@@ -101,7 +101,14 @@ scripts/
   verify_schema_alignment.py  框架模型↔真实库列级对齐检查
   verify_chat_stream.py   RAG 流式链路验证（mock OpenAI SSE）
   gen_env.py              本地联调 .env 生成（从 data-synth/WeKnora env 动态读凭据）
-tests/                    127 个测试（test_*.py，含 test_kb_admin.py）
+  gen_deploy_env.py       部署 .env 生成（容器内地址，凭据留空手动补）
+deploy/                   部署落地（docker-compose + nginx + Dockerfile）
+  docker-compose.yml      8 服务：nginx/web/api-server/celery worker+beat/redis/pg/mysql
+  Dockerfile.api          uv 构建（api+worker+docreader 同镜像多命令）
+  Dockerfile.web          bun 构建（standalone 运行）
+  nginx/default.conf      统一入口（SSE 关缓冲）
+  README.md               部署步骤/初始化/运维/验证
+tests/                    134 个测试（test_*.py，含 test_kb_admin.py / test_system_admin.py）
 ```
 
 ## 5. 验证方式（每次改动后必跑）
@@ -159,10 +166,12 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下）
 - [x] 系统管理页（用户/角色/团队/菜单/操作日志，只读）
 - [ ] 可选：问答页多轮历史持久化（本地存储）、引用点击跳文档稿、智能体编辑弹窗（config 可视化）、数据源页连接测试按钮
 
-### 8.2 部署落地（可选先做，让业务侧可看）
-- docker-compose：PG+pgvector、Redis（Celery broker）、MySQL（框架库）、FastAPI (uvicorn)、Celery worker + beat、Next.js 前端
-- 环境变量：KNOWLEDGE_DATABASE_URL、EMBEDDING_BASE_URL/API_KEY/MODEL、AI_CHAT_API_ENDPOINT/KEY/MODEL
-- 数据库初始化：跑 scripts/knowledge_schema.sql
+### 8.2 部署落地 ✅ 已交付（deploy/）
+- [x] docker-compose：nginx 统一入口 + web(Next.js) + api-server(FastAPI) + celery worker/beat + redis + pg(pgvector) + mysql 共 8 服务
+- [x] Dockerfile.api（uv 构建，api+worker+docreader 同镜像多命令）/ Dockerfile.web（bun 构建，standalone 运行）
+- [x] nginx 配置（参照 data-synth 精简：SSE 关缓冲、健康检查端点）
+- [x] deploy/.env 生成脚本（scripts/gen_deploy_env.py，凭据留空手动补）+ deploy/README.md（步骤/初始化/运维/验证）
+- [x] 待实际起容器验证（本机无 docker compose 插件，已做 YAML/变量一致性校验）；MySQL 框架库需手动建表+种子
 
 ### 8.3 增强项（按需）
 - wiki 页链接健康检查（wiki_lint：死链清理，参考 WeKnora wiki_lint.go）

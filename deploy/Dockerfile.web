@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1.7
+# KB web: Next.js 16 pure frontend.
+# Builds with bun, runs with node .next/standalone/server.js
+# (next start is incompatible with output:standalone).
+
+# ---- deps + build (bun) ----
+FROM oven/bun:1.3 AS builder
+WORKDIR /app
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN bun run build
+
+# ---- runtime (node standalone) ----
+FROM node:22-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+# standalone output + required static assets
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+EXPOSE 3000
+CMD ["node", "server.js"]
