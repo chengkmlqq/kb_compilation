@@ -15,12 +15,12 @@
 
 ## 2. 当前状态（2026-09-30）
 
-- **测试：127 个全部通过**（`uv run pytest` / `.venv/bin/python -m pytest`）
-- **API：18 个端点**——auth/login、me、open/datasources(/test)、qa/stream、agents CRUD+流式、**kbs 管理全套（CRUD/文档上传/wiki 树/页面详情/JSON 检索）**、health
+- **测试：134 个全部通过**（`uv run pytest` / `.venv/bin/python -m pytest`）
+- **API：23 个端点**——auth/login、me、open/datasources(/test)、qa/stream、agents CRUD+流式、kbs 管理全套（CRUD/文档上传/wiki 树/页面详情/JSON 检索）、**system 管理（users/roles/teams/menus/operation-logs）**、health
 - **Celery：4 个 task_class 注册**——KbDocumentProcessTask、KbDocumentEmbedTask、KbWikiBuildTask、KbGraphBuildTask（+ beat 扫描 scan_cron_tasks）
 - **MCP：3 个工具**——kb_list / kb_search / kb_answer（mcp SDK v2，MCPServer）
-- **前端：Next.js 16 应用就绪**（web/ 目录）——登录 / 知识库管理 / KB 详情（文档上传+wiki 树+检索）/ wiki 页面详情 / 智能问答(SSE) / 智能体配置 / Wiki 总览 / 数据源 8 个页面
-- **git：13+ commit**（后端能力 + P12 前端骨架），工作区见 git status
+- **前端：Next.js 16 应用就绪**（web/ 目录）——登录 / 知识库管理 / KB 详情（文档上传+wiki 树+检索）/ wiki 页面详情 / 智能问答(SSE) / 智能体配置 / Wiki 总览 / 数据源 / 系统管理（用户/角色/团队/菜单/日志）共 12 路由
+- **git**：全部已提交推送，工作区干净
 - 核心链路全部真实验证过（真实 PG17+pgvector + 真实框架 MySQL）
 
 ## 3. 已完成功能清单
@@ -52,10 +52,14 @@
 - [x] JSON 检索端点（非流式，前端搜索框用）
 - [x] worker 从 storage_path 读文件字节（上传→解析闭环打通，实测 READY+chunk 落库）
 
-### 3.4 前端（P12 第一段，Next.js 16 纯前端）✅
+### 3.4 前端（P12 第一段+收尾，Next.js 16 纯前端）✅
 - [x] 架构：`web/` 独立 Next.js 应用，`/api/[...path]` 代理路由转发到 FastAPI（cookie 透传 + SSE 透传），同源契约
-- [x] 页面：/login（登录写 x-next-identity cookie）、主布局（Sider 菜单+登录守卫）、/kbs、/kbs/[id]（上传+wiki 树+检索）、/kbs/[id]/wiki/[slug]、/chat（SSE 流式）、/agents、/wiki、/datasources
+- [x] 页面：/login（登录写 x-next-identity cookie）、主布局（Sider 菜单+登录守卫）、/kbs、/kbs/[id]（上传+wiki 树+检索+**解析状态自动轮询**）、/kbs/[id]/wiki/[slug]（**react-markdown+GFM 渲染**）、/chat（SSE 流式）、/agents、/wiki、/datasources、**/system（用户/角色/团队/菜单/操作日志）**
 - [x] 构建：bun install / build / type-check 全过；生产模式联调验证（页面渲染、代理转发、SSE event-stream 头透传）
+
+### 3.5 系统管理 API（P12 收尾，本次新增）✅
+- [x] 只读查询：users（分页/关键字）/ roles / teams / menus（排序树）/ operation-logs（分页/关键字）
+- [x] 说明：用户/角色编辑属管理敏感操作，本期只读，写操作留待 auth 加固阶段
 
 ## 4. 关键文件地图
 
@@ -145,16 +149,15 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下）
 12. **前端 dev 模式撞系统 inotify watch 限制**（antd 模块解析失败 "OS file watch limit reached"）：联调用 `bun run build` + `bun run start`（生产模式）验证，dev 只留给真正开发时用。
 13. **浏览器工具（agent-browser）在本机不可用**：GLIBC 2.29+ 缺失（老 kylin aarch64）。UI 验证用 curl 断言 HTML/接口，不用 browser_* 工具。
 14. **登录响应契约**：identity_cookie 在响应**顶层**（不在 data 内）；data 是 camelCase payload（loginId/userId/userName...，Identity.to_payload()）。
+15. **页面初始 HTML 为空是预期**：MainLayout 在客户端校验身份（useEffect）通过前 `return null`，服务端 SSR 不渲染子树——curl 验证页面只能拿到 HTML 壳，属正常。
 
 ## 8. 剩余工作（按优先级）
 
-### 8.1 P12 前端对接（剩余部分，2-3 周）
-- 文档上传进度轮询：前端目前上传后手动点刷新；可加定时轮询 parse_state
-- 问答页丰富：markdown 渲染（react-markdown）、引用来源点击跳文档、多轮历史持久化
-- 智能体问答页（按 agent 流式）/ 智能体编辑弹窗（config 可视化）
-- wiki 页 markdown 渲染升级（表格/代码块/图片）
-- 数据源页补「连接测试」按钮（后端 /test 已就绪）
-- 系统管理页（用户/角色/菜单/操作日志，data-synth 有现成页面可抄）
+### 8.1 P12 前端对接（剩余小项，按需）✅ 主体完成
+- [x] 上传进度轮询（有 PENDING/PARSING/EMBEDDING 文档时 3s 自动刷新）+ 状态 Spin 指示
+- [x] wiki 页 markdown 渲染升级（react-markdown + remark-gfm + 样式）
+- [x] 系统管理页（用户/角色/团队/菜单/操作日志，只读）
+- [ ] 可选：问答页多轮历史持久化（本地存储）、引用点击跳文档稿、智能体编辑弹窗（config 可视化）、数据源页连接测试按钮
 
 ### 8.2 部署落地（可选先做，让业务侧可看）
 - docker-compose：PG+pgvector、Redis（Celery broker）、MySQL（框架库）、FastAPI (uvicorn)、Celery worker + beat、Next.js 前端

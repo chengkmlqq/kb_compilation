@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from api.config import get_settings
 from api.db import get_db
-from api.routers import agents, auth, datasources, kbs, qa
+from api.routers import agents, auth, datasources, kbs, qa, system
 from api.services.identity import Identity, decode_identity_cookie
 
 app = FastAPI(
@@ -27,6 +27,7 @@ app.include_router(datasources.router, prefix="/api/v1/open")
 app.include_router(qa.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
 app.include_router(kbs.router, prefix="/api/v1")
+app.include_router(system.router, prefix="/api/v1")
 
 
 @app.get("/health")

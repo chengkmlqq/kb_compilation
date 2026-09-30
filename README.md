@@ -36,7 +36,7 @@ Celery workers（本仓库 worker/，沿用旧平台调度模式）
 - [x] **P14 文档入库链路**（解析→分块→向量化→落库，全走 Celery，worker 支持从 storage_path 读字节）
 - [x] **KB 管理 API**（CRUD + 文档上传/删除 + wiki 树/页面详情 + JSON 检索 + 删除保护）
 - [x] **P10 前端对接（第一段）**：`web/` Next.js 16 纯前端应用（登录 + 知识库管理 + 文档上传 + wiki 浏览 + SSE 问答 + 智能体 + 数据源），`/api/[...path]` 代理转发到 FastAPI
-- [ ] P10 收尾：上传进度轮询、markdown 渲染升级、系统管理页（用户/角色/菜单/操作日志）
+- [x] **P10 收尾**：上传进度轮询、wiki markdown 渲染（react-markdown+GFM）、系统管理页（用户/角色/团队/菜单/日志，只读）
 
 ## 命名约定
 

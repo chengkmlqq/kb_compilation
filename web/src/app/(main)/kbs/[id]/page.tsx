@@ -77,6 +77,23 @@ export default function KbDetailPage() {
     void loadWiki();
   }, [load, loadWiki]);
 
+  // Auto-poll while any document is still being parsed (PENDING/PARSING/EMBEDDING).
+  const hasInFlight = docs.some((d) =>
+    ["PENDING", "PARSING", "EMBEDDING"].includes(d.parse_state),
+  );
+  useEffect(() => {
+    if (!hasInFlight) return;
+    const timer = setInterval(() => {
+      void load();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [hasInFlight, load]);
+
+  // Refresh the wiki tree once documents finish parsing (pages appear after READY).
+  useEffect(() => {
+    if (!hasInFlight) void loadWiki();
+  }, [hasInFlight, loadWiki]);
+
   const doSearch = async () => {
     if (!query.trim()) return;
     setSearching(true);
@@ -148,7 +165,12 @@ export default function KbDetailPage() {
             {
               title: "状态",
               dataIndex: "parse_state",
-              render: (v: string) => <Tag color={PARSE_STATE_COLOR[v] || "default"}>{v}</Tag>,
+              render: (v: string) => (
+                <Space size={4}>
+                  {["PENDING", "PARSING", "EMBEDDING"].includes(v) && <Spin size="small" />}
+                  <Tag color={PARSE_STATE_COLOR[v] || "default"}>{v}</Tag>
+                </Space>
+              ),
             },
             {
               title: "分块数",

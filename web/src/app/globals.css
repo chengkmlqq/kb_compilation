@@ -8,3 +8,57 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/* Wiki page markdown rendering */
+.kb-markdown {
+  line-height: 1.7;
+  color: rgba(0, 0, 0, 0.88);
+}
+.kb-markdown h1,
+.kb-markdown h2,
+.kb-markdown h3,
+.kb-markdown h4 {
+  margin: 0.8em 0 0.4em;
+  font-weight: 600;
+}
+.kb-markdown h1 { font-size: 1.6em; }
+.kb-markdown h2 { font-size: 1.35em; padding-bottom: 0.3em; border-bottom: 1px solid #eee; }
+.kb-markdown h3 { font-size: 1.15em; }
+.kb-markdown ul,
+.kb-markdown ol { padding-left: 1.6em; }
+.kb-markdown li { margin: 0.2em 0; }
+.kb-markdown p { margin: 0.5em 0; }
+.kb-markdown code {
+  background: #f5f5f5;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+.kb-markdown pre {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 12px 16px;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.kb-markdown pre code { background: transparent; color: inherit; padding: 0; }
+.kb-markdown blockquote {
+  margin: 0.6em 0;
+  padding: 0.2em 1em;
+  border-left: 3px solid #1677ff;
+  background: #f6f8fb;
+  color: rgba(0, 0, 0, 0.65);
+}
+.kb-markdown table {
+  border-collapse: collapse;
+  margin: 0.8em 0;
+  width: 100%;
+}
+.kb-markdown th,
+.kb-markdown td {
+  border: 1px solid #e5e5e5;
+  padding: 6px 12px;
+  text-align: left;
+}
+.kb-markdown th { background: #fafafa; font-weight: 600; }
+.kb-markdown a { color: #1677ff; }

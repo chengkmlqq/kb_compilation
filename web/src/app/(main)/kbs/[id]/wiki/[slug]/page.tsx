@@ -3,39 +3,9 @@
 import { useEffect, useState } from "react";
 import { Breadcrumb, Card, Empty, Space, Spin, Tag, Typography } from "antd";
 import { useParams, useRouter } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { apiWikiPage, WikiPageDetail } from "@/lib/api";
-
-/** Minimal markdown-ish renderer: headings, bold, inline code, paragraphs. */
-function SimpleMarkdown({ text }: { text: string }) {
-  if (!text) return null;
-  const lines = text.split("\n");
-  const out: React.ReactNode[] = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("### ")) {
-      out.push(<Typography.Title key={out.length} level={4}>{trimmed.slice(4)}</Typography.Title>);
-    } else if (trimmed.startsWith("## ")) {
-      out.push(<Typography.Title key={out.length} level={3}>{trimmed.slice(3)}</Typography.Title>);
-    } else if (trimmed.startsWith("# ")) {
-      out.push(<Typography.Title key={out.length} level={2}>{trimmed.slice(2)}</Typography.Title>);
-    } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
-      out.push(
-        <div key={out.length} style={{ paddingLeft: 16 }}>
-          · {trimmed.slice(2)}
-        </div>,
-      );
-    } else if (trimmed) {
-      out.push(
-        <Typography.Paragraph key={out.length}>
-          {trimmed.replace(/`([^`]+)`/g, (_, code: string) => `「${code}」`)}
-        </Typography.Paragraph>,
-      );
-    } else {
-      out.push(<div key={out.length} style={{ height: 8 }} />);
-    }
-  }
-  return <>{out}</>;
-}
 
 export default function WikiPageDetailPage() {
   const { id, slug } = useParams<{ id: string; slug: string }>();
@@ -95,7 +65,9 @@ export default function WikiPageDetailPage() {
             <Typography.Paragraph type="secondary">{page.summary}</Typography.Paragraph>
           )}
           <hr />
-          <SimpleMarkdown text={page.content} />
+          <div className="kb-markdown">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{page.content}</ReactMarkdown>
+          </div>
         </Space>
       </Card>
       {page.links.length > 0 && (

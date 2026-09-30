@@ -247,3 +247,81 @@ export function apiListDatasources(page = 1, pageSize = 10, keyword = "") {
     `/api/v1/open/datasources?${params.toString()}`,
   );
 }
+
+// ---- system admin (read-only) ----
+
+export interface SysUserItem {
+  id?: string;
+  user_id?: string;
+  user_name?: string;
+  email?: string | null;
+  phone?: string | null;
+  default_team?: string | null;
+  state?: string | null;
+  create_dt?: string | null;
+}
+
+export interface SysRoleItem {
+  role_id?: string;
+  role_name?: string;
+  role_descr?: string | null;
+  role_type?: string;
+  state?: string;
+}
+
+export interface SysTeamItem {
+  team_id?: string;
+  team_name?: string;
+  label?: string | null;
+  descr?: string | null;
+  parent_team_name?: string | null;
+  state?: string | null;
+}
+
+export interface SysMenuItem {
+  menu_id?: string;
+  menu_name?: string;
+  menu_label?: string | null;
+  menu_type?: string | null;
+  route?: string | null;
+  parent_id?: string | null;
+  sort_num?: number | null;
+  state?: string | null;
+}
+
+export interface SysLogItem {
+  id?: string;
+  user_name?: string | null;
+  user_id?: string | null;
+  team_name?: string | null;
+  oper_type?: string | null;
+  oper_content?: string | null;
+  oper_url?: string | null;
+  oper_time?: string | null;
+}
+
+export function apiListUsers(page = 1, pageSize = 20, keyword = "") {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  if (keyword) params.set("keyword", keyword);
+  return request<PageList<SysUserItem>>(`/api/v1/system/users?${params.toString()}`);
+}
+
+export function apiListRoles(page = 1, pageSize = 20) {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return request<PageList<SysRoleItem>>(`/api/v1/system/roles?${params.toString()}`);
+}
+
+export function apiListTeams(page = 1, pageSize = 20) {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return request<PageList<SysTeamItem>>(`/api/v1/system/teams?${params.toString()}`);
+}
+
+export function apiListMenus() {
+  return request<{ items: SysMenuItem[]; total: number }>("/api/v1/system/menus");
+}
+
+export function apiListOperationLogs(page = 1, pageSize = 20, keyword = "") {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  if (keyword) params.set("keyword", keyword);
+  return request<PageList<SysLogItem>>(`/api/v1/system/operation-logs?${params.toString()}`);
+}
