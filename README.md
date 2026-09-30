@@ -27,13 +27,16 @@ Celery workers（本仓库 worker/，沿用旧平台调度模式）
 - [x] **模型对齐验证**：`scripts/verify_schema_alignment.py` 对真实库列级比对通过
 - [x] **P2 框架服务迁移**：auth/RBAC（密码学与前端字节级兼容）、数据源连接测试、配置缓存（TTL+single-flight）
 - [x] **P3 cron/任务调度 → Celery**：beat 扫描 `modo_cron_task`，乐观锁防重复触发
+- [x] **P4 MCP 服务端**：3 个知识库工具（kb_list/kb_search/kb_answer，mcp SDK v2）
+- [x] **P5 知识库域模型 + 向量化（pgvector）+ 混合检索（RRF）**
+- [x] **P6 RAG 问答链路**（chat_pipeline 照搬）+ 流式 SSE
 - [x] **P7 docreader 迁移**：文档解析引擎（md/pdf/docx/xlsx/pptx/epub/mhtml，去 gRPC 壳）
-- [ ] P4 MCP 服务端（registry → Python mcp SDK）
-- [ ] P5 知识库域模型（wiki_ / kb_ 前缀）+ 向量化（pgvector）+ 混合检索（RRF）
-- [ ] P6 问答链路（chat_pipeline 照搬）+ 流式 SSE
-- [ ] P8 Wiki 生成 + Neo4j 图谱
-- [ ] P9 智能体配置
-- [ ] P10 前端对接（Next.js 纯前端 + fetch 改造）
+- [x] **P8 Wiki 生成 + Neo4j 图谱**（实体/关系抽取，提示词迁自 WeKnora）
+- [x] **P9 智能体配置**（kb_agent CRUD + 按 agent 流式问答 + KB 范围解析）
+- [x] **P14 文档入库链路**（解析→分块→向量化→落库，全走 Celery，worker 支持从 storage_path 读字节）
+- [x] **KB 管理 API**（CRUD + 文档上传/删除 + wiki 树/页面详情 + JSON 检索 + 删除保护）
+- [x] **P10 前端对接（第一段）**：`web/` Next.js 16 纯前端应用（登录 + 知识库管理 + 文档上传 + wiki 浏览 + SSE 问答 + 智能体 + 数据源），`/api/[...path]` 代理转发到 FastAPI
+- [ ] P10 收尾：上传进度轮询、markdown 渲染升级、系统管理页（用户/角色/菜单/操作日志）
 
 ## 命名约定
 

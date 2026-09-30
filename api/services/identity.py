@@ -35,6 +35,17 @@ class Identity:
     team_label: str = ""
     raw: dict = field(default_factory=dict)
 
+    def to_payload(self) -> dict:
+        """Frontend-facing camelCase payload (mirrors the TS Identity shape)."""
+        return {
+            "loginId": self.login_id,
+            "userId": self.user_id,
+            "userName": self.user_name,
+            "teamName": self.team_name,
+            "teamId": self.team_id,
+            "teamLabel": self.team_label,
+        }
+
 
 def _to_text(value: object) -> str:
     if isinstance(value, str):

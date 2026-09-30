@@ -54,9 +54,21 @@ class Settings:
         os.getenv("JOB_BEAT_SCAN_INTERVAL_SECONDS", "30")
     )
 
+    # --- Knowledge file storage (uploaded KB documents) ---
+    # Local directory where uploaded document bytes are kept. The Celery
+    # doc-process task reads from `storage_path` on kb_document.
+    KB_STORAGE_DIR: str = os.getenv("KB_STORAGE_DIR", "")
+
     # --- Server ---
     APP_PORT: int = int(os.getenv("APP_PORT", "8000"))
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "info")
+
+    @property
+    def kb_storage_dir(self) -> str:
+        """Resolve the KB document storage directory (creates it lazily)."""
+        base = self.KB_STORAGE_DIR or str(Path(__file__).resolve().parent.parent / "data" / "kb_documents")
+        Path(base).mkdir(parents=True, exist_ok=True)
+        return base
 
     @property
     def is_pg(self) -> bool:

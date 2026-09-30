@@ -1,0 +1,11 @@
+# Next.js build artifacts
+node_modules/
+.next/
+out/
+
+# env
+.env
+.env.local
+
+# runtime data
+/data/

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from api.config import get_settings
 from api.db import get_db
-from api.routers import agents, auth, datasources, qa
+from api.routers import agents, auth, datasources, kbs, qa
 from api.services.identity import Identity, decode_identity_cookie
 
 app = FastAPI(
@@ -26,6 +26,7 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(datasources.router, prefix="/api/v1/open")
 app.include_router(qa.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
+app.include_router(kbs.router, prefix="/api/v1")
 
 
 @app.get("/health")
@@ -54,4 +55,4 @@ def me(
     identity: Identity | None = decode_identity_cookie(x_next_identity or "")
     if not identity:
         return {"success": False, "message": "未登录", "data": None}
-    return {"success": True, "data": identity.__dict__}
+    return {"success": True, "data": identity.to_payload()}

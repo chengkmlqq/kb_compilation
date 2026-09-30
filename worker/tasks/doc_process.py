@@ -40,17 +40,39 @@ def _load_document(document_id: str) -> KbDocument | None:
         db.close()
 
 
+def _load_document_bytes(storage_path: str | None) -> bytes:
+    """Load file bytes from a local storage_path (upload flow writes absolute paths)."""
+    if not storage_path:
+        return b""
+    try:
+        with open(storage_path, "rb") as fh:
+            return fh.read()
+    except OSError as e:
+        logger.warning("failed to read document bytes from %s: %s", storage_path, e)
+        return b""
+
+
 def process_document(document_id: str, file_content: bytes, parser_engine: str | None = None) -> dict:
     """Run the full ingest pipeline for a document (called by the job task).
 
-    file_content is passed via the job payload; for large files the caller
-    should store bytes in object storage and pass a storage ref instead.
+    - file_content: preloaded bytes (inline / test path). When empty, bytes
+      are loaded from the document's `storage_path` (upload flow writes the
+      file to local disk and records the absolute path on kb_document).
     """
     db = get_knowledge_sessionmaker()()
     try:
         document = db.execute(select(KbDocument).where(KbDocument.id == document_id)).scalars().first()
         if not document:
             return {"success": False, "error": f"document not found: {document_id}"}
+
+        if not file_content:
+            file_content = _load_document_bytes(document.storage_path)
+            if not file_content:
+                return {
+                    "success": False,
+                    "error": f"document bytes unavailable (storage_path={document.storage_path!r})",
+                }
+
         client = get_embedding_client(db)
         return ingest_document(db, document, file_content, client, parser_engine=parser_engine)
     finally:

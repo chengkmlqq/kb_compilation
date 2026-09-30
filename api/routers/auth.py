@@ -32,7 +32,8 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     success: bool
     message: str
-    data: Identity | None = None
+    # camelCase identity payload for the frontend (mirrors the TS Identity shape)
+    data: dict | None = None
     identity_cookie: str | None = None
 
 
@@ -68,7 +69,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
         return LoginResponse(
             success=True,
             message="登录成功",
-            data=identity,
+            data=identity.to_payload(),
             identity_cookie=encode_identity_cookie(identity),
         )
 
