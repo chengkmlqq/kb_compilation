@@ -154,11 +154,9 @@ class WikiPage(KnowledgeBase):
 
     __tablename__ = "wiki_page"
     __table_args__ = (
-        Index(
-            "idx_wiki_page_fts",
-            text("to_tsvector('simple', coalesce(title, '') || ' ' || coalesce(content, ''))"),
-            postgresql_using="gin",
-        ),
+        # NOTE: the GIN full-text index (to_tsvector) is created by
+        # scripts/knowledge_schema.sql, not here — it is PG-only and would
+        # break create_all on sqlite (used by unit tests).
         Index("idx_wiki_page_kb", "kb_id"),
         Index("idx_wiki_page_slug", "kb_id", "slug"),
     )

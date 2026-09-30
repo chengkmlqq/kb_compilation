@@ -40,6 +40,7 @@ celery_app.conf.update(
     include=[
         "worker.tasks.scheduler",
         "worker.tasks.doc_process",
+        "worker.tasks.wiki_graph",
     ]
 )
 
