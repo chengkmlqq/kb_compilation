@@ -109,3 +109,19 @@ CREATE TABLE IF NOT EXISTS wiki_link (
 CREATE INDEX IF NOT EXISTS idx_wiki_link_from ON wiki_link (from_page_id);
 CREATE INDEX IF NOT EXISTS idx_wiki_link_to ON wiki_link (to_page_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uk_wiki_link_pair ON wiki_link (from_page_id, to_page_id);
+
+-- ------------------------------------------------------------------------ agent
+CREATE TABLE IF NOT EXISTS kb_agent (
+    id          VARCHAR(36) PRIMARY KEY,
+    name        VARCHAR(255) NOT NULL,
+    description TEXT,
+    avatar      VARCHAR(64),
+    is_builtin  BOOLEAN NOT NULL DEFAULT FALSE,
+    team_name   VARCHAR(64),
+    created_by  VARCHAR(64),
+    config      JSONB NOT NULL DEFAULT '{}',
+    state       VARCHAR(16) NOT NULL DEFAULT '1',
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_kb_agent_team ON kb_agent (team_name);

@@ -201,6 +201,35 @@ class WikiLink(KnowledgeBase):
     )
 
 
+class KbAgent(KnowledgeBase):
+    """An AI agent (QA assistant) bound to knowledge bases.
+
+    Config JSON structure mirrors WeKnora's CustomAgentConfig: agent_mode
+    (quick-answer / smart-reasoning), system_prompt, model settings,
+    KB selection mode, allowed tools, retrieval flags.
+    """
+
+    __tablename__ = "kb_agent"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    avatar: Mapped[str | None] = mapped_column(String(64))
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # team-level ownership (team_name from the framework store)
+    team_name: Mapped[str | None] = mapped_column(String(64), index=True)
+    created_by: Mapped[str | None] = mapped_column(String(64))
+    # JSON config, see KbAgentConfig defaults in api/services/agents.py
+    config: Mapped[dict] = mapped_column(JSONB, default=dict)
+    state: Mapped[str] = mapped_column(String(16), default="1")  # 1=active 0=deleted
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP"), onupdate=datetime.utcnow
+    )
+
+
 def default_indexing_strategy() -> dict:
     """Default pipeline toggles: all enabled (matches WeKnora backfill)."""
     return {
@@ -218,5 +247,6 @@ __all__ = [
     "WikiFolder",
     "WikiPage",
     "WikiLink",
+    "KbAgent",
     "default_indexing_strategy",
 ]
