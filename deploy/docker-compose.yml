@@ -115,6 +115,26 @@ services:
     networks:
       - kb-net
 
+  flower:
+    # Celery worker 监控（任务队列/执行状态/失败重试），经 nginx /flower/ 访问
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    container_name: kb-flower
+    restart: unless-stopped
+    command:
+      - sh
+      - -lc
+      - 'celery -A worker.celery_app flower --address=0.0.0.0 --port=5555 --persistent=False --basic_auth="$${FLOWER_BASIC_AUTH:?FLOWER_BASIC_AUTH is required}"'
+    <<: *api-env
+    environment:
+      FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH}
+    depends_on:
+      redis:
+        condition: service_started
+    networks:
+      - kb-net
+
   redis:
     image: redis:7-alpine
     container_name: kb-redis

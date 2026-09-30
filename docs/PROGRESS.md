@@ -167,7 +167,7 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下）
 - [ ] 可选：问答页多轮历史持久化（本地存储）、引用点击跳文档稿、智能体编辑弹窗（config 可视化）、数据源页连接测试按钮
 
 ### 8.2 部署落地 ✅ 已交付（deploy/）
-- [x] docker-compose：nginx 统一入口 + web(Next.js) + api-server(FastAPI) + celery worker/beat + redis + pg(pgvector) + mysql 共 8 服务
+- [x] docker-compose：nginx 统一入口 + web(Next.js) + api-server(FastAPI) + celery worker/beat + **flower(worker 监控)** + redis + pg(pgvector) + mysql 共 9 服务
 - [x] Dockerfile.api（uv 构建，api+worker+docreader 同镜像多命令）/ Dockerfile.web（bun 构建，standalone 运行）
 - [x] nginx 配置（参照 data-synth 精简：SSE 关缓冲、健康检查端点）
 - [x] deploy/.env 生成脚本（scripts/gen_deploy_env.py，凭据留空手动补）+ deploy/README.md（步骤/初始化/运维/验证）

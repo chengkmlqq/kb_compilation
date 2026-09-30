@@ -58,6 +58,7 @@ PY
 | api-server | kb-api-server | —(内网 8000) | FastAPI 23 端点 |
 | celery-worker | kb-celery-worker | — | 文档解析/向量化/wiki/图谱 |
 | celery-beat | kb-celery-beat | — | 扫描 modo_cron_task |
+| flower | kb-flower | —(内网 5555) | Celery 监控 UI，经 nginx `/flower/` 访问（basic auth） |
 | redis | kb-redis | —(内网 6379) | broker + 结果后端 |
 | pg | kb-pg | —(内网 5432) | PG17 + pgvector，知识库 DDL 自动初始化 |
 | mysql | kb-mysql | —(内网 3306) | 框架库（需手动建表/种子） |
@@ -93,3 +94,7 @@ curl -s http://<host>/api/v1/open/health    # API 存活
 curl -s -X POST http://<host>/api/v1/auth/login \
   -H 'content-type: application/json' -d '{"userId":"huqiang","pwd":"sys"}'   # 登录
 ```
+
+## Worker 监控（Flower）
+
+浏览器访问 `http://<host>/flower/`，用 `FLOWER_BASIC_AUTH`（deploy/.env，默认 admin:admin，建议部署后修改）登录。可查看：worker 存活、任务队列、各任务执行状态/耗时/失败重试、Broker 队列深度。Flower 通过同一 Redis broker 监控，与 celery-worker 同源。
