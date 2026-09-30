@@ -9,3 +9,5 @@ out/
 
 # runtime data
 /data/
+# TS incremental build cache
+*.tsbuildinfo
