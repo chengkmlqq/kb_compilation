@@ -12,7 +12,7 @@ import logging
 
 from sqlalchemy import select
 
-from api.db import get_knowledge_sessionmaker
+from api.db import get_sessionmaker
 from api.models.knowledge import DocChunk
 from api.services.chat import load_chat_config
 from api.services.graph import Neo4jGraphStore, build_graph
@@ -26,7 +26,7 @@ TASK_CLASS_GRAPH_BUILD = "KbGraphBuildTask"
 
 
 def _load_kb_chunks(kb_id: str) -> list[dict]:
-    db = get_knowledge_sessionmaker()()
+    db = get_sessionmaker()()
     try:
         rows = (
             db.execute(
@@ -54,7 +54,7 @@ def _handle_wiki_build(job_id: str, task_params: str | None) -> dict:
     if not kb_id:
         return {"success": False, "error": "task_params must include kbId"}
     chunks = _load_kb_chunks(kb_id)
-    db = get_knowledge_sessionmaker()()
+    db = get_sessionmaker()()
     try:
         chat_cfg = load_chat_config(db)
         from api.services.graph import GraphExtractor
@@ -79,7 +79,7 @@ def _handle_graph_build(job_id: str, task_params: str | None) -> dict:
     if not kb_id:
         return {"success": False, "error": "task_params must include kbId"}
     chunks = _load_kb_chunks(kb_id)
-    db = get_knowledge_sessionmaker()()
+    db = get_sessionmaker()()
     try:
         chat_cfg = load_chat_config(db)
         store = None

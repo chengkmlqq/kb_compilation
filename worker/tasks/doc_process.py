@@ -19,7 +19,7 @@ import uuid
 
 from sqlalchemy import select
 
-from api.db import get_knowledge_sessionmaker
+from api.db import get_sessionmaker
 from api.models.knowledge import DocChunk, KbDocument
 from api.services.embedding import get_embedding_client, l2_normalize
 from api.services.ingest import ingest_document
@@ -33,7 +33,7 @@ TASK_CLASS_EMBED_DOC = "KbDocumentEmbedTask"
 
 
 def _load_document(document_id: str) -> KbDocument | None:
-    db = get_knowledge_sessionmaker()()
+    db = get_sessionmaker()()
     try:
         return db.execute(select(KbDocument).where(KbDocument.id == document_id)).scalars().first()
     finally:
@@ -59,7 +59,7 @@ def process_document(document_id: str, file_content: bytes, parser_engine: str |
       are loaded from the document's `storage_path` (upload flow writes the
       file to local disk and records the absolute path on kb_document).
     """
-    db = get_knowledge_sessionmaker()()
+    db = get_sessionmaker()()
     try:
         document = db.execute(select(KbDocument).where(KbDocument.id == document_id)).scalars().first()
         if not document:
@@ -80,8 +80,14 @@ def process_document(document_id: str, file_content: bytes, parser_engine: str |
 
 
 def embed_document(document_id: str) -> dict:
-    """Re-embed an existing document's chunks (embedding-model-change path)."""
-    db = get_knowledge_sessionmaker()()
+    """Re-embed an existing document's chunks (embedding-model-change path).
+
+    Chunks live in the business store; their new vectors go to the vector
+    store (kb_embedding) via VectorStore.
+    """
+    from api.services.vector_store import get_vector_store
+
+    db = get_sessionmaker()()
     try:
         chunks = (
             db.execute(
@@ -95,9 +101,9 @@ def embed_document(document_id: str) -> dict:
         client = get_embedding_client(db)
         texts = [c.content for c in chunks]
         vectors = client.embed_texts(texts)
+        store = get_vector_store()
         for chunk, vec in zip(chunks, vectors):
-            chunk.embedding = l2_normalize(vec)
-        db.commit()
+            store.upsert(chunk.kb_id, chunk.id, l2_normalize(vec))
         return {"success": True, "document_id": document_id, "embedded": len(chunks)}
     finally:
         db.close()

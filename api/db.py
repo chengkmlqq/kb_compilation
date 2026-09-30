@@ -2,8 +2,13 @@
 
 Two stores:
 - Base (framework): shares the legacy database (mysql or pg, per DATABASE_URL)
-- KnowledgeBase (knowledge domain): PostgreSQL + pgvector store for the
-  wiki/kb tables (doc_chunk embeddings, wiki_pages, graph refs)
+  and hosts BOTH the framework tables (modo_*) and the knowledge BUSINESS
+  tables (kb_datasource / kb_document / doc_chunk / wiki_* / kb_agent) — all
+  portable relational types, so the platform can switch relational DBs.
+- KnowledgeBase (vector store): PostgreSQL + pgvector for the single
+  vector-only table `kb_embedding`. All vector I/O goes through
+  api.services.vector_store.VectorStore, so the vector backend can later be
+  swapped to Elasticsearch / Milvus without touching callers.
 
 Both engines are created lazily so the app boots (and tests run) without a
 live database.
@@ -27,7 +32,7 @@ class Base(DeclarativeBase):
 
 
 class KnowledgeBase(DeclarativeBase):
-    """Declarative base for knowledge-domain models (PG + pgvector store)."""
+    """Declarative base for the vector-only store (PG + pgvector, kb_embedding)."""
 
 
 @lru_cache
@@ -45,11 +50,12 @@ def get_engine() -> Engine:
 
 @lru_cache
 def get_knowledge_engine() -> Engine:
-    """Lazily create the knowledge-store engine (PostgreSQL + pgvector).
+    """Lazily create the vector-store engine (PostgreSQL + pgvector).
 
-    SCHEMA_NAME is injected into the connection's search_path so tables in a
-    non-public schema resolve without per-query SET (same for production and
-    the temp-schema verification path).
+    Only `kb_embedding` (chunk embeddings) lives here; the knowledge business
+    tables live on the framework engine. SCHEMA_NAME is injected into the
+    connection's search_path so tables in a non-public schema resolve without
+    per-query SET (same for production and the temp-schema verification path).
     """
     settings = get_settings()
     connect_args: dict = {}

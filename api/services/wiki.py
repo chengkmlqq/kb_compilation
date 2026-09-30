@@ -7,8 +7,10 @@ page per entity, dedupe by slug, then link pages that co-occur — and run it
 synchronously inside a Celery task (which the platform's scheduler already
 provides retry/locking semantics for).
 
-Pages land in wiki_page (PG store); links in wiki_link. Slugs are derived from
-titles (pinyin-free ASCII fallback not needed — Chinese slugs are fine).
+Pages land in wiki_page / wiki_link on the BUSINESS store (the framework
+relational DB; only chunk embeddings live in the vector store). Slugs are
+derived from titles (pinyin-free ASCII fallback not needed — Chinese slugs
+are fine).
 """
 
 from __future__ import annotations

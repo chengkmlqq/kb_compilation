@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from api.db import get_knowledge_db
+from api.db import get_db
 from api.models.knowledge import KbDatasource
 from api.services.chat import answer_question
 from api.services.embedding import get_embedding_client
@@ -37,7 +37,7 @@ def _sse(event: dict) -> str:
 
 
 @router.post("/stream")
-def qa_stream(req: QARequest, db: Session = Depends(get_knowledge_db)) -> StreamingResponse:
+def qa_stream(req: QARequest, db: Session = Depends(get_db)) -> StreamingResponse:
     """Stream RAG QA: first a context event (retrieved hits), then deltas."""
 
     def generator():

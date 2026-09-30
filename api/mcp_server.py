@@ -28,7 +28,7 @@ from mcp.server.mcpserver import MCPServer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from api.db import get_knowledge_sessionmaker
+from api.db import get_sessionmaker
 from api.models.knowledge import KbDatasource
 from api.services.retrieval import RetrievalConfig, hybrid_search
 
@@ -36,8 +36,8 @@ logger = logging.getLogger(__name__)
 
 
 def new_session() -> Session:
-    """A scoped knowledge-store session (handlers own the lifecycle)."""
-    return get_knowledge_sessionmaker()()
+    """A scoped framework-store session (handlers own the lifecycle)."""
+    return get_sessionmaker()()
 
 
 # ---------------------------------------------------------------------------

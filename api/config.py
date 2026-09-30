@@ -27,10 +27,12 @@ class Settings:
     DB_MAX_CONNECTIONS: int = int(os.getenv("DB_MAX_CONNECTIONS", "10"))
     DB_POOL_PRE_PING: bool = os.getenv("DB_POOL_PRE_PING", "1") == "1"
 
-    # --- Knowledge store (PostgreSQL + pgvector, for wiki/kb domain) ---
-    # The framework tables share the legacy MySQL; the knowledge domain
-    # (doc_chunk embeddings, wiki pages, graph refs) lives on a PG store so
-    # pgvector and full-text search are available.
+    # --- Vector store (PostgreSQL + pgvector, for chunk embeddings only) ---
+    # The knowledge BUSINESS tables (kb_datasource / kb_document / doc_chunk /
+    # wiki_* / kb_agent) live on the FRAMEWORK relational store (DATABASE_URL);
+    # only the `kb_embedding` vector table lives on this PG store so pgvector
+    # and HNSW search are available. VECTOR_STORE_TYPE=es is reserved for a
+    # future Elasticsearch backend.
     KNOWLEDGE_DATABASE_URL: str = os.getenv("KNOWLEDGE_DATABASE_URL", "")
     EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "1024"))
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "")
@@ -59,6 +61,11 @@ class Settings:
     # doc-process task reads from `storage_path` on kb_document.
     KB_STORAGE_DIR: str = os.getenv("KB_STORAGE_DIR", "")
 
+    # --- Vector store backend ---
+    # pg (default, pgvector) | es (reserved). Business tables always live on
+    # the framework store; only chunk embeddings go to the vector backend.
+    VECTOR_STORE_TYPE: str = os.getenv("VECTOR_STORE_TYPE", "pg")
+
     # --- Server ---
     APP_PORT: int = int(os.getenv("APP_PORT", "8000"))
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "info")
@@ -80,11 +87,12 @@ class Settings:
         return self.DATABASE_URL
 
     def require_knowledge_database_url(self) -> str:
-        """URL for the PG + pgvector knowledge store.
+        """URL for the PG + pgvector VECTOR store (kb_embedding only).
 
         Falls back to DATABASE_URL when KNOWLEDGE_DATABASE_URL is unset (e.g.
-        a single-PG dev deployment), but refuses to run knowledge features on
-        MySQL (pgvector types and GIN indexes are PG-only).
+        a single-PG dev deployment), but refuses to use MySQL for the vector
+        store (pgvector types are PG-only). Not needed when
+        VECTOR_STORE_TYPE=es (reserved backend).
         """
         url = self.KNOWLEDGE_DATABASE_URL or self.DATABASE_URL
         if not url:

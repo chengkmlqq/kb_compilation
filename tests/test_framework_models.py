@@ -1,8 +1,12 @@
-"""Framework model sanity checks.
+"""Framework + knowledge model sanity checks.
 
 Verifies the ORM models ported from the source Drizzle schema:
-1. Exactly the framework tables are present (legacy data-synthesis business
-   tables excluded).
+1. Exactly the expected tables are present on each declarative base —
+   the framework tables + the knowledge BUSINESS tables
+   (kb_datasource / kb_document / doc_chunk / wiki_* / kb_agent) on `Base`
+   (portable relational types, live on the framework relational store), and
+   ONLY the vector table `kb_embedding` on `KnowledgeBase` (pgvector store).
+   Legacy data-synthesis business tables stay excluded.
 2. Every model maps to the expected physical table name.
 3. Models can create tables on an in-memory engine (structural self-consistency).
 """
@@ -13,11 +17,11 @@ import pytest
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
-from api.db import Base
+from api.db import Base, KnowledgeBase
 from api.models import framework
 
 # Expected framework tables (kept from the source Drizzle schema).
-EXPECTED_TABLES = {
+FRAMEWORK_TABLES = {
     "modo_user",
     "modo_user_role",
     "modo_user_role_rela",
@@ -49,6 +53,27 @@ EXPECTED_TABLES = {
     "ai_chat_conversation",
     "ai_chat_message",
 }
+
+# Knowledge-domain BUSINESS tables — ported onto the framework base so they
+# live on the same relational store as the framework tables (MySQL by
+# default, portable to any relational DB). Only portable types, no vectors.
+KNOWLEDGE_BUSINESS_TABLES = {
+    "kb_datasource",
+    "kb_document",
+    "doc_chunk",
+    "wiki_folder",
+    "wiki_page",
+    "wiki_link",
+    "kb_agent",
+}
+
+# The single vector-only table lives on the vector store base (PG + pgvector).
+VECTOR_ONLY_TABLES = {
+    "kb_embedding",
+}
+
+# Everything expected on the framework base.
+EXPECTED_TABLES = FRAMEWORK_TABLES | KNOWLEDGE_BUSINESS_TABLES
 
 # Legacy business tables (data-synthesis domain) that MUST NOT be present
 # after extraction. Names are the REAL table names in the source DB — they
@@ -107,6 +132,19 @@ IGNORED_DB_TABLES = {
 def test_only_framework_tables_defined() -> None:
     mapped = {t.name for t in Base.metadata.sorted_tables}
     assert mapped == EXPECTED_TABLES, f"missing={EXPECTED_TABLES - mapped}, extra={mapped - EXPECTED_TABLES}"
+
+
+def test_vector_only_table_on_knowledge_base() -> None:
+    """The knowledge (vector) base holds ONLY kb_embedding.
+
+    Every other knowledge table is a business table on the framework base
+    (portable relational types); the vector base is reserved for pgvector.
+    """
+    mapped = {t.name for t in KnowledgeBase.metadata.sorted_tables}
+    assert mapped == VECTOR_ONLY_TABLES, (
+        f"missing={VECTOR_ONLY_TABLES - mapped}, extra={mapped - VECTOR_ONLY_TABLES}"
+    )
+    assert mapped.isdisjoint(EXPECTED_TABLES)
 
 
 def test_no_legacy_business_tables() -> None:

@@ -2,7 +2,7 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-09-30
+最后更新：2026-10-01
 
 ## 1. 项目概况
 
@@ -10,12 +10,13 @@
 |---|---|
 | 仓库 | `/home/jenkins/chengkai/kb_compilation`（git remote: git@github.com:chengkml/kb_compilation.git） |
 | 目标 | 从 data-synth 剔除数据合成业务，保留系统框架层；在其上迁移 WeKnora 知识库能力 |
-| 最终形态 | Next.js 纯前端 + Python FastAPI 后端 + Celery 任务，知识库数据走 PG+pgvector |
+| 最终形态 | Next.js 纯前端 + Python FastAPI 后端 + Celery 任务；知识库**业务表**走框架关系库（MySQL 默认，可换任意关系库），**向量**走独立向量库（PG+pgvector，预留 ES） |
 | 上游参考 | `/home/jenkins/chengkai/data-synth`（框架层来源）、`/home/jenkins/chengkai/WeKnora`（知识库功能来源） |
 
-## 2. 当前状态（2026-09-30）
+## 2. 当前状态（2026-10-01）
 
-- **测试：134 个全部通过**（`uv run pytest` / `.venv/bin/python -m pytest`）
+- **测试：142 个全部通过**（`uv run pytest` / `.venv/bin/python -m pytest`）
+- **存储拆分（2026-10-01 落地）**：知识库 7 张业务表（kb_datasource/kb_document/doc_chunk/wiki_folder/wiki_page/wiki_link/kb_agent）迁到**框架关系库**（MySQL，可移植类型，DDL 经 MySQL 8 真库验证）；PG 只留 1 张向量表 `kb_embedding`（pgvector+HNSW）；向量 IO 全部走 `api/services/vector_store.py` 的 `VectorStore` 抽象（`VECTOR_STORE_TYPE=pg|es`，es 已留桩）
 - **API：23 个端点**——auth/login、me、open/datasources(/test)、qa/stream、agents CRUD+流式、kbs 管理全套（CRUD/文档上传/wiki 树/页面详情/JSON 检索）、**system 管理（users/roles/teams/menus/operation-logs）**、health
 - **Celery：4 个 task_class 注册**——KbDocumentProcessTask、KbDocumentEmbedTask、KbWikiBuildTask、KbGraphBuildTask（+ beat 扫描 scan_cron_tasks）
 - **MCP：3 个工具**——kb_list / kb_search / kb_answer（mcp SDK v2，MCPServer）
@@ -27,7 +28,7 @@
 
 ### 3.1 框架层（从 data-synth 抽离）✅
 - [x] 30 张框架表 1:1 迁移（表/列/索引名与原库一致，可直连共享库）
-- [x] 双引擎 DB：框架表（MySQL，DATABASE_URL）+ 知识库表（PG+pgvector，KNOWLEDGE_DATABASE_URL）
+- [x] 双引擎 DB：框架表 + 知识库**业务表**（MySQL，DATABASE_URL）+ 向量表 kb_embedding（PG+pgvector，KNOWLEDGE_DATABASE_URL，经 VectorStore 抽象可切 ES）
 - [x] auth/RBAC：AES/DES 字节级兼容（Node crypto-js 黄金密文交叉验证 + 真实库 roundtrip 通过）、身份 cookie 编解码、RBAC 三级检查
 - [x] 数据源：连接测试（mysql/postgres/kingbase/trino/minio）、分页列表
 - [x] 配置缓存：modo_dim SYSTEM_CONFIG TTL+single-flight
@@ -36,8 +37,8 @@
 
 ### 3.2 知识库域（迁移 WeKnora）✅
 - [x] docreader：8772 行解析引擎（3 引擎 9 格式：md/pdf/docx/xlsx/pptx/epub/mhtml/图片）
-- [x] 知识库模型：7 张 wiki/kb 表（KbDatasource/KbDocument/DocChunk/WikiFolder/WikiPage/WikiLink/KbAgent），pgvector+HNSW+GIN
-- [x] 混合检索：向量臂（余弦距离+阈值）+ 关键词臂（ILIKE+pg_trgm，中文可用）+ RRF 融合（k=60, 0.7/0.3，公式与 WeKnora 逐项一致）
+- [x] 知识库模型：7 张业务表（KbDatasource/KbDocument/DocChunk/WikiFolder/WikiPage/WikiLink/KbAgent，可移植关系类型，随框架库）+ 1 张向量表（KbEmbedding，PG pgvector）
+- [x] 混合检索：向量臂（余弦距离+阈值，经 VectorStore 抽象）+ 关键词臂（可移植 ilike + 应用侧评分，无 PG 扩展依赖）+ RRF 融合（k=60, 0.7/0.3，公式与 WeKnora 逐项一致）
 - [x] 文档入库：解析→分块（800/80）→向量化→落库 全链路 Celery 任务
 - [x] RAG 问答：SSE 流式 + search_results 上下文注入 + chunk_id 引用标注
 - [x] wiki 生成：实体分组去重→建页（幂等追加）→bigram 关联建链
@@ -97,7 +98,8 @@ web/                      Next.js 16 前端（纯前端 + /api/[...path] 代理�
   src/app/                login / (main)/{kbs,kbs/[id],kbs/[id]/wiki/[slug],chat,agents,wiki,datasources}
   src/lib/api.ts          fetch 封装（登录/KB/文档/wiki/检索/智能体/数据源）
 scripts/
-  knowledge_schema.sql    知识库 DDL（vector/uuid-ossp/pg_trgm 扩展 + 7 表 + 索引）
+  knowledge_schema.sql           向量库 DDL（PG 专用：vector 扩展 + kb_embedding 单表 + HNSW）
+  knowledge_business_schema.sql  知识库业务表 DDL（可移植关系语法，MySQL 8 真库验证，PG/SQLite 方言解析通过）
   verify_schema_alignment.py  框架模型↔真实库列级对齐检查
   verify_chat_stream.py   RAG 流式链路验证（mock OpenAI SSE）
   gen_env.py              本地联调 .env 生成（从 data-synth/WeKnora env 动态读凭据）
@@ -123,9 +125,10 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下）
 真实库联调配方（已实测通过）：
 1. `scripts/gen_env.py --write` 生成 .env（读 data-synth/.env.development + WeKnora/.env，host 改写为本机 13308/5433）
 2. `psql -h 127.0.0.1 -p 5433 -U <user> -d <db> -f scripts/knowledge_schema.sql`（幂等，注意分号切块法会吞「注释+建表」整块，必须用 psql 整文件执行）
-3. `.venv/bin/uvicorn api.main:app --port 8002`（8000 被 dataos-agent-nginx 占用）
-4. `cd web && API_BASE_URL=http://127.0.0.1:8002 bun run start`（生产模式；dev 模式会撞系统 inotify watch 限制）
-5. curl 验证：/api/v1/auth/login（huqiang/sys）→ /kbs CRUD → upload → /wiki → /search → /qa/stream（SSE 头透传）
+3. `mysql -h 127.0.0.1 -P 13308 -u <user> -p<pass> data_synth_neo < scripts/knowledge_business_schema.sql`（首次建 7 张知识库业务表；重跑报 Duplicate key name / Duplicate foreign key 可忽略。凭据从 data-synth/.env.development 动态读，勿写命令行）
+4. `.venv/bin/uvicorn api.main:app --port 8002`（8000 被 dataos-agent-nginx 占用）
+5. `cd web && API_BASE_URL=http://127.0.0.1:8002 bun run start`（生产模式；dev 模式会撞系统 inotify watch 限制）
+6. curl 验证：/api/v1/auth/login（huqiang/sys）→ /kbs CRUD → upload → /wiki → /search → /qa/stream（SSE 头透传）
 
 ## 6. 环境与连接信息
 
@@ -143,9 +146,9 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下）
 ## 7. 关键坑位记录（务必先读）
 
 1. **Hermes 脱敏会写坏含 URL/凭据字面量的代码**：写含 `redis://host:***@`、密码样式的字符串会被改写/截断。规避：字面量用字符串拼接（`"jdbc:mysql:" + "//h1/db1"`），或从 env 动态读。往写文件时如发现 `***` 或行被吞，立即改用拼接重写。
-2. **PG 原生 tsvector 无法分词中文**（整句一个 token）→ 关键词臂用 ILIKE + pg_trgm word_similarity（已实现，勿改回 websearch_to_tsquery）。
+2. **关键词臂不依赖 PG 扩展**：早期用 ILIKE + pg_trgm word_similarity（PG 原生 tsvector 无法分词中文，整句一个 token），2026-10-01 改造为可移植 `ilike` 子串匹配 + 应用侧评分（retrieval.py `_keyword_score`），MySQL/PG/SQLite 通用，勿改回 websearch_to_tsquery。
 3. **pgvector 扩展在 public schema**：表在其他 schema 时 search_path 必须含 public（`SET search_path TO x, public`；api/db.py get_knowledge_engine 通过 connect_args options 注入 SCHEMA_NAME）。DDL 文件顶部有注释说明。
-4. **SQLite 不能建 GIN/to_tsvector 索引**：wiki_page 的 FTS 索引只写在 knowledge_schema.sql，不在 SQLAlchemy 模型里（否则 create_all 在 sqlite 测试崩）。
+4. **SQLite 不能建 pgvector/HNSW 索引**：向量表 kb_embedding 的 HNSW 索引只写在 knowledge_schema.sql（PG 专用），不在 SQLAlchemy 模型里（否则 create_all 在 sqlite 测试崩）。
 5. **SQLAlchemy 2.0 update().execute() 返回类型**：rowcount 用 `getattr(result, "rowcount", 0)` 规避 Pyright 误报。
 6. **mcp SDK 用 v2 语法**：`from mcp.server.mcpserver import MCPServer`（FastMCP 在 2.x 已改名）。工具逻辑抽成模块级 handle_* 函数便于测试（Tool 对象不暴露底层 fn）。
 7. **docreader 的 textract 已改惰性导入**（上游因 SSRF 禁用该方法，勿改回顶层 import）。
@@ -157,6 +160,10 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下）
 13. **浏览器工具（agent-browser）在本机不可用**：GLIBC 2.29+ 缺失（老 kylin aarch64）。UI 验证用 curl 断言 HTML/接口，不用 browser_* 工具。
 14. **登录响应契约**：identity_cookie 在响应**顶层**（不在 data 内）；data 是 camelCase payload（loginId/userId/userName...，Identity.to_payload()）。
 15. **页面初始 HTML 为空是预期**：MainLayout 在客户端校验身份（useEffect）通过前 `return null`，服务端 SSR 不渲染子树——curl 验证页面只能拿到 HTML 壳，属正常。
+16. **MySQL 忽略列级内联 REFERENCES**：`col VARCHAR(64) REFERENCES x(id)` 在 MySQL 只解析不建外键（PG 会建）。跨库 DDL 必须用表级 `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY`，且放在 CREATE INDEX 之后（复用已有索引，避免 MySQL 为 FK 自动补索引造成重复）。knowledge_business_schema.sql 已按此落地并经 MySQL 8 真库验证（4 个 CASCADE 外键全建出）。
+17. **MySQL 8 不支持 `CREATE INDEX IF NOT EXISTS`**（PG/SQLite/MariaDB 支持）：跨库 DDL 用裸 CREATE INDEX；幂等靠「docker init 全新库 + 表级 IF NOT EXISTS」，对已存在 schema 重跑报 Duplicate key name / Duplicate foreign key 可忽略。
+18. **MySQL 8 禁止 TEXT/BLOB 字面默认值**（`content TEXT DEFAULT ''` 直接报错）：跨库 DDL 的 TEXT 列不写 DEFAULT，ORM 端 `default=` 兜底。
+19. **知识库存储拆分后的 DDL 验证配方**：真库验证 `docker run -d --name kb-ddl-verify -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -p 13309:3306 mysql:8.0` → `docker exec -i kb-ddl-verify mysql -uroot <scripts/knowledge_business_schema.sql`（无库则先 CREATE DATABASE）；方言解析校验 `uv run --with sqlglot python -c "..."`（mysql/postgres/sqlite 三方言全过，22 语句）。
 
 ## 8. 剩余工作（按优先级）
 
@@ -171,7 +178,7 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下）
 - [x] Dockerfile.api（uv 构建，api+worker+docreader 同镜像多命令）/ Dockerfile.web（bun 构建，standalone 运行）
 - [x] nginx 配置（参照 data-synth 精简：SSE 关缓冲、健康检查端点）
 - [x] deploy/.env 生成脚本（scripts/gen_deploy_env.py，凭据留空手动补）+ deploy/README.md（步骤/初始化/运维/验证）
-- [x] 待实际起容器验证（本机无 docker compose 插件，已做 YAML/变量一致性校验）；MySQL 框架库需手动建表+种子
+- [x] 待实际起容器验证（本机无 docker compose 插件，已做 YAML/变量一致性校验）；MySQL 知识库业务表已挂载 DDL 自动建（docker-entrypoint-initdb.d），框架 modo_* 表仍需手动建表+种子
 
 ### 8.3 增强项（按需）
 - wiki 页链接健康检查（wiki_lint：死链清理，参考 WeKnora wiki_lint.go）

@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from api.db import get_knowledge_db
+from api.db import get_db
 from api.models.knowledge import KbAgent
 from api.services.agents import (
     create_agent,
@@ -45,7 +45,7 @@ class AgentUpdateRequest(BaseModel):
 
 
 @router.post("")
-def create(req: AgentCreateRequest, db: Session = Depends(get_knowledge_db)) -> dict:
+def create(req: AgentCreateRequest, db: Session = Depends(get_db)) -> dict:
     agent = create_agent(
         db,
         name=req.name,
@@ -59,12 +59,12 @@ def create(req: AgentCreateRequest, db: Session = Depends(get_knowledge_db)) -> 
 
 
 @router.get("")
-def list_agents_route(page: int = 1, page_size: int = 10, db: Session = Depends(get_knowledge_db)) -> dict:
+def list_agents_route(page: int = 1, page_size: int = 10, db: Session = Depends(get_db)) -> dict:
     return {"success": True, "data": list_agents(db, page=page, page_size=page_size)}
 
 
 @router.put("/{agent_id}")
-def update(agent_id: str, req: AgentUpdateRequest, db: Session = Depends(get_knowledge_db)) -> dict:
+def update(agent_id: str, req: AgentUpdateRequest, db: Session = Depends(get_db)) -> dict:
     agent = update_agent(db, agent_id, req.model_dump(exclude_none=True))
     if not agent:
         raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
@@ -72,7 +72,7 @@ def update(agent_id: str, req: AgentUpdateRequest, db: Session = Depends(get_kno
 
 
 @router.delete("/{agent_id}")
-def delete(agent_id: str, db: Session = Depends(get_knowledge_db)) -> dict:
+def delete(agent_id: str, db: Session = Depends(get_db)) -> dict:
     if not delete_agent(db, agent_id):
         raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
     return {"success": True}
@@ -88,7 +88,7 @@ def _sse(event: dict) -> str:
 
 
 @router.post("/{agent_id}/qa/stream")
-def agent_qa_stream(agent_id: str, req: AgentQARequest, db: Session = Depends(get_knowledge_db)) -> StreamingResponse:
+def agent_qa_stream(agent_id: str, req: AgentQARequest, db: Session = Depends(get_db)) -> StreamingResponse:
     """Stream RAG QA through an agent: resolve KB scope -> retrieve -> answer."""
 
     def generator():

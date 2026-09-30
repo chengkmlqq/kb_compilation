@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from api.db import KnowledgeBase
+from api.db import Base
 from api.models.knowledge import KbAgent, KbDatasource
 from api.services.agents import (
     AgentConfig,
@@ -48,7 +48,8 @@ def test_config_to_dict_roundtrip() -> None:
 @pytest.fixture()
 def agent_db():
     engine = create_engine("sqlite:///:memory:")
-    KnowledgeBase.metadata.create_all(engine)
+    # Business tables live on the framework base (portable relational types).
+    Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False)
     db = Session()
     db.add_all(

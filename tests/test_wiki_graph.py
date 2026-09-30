@@ -15,7 +15,7 @@ from api.services.wiki import (
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from api.db import KnowledgeBase
+from api.db import Base
 from api.models.knowledge import WikiPage
 
 
@@ -79,9 +79,9 @@ def test_group_candidates_dedupes_by_slug() -> None:
 
 def test_upsert_pages_and_links() -> None:
     engine = create_engine("sqlite:///:memory:")
-    # Only wiki tables are created (knowledge base metadata is PG-only
-    # in production; for this test we model pages on a dedicated base).
-    KnowledgeBase.metadata.create_all(engine)
+    # Wiki tables live on the framework base (portable relational types);
+    # the vector-only kb_embedding stays on PG (pgvector) in production.
+    Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False)
     db = Session()
 

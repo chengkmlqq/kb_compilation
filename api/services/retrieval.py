@@ -8,12 +8,14 @@ retriever/postgres), preserving its quality-critical behaviour:
   with 1-indexed ranks, vector results winning metadata ties, results sorted
   by fused score descending. Defaults match WeKnora: k=60, weights 0.7 / 0.3.
 
-- **Vector recall**: pgvector cosine distance (`<=>`) with a distance
-  threshold (WeKnora uses `distance < 1 - similarity_threshold`).
-
-- **Keyword recall**: PostgreSQL full-text search over the chunk content
-  (websearch_to_tsquery + ts_rank), which handles CJK via the 'simple'
-  config the same way WeKnora's wiki index does.
+Storage separation:
+- The vector arm queries the dedicated vector store (api.services.vector_store,
+  PG pgvector today; the backend can swap to ES). Vectors live in `kb_embedding`
+  (knowledge engine), not in the business store.
+- The keyword arm queries the business store (framework relational DB). It is
+  pure portable SQL: `ilike`/`like` substring matching (works on MySQL, PG and
+  SQLite) with an application-side relevance score, so no PG-specific
+  extension (pg_trgm) is required and the platform can switch relational DBs.
 
 - **Vector-only mode** degrades to dedup (no fusion) when the keyword arm is
   disabled, mirroring WeKnora's fuseOrDeduplicate.
@@ -25,7 +27,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api.models.knowledge import DocChunk, KbDatasource
@@ -89,70 +91,86 @@ def config_from_kb(kb: KbDatasource, overrides: dict | None = None) -> Retrieval
 
 
 # ---------------------------------------------------------------------------
-# Recall arms
+# Vector arm (delegates to the swappable vector store)
 # ---------------------------------------------------------------------------
 
 
 def vector_search(
-    db: Session,
     kb_id: str,
     query_embedding: list[float],
     cfg: RetrievalConfig,
 ) -> list[ChunkHit]:
-    """Vector recall via pgvector cosine distance (`<=>`)."""
-    distance = DocChunk.embedding.cosine_distance(query_embedding)
-    max_distance = 1.0 - cfg.threshold
-    stmt = (
-        select(
-            DocChunk.id,
-            DocChunk.content,
-            DocChunk.document_id,
-            DocChunk.kb_id,
-            DocChunk.meta,
-            distance.label("distance"),
+    """Vector recall through the vector store; returns [] on any backend error.
+
+    Metadata (content, document_id, meta) is filled in by the caller-facing
+    hybrid_search from the business store — the vector store only knows ids.
+    """
+    from api.services.vector_store import get_vector_store
+
+    try:
+        hits = get_vector_store().search(
+            kb_id,
+            query_embedding,
+            top_k=cfg.top_k,
+            threshold=cfg.threshold,
         )
-        .where(DocChunk.kb_id == kb_id, DocChunk.enabled.is_(True), DocChunk.embedding.isnot(None))
-        .where(distance < max_distance)
-        .order_by(distance)
-        .limit(cfg.top_k * 2)  # over-fetch for a healthier fusion pool
-    )
-    rows = db.execute(stmt).all()
-    hits: list[ChunkHit] = []
-    for idx, row in enumerate(rows, start=1):
-        hits.append(
+    except Exception:
+        logger.exception("vector recall failed; continuing with keyword arm")
+        return []
+
+    out: list[ChunkHit] = []
+    for rank, hit in enumerate(hits, start=1):
+        out.append(
             ChunkHit(
-                chunk_id=row.id,
-                content=row.content,
-                document_id=row.document_id,
-                kb_id=row.kb_id,
-                score=1.0 - float(row.distance),  # distance -> similarity
-                vector_rank=idx,
-                meta=row.meta or {},
+                chunk_id=hit.chunk_id,
+                content="",  # hydrated from the business store by hybrid_search
+                kb_id=kb_id,
+                score=hit.score,
+                vector_rank=rank,
             )
         )
-    return hits
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Keyword arm (portable SQL + app-side scoring)
+# ---------------------------------------------------------------------------
+
+
+def _keyword_score(query: str, content: str) -> float:
+    """Relevance of a keyword match, computed app-side (dialect-neutral).
+
+    Weights: earlier first-occurrence (closer to the top is more relevant) and
+    more total occurrences rank higher; length-normalized so a long chunk is
+    not automatically preferred. Any value in (0, 1] is fine — RRF only needs
+    the RANK order, and the score surfaces as a display number.
+    """
+    if not query or not content:
+        return 0.0
+    q = query.strip().lower()
+    if not q:
+        return 0.0
+    text_l = content.lower()
+    occurrences = text_l.count(q)
+    if occurrences == 0:
+        return 0.0
+    pos = text_l.find(q)
+    position_weight = 1.0 / (1.0 + pos / 100.0)  # earlier match -> closer to 1
+    freq_weight = min(1.0, occurrences / 5.0)  # more occurrences -> closer to 1
+    length_penalty = 1.0 / (1.0 + max(0, len(content) - len(query)) / 500.0)
+    return round(position_weight * freq_weight * length_penalty, 4)
 
 
 def keyword_search(db: Session, kb_id: str, query: str, cfg: RetrievalConfig) -> list[ChunkHit]:
-    """Keyword recall via substring + trigram scoring.
-
-    PostgreSQL's built-in `to_tsvector` cannot segment Chinese (the whole
-    sentence becomes one token), so tsquery alone returns nothing for CJK
-    input. WeKnora solves this with ParadeDB (built-in CJK tokenizer); on a
-    vanilla PG we use ILIKE substring matching as the reliable recall path
-    plus pg_trgm `word_similarity` for a graded score. Both degrade
-    gracefully: if pg_trgm is missing, rank falls back to match position.
-    """
+    """Keyword recall via portable substring matching (`ilike` on the business
+    store). All dialects (MySQL, PG, SQLite) implement `ilike`/`like`; ranking
+    is done app-side by `_keyword_score` (no PG-specific extensions needed)."""
     if not query or not query.strip():
         return []
 
     needle = query.strip()
     like_pat = f"%{needle}%"
 
-    # Graded score: trigram word_similarity (best for CJK), else fall back to
-    # a constant so ILIKE-only matches still rank.
-    score_expr = func.word_similarity(needle, func.coalesce(DocChunk.content, "")).label("rank")
-
     stmt = (
         select(
             DocChunk.id,
@@ -160,30 +178,39 @@ def keyword_search(db: Session, kb_id: str, query: str, cfg: RetrievalConfig) ->
             DocChunk.document_id,
             DocChunk.kb_id,
             DocChunk.meta,
-            score_expr,
         )
         .where(
             DocChunk.kb_id == kb_id,
             DocChunk.enabled.is_(True),
             DocChunk.content.ilike(like_pat),
         )
-        .order_by(score_expr.desc())
-        .limit(cfg.top_k * 2)
+        .limit(cfg.top_k * 4)  # over-fetch; app-side scoring then trims
     )
     rows = db.execute(stmt).all()
-    hits: list[ChunkHit] = []
-    for idx, row in enumerate(rows, start=1):
-        hits.append(
+
+    scored: list[ChunkHit] = []
+    for row in rows:
+        content = row.content or ""
+        score = _keyword_score(needle, content)
+        if score <= 0:
+            continue
+        scored.append(
             ChunkHit(
                 chunk_id=row.id,
-                content=row.content,
+                content=content,
                 document_id=row.document_id,
                 kb_id=row.kb_id,
-                score=float(row.rank or 0.0),
-                keyword_rank=idx,
+                score=score,
                 meta=row.meta or {},
             )
         )
+
+    # Rank by score desc (app-side, dialect-neutral), then assign ranks.
+    scored.sort(key=lambda h: h.score, reverse=True)
+    hits: list[ChunkHit] = []
+    for idx, hit in enumerate(scored[: cfg.top_k], start=1):
+        hit.keyword_rank = idx
+        hits.append(hit)
     return hits
 
 
@@ -244,6 +271,27 @@ def fuse_rrf(
     return fused[: cfg.top_k]
 
 
+def hydrate_metadata(db: Session, hits: list[ChunkHit]) -> list[ChunkHit]:
+    """Fill content/document_id/meta for vector-only hits from the business store."""
+    missing = [h for h in hits if not h.content]
+    if not missing:
+        return hits
+    ids = [h.chunk_id for h in missing]
+    rows = db.execute(
+        select(DocChunk.id, DocChunk.content, DocChunk.document_id, DocChunk.meta).where(
+            DocChunk.id.in_(ids)
+        )
+    ).all()
+    by_id = {r.id: r for r in rows}
+    for h in missing:
+        row = by_id.get(h.chunk_id)
+        if row is not None:
+            h.content = row.content
+            h.document_id = row.document_id
+            h.meta = row.meta or {}
+    return hits
+
+
 def hybrid_search(
     db: Session,
     kb_id: str,
@@ -251,22 +299,21 @@ def hybrid_search(
     query_embedding: list[float] | None,
     cfg: RetrievalConfig,
 ) -> list[ChunkHit]:
-    """Full hybrid retrieval: vector recall + keyword recall + RRF fusion."""
+    """Full hybrid retrieval: vector recall + keyword recall + RRF fusion.
+
+    - `db` is a session on the BUSINESS store (chunks live there).
+    - `query_embedding` drives the vector arm via the vector store.
+    """
     vector_hits: list[ChunkHit] = []
     keyword_hits: list[ChunkHit] = []
 
     if cfg.vector_enabled and query_embedding:
-        try:
-            vector_hits = vector_search(db, kb_id, query_embedding, cfg)
-        except Exception:
-            logger.exception("vector recall failed; continuing with keyword arm")
+        vector_hits = vector_search(kb_id, query_embedding, cfg)
     if cfg.keyword_enabled and query:
-        try:
-            keyword_hits = keyword_search(db, kb_id, query, cfg)
-        except Exception:
-            logger.exception("keyword recall failed; continuing with vector arm")
+        keyword_hits = keyword_search(db, kb_id, query, cfg)
 
-    return fuse_rrf(vector_hits, keyword_hits, cfg)
+    fused = fuse_rrf(vector_hits, keyword_hits, cfg)
+    return hydrate_metadata(db, fused)
 
 
 def search_knowledge_base(

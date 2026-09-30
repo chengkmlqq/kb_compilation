@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from api.config import get_settings
-from api.db import get_db, get_knowledge_db
+from api.db import get_db
 from api.models.framework import Job
 from api.services.embedding import get_embedding_client
 from api.services.kb_admin import (
@@ -76,13 +76,13 @@ def get_kbs(
     page: int = 1,
     page_size: int = 10,
     keyword: str = "",
-    db: Session = Depends(get_knowledge_db),
+    db: Session = Depends(get_db),
 ) -> dict:
     return {"success": True, "data": list_kbs(db, page, page_size, keyword)}
 
 
 @router.post("")
-def post_kb(req: KBCreateRequest, db: Session = Depends(get_knowledge_db)) -> dict:
+def post_kb(req: KBCreateRequest, db: Session = Depends(get_db)) -> dict:
     kb = create_kb(
         db,
         name=req.name,
@@ -94,7 +94,7 @@ def post_kb(req: KBCreateRequest, db: Session = Depends(get_knowledge_db)) -> di
 
 
 @router.get("/{kb_id}")
-def get_kb_detail(kb_id: str, db: Session = Depends(get_knowledge_db)) -> dict:
+def get_kb_detail(kb_id: str, db: Session = Depends(get_db)) -> dict:
     kb = get_kb(db, kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
@@ -119,7 +119,7 @@ def get_kb_detail(kb_id: str, db: Session = Depends(get_knowledge_db)) -> dict:
 
 
 @router.put("/{kb_id}")
-def put_kb(kb_id: str, req: KBUpdateRequest, db: Session = Depends(get_knowledge_db)) -> dict:
+def put_kb(kb_id: str, req: KBUpdateRequest, db: Session = Depends(get_db)) -> dict:
     kb = update_kb(db, kb_id, req.model_dump(exclude_none=True))
     if not kb:
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
@@ -127,7 +127,7 @@ def put_kb(kb_id: str, req: KBUpdateRequest, db: Session = Depends(get_knowledge
 
 
 @router.delete("/{kb_id}")
-def del_kb(kb_id: str, db: Session = Depends(get_knowledge_db)) -> dict:
+def del_kb(kb_id: str, db: Session = Depends(get_db)) -> dict:
     result = delete_kb(db, kb_id)
     if not result["success"]:
         raise HTTPException(status_code=409, detail=result["message"])
@@ -139,7 +139,7 @@ def get_documents(
     kb_id: str,
     page: int = 1,
     page_size: int = 20,
-    db: Session = Depends(get_knowledge_db),
+    db: Session = Depends(get_db),
 ) -> dict:
     if not get_kb(db, kb_id):
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
@@ -150,7 +150,7 @@ def get_documents(
 async def upload_document(
     kb_id: str,
     file: UploadFile,
-    db: Session = Depends(get_knowledge_db),
+    db: Session = Depends(get_db),
 ) -> dict:
     """Accept a document upload, persist bytes locally, enqueue Celery parse.
 
@@ -251,7 +251,7 @@ def _enqueue_document_process(kb_id: str, document_id: str) -> None:
 
 
 @router.delete("/{kb_id}/documents/{document_id}")
-def del_document(kb_id: str, document_id: str, db: Session = Depends(get_knowledge_db)) -> dict:
+def del_document(kb_id: str, document_id: str, db: Session = Depends(get_db)) -> dict:
     result = delete_document(db, kb_id, document_id)
     if not result["success"]:
         raise HTTPException(status_code=404, detail=result["message"])
@@ -259,14 +259,14 @@ def del_document(kb_id: str, document_id: str, db: Session = Depends(get_knowled
 
 
 @router.get("/{kb_id}/wiki")
-def get_wiki(kb_id: str, db: Session = Depends(get_knowledge_db)) -> dict:
+def get_wiki(kb_id: str, db: Session = Depends(get_db)) -> dict:
     if not get_kb(db, kb_id):
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
     return {"success": True, "data": wiki_tree(db, kb_id)}
 
 
 @router.get("/{kb_id}/wiki/pages/{slug}")
-def get_wiki_page_route(kb_id: str, slug: str, db: Session = Depends(get_knowledge_db)) -> dict:
+def get_wiki_page_route(kb_id: str, slug: str, db: Session = Depends(get_db)) -> dict:
     page = get_wiki_page(db, kb_id, slug)
     if not page:
         raise HTTPException(status_code=404, detail=f"wiki 页不存在: {slug}")
@@ -277,7 +277,7 @@ def get_wiki_page_route(kb_id: str, slug: str, db: Session = Depends(get_knowled
 def search_route(
     kb_id: str,
     req: SearchRequest,
-    db: Session = Depends(get_knowledge_db),
+    db: Session = Depends(get_db),
 ) -> dict:
     if not get_kb(db, kb_id):
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")

@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from api.db import KnowledgeBase
+from api.db import Base
 from api.models.knowledge import (
     DocChunk,
     KbDatasource,
@@ -32,7 +32,8 @@ from api.services.kb_admin import (
 @pytest.fixture()
 def kb_db(tmp_path):
     engine = create_engine("sqlite:///:memory:")
-    KnowledgeBase.metadata.create_all(engine)
+    # Business tables live on the framework base (portable relational types).
+    Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False)
     db = Session()
     yield db

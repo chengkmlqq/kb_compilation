@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from api.db import KnowledgeBase
+from api.db import Base
 from api.mcp_server import (
     create_mcp_server,
     handle_kb_answer,
@@ -21,7 +21,7 @@ from api.models.knowledge import KbDatasource
 @pytest.fixture()
 def mcp_db():
     engine = create_engine("sqlite:///:memory:")
-    KnowledgeBase.metadata.create_all(engine)
+    Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False)
     db = Session()
     db.add_all(

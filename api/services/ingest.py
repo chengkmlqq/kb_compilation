@@ -4,8 +4,9 @@ Orchestrates the knowledge-domain write path:
 1. Load file bytes (from sys_file storage record or raw bytes)
 2. docreader parses to markdown (+ images)
 3. TextSplitter chunks the content
-4. EmbeddingClient embeds each chunk (pgvector)
-5. doc_chunk rows are written (knowledge store) and kb_document state advances
+4. EmbeddingClient embeds each chunk
+5. doc_chunk rows are written to the BUSINESS store (framework relational DB)
+   and embeddings to the vector store (kb_embedding via VectorStore)
 
 All steps are idempotent-ish: re-ingesting a document replaces its chunks
 (delete-by-document then insert), so a retry after a mid-pipeline failure
@@ -86,26 +87,41 @@ def replace_document_chunks(
 ) -> int:
     """Write chunks for a document, replacing any previous chunks (idempotent).
 
+    Chunk rows (id/kb_id/seq/content/meta) go to the BUSINESS store (`db`);
+    embeddings go to the vector store (kb_embedding via VectorStore).
+
     Returns the number of chunks written.
     """
-    # Remove stale chunks first (idempotent re-ingest / retry safety).
+    # Remove stale chunks first (idempotent re-ingest / retry safety), and
+    # their embeddings from the vector store (new chunks get new ids).
+    from api.services.vector_store import get_vector_store
+
+    store = get_vector_store()
+    stale_ids = [
+        row[0]
+        for row in db.execute(
+            select(DocChunk.id).where(DocChunk.document_id == document_id)
+        ).all()
+    ]
     db.execute(delete(DocChunk).where(DocChunk.document_id == document_id))
     db.flush()
+    store.delete_by_chunks(stale_ids)
 
     row_count = 0
     for (seq, text), vec in zip(chunks, vectors):
+        chunk_id = _doc_id()
         db.add(
             DocChunk(
-                id=_doc_id(),
+                id=chunk_id,
                 kb_id=kb_id,
                 document_id=document_id,
                 seq=seq,
                 content=text,
                 meta=meta or {},
-                embedding=vec,
                 enabled=True,
             )
         )
+        store.upsert(kb_id, chunk_id, vec)
         row_count += 1
     return row_count
 
@@ -139,7 +155,8 @@ def ingest_document(
 ) -> dict:
     """Full pipeline for one document. Returns a summary dict.
 
-    - kb_db: knowledge-store session (doc_chunk / kb_document)
+    - kb_db: business-store session (doc_chunk / kb_document live on the
+      framework relational store)
     - file_content: raw bytes of the document
     """
     result: dict = {"document_id": document.id, "chunks": 0, "parse_state": "FAILED"}

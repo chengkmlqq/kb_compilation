@@ -1,23 +1,21 @@
-"""Knowledge-domain ORM models (PostgreSQL + pgvector store).
+"""Knowledge-domain ORM models.
 
-Naming follows the project convention — wiki / kb semantics, never synth.
+Storage split (multi-database, cross-dialect):
+- Business tables (kb_datasource / kb_document / doc_chunk / wiki_* / kb_agent)
+  live on the FRAMEWORK store (MySQL or any relational DB) — they carry only
+  portable SQLAlchemy types (String/Text/JSON/Integer/...), so the platform
+  can switch to another relational database without SQL changes.
+- Embedding vectors live in a SEPARATE vector store: `kb_embedding` on the
+  knowledge engine (PostgreSQL + pgvector today). All vector I/O goes through
+  api.services.vector_store.VectorStore, so the vector backend can later be
+  swapped to Elasticsearch / Milvus / etc. without touching callers.
 
-Tables (all on KnowledgeBase => PG + pgvector):
-- kb_datasource   — a knowledge base (a compiled corpus / wiki space)
-- kb_document     — an uploaded/parsed document inside a knowledge base
-- doc_chunk       — chunked document text + its embedding vector
-- wiki_folder     — folder tree for wiki pages
-- wiki_page       — generated wiki page (entity/concept/summary)
-- wiki_link       — bidirectional wiki page links
-
-The `embedding` column uses pgvector's vector type; the GIN full-text index on
-wiki_page mirrors WeKnora's search setup. `indexing_strategy` mirrors WeKnora's
-per-KB pipeline toggles (vector / keyword / wiki / graph).
+Note: the JSON columns use SQLAlchemy's generic JSON type (not PG JSONB) so
+the business tables stay dialect-neutral.
 """
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 
 from sqlalchemy import (
@@ -33,9 +31,8 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.dialects.postgresql import JSONB
 
-from api.db import KnowledgeBase
+from api.db import Base, KnowledgeBase
 from api.config import get_settings
 
 _EMBEDDING_DIM = get_settings().EMBEDDING_DIM
@@ -50,8 +47,8 @@ def _vector_type():
     return Vector(_EMBEDDING_DIM)
 
 
-class KbDatasource(KnowledgeBase):
-    """A knowledge base (compiled corpus / wiki space)."""
+class KbDatasource(Base):
+    """A knowledge base (compiled corpus / wiki space) — business store."""
 
     __tablename__ = "kb_datasource"
 
@@ -77,7 +74,7 @@ class KbDatasource(KnowledgeBase):
     )
 
 
-class KbDocument(KnowledgeBase):
+class KbDocument(Base):
     """A document inside a knowledge base (source file + parse status)."""
 
     __tablename__ = "kb_document"
@@ -107,8 +104,13 @@ class KbDocument(KnowledgeBase):
     )
 
 
-class DocChunk(KnowledgeBase):
-    """Chunked document text with its embedding vector (pgvector)."""
+class DocChunk(Base):
+    """Chunked document text + metadata (NO vector — vector lives in kb_embedding).
+
+    Splitting the embedding into a dedicated vector store keeps this table
+    portable across relational databases and lets the vector backend swap
+    (PG -> ES) independently.
+    """
 
     __tablename__ = "doc_chunk"
     __table_args__ = (
@@ -124,9 +126,7 @@ class DocChunk(KnowledgeBase):
     seq: Mapped[int] = mapped_column(Integer, default=0)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # page/section metadata for citation
-    meta: Mapped[dict] = mapped_column(JSONB, default=dict)
-    # pgvector embedding column
-    embedding = mapped_column(_vector_type(), nullable=True)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
     created_at: Mapped[datetime | None] = mapped_column(
@@ -134,7 +134,31 @@ class DocChunk(KnowledgeBase):
     )
 
 
-class WikiFolder(KnowledgeBase):
+class KbEmbedding(KnowledgeBase):
+    """Vector-only table: chunk embedding vectors (pgvector today).
+
+    One row per chunk. `chunk_id` mirrors doc_chunk.id in the business store.
+    The table is created only on the knowledge engine (PG); callers never
+    touch it directly — they use VectorStore (api.services.vector_store).
+    """
+
+    __tablename__ = "kb_embedding"
+    __table_args__ = (
+        Index("idx_kb_embedding_kb", "kb_id"),
+        # NOTE: HNSW index created in scripts/knowledge_schema.sql (PG-only).
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kb_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    chunk_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    embedding = mapped_column(_vector_type(), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class WikiFolder(Base):
     """Folder tree for wiki pages."""
 
     __tablename__ = "wiki_folder"
@@ -149,14 +173,14 @@ class WikiFolder(KnowledgeBase):
     )
 
 
-class WikiPage(KnowledgeBase):
+class WikiPage(Base):
     """A wiki page generated from document knowledge (entity/concept/summary)."""
 
     __tablename__ = "wiki_page"
     __table_args__ = (
-        # NOTE: the GIN full-text index (to_tsvector) is created by
-        # scripts/knowledge_schema.sql, not here — it is PG-only and would
-        # break create_all on sqlite (used by unit tests).
+        # NOTE: PG full-text GIN index would be PG-only; we keep wiki search
+        # application-side (ILIKE via the generic keyword arm), so the schema
+        # stays portable across relational databases.
         Index("idx_wiki_page_kb", "kb_id"),
         Index("idx_wiki_page_slug", "kb_id", "slug"),
     )
@@ -169,7 +193,7 @@ class WikiPage(KnowledgeBase):
     content: Mapped[str] = mapped_column(Text, default="")
     summary: Mapped[str | None] = mapped_column(Text)
     # JSON array of source document ids used to build this page
-    source_refs: Mapped[list] = mapped_column(JSONB, default=list)
+    source_refs: Mapped[list] = mapped_column(JSON, default=list)
     folder_id: Mapped[str | None] = mapped_column(String(64), default="")
     status: Mapped[str] = mapped_column(String(32), default="active")  # active/draft/archived
     created_by: Mapped[str | None] = mapped_column(String(64))
@@ -181,7 +205,7 @@ class WikiPage(KnowledgeBase):
     )
 
 
-class WikiLink(KnowledgeBase):
+class WikiLink(Base):
     """Bidirectional link between wiki pages."""
 
     __tablename__ = "wiki_link"
@@ -201,7 +225,7 @@ class WikiLink(KnowledgeBase):
     )
 
 
-class KbAgent(KnowledgeBase):
+class KbAgent(Base):
     """An AI agent (QA assistant) bound to knowledge bases.
 
     Config JSON structure mirrors WeKnora's CustomAgentConfig: agent_mode
@@ -220,7 +244,7 @@ class KbAgent(KnowledgeBase):
     team_name: Mapped[str | None] = mapped_column(String(64), index=True)
     created_by: Mapped[str | None] = mapped_column(String(64))
     # JSON config, see KbAgentConfig defaults in api/services/agents.py
-    config: Mapped[dict] = mapped_column(JSONB, default=dict)
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
     state: Mapped[str] = mapped_column(String(16), default="1")  # 1=active 0=deleted
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=text("CURRENT_TIMESTAMP")
@@ -241,12 +265,13 @@ def default_indexing_strategy() -> dict:
 
 
 __all__ = [
+    "KbAgent",
     "KbDatasource",
     "KbDocument",
+    "KbEmbedding",
     "DocChunk",
     "WikiFolder",
     "WikiPage",
     "WikiLink",
-    "KbAgent",
     "default_indexing_strategy",
 ]
