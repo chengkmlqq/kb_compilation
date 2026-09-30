@@ -1,6 +1,6 @@
 """Celery application for the KB compilation platform.
 
-Mirrors data-synth's synth_scheduler pattern: a beat worker scans the
+Mirrors the source platform's scheduler pattern: a beat worker scans the
 modo_cron_task table and dispatches jobs; a client app is used by the API
 service to enqueue tasks (doc-parse / embed / wiki-build / graph-extract).
 """
@@ -44,7 +44,7 @@ celery_app.conf.update(
 
 # Beat app: scans modo_cron_task and dispatches. Run via:
 #   celery -A worker.celery_app beat
-# (equivalent of data-synth's synth_scheduler/beat_app.py scan-modo-cron-tasks)
+# (mirrors the source platform's beat_app.py scan-modo-cron-tasks)
 celery_app.conf.beat_schedule = {
     "scan-modo-cron-tasks": {
         "task": "worker.tasks.scheduler.scan_cron_tasks",

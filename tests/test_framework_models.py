@@ -1,7 +1,8 @@
 """Framework model sanity checks.
 
-Verifies the ORM models ported from data-synth schema.ts:
-1. Exactly the framework tables are present (synth business tables excluded).
+Verifies the ORM models ported from the source Drizzle schema:
+1. Exactly the framework tables are present (legacy data-synthesis business
+   tables excluded).
 2. Every model maps to the expected physical table name.
 3. Models can create tables on an in-memory engine (structural self-consistency).
 """
@@ -15,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from api.db import Base
 from api.models import framework
 
-# Expected framework tables (kept from data-synth schema.ts).
+# Expected framework tables (kept from the source Drizzle schema).
 EXPECTED_TABLES = {
     "modo_user",
     "modo_user_role",
@@ -49,7 +50,9 @@ EXPECTED_TABLES = {
     "ai_chat_message",
 }
 
-# Synth business tables that MUST NOT be present after extraction.
+# Legacy business tables (data-synthesis domain) that MUST NOT be present
+# after extraction. Names are the REAL table names in the source DB — they
+# stay verbatim so the exclusion assertion matches the physical schema.
 EXCLUDED_TABLES = {
     "synth_task",
     "synth_host",
@@ -92,8 +95,8 @@ EXCLUDED_TABLES = {
 
 # Tables present in the live DB that are intentionally NOT modeled:
 # - `*_bak_*` are operator backup tables (schema drift artifacts)
-# - modo_requirement / modo_requirement_entity are synth business (extracted out)
-# - modo_user_synth_100 is an ad-hoc table from the old synth link
+# - modo_requirement / modo_requirement_entity are legacy synthesis business (extracted out)
+# - modo_user_synth_100 is an ad-hoc table from the old synthesis link
 IGNORED_DB_TABLES = {
     "modo_requirement",
     "modo_requirement_entity",
@@ -106,7 +109,7 @@ def test_only_framework_tables_defined() -> None:
     assert mapped == EXPECTED_TABLES, f"missing={EXPECTED_TABLES - mapped}, extra={mapped - EXPECTED_TABLES}"
 
 
-def test_no_synth_business_tables() -> None:
+def test_no_legacy_business_tables() -> None:
     mapped = {t.name for t in Base.metadata.sorted_tables}
     assert mapped.isdisjoint(EXCLUDED_TABLES)
 

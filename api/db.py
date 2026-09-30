@@ -1,6 +1,6 @@
 """SQLAlchemy engine + session management (dual dialect: pg / mysql).
 
-Mirrors data-synth's `src/db/index.ts` semantics: one engine built from
+Mirrors the source platform's db/index semantics: one engine built from
 DATABASE_URL, dialect selected by DB_TYPE. The engine is created lazily so
 that the app boots (and tests run) without a live database.
 """
@@ -24,7 +24,7 @@ class Base(DeclarativeBase):
 
 @lru_cache
 def get_engine() -> Engine:
-    """Lazily create the process-wide engine (pool sized like data-synth)."""
+    """Lazily create the process-wide engine (pool sized like the source platform)."""
     settings = get_settings()
     return create_engine(
         settings.require_database_url(),

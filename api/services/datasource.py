@@ -1,6 +1,6 @@
 """Datasource services — connection test, team access guard, metadata.
 
-Ported from data-synth:
+Ported from the source platform:
 - rawTestConnectionAction (src/app/actions/datasource-actions.ts): mysql /
   postgres / kingbase / trino / hive / minio-s3-oss-obs probing
 - findAccessibleDatasourceById (src/lib/auth/datasource-access.ts): team-gated
@@ -8,7 +8,7 @@ Ported from data-synth:
 - /api/open/datasources (route.ts): paginated list
 
 Secrets: `ds_auth` is AES-encrypted at rest in modo_datasource; we decrypt with
-api.lib.crypto.aes_decrypt (byte-compatible with data-synth / Java).
+api.lib.crypto.aes_decrypt (byte-compatible with the legacy / Java client).
 """
 
 from __future__ import annotations

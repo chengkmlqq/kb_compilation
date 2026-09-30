@@ -1,6 +1,6 @@
 """System config cache — in-process snapshot of modo_dim (SYSTEM_CONFIG group).
 
-Ported from data-synth src/lib/config-cache.ts:
+Ported from the source platform's config-cache module:
 - TTL expiry (60s) so reads hit DB at most once per TTL per process
 - single-flight: concurrent misses share one DB query (cache stampede guard)
 - invalidate() after writes so the next read sees fresh values

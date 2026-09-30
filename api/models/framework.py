@@ -1,11 +1,13 @@
 """Framework-layer ORM models.
 
-Ported 1:1 from data-synth `src/db/schema.ts` (Drizzle). Only the framework
-tables are kept — all `synth_*` business tables (tape / training / raw_dataset /
-quality / sensitive / requirement / wizard) are intentionally excluded.
+Ported 1:1 from the source platform's Drizzle schema. Only the framework tables are
+kept — the legacy data-synthesis business tables (tape / training /
+raw_dataset / quality / sensitive / requirement / wizard) are intentionally
+excluded. Those table names appear verbatim in the exclusion test because
+they are physical names in the shared source database.
 
 Column types and table/column/index names are preserved EXACTLY so this service
-can share the same database as the existing data-synth deployment.
+can share the same database as the existing legacy deployment.
 """
 
 from __future__ import annotations

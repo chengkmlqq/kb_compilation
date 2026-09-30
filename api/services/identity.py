@@ -1,6 +1,6 @@
 """Identity session — cookie encode/decode + RBAC path permission check.
 
-Ported from data-synth:
+Ported from the source platform:
 - src/lib/auth/identity-session.ts (cookie encode/decode, resolveActiveUserIdentity)
 - src/app/actions/role-actions.ts rawCheckPathPermission (RBAC)
 - src/lib/identity.ts (Identity type)

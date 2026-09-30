@@ -25,7 +25,7 @@ from api.models.framework import (
     UserRoleRela,
 )
 
-# Golden values produced by data-synth's crypto-js (Node) with default keys.
+# Golden values produced by the source platform's crypto-js (Node) with default keys.
 NODE_AES_SAMPLES = [
     ("admin123", "0ul8acflRvZxbGbFANJoHA=="),
     ("Test@2024", "kNutP9CPm2aLPNfzuY00Ow=="),

@@ -1,6 +1,6 @@
 """KB Compilation Platform — configuration.
 
-Environment variables follow data-synth conventions (DB_TYPE, DATABASE_URL, ...)
+Environment variables follow the source platform's conventions (DB_TYPE, DATABASE_URL, ...)
 so the extracted service can be dropped into the existing deployment.
 """
 
@@ -12,13 +12,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env from project root (same behaviour as data-synth Next.js).
+# Load .env from project root (same behaviour as the source Next.js app).
 _ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_ROOT / ".env")
 
 
 class Settings:
-    """Runtime settings, read from env with data-synth-compatible names."""
+    """Runtime settings, read from env with source-compatible names."""
 
     # --- Database (dual dialect: pg / mysql, switched by DB_TYPE) ---
     DB_TYPE: str = os.getenv("DB_TYPE", "pg")

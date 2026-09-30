@@ -1,6 +1,6 @@
-"""Cryptographic helpers — byte-compatible with data-synth's TypeScript.
+"""Cryptographic helpers — byte-compatible with the source platform's TypeScript.
 
-data-synth uses CryptoJS (AES-128-CBC / DES-ECB, PKCS7, key padded with '0')
+The source platform uses CryptoJS (AES-128-CBC / DES-ECB, PKCS7, key padded with '0')
 and must interoperate because BOTH services read/write the SAME tables
 (`modo_user.user_pwd` is stored AES-encrypted) and share cookies.
 
@@ -16,7 +16,7 @@ from Crypto.Cipher import AES, DES
 
 
 def fill_char(key: str, target_length: int) -> str:
-    """Pad-or-truncate key with '0' — same as data-synth fillChar()."""
+    """Pad-or-truncate key with '0' — same as the source platform's fillChar()."""
     if len(key) >= target_length:
         return key[:target_length]
     return key.ljust(target_length, "0")

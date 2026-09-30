@@ -1,15 +1,16 @@
 #!/usr/bin/env python
-"""Verify ORM models align with the live data-synth database (both directions).
+"""Verify ORM models align with the live source database (both directions).
 
 Reads DATABASE_URL from the specified env file, inspects real table/column
 definitions, and compares against our SQLAlchemy models:
 
   1. every framework table in the DB has a model
   2. every model's columns exist in the DB table (names + nullability)
-  3. synth business tables found in DB but NOT modeled (expected, informational)
+  3. legacy data-synthesis business tables found in DB but NOT modeled
+     (expected, informational)
 
 Usage:
-  python scripts/verify_schema_alignment.py [env_file]     # env_file defaults to ../.env.development of data-synth
+  python scripts/verify_schema_alignment.py [env_file]
 
 Exit code 0 = aligned, 1 = mismatch (prints diffs).
 """
@@ -31,8 +32,8 @@ from api.models import framework  # noqa: E402,F401  (registers all models)
 
 # Tables present in the live DB that are intentionally NOT modeled:
 # - `*_bak_*` are operator backup tables (schema drift artifacts)
-# - modo_requirement / modo_requirement_entity are synth business (extracted out)
-# - modo_user_synth_100 is an ad-hoc table from the old synth link
+# - modo_requirement / modo_requirement_entity are legacy synthesis business (extracted out)
+# - modo_user_synth_100 is an ad-hoc table from the old synthesis link
 IGNORED_DB_TABLES = {
     "modo_requirement",
     "modo_requirement_entity",
@@ -69,8 +70,8 @@ def main() -> int:
         shown = f"{scheme}://{userinfo.split(':')[0]}:***@{host}"
     print("Connecting to:", shown)
 
-    # MySQL URLs from data-synth use bare `mysql://`; SQLAlchemy needs the
-    # PyMySQL driver explicitly.
+    # MySQL URLs in the source deployment use bare `mysql://`; SQLAlchemy needs
+    # the PyMySQL driver explicitly.
     if url.startswith("mysql://") and "+pymysql" not in url:
         url = url.replace("mysql://", "mysql+pymysql://", 1)
     engine = create_engine(url, pool_pre_ping=True)
@@ -108,9 +109,9 @@ def main() -> int:
         for c in sorted(set(db_cols) - model_cols):
             mismatches.append(f"  {name}.{c}: in DB but not in model")
 
-    # 3. Expected synth business tables present? informational.
-    synth_business = sorted(t for t in db_tables if t.startswith("synth_"))
-    print(f"DB size: {len(db_tables)} tables total; framework {len(model_tables)} modeled; synth business left in DB: {len(synth_business)}")
+    # 3. Expected legacy business tables present? informational.
+    legacy_business = sorted(t for t in db_tables if t.startswith("synth_"))
+    print(f"DB size: {len(db_tables)} tables total; framework {len(model_tables)} modeled; legacy business left in DB: {len(legacy_business)}")
 
     if mismatches:
         print("\n[MISMATCHES]")

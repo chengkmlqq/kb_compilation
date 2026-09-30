@@ -1,6 +1,6 @@
 """Cron scanner — beat task that polls modo_cron_task and dispatches due jobs.
 
-Ported from data-synth synth_weaver/scheduler/tasks/jobs.py (scan_cron_tasks),
+Ported from the source platform's job scheduler (scan_cron_tasks),
 retaining its key correctness properties:
 
 1. Initialization: tasks with empty next_fire_time get their next fire time
@@ -46,7 +46,7 @@ def _now_local_naive() -> dt.datetime:
 
 
 def _to_next_fire_time_text(value: dt.datetime) -> str:
-    """Serialize as UTC ISO-8601 with trailing Z (matches data-synth)."""
+    """Serialize as UTC ISO-8601 with trailing Z (matches the source DB)."""
     normalized = value.astimezone(dt.timezone.utc).replace(microsecond=0)
     return normalized.isoformat().replace("+00:00", "Z")
 
@@ -79,7 +79,7 @@ def _parse_next_fire_time(value: Any) -> Optional[dt.datetime]:
 
 
 def _generate_job_id(task_class: str) -> str:
-    """Readable job id prefix, mirroring data-synth's _generate_job_id map."""
+    """Readable job id prefix, mirroring the source platform's job-id map."""
     prefix_map = {
         "MetadataCollectionTask": "METADATA",
         "IdentitySyncTask": "IDENTITY_SYNC",

@@ -1,13 +1,13 @@
 [project]
 name = "kb-api"
 version = "0.1.0"
-description = "KB compilation platform: framework layer extracted from data-synth + WeKnora RAG capabilities"
+description = "KB wiki platform: framework layer migrated from the legacy data-synthesis platform + WeKnora RAG capabilities"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "sqlalchemy>=2.0",
-    "pydantic>=2.7",
+    "pydantic>=2.13",
     "pydantic-settings>=2.3",
     "celery>=5.4",
     "redis>=5.0",
@@ -21,6 +21,19 @@ dependencies = [
     "pycryptodome>=3.23.0",
     "minio>=7.2.20",
     "croniter>=6.2.4",
+    "beautifulsoup4>=4.14",
+    "ebooklib>=0.18",
+    "lxml>=6.1",
+    "markdownify>=0.13",
+    "openpyxl>=3.1",
+    "pandas>=2.0",
+    "pillow>=12.2",
+    "pypdf>=6.13",
+    "python-docx>=1.2",
+    "requests>=2.33",
+    "markitdown[docx,pdf,xls,xlsx]>=0.1.3",
+    "playwright>=1.55",
+    "trafilatura>=2.0",
 ]
 
 [dependency-groups]

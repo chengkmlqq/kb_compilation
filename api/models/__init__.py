@@ -1,6 +1,6 @@
 """ORM models package.
 
-- framework: tables ported 1:1 from data-synth schema.ts (kept tables only)
+- framework: tables ported 1:1 from the source Drizzle schema (kept tables only)
 - knowledge: WeKnora-migrated tables (kb / document / chunk / embedding / wiki /
   graph) — added during the WeKnora migration phase
 """

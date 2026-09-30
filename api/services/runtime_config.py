@@ -1,6 +1,6 @@
 """Runtime config resolution — env-first, DB fallback, sensitive-value masking.
 
-Ported from data-synth src/lib/runtime-config.ts:
+Ported from the source platform's runtime-config module:
 - resolve_runtime_config: DB dim codes (SYSTEM_CONFIG) take priority, then env,
   then fallback. Sensitive keys are masked in output (never logged raw).
 - mask_value / is_sensitive_key helpers used by logging and audit paths.

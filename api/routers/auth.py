@@ -1,4 +1,4 @@
-"""Login / logout API — ported from data-synth src/app/actions/login-actions.ts.
+"""Login / logout API — ported from the source platform's login-actions.
 
 Note: the frontend still uses server actions; this API exists so the extracted
 backend can serve non-Next clients (Open API / MCP) and later the refactored

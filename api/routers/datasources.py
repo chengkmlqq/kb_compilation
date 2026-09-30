@@ -1,4 +1,4 @@
-"""Datasource API routes — mirrors data-synth /api/open/datasources endpoints."""
+"""Datasource API routes — mirrors the source platform's /api/open/datasources endpoints."""
 
 from __future__ import annotations
 

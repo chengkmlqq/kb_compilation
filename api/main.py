@@ -1,7 +1,7 @@
 """FastAPI application entry point.
 
 Serves the framework layer (auth / RBAC / datasource / metadata / files /
-system config) that was extracted from the data-synth Next.js backend.
+system config) migrated from the legacy Next.js backend.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from api.services.identity import Identity, decode_identity_cookie
 
 app = FastAPI(
     title="KB Compilation API",
-    description="Framework layer extracted from data-synth + WeKnora RAG capabilities",
+    description="Framework layer + WeKnora RAG capabilities (KB wiki platform)",
     version="0.1.0",
 )
 
@@ -39,7 +39,7 @@ def health() -> dict:
 
 @app.get("/api/v1/open/health")
 def open_health() -> dict:
-    """Open-API health endpoint (mirrors data-synth /api/open/health)."""
+    """Open-API health endpoint (mirrors the source platform's /api/open/health)."""
     return {"success": True, "status": "UP"}
 
 
