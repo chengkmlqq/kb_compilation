@@ -6,9 +6,13 @@ system config) that was extracted from the data-synth Next.js backend.
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import Cookie, Depends, FastAPI
+from sqlalchemy.orm import Session
 
 from api.config import get_settings
+from api.db import get_db
+from api.routers import auth
+from api.services.identity import Identity, decode_identity_cookie
 
 app = FastAPI(
     title="KB Compilation API",
@@ -17,6 +21,8 @@ app = FastAPI(
 )
 
 _settings = get_settings()
+
+app.include_router(auth.router, prefix="/api/v1")
 
 
 @app.get("/health")
@@ -34,3 +40,15 @@ def health() -> dict:
 def open_health() -> dict:
     """Open-API health endpoint (mirrors data-synth /api/open/health)."""
     return {"success": True, "status": "UP"}
+
+
+@app.get("/api/v1/me")
+def me(
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Decode current identity from the shared AES cookie (frontend compat)."""
+    identity: Identity | None = decode_identity_cookie(x_next_identity or "")
+    if not identity:
+        return {"success": False, "message": "未登录", "data": None}
+    return {"success": True, "data": identity.__dict__}
