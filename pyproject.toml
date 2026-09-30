@@ -19,6 +19,7 @@ dependencies = [
     "neo4j>=5.20",
     "pgvector>=0.2",
     "pycryptodome>=3.23.0",
+    "minio>=7.2.20",
 ]
 
 [dependency-groups]
