@@ -39,6 +39,7 @@ celery_app = _build_app("kb_compilation")
 celery_app.conf.update(
     include=[
         "worker.tasks.scheduler",
+        "worker.tasks.doc_process",
     ]
 )
 
