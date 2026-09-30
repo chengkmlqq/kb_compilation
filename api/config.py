@@ -27,6 +27,16 @@ class Settings:
     DB_MAX_CONNECTIONS: int = int(os.getenv("DB_MAX_CONNECTIONS", "10"))
     DB_POOL_PRE_PING: bool = os.getenv("DB_POOL_PRE_PING", "1") == "1"
 
+    # --- Knowledge store (PostgreSQL + pgvector, for wiki/kb domain) ---
+    # The framework tables share the legacy MySQL; the knowledge domain
+    # (doc_chunk embeddings, wiki pages, graph refs) lives on a PG store so
+    # pgvector and full-text search are available.
+    KNOWLEDGE_DATABASE_URL: str = os.getenv("KNOWLEDGE_DATABASE_URL", "")
+    EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "1024"))
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "")
+    EMBEDDING_BASE_URL: str = os.getenv("EMBEDDING_BASE_URL", "")
+    EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")
+
     # --- Auth ---
     AUTH_SECRET: str = os.getenv("AUTH_SECRET", os.getenv("NEXTAUTH_SECRET", ""))
     SSO_ENABLED: bool = os.getenv("SSO_ENABLED", "0") == "1"
@@ -56,6 +66,22 @@ class Settings:
         if not self.DATABASE_URL:
             raise RuntimeError("Missing required env var: DATABASE_URL")
         return self.DATABASE_URL
+
+    def require_knowledge_database_url(self) -> str:
+        """URL for the PG + pgvector knowledge store.
+
+        Falls back to DATABASE_URL when KNOWLEDGE_DATABASE_URL is unset (e.g.
+        a single-PG dev deployment), but refuses to run knowledge features on
+        MySQL (pgvector types and GIN indexes are PG-only).
+        """
+        url = self.KNOWLEDGE_DATABASE_URL or self.DATABASE_URL
+        if not url:
+            raise RuntimeError("Missing required env var: KNOWLEDGE_DATABASE_URL")
+        if url.startswith("mysql"):
+            raise RuntimeError(
+                "KNOWLEDGE_DATABASE_URL must be PostgreSQL (pgvector required), got mysql"
+            )
+        return url
 
     def effective_broker_url(self) -> str:
         """Resolve Celery broker URL: explicit env wins, fall back to REDIS_URL."""
