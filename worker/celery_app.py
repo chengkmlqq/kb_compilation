@@ -38,10 +38,7 @@ def _build_app(name: str) -> Celery:
 celery_app = _build_app("kb_compilation")
 celery_app.conf.update(
     include=[
-        "worker.tasks.doc_process",
-        "worker.tasks.embedding",
-        "worker.tasks.wiki",
-        "worker.tasks.graph",
+        "worker.tasks.scheduler",
     ]
 )
 

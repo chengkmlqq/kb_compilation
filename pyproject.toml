@@ -20,6 +20,7 @@ dependencies = [
     "pgvector>=0.2",
     "pycryptodome>=3.23.0",
     "minio>=7.2.20",
+    "croniter>=6.2.4",
 ]
 
 [dependency-groups]
