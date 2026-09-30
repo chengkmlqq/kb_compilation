@@ -1,0 +1,10 @@
+"""Placeholder for Celery task modules (filled in during implementation).
+
+Tasks live here:
+- worker/tasks/cron_scan.py      — modo_cron_task scanner (beat), replaces
+                                   synth_scheduler scan_cron_tasks
+- worker/tasks/doc_process.py    — document parse/split
+- worker/tasks/embedding.py      — vectorization
+- worker/tasks/wiki.py           — wiki page generation
+- worker/tasks/graph.py          — entity extraction / graph write
+"""
