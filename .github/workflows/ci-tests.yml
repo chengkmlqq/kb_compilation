@@ -1,0 +1,38 @@
+# ci-tests.yml — kb_compilation 测试 CI
+#
+# 跑仓库自带的 pytest 套件（tests/，纯逻辑、无外部服务依赖，约 150 用例）。
+# 用 uv 管理依赖 + 锁定的 uv.lock，确定性安装。
+
+name: CI 测试
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: kb-ci-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+
+      - name: 同步依赖（frozen，按 uv.lock）
+        run: uv sync --frozen
+
+      - name: 跑 pytest
+        run: uv run python -m pytest tests/ -q

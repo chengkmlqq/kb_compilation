@@ -1,0 +1,107 @@
+# build-images.yml — 构建并推送 kb_compilation 的两个镜像（kb-api / kb-web）
+#
+# 风格对照 agent-gateway 工程的 build-agent-gateway.yml：
+#   buildx 多平台 + 登录 registry + docker/build-push-action + GHA 层缓存 +
+#   registry/namespace 可用仓库变量 vars.REGISTRY / vars.REGISTRY_NAMESPACE 覆盖。
+#
+# 本仓库产出两个镜像：
+#   - kb-api: deploy/Dockerfile.api，构建上下文 = 仓库根（FastAPI + Celery worker/beat）
+#   - kb-web: deploy/Dockerfile.web，构建上下文 = web/（Next.js / bun）
+
+name: kb_compilation 镜像构建
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: kb-compile-images
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ${{ vars.REGISTRY || 'crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com' }}
+  REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || 'ck-registry' }}
+
+jobs:
+  # ---------------------------------------------------------------- api 镜像
+  build-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 生成镜像变量
+        id: vars
+        shell: bash
+        run: |
+          echo "image=${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/kb-api" >> "$GITHUB_OUTPUT"
+
+      - name: 安装 Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: 登录镜像仓库
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: 构建并推送 kb-api 镜像
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile.api
+          platforms: linux/amd64,linux/arm64
+          pull: true
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            PY_BASE_IMAGE=${{ vars.PY_BASE_IMAGE || 'python:3.11-slim' }}
+          tags: |
+            ${{ steps.vars.outputs.image }}:latest
+            ${{ steps.vars.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=kb-api
+          cache-to: type=gha,mode=max,scope=kb-api
+
+  # ---------------------------------------------------------------- web 镜像
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 生成镜像变量
+        id: vars
+        shell: bash
+        run: |
+          echo "image=${{ env.REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/kb-web" >> "$GITHUB_OUTPUT"
+
+      - name: 安装 Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: 登录镜像仓库
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: 构建并推送 kb-web 镜像
+        uses: docker/build-push-action@v7
+        with:
+          context: web
+          file: deploy/Dockerfile.web
+          platforms: linux/amd64,linux/arm64
+          pull: true
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            ${{ steps.vars.outputs.image }}:latest
+            ${{ steps.vars.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=kb-web
+          cache-to: type=gha,mode=max,scope=kb-web
