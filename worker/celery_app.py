@@ -41,6 +41,7 @@ celery_app.conf.update(
         "worker.tasks.scheduler",
         "worker.tasks.doc_process",
         "worker.tasks.wiki_graph",
+        "worker.tasks.agent_gateway",
     ]
 )
 

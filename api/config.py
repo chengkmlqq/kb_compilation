@@ -66,6 +66,17 @@ class Settings:
     # the framework store; only chunk embeddings go to the vector backend.
     VECTOR_STORE_TYPE: str = os.getenv("VECTOR_STORE_TYPE", "pg")
 
+    # --- Agent gateway (hermes-agent skill execution service) ---
+    # Base URL of the separately-deployed agent-gateway (default host:8080).
+    # In docker-compose the worker reaches it via host.docker.internal:8080
+    # (gateway binds host 8080 -> container 8080).
+    AGENT_GATEWAY_BASE_URL: str = os.getenv("AGENT_GATEWAY_BASE_URL", "http://127.0.0.1:8080")
+    # Global wait budget for a single gateway task (a full skill run takes
+    # 10-25 min; mirrors the gateway's SKILL_SCRIPT_TIMEOUT_S=3600).
+    AGENT_GATEWAY_TIMEOUT_S: int = int(os.getenv("AGENT_GATEWAY_TIMEOUT_S", "3600"))
+    # Polling interval for GET /tasks/{id} while the agent runs.
+    AGENT_GATEWAY_POLL_INTERVAL_S: int = int(os.getenv("AGENT_GATEWAY_POLL_INTERVAL_S", "15"))
+
     # --- Server ---
     APP_PORT: int = int(os.getenv("APP_PORT", "8000"))
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "info")
