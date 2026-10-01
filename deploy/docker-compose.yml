@@ -24,6 +24,7 @@ x-api-env: &api-env
     - .env
   environment:
     DB_TYPE: mysql
+    DATABASE_URL: ${KB_DATABASE_URL}
     REDIS_URL: ${KB_REDIS_URL}
     CELERY_BROKER_URL: ${KB_CELERY_BROKER_URL}
     CELERY_RESULT_BACKEND: ${KB_CELERY_RESULT_BACKEND}

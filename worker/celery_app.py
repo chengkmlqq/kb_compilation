@@ -54,3 +54,10 @@ celery_app.conf.beat_schedule = {
         "schedule": settings.JOB_BEAT_SCAN_INTERVAL_SECONDS,
     },
 }
+# Force import all task modules to register handlers in TASK_CLASS_REGISTRY
+try:
+    from worker.tasks import doc_process, wiki_graph, agent_gateway
+    from worker.tasks.scheduler import TASK_CLASS_REGISTRY
+    print(f"Tasks registered: {list(TASK_CLASS_REGISTRY.keys())}")
+except Exception as e:
+    print(f"Warning: Failed to register tasks: {e}")

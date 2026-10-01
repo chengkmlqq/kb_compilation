@@ -45,6 +45,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY api/ ./api/
+COPY worker/ ./worker/
 COPY docreader/ ./docreader/
 COPY scripts/ ./scripts/
 RUN mkdir -p /data/kb_documents
