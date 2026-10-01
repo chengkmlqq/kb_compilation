@@ -16,26 +16,36 @@ import {
   Tag,
   Tooltip,
   Typography,
+  Upload,
 } from "antd";
 import {
   DeleteOutlined,
   EditOutlined,
   MessageOutlined,
+  PaperClipOutlined,
   PlusOutlined,
   PushpinOutlined,
+  SearchOutlined,
   SendOutlined,
   StopOutlined,
 } from "@ant-design/icons";
 import {
+  apiCreateAgentSession,
   apiCreateSession,
+  apiDeleteAttachment,
   apiDeleteSession,
   apiFollowUp,
   apiGenerateTitle,
+  apiListAgents,
+  apiListAttachments,
   apiListKbs,
   apiListSessions,
   apiLoadSessionMessages,
   apiRecommendQuestions,
+  apiSearchMessages,
   apiUpdateSession,
+  apiUploadAttachment,
+  ChatAttachmentItem,
   ChatMessageItem,
   ChatSessionItem,
   KbItem,
@@ -65,6 +75,14 @@ export default function ChatPage() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [renameTarget, setRenameTarget] = useState<ChatSessionItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  // L3：Agent 模式 + 附件 + 消息搜索
+  const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
+  const [agentMode, setAgentMode] = useState<string>(); // 选中的 agent id
+  const [attachments, setAttachments] = useState<ChatAttachmentItem[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchKeyword, setSearchKeyword] = useState("");
+  const [searchResults, setSearchResults] = useState<(ChatMessageItem & { session_id: string; session_title: string })[]>([]);
+  const [searching, setSearching] = useState(false);
 
   const scrollBottom = () => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
@@ -91,6 +109,12 @@ export default function ChatPage() {
 
   useEffect(() => {
     void loadSessions();
+    void (async () => {
+      const res = await apiListAgents(1, 100);
+      if (res.success) {
+        setAgents((res.data?.items || []).map((a) => ({ id: a.id, name: a.name })));
+      }
+    })();
   }, [loadSessions]);
 
   // 打开会话：加载历史 + 推荐问题
@@ -104,6 +128,14 @@ export default function ChatPage() {
         setMsgs((res.data?.items || []) as UiMessage[]);
         const s = sessions.find((x) => x.id === sessionId);
         if (s?.kb_id) setKbId(s.kb_id);
+        if (s?.agent_id) {
+          setAgentMode(s.agent_id);
+        } else {
+          setAgentMode(undefined);
+        }
+        // 加载附件
+        const att = await apiListAttachments(sessionId);
+        if (att.success) setAttachments(att.data?.items || []);
       } finally {
         setLoadingMsgs(false);
         scrollBottom();
@@ -172,7 +204,9 @@ export default function ChatPage() {
     // 若还没有会话，先建一个（用第一条问题当会话）
     let sessionId = activeSession;
     if (!sessionId) {
-      const created = await apiCreateSession(kbId, question.slice(0, 30));
+      const created = agentMode
+        ? await apiCreateAgentSession(agentMode, kbId, question.slice(0, 30))
+        : await apiCreateSession(kbId, question.slice(0, 30));
       if (created.success && created.data) {
         sessionId = created.data.id;
         setActiveSession(sessionId);
@@ -186,7 +220,10 @@ export default function ChatPage() {
     }
 
     try {
-      const resp = await fetch("/api/v1/qa/stream", {
+      const endpoint = agentMode
+        ? `/api/v1/agents/${agentMode}/qa/stream`
+        : "/api/v1/qa/stream";
+      const resp = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -304,8 +341,64 @@ export default function ChatPage() {
       setActiveSession(undefined);
       setMsgs([]);
       setRecommendations([]);
+      setAttachments([]);
+      setAgentMode(undefined);
     }
     await loadSessions();
+  };
+
+  // L3：附件上传/删除
+  const uploadAttachment = async (file: File) => {
+    let sessionId = activeSession;
+    if (!sessionId) {
+      const created = agentMode
+        ? await apiCreateAgentSession(agentMode, kbId)
+        : await apiCreateSession(kbId);
+      if (created.success && created.data) {
+        sessionId = created.data.id;
+        setActiveSession(sessionId);
+        await loadSessions();
+      } else {
+        toast.error("创建会话失败，无法上传附件");
+        return;
+      }
+    }
+    const res = await apiUploadAttachment(sessionId!, file);
+    if (res.success && res.data) {
+      setAttachments((prev) => [...prev, res.data!]);
+      toast.success(`附件已上传：${res.data.file_name}`);
+    } else {
+      toast.error(res.message || "附件上传失败");
+    }
+  };
+
+  const removeAttachment = async (attId: string) => {
+    if (!activeSession) return;
+    const res = await apiDeleteAttachment(activeSession, attId);
+    if (res.success) {
+      setAttachments((prev) => prev.filter((a) => a.id !== attId));
+    } else {
+      toast.error(res.message || "删除附件失败");
+    }
+  };
+
+  // L3：消息搜索
+  const doSearch = async () => {
+    if (!searchKeyword.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    setSearching(true);
+    try {
+      const res = await apiSearchMessages(searchKeyword.trim(), 20);
+      if (res.success) {
+        setSearchResults(res.data?.items || []);
+      } else {
+        toast.error(res.message || "搜索失败");
+      }
+    } finally {
+      setSearching(false);
+    }
   };
 
   const togglePin = async (s: ChatSessionItem) => {
@@ -394,12 +487,31 @@ export default function ChatPage() {
         <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", alignItems: "center", gap: 12 }}>
           <Text strong>智能问答（RAG）</Text>
           <Select
+            style={{ width: 180 }}
+            placeholder="Agent 模式"
+            value={agentMode}
+            allowClear
+            onChange={(v) => {
+              setAgentMode(v || undefined);
+              if (v) {
+                setActiveSession(undefined);
+                setMsgs([]);
+                setRecommendations([]);
+                setAttachments([]);
+              }
+            }}
+            options={agents.map((a) => ({ value: a.id, label: `🤖 ${a.name}` }))}
+          />
+          <Select
             style={{ width: 240 }}
             placeholder="选择知识库"
             value={kbId}
             onChange={(v) => void onKbChange(v)}
             options={kbs.map((k) => ({ value: k.id, label: k.name }))}
           />
+          <Button icon={<SearchOutlined />} onClick={() => setSearchOpen(true)}>
+            搜消息
+          </Button>
           {streaming && (
             <Button size="small" danger icon={<StopOutlined />} onClick={stopGenerating}>
               停止
@@ -482,24 +594,48 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </div>
 
-        <div style={{ padding: "12px 16px", borderTop: "1px solid #f0f0f0", display: "flex", gap: 8 }}>
-          <Input.TextArea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="输入问题，Enter 发送，Shift+Enter 换行"
-            autoSize={{ minRows: 1, maxRows: 4 }}
-            disabled={streaming}
-            onPressEnter={(e) => {
-              if (!e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            style={{ flex: 1 }}
-          />
-          <Button type="primary" icon={<SendOutlined />} loading={streaming} disabled={!kbId} onClick={() => void send()}>
-            发送
-          </Button>
+        <div style={{ padding: "12px 16px", borderTop: "1px solid #f0f0f0" }}>
+          {/* 附件区 */}
+          {(attachments.length > 0 || true) && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+              {attachments.map((a) => (
+                <Tag key={a.id} closable onClose={() => void removeAttachment(a.id)} style={{ maxWidth: 240 }}>
+                  📎 {a.file_name}
+                </Tag>
+              ))}
+              <Upload
+                accept=".pdf,.doc,.docx,.md,.txt,.html,.xlsx,.pptx"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void uploadAttachment(file as File);
+                  return false;
+                }}
+              >
+                <Button size="small" icon={<PaperClipOutlined />}>
+                  上传附件
+                </Button>
+              </Upload>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <Input.TextArea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="输入问题，Enter 发送，Shift+Enter 换行"
+              autoSize={{ minRows: 1, maxRows: 4 }}
+              disabled={streaming}
+              onPressEnter={(e) => {
+                if (!e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              style={{ flex: 1 }}
+            />
+            <Button type="primary" icon={<SendOutlined />} loading={streaming} disabled={!kbId} onClick={() => void send()}>
+              发送
+            </Button>
+          </div>
         </div>
       </Card>
 
@@ -511,6 +647,42 @@ export default function ChatPage() {
         onOk={() => void renameSession()}
       >
         <Input value={renameValue} onChange={(e) => setRenameValue(e.target.value)} placeholder="会话标题" />
+      </Modal>
+
+      {/* 消息搜索弹窗 */}
+      <Modal
+        title="消息搜索"
+        open={searchOpen}
+        onCancel={() => setSearchOpen(false)}
+        footer={null}
+        width={640}
+      >
+        <Space.Compact style={{ width: "100%", marginBottom: 12 }}>
+          <Input
+            value={searchKeyword}
+            onChange={(e) => setSearchKeyword(e.target.value)}
+            placeholder="输入关键词，搜索所有会话的历史消息"
+            onPressEnter={() => void doSearch()}
+          />
+          <Button type="primary" loading={searching} onClick={() => void doSearch()}>
+            搜索
+          </Button>
+        </Space.Compact>
+        <div style={{ maxHeight: 420, overflow: "auto" }}>
+          {searchResults.length === 0 ? (
+            <Empty description="无匹配消息" style={{ padding: 24 }} />
+          ) : (
+            searchResults.map((r) => (
+              <div key={r.id} style={{ padding: "8px 0", borderBottom: "1px solid #f0f0f0" }}>
+                <Tag color="blue">{r.session_title || "未知会话"}</Tag>
+                <Tag>{r.role === "user" ? "问" : "答"}</Tag>
+                <Text style={{ fontSize: 13 }} ellipsis>
+                  {r.content.slice(0, 120)}
+                </Text>
+              </div>
+            ))
+          )}
+        </div>
       </Modal>
 
       <style jsx global>{`

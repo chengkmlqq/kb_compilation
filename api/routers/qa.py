@@ -22,7 +22,12 @@ from sqlalchemy.orm import Session
 from api.db import get_db
 from api.models.knowledge import KbDatasource
 from api.services.chat import answer_question
-from api.services.chat_sessions import append_message, get_context_messages, get_session
+from api.services.chat_sessions import (
+    append_message,
+    attachment_contents,
+    get_context_messages,
+    get_session,
+)
 from api.services.embedding import get_embedding_client
 from api.services.identity import decode_identity_cookie
 
@@ -60,11 +65,24 @@ def qa_stream(
             yield _sse({"type": "done"})
             return
 
+        # 身份（无 session 也解析：用于个人/团队模型作用域）
+        identity = decode_identity_cookie(x_next_identity or "")
+        ctx_user_id = identity.user_id if identity else ""
+        ctx_team_name = identity.team_name or "" if identity else ""
+        ctx_is_admin = False
+        if ctx_user_id:
+            try:
+                from api.services.models import is_admin
+
+                ctx_is_admin = is_admin(db, ctx_user_id)
+            except Exception:  # noqa: BLE001
+                ctx_is_admin = False
+
         # 会话模式：校验 + 加载历史
         session = None
         user_id = None
+        attachment_ctx = ""
         if req.session_id:
-            identity = decode_identity_cookie(x_next_identity or "")
             if not identity or not identity.user_id:
                 yield _sse({"type": "error", "message": "未登录"})
                 yield _sse({"type": "done"})
@@ -80,6 +98,11 @@ def qa_stream(
                 {"role": m["role"], "content": m["content"]}
                 for m in get_context_messages(db, req.session_id, limit=20)
             ]
+            # 附件内容注入（临时文档问答）
+            try:
+                attachment_ctx = attachment_contents(db, req.session_id)
+            except Exception:  # noqa: BLE001
+                attachment_ctx = ""
         else:
             history = [
                 {"role": str(m.get("role", "user")), "content": str(m.get("content", ""))}
@@ -97,7 +120,12 @@ def qa_stream(
         query_embedding = None
         if req.embed_query:
             try:
-                client = get_embedding_client(db)
+                client = get_embedding_client(
+                    db,
+                    user_id=ctx_user_id,
+                    team_name=ctx_team_name,
+                    is_sys_admin=ctx_is_admin,
+                )
                 query_embedding = client.embed_query(req.question)
             except Exception:  # noqa: BLE001
                 logger.exception("query embedding failed; vector arm disabled")
@@ -114,6 +142,10 @@ def qa_stream(
                 query_embedding=query_embedding,
                 retrieval_overrides=overrides,
                 history=history,
+                extra_context=attachment_ctx,
+                user_id=ctx_user_id,
+                team_name=ctx_team_name,
+                is_sys_admin=ctx_is_admin,
             ):
                 if event.get("type") == "context":
                     hits = event.get("hits") or []

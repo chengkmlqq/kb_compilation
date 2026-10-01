@@ -40,9 +40,41 @@ class ChatMessage:
     content: str
 
 
-def load_chat_config(db: Session | None = None) -> ChatConfig:
-    """Resolve chat config (DB > env, mirroring runtime-config)."""
+def load_chat_config(
+    db: Session | None = None,
+    *,
+    user_id: str = "",
+    team_name: str = "",
+    is_sys_admin: bool = False,
+) -> ChatConfig:
+    """Resolve chat config with scoped model priority.
+
+    New chain: personal default > team default > system default (scoped
+    model registry), then the legacy modo_dim SYSTEM_CONFIG > env path.
+    Consumers with no user context (worker/wiki build, MCP) skip personal
+    and team scopes and resolve the system default first, then legacy/env.
+    """
     settings = get_settings()
+
+    if db is not None:
+        try:
+            from api.services.models import resolve_model_config
+
+            resolved = resolve_model_config(
+                db,
+                "chat",
+                caller_user_id=user_id or "",
+                caller_team_name=team_name or "",
+                is_sys_admin=is_sys_admin,
+            )
+            if resolved and resolved.get("base_url"):
+                return ChatConfig(
+                    base_url=resolved["base_url"],
+                    api_key=resolved.get("api_key") or "",
+                    model=resolved.get("model") or "",
+                )
+        except Exception:
+            logger.warning("failed to resolve scoped chat model; using legacy config", exc_info=True)
 
     def _resolve(env_key: str, db_codes: list[str], fallback: str = "") -> str:
         if db is None:
@@ -101,12 +133,29 @@ def build_messages(
     question: str,
     hits: list[ChunkHit],
     history: list[ChatMessage] | None = None,
+    extra_context: str = "",
+    agent_prompt: str = "",
 ) -> list[ChatMessage]:
-    """Build the message list: system (with context) + history + user question."""
+    """Build the message list: system (with context) + history + user question.
+
+    extra_context (session attachments, already markdown) is appended to the
+    system prompt so the model can answer from attached documents.
+    agent_prompt overrides the default system prompt (agent persona).
+    """
     context = serialize_context(hits)
-    system = SYSTEM_PROMPT.format(context=context) if context else (
-        "你是一个知识库问答助手。若检索片段不足以回答，请明确说明。"
-    )
+    if context or extra_context:
+        parts = []
+        if context:
+            parts.append(f"以下为知识库检索片段：\n{context}")
+        if extra_context:
+            parts.append(f"以下为本次会话上传的附件文档内容：\n{extra_context}")
+        base = (
+            "你是一个知识库问答助手。请优先依据提供的检索片段和附件文档回答问题；"
+            "若信息不足，请明确说明。"
+        )
+        system = (agent_prompt or base) + "\n\n" + "\n\n".join(parts)
+    else:
+        system = agent_prompt or "你是一个知识库问答助手。若检索片段不足以回答，请明确说明。"
     messages = [ChatMessage(role="system", content=system)]
     messages.extend(history or [])
     messages.append(ChatMessage(role="user", content=question))
@@ -192,19 +241,29 @@ def answer_question(
     retrieval_overrides: dict | None = None,
     history: list[ChatMessage] | list[dict] | None = None,
     chat_cfg: ChatConfig | None = None,
+    extra_context: str = "",
+    agent_prompt: str = "",
+    user_id: str = "",
+    team_name: str = "",
+    is_sys_admin: bool = False,
 ) -> Iterator[dict]:
     """Full RAG QA stream: retrieve -> build messages -> stream deltas.
 
     Yields dicts: {"type": "context", "hits": [...]} first, then
     {"type": "delta", "text": "..."} per chunk. history accepts either
-    ChatMessage objects or {"role", "content"} dicts.
+    ChatMessage objects or {"role", "content"} dicts. extra_context is
+    injected into the system prompt (used for session attachments).
+    user_id/team_name/is_sys_admin scope the resolved chat model
+    (personal > team > system > legacy) when chat_cfg is not given.
     """
     from api.services.retrieval import config_from_kb, hybrid_search
 
     cfg = config_from_kb(kb, retrieval_overrides)
     hits = hybrid_search(kb_db, kb.id, question, query_embedding, cfg)
     if chat_cfg is None:
-        chat_cfg = load_chat_config(kb_db)
+        chat_cfg = load_chat_config(
+            kb_db, user_id=user_id or "", team_name=team_name or "", is_sys_admin=is_sys_admin
+        )
 
     yield {"type": "context", "hits": [h.__dict__ for h in hits]}
 
@@ -215,7 +274,7 @@ def answer_question(
         ]
     else:
         normalized = []
-    messages = build_messages(question, hits, normalized)
+    messages = build_messages(question, hits, normalized, extra_context=extra_context, agent_prompt=agent_prompt)
     client = ChatClient(chat_cfg)
     for delta in client.stream(messages):
         yield {"type": "delta", "text": delta}

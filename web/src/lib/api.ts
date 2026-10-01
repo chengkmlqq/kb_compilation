@@ -441,6 +441,7 @@ export function apiDeleteSkill(name: string) {
 export interface ChatSessionItem {
   id: string;
   kb_id?: string | null;
+  agent_id?: string | null;
   title: string;
   pinned: boolean;
   created_at: string;
@@ -517,4 +518,44 @@ export function apiLoadSessionMessages(sessionId: string) {
 
 export function apiDeleteSessionMessage(sessionId: string, messageId: string) {
   return request(`/api/v1/sessions/${sessionId}/messages/${messageId}`, { method: "DELETE" });
+}
+
+export function apiSearchMessages(keyword: string, limit = 20) {
+  return request<{ items: (ChatMessageItem & { session_id: string; session_title: string })[] }>(
+    "/api/v1/sessions/search",
+    { method: "POST", body: JSON.stringify({ keyword, limit }) },
+  );
+}
+
+export interface ChatAttachmentItem {
+  id: string;
+  session_id: string;
+  file_name: string;
+  file_ext: string;
+  file_size: number;
+  created_at: string;
+}
+
+export function apiListAttachments(sessionId: string) {
+  return request<{ items: ChatAttachmentItem[] }>(`/api/v1/sessions/${sessionId}/attachments`);
+}
+
+export function apiUploadAttachment(sessionId: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return request<ChatAttachmentItem>(`/api/v1/sessions/${sessionId}/attachments`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+export function apiDeleteAttachment(sessionId: string, attachmentId: string) {
+  return request(`/api/v1/sessions/${sessionId}/attachments/${attachmentId}`, { method: "DELETE" });
+}
+
+export function apiCreateAgentSession(agentId: string, kbId?: string | null, title?: string) {
+  return request<ChatSessionItem>("/api/v1/sessions", {
+    method: "POST",
+    body: JSON.stringify({ agent_id: agentId, kb_id: kbId || null, title: title || null }),
+  });
 }
