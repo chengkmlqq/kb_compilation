@@ -68,6 +68,8 @@ services:
     container_name: kb-api-server
     restart: unless-stopped
     <<: *api-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - kb-docs:/data/kb_documents
     depends_on:
