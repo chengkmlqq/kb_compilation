@@ -433,3 +433,88 @@ export function apiGetSkillDetail(name: string) {
 export function apiDeleteSkill(name: string) {
   return request(`/api/v1/system/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
 }
+
+// ---------------------------------------------------------------------------
+// 会话管理 (sessions)
+// ---------------------------------------------------------------------------
+
+export interface ChatSessionItem {
+  id: string;
+  kb_id?: string | null;
+  title: string;
+  pinned: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatMessageItem {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  refs?: { chunk_id: string; score: number }[];
+  created_at: string;
+}
+
+export function apiCreateSession(kb_id?: string | null, title?: string) {
+  return request<ChatSessionItem>("/api/v1/sessions", {
+    method: "POST",
+    body: JSON.stringify({ kb_id: kb_id || null, title: title || null }),
+  });
+}
+
+export function apiListSessions(page = 1, pageSize = 50) {
+  return request<{ items: ChatSessionItem[]; total: number }>(
+    `/api/v1/sessions?page=${page}&page_size=${pageSize}`,
+  );
+}
+
+export function apiUpdateSession(
+  sessionId: string,
+  patch: { title?: string; kb_id?: string | null; pinned?: boolean },
+) {
+  return request<ChatSessionItem>(`/api/v1/sessions/${sessionId}`, {
+    method: "PUT",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function apiDeleteSession(sessionId: string) {
+  return request(`/api/v1/sessions/${sessionId}`, { method: "DELETE" });
+}
+
+export function apiBatchDeleteSessions(sessionIds: string[]) {
+  return request<{ deleted: number }>("/api/v1/sessions/batch-delete", {
+    method: "POST",
+    body: JSON.stringify({ session_ids: sessionIds }),
+  });
+}
+
+export function apiClearSessionMessages(sessionId: string) {
+  return request(`/api/v1/sessions/${sessionId}/messages`, { method: "DELETE" });
+}
+
+export function apiGenerateTitle(sessionId: string) {
+  return request<{ title: string }>(`/api/v1/sessions/${sessionId}/generate-title`, { method: "POST" });
+}
+
+export function apiRecommendQuestions(kbId?: string | null, count = 3) {
+  return request<{ questions: string[] }>("/api/v1/sessions/recommendations", {
+    method: "POST",
+    body: JSON.stringify({ kb_id: kbId || null, count }),
+  });
+}
+
+export function apiFollowUp(sessionId: string, lastAnswer: string, count = 3) {
+  return request<{ questions: string[] }>("/api/v1/sessions/follow-up", {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId, last_answer: lastAnswer, count }),
+  });
+}
+
+export function apiLoadSessionMessages(sessionId: string) {
+  return request<{ items: ChatMessageItem[] }>(`/api/v1/sessions/${sessionId}/messages`);
+}
+
+export function apiDeleteSessionMessage(sessionId: string, messageId: string) {
+  return request(`/api/v1/sessions/${sessionId}/messages/${messageId}`, { method: "DELETE" });
+}

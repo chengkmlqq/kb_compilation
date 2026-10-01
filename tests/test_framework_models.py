@@ -67,13 +67,19 @@ KNOWLEDGE_BUSINESS_TABLES = {
     "kb_agent",
 }
 
+# Chat conversation persistence (chat_session / chat_message) — framework store.
+CHAT_TABLES = {
+    "chat_session",
+    "chat_message",
+}
+
 # The single vector-only table lives on the vector store base (PG + pgvector).
 VECTOR_ONLY_TABLES = {
     "kb_embedding",
 }
 
 # Everything expected on the framework base.
-EXPECTED_TABLES = FRAMEWORK_TABLES | KNOWLEDGE_BUSINESS_TABLES
+EXPECTED_TABLES = FRAMEWORK_TABLES | KNOWLEDGE_BUSINESS_TABLES | CHAT_TABLES
 
 # Legacy business tables (data-synthesis domain) that MUST NOT be present
 # after extraction. Names are the REAL table names in the source DB — they

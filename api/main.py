@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from api.config import get_settings
 from api.db import get_db
-from api.routers import agents, auth, datasources, kbs, qa, system, system_config
+from api.routers import agents, auth, chat_sessions, datasources, kbs, qa, system, system_config
 from api.services.identity import Identity, decode_identity_cookie
 
 app = FastAPI(
@@ -25,6 +25,7 @@ _settings = get_settings()
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(datasources.router, prefix="/api/v1/open")
 app.include_router(qa.router, prefix="/api/v1")
+app.include_router(chat_sessions.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
 app.include_router(kbs.router, prefix="/api/v1")
 app.include_router(system.router, prefix="/api/v1")

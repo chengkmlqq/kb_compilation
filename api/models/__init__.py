@@ -8,5 +8,6 @@ Two declarative bases, two stores:
 
 from api.models.framework import *  # noqa: F401,F403
 from api.models import knowledge  # noqa: F401  (registers knowledge models)
+from api.models import chat_session  # noqa: F401  (registers chat session/message models)
 
-__all__ = ["framework", "knowledge"]
+__all__ = ["framework", "knowledge", "chat_session"]
