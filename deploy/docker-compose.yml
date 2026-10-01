@@ -51,9 +51,7 @@ services:
       - kb-net
 
   web:
-    build:
-      context: ../web
-      dockerfile: ../deploy/Dockerfile.web
+    image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-web:${KB_IMAGE_TAG:-latest}
     container_name: kb-web
     restart: unless-stopped
     environment:
@@ -65,9 +63,7 @@ services:
       - kb-net
 
   api-server:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.api-server
+    image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-api-server:${KB_IMAGE_TAG:-latest}
     container_name: kb-api-server
     restart: unless-stopped
     <<: *api-env
@@ -84,9 +80,7 @@ services:
       - kb-net
 
   celery-worker:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.worker
+    image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-worker:${KB_IMAGE_TAG:-latest}
     container_name: kb-celery-worker
     restart: unless-stopped
     command: ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
@@ -108,9 +102,7 @@ services:
       - kb-net
 
   celery-beat:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.worker
+    image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-worker:${KB_IMAGE_TAG:-latest}
     container_name: kb-celery-beat
     restart: unless-stopped
     command: ["celery", "-A", "worker.celery_app", "beat", "--loglevel=info"]
@@ -127,9 +119,7 @@ services:
 
   flower:
     # Celery worker 监控（任务队列/执行状态/失败重试），经 nginx /flower/ 访问
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.worker
+    image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-worker:${KB_IMAGE_TAG:-latest}
     container_name: kb-flower
     restart: unless-stopped
     command:
