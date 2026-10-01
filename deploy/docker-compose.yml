@@ -83,7 +83,7 @@ services:
     image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-worker:${KB_IMAGE_TAG:-latest}
     container_name: kb-celery-worker
     restart: unless-stopped
-    command: ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+    command: ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info", "--concurrency=2", "-Q", "default"]
     <<: *api-env
     extra_hosts:
       # Linux has no automatic host.docker.internal; map it so the worker

@@ -29,6 +29,7 @@ def _build_app(name: str) -> Celery:
         task_acks_late=True,
         worker_prefetch_multiplier=1,
         timezone=settings.CELERY_TIMEZONE,
+        task_default_queue="default",
     )
     return app
 
