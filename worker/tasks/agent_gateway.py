@@ -75,17 +75,25 @@ def wait_for_task(
     base_url: str,
     timeout_s: float,
     poll_interval_s: float,
+    job_id: str | None = None,
 ) -> tuple[dict, bool]:
     """Poll GET /tasks/{id} until terminal status or deadline.
 
     Returns (last task record, timed_out). Transient HTTP errors during
     polling are logged and retried until the deadline instead of failing the
     whole job (the gateway may blip while the agent holds the task slot).
+
+    When job_id is given, each poll writes a lightweight progress line into
+    the modo_job.error_message slot (poll count, current gateway status,
+    elapsed) so the task monitor page can show live progress for long
+    agent-gateway runs (10-25 min typical).
     """
     base = base_url.rstrip("/")
     deadline = time.monotonic() + timeout_s
     last: dict = {"task_id": task_id, "status": "unknown"}
+    polls = 0
     while True:
+        polls += 1
         try:
             resp = client.get(f"{base}/tasks/{task_id}", timeout=_HTTP_REQUEST_TIMEOUT_S)
             resp.raise_for_status()
@@ -101,6 +109,20 @@ def wait_for_task(
                 task_id,
                 e,
             )
+        if job_id:
+            try:
+                from api.db import get_sessionmaker
+                from api.models.framework import Job
+                from sqlalchemy import select
+
+                with get_sessionmaker()() as db:
+                    job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
+                    if job and job.state not in ("SUCCESS", "FAILED"):
+                        elapsed = int(time.monotonic() - (deadline - timeout_s))
+                        status = str(last.get("status") or "unknown")
+                        job.error_message = f"[poll {polls}] gateway status={status}, elapsed={elapsed}s"
+            except Exception:  # noqa: BLE001
+                pass  # progress write is best-effort; never fail the poll
         if time.monotonic() >= deadline:
             return last, True
         time.sleep(poll_interval_s)
@@ -195,7 +217,8 @@ def _handle_agent_gateway(job_id: str, task_params: str | None) -> dict:
         result["gateway_task_id"] = gateway_task_id
 
         record, timed_out = wait_for_task(
-            client, gateway_task_id, base_url, timeout_s, poll_interval_s
+            client, gateway_task_id, base_url, timeout_s, poll_interval_s,
+            job_id=job_id,
         )
         if timed_out:
             _cancel_task(client, base_url, gateway_task_id)

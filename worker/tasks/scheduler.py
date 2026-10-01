@@ -256,6 +256,20 @@ def scan_cron_tasks() -> dict:
     }
 
 
+def _update_duration(db: Session, job: Job) -> None:
+    """Compute and persist duration_ms from start/end timestamps.
+
+    MySQL DATETIME columns round-trip as NAIVE datetimes, while we write UTC
+    aware values — so strip tzinfo before subtracting (assume both came from
+    the same wall-clock source).
+    """
+    if job.start_time and job.end_time:
+        start = job.start_time.replace(tzinfo=None)
+        end = job.end_time.replace(tzinfo=None)
+        delta = end - start
+        job.duration_ms = int(delta.total_seconds() * 1000)
+
+
 @celery_app.task(name="worker.tasks.scheduler.execute_modo_job", bind=False, acks_late=True)
 def execute_modo_job(job_id: str) -> dict:
     """Execute a modo_job by dispatching to the registered task_class handler.
@@ -276,6 +290,8 @@ def execute_modo_job(job_id: str) -> dict:
         task_class = job.task_class
         task_params = job.task_params
         job.state = "RUNNING"
+        if job.start_time is None:
+            job.start_time = dt.datetime.now(dt.timezone.utc)
 
     handler = TASK_CLASS_REGISTRY.get(task_class)
     if handler is None:
@@ -284,6 +300,8 @@ def execute_modo_job(job_id: str) -> dict:
             if job:
                 job.state = "FAILED"
                 job.error_message = f"no handler registered for {task_class}"
+                job.end_time = dt.datetime.now(dt.timezone.utc)
+                _update_duration(db, job)
         return {"success": False, "error": f"no handler registered for {task_class}"}
 
     try:
@@ -295,12 +313,16 @@ def execute_modo_job(job_id: str) -> dict:
             if job:
                 job.state = "FAILED"
                 job.error_message = str(e)
+                job.end_time = dt.datetime.now(dt.timezone.utc)
+                _update_duration(db, job)
         return {"success": False, "error": str(e)}
 
     with session_scope() as db:
         job = db.execute(select(Job).where(Job.id == normalized)).scalars().first()
         if job:
             job.state = "SUCCESS"
+            job.end_time = dt.datetime.now(dt.timezone.utc)
+            _update_duration(db, job)
     return {"success": True, "result": result}
 
 

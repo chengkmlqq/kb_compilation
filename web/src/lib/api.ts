@@ -804,3 +804,44 @@ export function apiCreateAgentSession(agentId: string, kbId?: string | null, tit
     body: JSON.stringify({ agent_id: agentId, kb_id: kbId || null, title: title || null }),
   });
 }
+
+// ---- task monitor (任务监控) ----
+
+export interface JobItem {
+  id: string;
+  task_id?: string | null;
+  task_class?: string | null;
+  queue_name?: string | null;
+  trigger_type?: string | null;
+  state?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_ms?: number | null;
+  error_message?: string | null;
+  log_path?: string | null;
+  create_time?: string | null;
+  params?: Record<string, unknown>;
+}
+
+export function apiListJobs(params: {
+  page?: number;
+  page_size?: number;
+  task_class?: string;
+  state?: string;
+  keyword?: string;
+} = {}) {
+  const q = new URLSearchParams();
+  if (params.page) q.set("page", String(params.page));
+  if (params.page_size) q.set("page_size", String(params.page_size));
+  if (params.task_class) q.set("task_class", params.task_class);
+  if (params.state) q.set("state", params.state);
+  if (params.keyword) q.set("keyword", params.keyword);
+  const qs = q.toString();
+  return request<{ items: JobItem[]; total: number; page: number; page_size: number }>(
+    `/api/v1/jobs${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export function apiGetJob(jobId: string) {
+  return request<JobItem>(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
+}

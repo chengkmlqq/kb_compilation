@@ -145,7 +145,7 @@ def test_timeout_cancels_task(monkeypatch):
     # Real wait_for_task does NOT cancel — it just returns (record, True) when
     # the deadline hits. The handler is the one that issues the best-effort
     # cancel, so the fake must mirror that division of responsibility.
-    def wait(client, task_id, base_url, timeout_s, poll_interval_s):
+    def wait(client, task_id, base_url, timeout_s, poll_interval_s, job_id=None):
         return {"task_id": task_id, "status": "running"}, True
 
     fake = FakeClient({"task_id": "t-1"}, [])
