@@ -45,20 +45,44 @@ def _uuid() -> str:
 # ---------------------------------------------------------------------------
 
 
+def kb_visible_clauses(
+    caller_user_id: str, caller_team_name: str, is_sys_admin: bool
+) -> list:
+    """SQL OR-clauses for KB visibility (personal=owner / team / system+admin)."""
+    from api.services.scope import visible_clauses
+
+    return visible_clauses(caller_user_id, caller_team_name, is_sys_admin, KbDatasource)
+
+
 def list_kbs(
     db: Session,
     page: int = 1,
     page_size: int = 10,
     keyword: str = "",
     team_name: str | None = None,
+    *,
+    caller_user_id: str = "",
+    caller_team_name: str = "",
+    is_sys_admin: bool = False,
+    scope: str | None = None,
 ) -> dict:
-    """Paginated KB list with doc/page counts (state='1' only)."""
+    """Paginated KB list with doc/page counts (state='1' only).
+
+    With caller context, only KBs the caller may see are returned
+    (personal=owner, team=team members, system=admins).
+    """
     stmt = select(KbDatasource).where(KbDatasource.state == "1")
+    if caller_user_id or caller_team_name or is_sys_admin:
+        clauses = kb_visible_clauses(caller_user_id, caller_team_name, is_sys_admin)
+        if clauses:
+            stmt = stmt.where(clauses[0])
     if keyword:
         like = f"%{keyword.strip()}%"
         stmt = stmt.where(KbDatasource.name.ilike(like))
     if team_name:
         stmt = stmt.where(KbDatasource.team_name == team_name)
+    if scope:
+        stmt = stmt.where(KbDatasource.scope == scope)
 
     total = len(db.execute(stmt).scalars().all())
     rows = (
@@ -103,14 +127,21 @@ def create_kb(
     indexing_strategy: dict | None = None,
     team_name: str | None = None,
     created_by: str | None = None,
+    scope: str = "system",
+    owner_user_id: str | None = None,
 ) -> KbDatasource:
-    """Create a KB; name is required, id is generated if absent."""
+    """Create a KB; name is required, id is generated if absent.
+
+    scope: personal(owner_user_id) / team(team_name) / system(admin).
+    """
     kb = KbDatasource(
         id=_uuid(),
         name=name.strip(),
         label=label,
         description=description,
+        scope=scope or "system",
         team_name=team_name,
+        owner_user_id=owner_user_id,
         created_by=created_by,
         indexing_strategy=indexing_strategy or {},
         state="1",
@@ -170,6 +201,9 @@ def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0) -> dict:
         "name": kb.name,
         "label": kb.label,
         "description": kb.description,
+        "scope": kb.scope or "system",
+        "team_name": kb.team_name or "",
+        "owner_user_id": kb.owner_user_id or "",
         "indexing_strategy": kb.indexing_strategy or {},
         "state": kb.state,
         "doc_count": doc_count,
@@ -314,6 +348,8 @@ def get_wiki_page(db: Session, kb_id: str, slug: str) -> dict | None:
     ).scalars().first()
     if not page:
         return None
+
+    # 出链（本页 -> 其他页）
     links = db.execute(
         select(WikiLink).where(
             WikiLink.kb_id == kb_id, WikiLink.from_page_id == page.id
@@ -328,6 +364,23 @@ def get_wiki_page(db: Session, kb_id: str, slug: str) -> dict | None:
         linked_pages = [
             {"slug": lp.slug, "title": lp.title, "page_type": lp.page_type} for lp in linked
         ]
+
+    # 反向链接（其他页 -> 本页）
+    in_links_rows = db.execute(
+        select(WikiLink).where(
+            WikiLink.kb_id == kb_id, WikiLink.to_page_id == page.id
+        )
+    ).scalars().all()
+    in_links = []
+    if in_links_rows:
+        in_ids = [l.from_page_id for l in in_links_rows]
+        in_pages = db.execute(
+            select(WikiPage).where(WikiPage.id.in_(in_ids), WikiPage.status == "active")
+        ).scalars().all()
+        in_links = [
+            {"slug": ip.slug, "title": ip.title, "page_type": ip.page_type} for ip in in_pages
+        ]
+
     return {
         "id": page.id,
         "slug": page.slug,
@@ -338,8 +391,118 @@ def get_wiki_page(db: Session, kb_id: str, slug: str) -> dict | None:
         "source_refs": page.source_refs or [],
         "folder_id": page.folder_id or "",
         "links": linked_pages,
+        "in_links": in_links,
         "created_at": page.created_at.isoformat() if page.created_at else None,
         "updated_at": page.updated_at.isoformat() if page.updated_at else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Wiki 知识图谱（数据源：wiki_page + wiki_link，不依赖 Neo4j）
+# ---------------------------------------------------------------------------
+
+PAGE_TYPE_LABELS = {
+    "entity": "实体",
+    "concept": "概念",
+    "summary": "摘要",
+}
+
+GRAPH_PAGE_TYPES = list(PAGE_TYPE_LABELS.keys())
+
+
+def wiki_graph(
+    db: Session,
+    kb_id: str,
+    mode: str = "overview",
+    center: str = "",
+    depth: int = 1,
+    limit: int = 200,
+    types: list[str] | None = None,
+) -> dict:
+    """图谱数据：nodes = wiki pages, edges = wiki_links。
+
+    mode=overview 返回全库图（受 limit 截断）；mode=ego 以 center slug 为中心
+    返回 depth 跳邻域。types 过滤 page_type。
+    """
+    allowed_types = [t for t in (types or []) if t in GRAPH_PAGE_TYPES]
+    type_filter = set(allowed_types) if allowed_types else set(GRAPH_PAGE_TYPES)
+
+    pages = db.execute(
+        select(WikiPage).where(WikiPage.kb_id == kb_id, WikiPage.status == "active")
+    ).scalars().all()
+    by_id = {p.id: p for p in pages}
+    page_ids = {p.id for p in pages}
+
+    # 统计每页链接数（出+入）
+    link_counts: dict[str, int] = {}
+    slug_by_id = {p.id: p.slug for p in pages}
+    link_rows = db.execute(
+        select(WikiLink.from_page_id, WikiLink.to_page_id).where(WikiLink.kb_id == kb_id)
+    ).all()
+    edges: list[dict] = []
+    for frm, to in link_rows:
+        if frm in page_ids and to in page_ids:
+            link_counts[frm] = link_counts.get(frm, 0) + 1
+            link_counts[to] = link_counts.get(to, 0) + 1
+            edges.append({"source": slug_by_id[frm], "target": slug_by_id[to]})
+
+    # 选择节点集
+    if mode == "ego" and center:
+        center_page = db.execute(
+            select(WikiPage).where(
+                WikiPage.kb_id == kb_id, WikiPage.slug == center, WikiPage.status == "active"
+            )
+        ).scalars().first()
+        if not center_page:
+            return {"nodes": [], "edges": [], "meta": {"mode": "ego", "total": 0, "returned": 0, "truncated": False}}
+        selected: set[str] = {center_page.id}
+        frontier: set[str] = {center_page.id}
+        for _ in range(max(1, depth)):
+            next_frontier: set[str] = set()
+            for frm, to in link_rows:
+                if frm in frontier and to in page_ids and to not in selected:
+                    next_frontier.add(to)
+                if to in frontier and frm in page_ids and frm not in selected:
+                    next_frontier.add(frm)
+            selected |= next_frontier
+            frontier = next_frontier
+            if not frontier:
+                break
+    else:
+        # overview：按链接数取 top-N（默认全库，limit 截断）
+        ranked = sorted(
+            [p for p in pages if p.page_type in type_filter],
+            key=lambda p: link_counts.get(p.id, 0),
+            reverse=True,
+        )
+        selected = {p.id for p in ranked[:limit]}
+
+    nodes = []
+    for p in pages:
+        if p.id not in selected or p.page_type not in type_filter:
+            continue
+        nodes.append(
+            {
+                "slug": p.slug,
+                "title": p.title,
+                "page_type": p.page_type,
+                "link_count": link_counts.get(p.id, 0),
+                "summary": p.summary,
+            }
+        )
+
+    node_slugs = {p.slug for p in pages if p.id in selected}
+    edges = [e for e in edges if e["source"] in node_slugs and e["target"] in node_slugs]
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "meta": {
+            "mode": mode,
+            "total": len(pages),
+            "returned": len(nodes),
+            "truncated": len(pages) > limit and mode != "ego",
+        },
     }
 
 

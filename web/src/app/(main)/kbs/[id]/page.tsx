@@ -16,8 +16,9 @@ import {
   Typography,
   Upload,
 } from "antd";
-import { InboxOutlined, ReloadOutlined } from "@ant-design/icons";
-import { useParams, useRouter } from "next/navigation";
+import { InboxOutlined, ReloadOutlined, ShareAltOutlined } from "@ant-design/icons";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import WikiGraphView from "@/components/WikiGraphView";
 import {
   apiDeleteDocument,
   apiListDocuments,
@@ -51,6 +52,18 @@ export default function KbDetailPage() {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [searching, setSearching] = useState(false);
+  const [wikiView, setWikiView] = useState<"list" | "graph">("list");
+  const [focusSlug, setFocusSlug] = useState<string | undefined>(undefined);
+  const searchParams = useSearchParams();
+
+  // 从 wiki 页「图谱中查看」跳入时：?wiki=graph&focus=<slug>
+  useEffect(() => {
+    if (searchParams.get("wiki") === "graph") {
+      setWikiView("graph");
+      const f = searchParams.get("focus");
+      if (f) setFocusSlug(f);
+    }
+  }, [searchParams]);
 
   const load = useCallback(async () => {
     setDocsLoading(true);
@@ -202,6 +215,13 @@ export default function KbDetailPage() {
               loading={searching}
               style={{ width: 280 }}
             />
+            <Button
+              icon={<ShareAltOutlined />}
+              type={wikiView === "graph" ? "primary" : "default"}
+              onClick={() => setWikiView(wikiView === "graph" ? "list" : "graph")}
+            >
+              {wikiView === "graph" ? "列表视图" : "图谱视图"}
+            </Button>
           </Space>
         }
       >
@@ -219,6 +239,8 @@ export default function KbDetailPage() {
               </List.Item>
             )}
           />
+        ) : wikiView === "graph" ? (
+          <WikiGraphView kbId={kbId} focusSlug={focusSlug} />
         ) : (
           <Spin spinning={wikiLoading}>
             {wikiPages.length === 0 ? (

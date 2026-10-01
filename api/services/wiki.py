@@ -148,24 +148,27 @@ def build_links(db: Session, kb_id: str, pages: list[WikiPage]) -> int:
     for i, a in enumerate(pages):
         for b in pages[i + 1 :]:
             if _pages_related(a, b):
-                existing = db.execute(
-                    select(WikiLink).where(
-                        WikiLink.kb_id == kb_id,
-                        WikiLink.from_page_id == a.id,
-                        WikiLink.to_page_id == b.id,
-                    )
-                ).scalars().first()
-                if existing is None:
-                    db.add(
-                        WikiLink(
-                            id=uuid.uuid4().hex,
-                            kb_id=kb_id,
-                            from_page_id=a.id,
-                            to_page_id=b.id,
-                            link_type="related",
+                # 双向建链：A→B 和 B→A 各一条，这样页面的出链(links)与
+                # 入链(in_links)都能反映同一组关联。
+                for frm, to in ((a, b), (b, a)):
+                    existing = db.execute(
+                        select(WikiLink).where(
+                            WikiLink.kb_id == kb_id,
+                            WikiLink.from_page_id == frm.id,
+                            WikiLink.to_page_id == to.id,
                         )
-                    )
-                    added += 1
+                    ).scalars().first()
+                    if existing is None:
+                        db.add(
+                            WikiLink(
+                                id=uuid.uuid4().hex,
+                                kb_id=kb_id,
+                                from_page_id=frm.id,
+                                to_page_id=to.id,
+                                link_type="related",
+                            )
+                        )
+                        added += 1
     return added
 
 

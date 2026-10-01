@@ -1,11 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Breadcrumb, Card, Empty, Space, Spin, Tag, Typography } from "antd";
+import { Breadcrumb, Button, Card, Empty, Space, Spin, Tag, Typography } from "antd";
+import { ApartmentOutlined } from "@ant-design/icons";
 import { useParams, useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { apiWikiPage, WikiPageDetail } from "@/lib/api";
+
+const TYPE_COLOR: Record<string, string> = {
+  entity: "purple",
+  concept: "blue",
+  summary: "gold",
+};
 
 export default function WikiPageDetailPage() {
   const { id, slug } = useParams<{ id: string; slug: string }>();
@@ -44,6 +51,21 @@ export default function WikiPageDetailPage() {
     );
   }
 
+  const renderLinks = (items: { slug: string; title: string; page_type: string }[]) => (
+    <Space wrap>
+      {items.map((link) => (
+        <Tag
+          key={link.slug}
+          color={TYPE_COLOR[link.page_type] || "default"}
+          style={{ cursor: "pointer" }}
+          onClick={() => router.push(`/kbs/${id}/wiki/${encodeURIComponent(link.slug)}`)}
+        >
+          {link.title}
+        </Tag>
+      ))}
+    </Space>
+  );
+
   return (
     <Space direction="vertical" size="middle" style={{ display: "flex" }}>
       <Breadcrumb
@@ -55,11 +77,20 @@ export default function WikiPageDetailPage() {
       />
       <Card>
         <Space direction="vertical" size="small" style={{ display: "flex" }}>
-          <Space>
-            <Typography.Title level={3} style={{ margin: 0 }}>
-              {page.title}
-            </Typography.Title>
-            <Tag color={page.page_type === "concept" ? "blue" : "purple"}>{page.page_type}</Tag>
+          <Space style={{ justifyContent: "space-between", width: "100%" }}>
+            <Space>
+              <Typography.Title level={3} style={{ margin: 0 }}>
+                {page.title}
+              </Typography.Title>
+              <Tag color={TYPE_COLOR[page.page_type] || "default"}>{page.page_type}</Tag>
+            </Space>
+            <Button
+              size="small"
+              icon={<ApartmentOutlined />}
+              onClick={() => router.push(`/kbs/${id}?wiki=graph&focus=${encodeURIComponent(page.slug)}`)}
+            >
+              图谱中查看
+            </Button>
           </Space>
           {page.summary && (
             <Typography.Paragraph type="secondary">{page.summary}</Typography.Paragraph>
@@ -70,19 +101,23 @@ export default function WikiPageDetailPage() {
           </div>
         </Space>
       </Card>
-      {page.links.length > 0 && (
-        <Card title="关联页面">
-          <Space wrap>
-            {page.links.map((link) => (
-              <Tag
-                key={link.slug}
-                color="geekblue"
-                style={{ cursor: "pointer" }}
-                onClick={() => router.push(`/kbs/${id}/wiki/${link.slug}`)}
-              >
-                {link.title}
-              </Tag>
-            ))}
+      {(page.links.length > 0 || page.in_links.length > 0) && (
+        <Card title="双向链接">
+          <Space direction="vertical" size="middle" style={{ display: "flex" }}>
+            {page.in_links.length > 0 && (
+              <div>
+                <Typography.Text type="secondary">
+                  被引用（{page.in_links.length} 个页面链接到此页）
+                </Typography.Text>
+                <div style={{ marginTop: 8 }}>{renderLinks(page.in_links)}</div>
+              </div>
+            )}
+            {page.links.length > 0 && (
+              <div>
+                <Typography.Text type="secondary">引用（此页链接到 {page.links.length} 个页面）</Typography.Text>
+                <div style={{ marginTop: 8 }}>{renderLinks(page.links)}</div>
+              </div>
+            )}
           </Space>
         </Card>
       )}

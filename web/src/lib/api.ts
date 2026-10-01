@@ -171,12 +171,46 @@ export interface WikiPageDetail {
   source_refs: string[];
   folder_id: string;
   links: { slug: string; title: string; page_type: string }[];
+  in_links: { slug: string; title: string; page_type: string }[];
   created_at?: string | null;
   updated_at?: string | null;
 }
 
 export function apiWikiTree(kbId: string) {
   return request<WikiTree>(`/api/v1/kbs/${kbId}/wiki`);
+}
+
+export interface WikiGraphNode {
+  slug: string;
+  title: string;
+  page_type: string;
+  link_count: number;
+  summary?: string | null;
+}
+
+export interface WikiGraphEdge {
+  source: string;
+  target: string;
+}
+
+export interface WikiGraphData {
+  nodes: WikiGraphNode[];
+  edges: WikiGraphEdge[];
+  meta: { mode: string; total: number; returned: number; truncated: boolean };
+}
+
+export function apiWikiGraph(
+  kbId: string,
+  params: { mode?: "overview" | "ego"; center?: string; depth?: number; limit?: number; types?: string[] } = {},
+) {
+  const q = new URLSearchParams();
+  if (params.mode) q.set("mode", params.mode);
+  if (params.center) q.set("center", params.center);
+  if (params.depth !== undefined) q.set("depth", String(params.depth));
+  if (params.limit !== undefined) q.set("limit", String(params.limit));
+  if (params.types && params.types.length > 0) q.set("types", params.types.join(","));
+  const qs = q.toString();
+  return request<WikiGraphData>(`/api/v1/kbs/${kbId}/wiki/graph${qs ? `?${qs}` : ""}`);
 }
 
 export function apiWikiPage(kbId: string, slug: string) {

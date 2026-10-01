@@ -18,7 +18,7 @@ import logging
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Cookie, Depends, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,7 @@ from api.config import get_settings
 from api.db import get_db
 from api.models.framework import Job
 from api.services.embedding import get_embedding_client
+from api.services.identity import decode_identity_cookie
 from api.services.kb_admin import (
     create_document,
     create_kb,
@@ -37,6 +38,7 @@ from api.services.kb_admin import (
     list_documents,
     list_kbs,
     update_kb,
+    wiki_graph,
     wiki_tree,
 )
 from api.services.kb_admin import _remove_local_file  # noqa: PLC2701 (same package helper)
@@ -55,6 +57,8 @@ class KBCreateRequest(BaseModel):
     label: str | None = None
     description: str | None = None
     indexing_strategy: dict | None = None
+    scope: str = "system"
+    team_name: str | None = None
 
 
 class KBUpdateRequest(BaseModel):
@@ -76,21 +80,76 @@ def get_kbs(
     page: int = 1,
     page_size: int = 10,
     keyword: str = "",
+    scope: str | None = None,
     db: Session = Depends(get_db),
-) -> dict:
-    return {"success": True, "data": list_kbs(db, page, page_size, keyword)}
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+    ) -> dict:
+    identity = decode_identity_cookie(x_next_identity or "")
+    caller_user_id = identity.user_id if identity else ""
+    caller_team_name = identity.team_name or "" if identity else ""
+    is_sys_admin = False
+    if caller_user_id:
+        from api.services.scope import is_admin
+
+        is_sys_admin = is_admin(db, caller_user_id)
+    return {
+        "success": True,
+        "data": list_kbs(
+            db,
+            page,
+            page_size,
+            keyword,
+            caller_user_id=caller_user_id,
+            caller_team_name=caller_team_name,
+            is_sys_admin=is_sys_admin,
+            scope=scope,
+        ),
+    }
+
+
+class KBCreateRequest2(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    label: str | None = None
+    description: str | None = None
+    indexing_strategy: dict | None = None
+    scope: str = "system"
+    team_name: str | None = None
 
 
 @router.post("")
-def post_kb(req: KBCreateRequest, db: Session = Depends(get_db)) -> dict:
+def post_kb(
+    req: KBCreateRequest2,
+    db: Session = Depends(get_db),
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+) -> dict:
+    identity = decode_identity_cookie(x_next_identity or "")
+    caller_user_id = identity.user_id if identity else ""
+    caller_team_name = identity.team_name or "" if identity else ""
+    is_sys_admin = False
+    if caller_user_id:
+        from api.services.scope import is_admin
+
+        is_sys_admin = is_admin(db, caller_user_id)
+    from api.services.scope import validate_scope_request
+
+    scope, owner_user_id, owner_team_name = validate_scope_request(
+        req.scope,
+        caller_user_id=caller_user_id,
+        caller_team_name=caller_team_name,
+        is_sys_admin=is_sys_admin,
+    )
     kb = create_kb(
         db,
         name=req.name,
         label=req.label,
         description=req.description,
         indexing_strategy=req.indexing_strategy,
+        scope=scope,
+        team_name=owner_team_name or None,
+        owner_user_id=owner_user_id or None,
+        created_by=caller_user_id or None,
     )
-    return {"success": True, "data": {"id": kb.id, "name": kb.name}}
+    return {"success": True, "data": {"id": kb.id, "name": kb.name, "scope": kb.scope}}
 
 
 @router.get("/{kb_id}")
@@ -263,6 +322,30 @@ def get_wiki(kb_id: str, db: Session = Depends(get_db)) -> dict:
     if not get_kb(db, kb_id):
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
     return {"success": True, "data": wiki_tree(db, kb_id)}
+
+
+@router.get("/{kb_id}/wiki/graph")
+def get_wiki_graph_route(
+    kb_id: str,
+    mode: str = "overview",
+    center: str = "",
+    depth: int = 1,
+    limit: int = 200,
+    types: str = "",
+    db: Session = Depends(get_db),
+) -> dict:
+    """Wiki 知识图谱（wiki_page + wiki_link，不依赖 Neo4j）。
+
+    mode=overview 全库图；mode=ego 以 center slug 为中心 depth 跳邻域。
+    types 逗号分隔过滤 page_type（entity/concept/summary）。
+    """
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    type_list = [t for t in types.split(",") if t.strip()] if types else []
+    data = wiki_graph(
+        db, kb_id, mode=mode, center=center, depth=depth, limit=limit, types=type_list
+    )
+    return {"success": True, "data": data}
 
 
 @router.get("/{kb_id}/wiki/pages/{slug}")

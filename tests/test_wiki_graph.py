@@ -99,9 +99,9 @@ def test_upsert_pages_and_links() -> None:
     assert {p.slug for p in pages2} == {"数据中台", "中台架构"}
     assert len(db.query(WikiPage).all()) == 2
 
-    # related titles produce a link
+    # related titles produce a pair of directed links (A→B and B→A, bidirectional)
     links = build_links(db, "kb1", pages)
-    assert links == 1
+    assert links == 2
     # re-running links is idempotent
     assert build_links(db, "kb1", pages) == 0
     db.close()
