@@ -8,6 +8,7 @@ import {
   apiSaveModelConfig,
   apiTestModelEndpoint,
   ModelConfigItem,
+  ModelTestResult,
 } from "@/lib/api";
 
 const { Text } = Typography;
@@ -23,7 +24,7 @@ export default function ModelConfigPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ kind?: string; model_matches?: boolean; error?: string } | null>(null);
+  const [testResult, setTestResult] = useState<ModelTestResult | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);

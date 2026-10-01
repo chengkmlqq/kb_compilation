@@ -344,7 +344,7 @@ export function apiGetModelConfig() {
 }
 
 export function apiSaveModelConfig(items: { code: string; value: string | null }[]) {
-  return request("/api/v1/system/model-config", {
+  return request<{ saved: string[]; count: number }>("/api/v1/system/model-config", {
     method: "PUT",
     body: JSON.stringify({ items }),
   });
@@ -355,6 +355,14 @@ export function apiTestModelEndpoint(payload: { base_url: string; api_key: strin
     "/api/v1/system/model-config/test",
     { method: "POST", body: JSON.stringify(payload) },
   );
+}
+
+export interface ModelTestResult {
+  ok?: boolean;
+  kind?: string;
+  models?: string[];
+  model_matches?: boolean;
+  error?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -410,7 +418,10 @@ export function apiInstallSkill(file: File, name?: string) {
   const form = new FormData();
   form.append("file", file);
   if (name) form.append("name", name);
-  return request("/api/v1/system/skills/install", { method: "POST", body: form });
+  return request<{ name?: string; installed?: boolean; skill_count_after?: number; scripts?: string[]; error?: string }>(
+    "/api/v1/system/skills/install",
+    { method: "POST", body: form },
+  );
 }
 
 export function apiGetSkillDetail(name: string) {
