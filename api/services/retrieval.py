@@ -27,7 +27,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from api.models.knowledge import DocChunk, KbDatasource
@@ -137,40 +137,117 @@ def vector_search(
 # ---------------------------------------------------------------------------
 
 
-def _keyword_score(query: str, content: str) -> float:
-    """Relevance of a keyword match, computed app-side (dialect-neutral).
+# 查询切词时过滤的助词/疑问词（中文无分词器，用停用词表 + 2-gram 滑窗）
+_KEYWORD_STOPWORDS = {
+    "的", "了", "是", "在", "和", "与", "或", "及", "等", "吗", "呢", "吧", "啊",
+    "什么", "怎么", "怎样", "多少", "哪些", "哪个", "如何", "请问", "请", "我", "你",
+    "他", "她", "它", "有", "没", "不", "要", "可以", "应该", "能否", "是否",
+}
 
-    Weights: earlier first-occurrence (closer to the top is more relevant) and
-    more total occurrences rank higher; length-normalized so a long chunk is
-    not automatically preferred. Any value in (0, 1] is fine — RRF only needs
-    the RANK order, and the score surfaces as a display number.
+
+def _split_terms(query: str) -> list[str]:
+    """把查询拆成检索词（无外部分词器）。
+
+    规则：
+    - 英文/数字按空白与标点切分为单词（≥2 字符才保留）；
+    - 中文连续串按标点切段，去掉停用词后：段长 ≤ 6 字保留整段，
+      段长 > 6 字用 2-gram 滑窗（覆盖任意二字词，代价是少量噪音词）；
+    - 结果去重，保持原序。
     """
-    if not query or not content:
-        return 0.0
-    q = query.strip().lower()
-    if not q:
-        return 0.0
-    text_l = content.lower()
-    occurrences = text_l.count(q)
-    if occurrences == 0:
-        return 0.0
-    pos = text_l.find(q)
-    position_weight = 1.0 / (1.0 + pos / 100.0)  # earlier match -> closer to 1
-    freq_weight = min(1.0, occurrences / 5.0)  # more occurrences -> closer to 1
-    length_penalty = 1.0 / (1.0 + max(0, len(content) - len(query)) / 500.0)
-    return round(position_weight * freq_weight * length_penalty, 4)
+    import re
 
-
-def keyword_search(db: Session, kb_id: str, query: str, cfg: RetrievalConfig) -> list[ChunkHit]:
-    """Keyword recall via portable substring matching (`ilike` on the business
-    store). All dialects (MySQL, PG, SQLite) implement `ilike`/`like`; ranking
-    is done app-side by `_keyword_score` (no PG-specific extensions needed)."""
     if not query or not query.strip():
         return []
 
-    needle = query.strip()
-    like_pat = f"%{needle}%"
+    # 统一分隔：空白与常见中文标点都切成独立段
+    parts = re.split(r"[\s,，。；;、!！?？:：""''《》<>（）()\[\]{}|/\\_\-]+", query.strip())
+    terms: list[str] = []
 
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        # 英文/数字词（纯 ASCII 单词）
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.\-]*", part):
+            if len(part) >= 2 and part.lower() not in terms:
+                terms.append(part.lower())
+            continue
+        # 中文：去掉停用词后处理
+        seg = part
+        if seg in _KEYWORD_STOPWORDS:
+            continue
+        if len(seg) <= 6:
+            # 段完全由停用词拼接而成（如「是什么」）→ 无检索价值
+            if all(_is_stopword_char(c) for c in seg):
+                continue
+            if seg not in terms:
+                terms.append(seg)
+        else:
+            # 2-gram 滑窗：连续两字组合
+            for i in range(len(seg) - 1):
+                gram = seg[i : i + 2]
+                if gram not in _KEYWORD_STOPWORDS and gram not in terms:
+                    terms.append(gram)
+    return terms
+
+
+def _is_stopword_char(ch: str) -> bool:
+    """单字是否命中停用词表（含作为组合词组成部分的单字）。"""
+    if ch in _KEYWORD_STOPWORDS:
+        return True
+    return any(ch in w for w in _KEYWORD_STOPWORDS if len(w) > 1)
+
+
+def _keyword_score(keywords: list[str], content: str) -> float:
+    """多关键词相关性评分（方言中立，app-side）。
+
+    - 覆盖率：命中的关键词数 / 关键词总数（召回的核心信号）；
+    - 位置：最早命中的位置越靠前越好；
+    - 频次：命中词在内容中的总出现次数（归一化）。
+    返回 (0, 1] 区间，供 RRF 排序（只需 RANK 序）。
+    """
+    if not keywords or not content:
+        return 0.0
+    text_l = content.lower()
+
+    hit_terms = [k for k in keywords if text_l.count(k) > 0]
+    if not hit_terms:
+        return 0.0
+
+    coverage = len(hit_terms) / len(keywords)
+
+    # 最早命中位置（相对内容开头）
+    first_pos = min(text_l.find(k) for k in hit_terms)
+    position_weight = 1.0 / (1.0 + first_pos / 100.0)
+
+    # 总频次（去重计数，限制上限）
+    total_occurrences = sum(text_l.count(k) for k in hit_terms)
+    freq_weight = min(1.0, total_occurrences / 5.0)
+
+    # 长内容轻微惩罚（避免大 chunk 无脑占优）
+    length_penalty = 1.0 / (1.0 + max(0, len(content) - 200) / 1000.0)
+
+    return round(coverage * (0.5 * position_weight + 0.3 * freq_weight + 0.2) * length_penalty, 4)
+
+
+def keyword_search(db: Session, kb_id: str, query: str, cfg: RetrievalConfig) -> list[ChunkHit]:
+    """Keyword recall via multi-term substring matching (`ilike` OR).
+
+    Query is split into terms (`_split_terms`), then chunks matching ANY term
+    are recalled with portable `ilike`/`like` (works on MySQL, PG, SQLite);
+    ranking is app-side by `_keyword_score` (no PG-specific extensions).
+    """
+    if not query or not query.strip():
+        return []
+
+    keywords = _split_terms(query)
+    if not keywords:
+        return []
+
+    # 关键词去重（_split_terms 已去重；防御重复）
+    keywords = list(dict.fromkeys(keywords))
+
+    conditions = [DocChunk.content.ilike(f"%{k}%") for k in keywords]
     stmt = (
         select(
             DocChunk.id,
@@ -182,16 +259,16 @@ def keyword_search(db: Session, kb_id: str, query: str, cfg: RetrievalConfig) ->
         .where(
             DocChunk.kb_id == kb_id,
             DocChunk.enabled.is_(True),
-            DocChunk.content.ilike(like_pat),
+            or_(*conditions),
         )
-        .limit(cfg.top_k * 4)  # over-fetch; app-side scoring then trims
+        .limit(cfg.top_k * 8)  # over-fetch; app-side scoring then trims
     )
     rows = db.execute(stmt).all()
 
     scored: list[ChunkHit] = []
     for row in rows:
         content = row.content or ""
-        score = _keyword_score(needle, content)
+        score = _keyword_score(keywords, content)
         if score <= 0:
             continue
         scored.append(
