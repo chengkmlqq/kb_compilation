@@ -120,20 +120,24 @@ def scan_cron_tasks() -> dict:
     created_jobs = 0
 
     with session_scope() as db:
-        cron_rows = (
-            db.execute(
-                select(
-                    CronTask.id,
-                    CronTask.cron_expression,
-                    CronTask.next_fire_time,
-                    CronTask.task_class,
-                    CronTask.fire_params,
-                    CronTask.queue_name,
-                ).where(CronTask.state == "1")
+        try:
+            cron_rows = (
+                db.execute(
+                    select(
+                        CronTask.id,
+                        CronTask.cron_expression,
+                        CronTask.next_fire_time,
+                        CronTask.task_class,
+                        CronTask.fire_params,
+                        CronTask.queue_name,
+                    ).where(CronTask.state == "1")
+                )
+                .mappings()
+                .all()
             )
-            .mappings()
-            .all()
-        )
+        except Exception:  # table not seeded yet (fresh DB, beat starts before seed)
+            db.rollback()
+            return {"success": True, "initialized": 0, "triggered": 0, "createdJobs": 0, "skipped": "cron_task table missing"}
 
     for row in cron_rows:
         cron_task_id = _normalize_text(row.get("id"))

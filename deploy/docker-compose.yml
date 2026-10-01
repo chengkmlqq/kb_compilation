@@ -123,9 +123,14 @@ services:
     container_name: kb-flower
     restart: unless-stopped
     command:
-      - sh
-      - -lc
-      - 'celery -A worker.celery_app flower --address=0.0.0.0 --port=5555 --persistent=False --basic_auth="$${FLOWER_BASIC_AUTH:?FLOWER_BASIC_AUTH is required}"'
+      - celery
+      - -A
+      - worker.celery_app
+      - flower
+      - --address=0.0.0.0
+      - --port=5555
+      - --persistent=False
+      - --basic_auth=${FLOWER_BASIC_AUTH}
     <<: *api-env
     environment:
       FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH}
