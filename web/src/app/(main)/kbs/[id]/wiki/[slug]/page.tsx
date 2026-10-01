@@ -58,7 +58,7 @@ export default function WikiPageDetailPage() {
           key={link.slug}
           color={TYPE_COLOR[link.page_type] || "default"}
           style={{ cursor: "pointer" }}
-          onClick={() => router.push(`/kbs/${id}/wiki/${encodeURIComponent(link.slug)}`)}
+          onClick={() => router.push(`/kbs/${id}/wiki/${link.slug}`)}
         >
           {link.title}
         </Tag>

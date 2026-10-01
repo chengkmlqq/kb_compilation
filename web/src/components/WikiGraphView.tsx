@@ -142,7 +142,7 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
   };
 
   const goWikiPage = (slug: string) => {
-    router.push(`/kbs/${kbId}/wiki/${encodeURIComponent(slug)}`);
+    router.push(`/kbs/${kbId}/wiki/${slug}`);
   };
 
   // ---- SVG 渲染（力导向模拟）----
