@@ -325,3 +325,100 @@ export function apiListOperationLogs(page = 1, pageSize = 20, keyword = "") {
   if (keyword) params.set("keyword", keyword);
   return request<PageList<SysLogItem>>(`/api/v1/system/operation-logs?${params.toString()}`);
 }
+
+// ---------------------------------------------------------------------------
+// 模型配置 (system/model-config)
+// ---------------------------------------------------------------------------
+
+export interface ModelConfigItem {
+  code: string;
+  label: string;
+  description: string;
+  value: string;
+  sensitive: boolean;
+  source: "db" | "env";
+}
+
+export function apiGetModelConfig() {
+  return request<{ items: ModelConfigItem[] }>("/api/v1/system/model-config");
+}
+
+export function apiSaveModelConfig(items: { code: string; value: string | null }[]) {
+  return request("/api/v1/system/model-config", {
+    method: "PUT",
+    body: JSON.stringify({ items }),
+  });
+}
+
+export function apiTestModelEndpoint(payload: { base_url: string; api_key: string; model: string }) {
+  return request<{ ok: boolean; kind?: string; models?: string[]; model_matches?: boolean; error?: string }>(
+    "/api/v1/system/model-config/test",
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MCP 服务器管理 (system/mcp-servers, 代理 agent-gateway)
+// ---------------------------------------------------------------------------
+
+export interface McpServerItem {
+  name: string;
+  type?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  [k: string]: unknown;
+}
+
+export function apiListMcpServers() {
+  return request<{ data: McpServerItem[]; source?: string; count?: number }>("/api/v1/system/mcp-servers");
+}
+
+export function apiSaveMcpServers(servers: McpServerItem[], verify = false, force = false) {
+  return request(`/api/v1/system/mcp-servers${verify ? "?verify=true" : ""}${force ? (verify ? "&force=true" : "?force=true") : ""}`, {
+    method: "PUT",
+    body: JSON.stringify({ servers, verify, force }),
+  });
+}
+
+export function apiTestMcpServer(item: McpServerItem) {
+  return request<{ ok?: boolean; tool_count?: number; name?: string; error?: string }>("/api/v1/system/mcp-servers/test", {
+    method: "POST",
+    body: JSON.stringify(item),
+  });
+}
+
+export function apiDeleteMcpServer(name: string) {
+  return request(`/api/v1/system/mcp-servers/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------------------
+// 技能管理 (system/skills, 代理 agent-gateway)
+// ---------------------------------------------------------------------------
+
+export interface SkillItem {
+  name: string;
+  description?: string;
+  scripts?: string[];
+  [k: string]: unknown;
+}
+
+export function apiListSkills() {
+  return request<{ data: SkillItem[] }>("/api/v1/system/skills");
+}
+
+export function apiInstallSkill(file: File, name?: string) {
+  const form = new FormData();
+  form.append("file", file);
+  if (name) form.append("name", name);
+  return request("/api/v1/system/skills/install", { method: "POST", body: form });
+}
+
+export function apiGetSkillDetail(name: string) {
+  return request<{ name?: string; description?: string; content?: string; files?: string[] }>(
+    `/api/v1/system/skills/${encodeURIComponent(name)}`,
+  );
+}
+
+export function apiDeleteSkill(name: string) {
+  return request(`/api/v1/system/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
+}

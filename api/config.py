@@ -71,6 +71,8 @@ class Settings:
     # In docker-compose the worker reaches it via host.docker.internal:8080
     # (gateway binds host 8080 -> container 8080).
     AGENT_GATEWAY_BASE_URL: str = os.getenv("AGENT_GATEWAY_BASE_URL", "http://127.0.0.1:8080")
+    # Admin token for the gateway's management APIs (MCP/skills). Empty = no token.
+    AGENT_GATEWAY_ADMIN_TOKEN: str = os.getenv("AGENT_GATEWAY_ADMIN_TOKEN", "")
     # Global wait budget for a single gateway task (a full skill run takes
     # 10-25 min; mirrors the gateway's SKILL_SCRIPT_TIMEOUT_S=3600).
     AGENT_GATEWAY_TIMEOUT_S: int = int(os.getenv("AGENT_GATEWAY_TIMEOUT_S", "3600"))

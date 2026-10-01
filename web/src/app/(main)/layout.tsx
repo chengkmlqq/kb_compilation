@@ -10,6 +10,7 @@ import {
   LogoutOutlined,
   RobotOutlined,
   SettingOutlined,
+  CloudServerOutlined,
 } from "@ant-design/icons";
 import { usePathname, useRouter } from "next/navigation";
 import { apiMe } from "@/lib/api";
@@ -22,6 +23,7 @@ const MENU_ITEMS = [
   { key: "/agents", icon: <RobotOutlined />, label: "智能体配置" },
   { key: "/datasources", icon: <DatabaseOutlined />, label: "数据源" },
   { key: "/wiki", icon: <BookOutlined />, label: "Wiki 总览" },
+  { key: "/models", icon: <CloudServerOutlined />, label: "模型配置" },
   { key: "/system", icon: <SettingOutlined />, label: "系统管理" },
 ];
 

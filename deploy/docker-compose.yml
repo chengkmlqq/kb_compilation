@@ -33,6 +33,7 @@ x-api-env: &api-env
     # agent-gateway (host-bound :8080). The worker reaches it through
     # host.docker.internal (see celery-worker extra_hosts).
     AGENT_GATEWAY_BASE_URL: ${AGENT_GATEWAY_BASE_URL:-http://host.docker.internal:8080}
+    AGENT_GATEWAY_ADMIN_TOKEN: ${AGENT_GATEWAY_ADMIN_TOKEN:-}
     AGENT_GATEWAY_TIMEOUT_S: ${AGENT_GATEWAY_TIMEOUT_S:-3600}
     AGENT_GATEWAY_POLL_INTERVAL_S: ${AGENT_GATEWAY_POLL_INTERVAL_S:-15}
 
