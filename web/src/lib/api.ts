@@ -224,7 +224,16 @@ export function apiWikiGraph(
 }
 
 export function apiWikiPage(kbId: string, slug: string) {
-  return request<WikiPageDetail>(`/api/v1/kbs/${kbId}/wiki/pages/${encodeURIComponent(slug)}`);
+  // Next 16 客户端导航(router.push)时 useParams 返回未解码的编码串，
+  // 硬导航时返回解码中文 —— 先 decode 再 encode 幂等兼容两种输入
+  // （纯中文无 % 序列时 decodeURIComponent 原样返回，不抛错）。
+  let s = slug;
+  try {
+    s = decodeURIComponent(slug);
+  } catch {
+    // 仅当含非法 % 序列时进入（中文 slug 不会），保持原样
+  }
+  return request<WikiPageDetail>(`/api/v1/kbs/${kbId}/wiki/pages/${encodeURIComponent(s)}`);
 }
 
 // ---- search ----
