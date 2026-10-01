@@ -56,6 +56,8 @@ class KbDatasource(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     label: Mapped[str | None] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text)
+    # 三级权限：personal(owner_user_id) / team(team_name) / system(仅管理员)
+    scope: Mapped[str | None] = mapped_column(String(16), default="system", index=True)
     # team-level ownership (team_name from the framework store)
     team_name: Mapped[str | None] = mapped_column(String(64), index=True)
     owner_user_id: Mapped[str | None] = mapped_column(String(64))

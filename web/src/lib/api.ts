@@ -75,6 +75,9 @@ export interface KbItem {
   name: string;
   label?: string | null;
   description?: string | null;
+  scope?: string;
+  team_name?: string;
+  owner_user_id?: string;
   indexing_strategy?: Record<string, boolean>;
   doc_count?: number;
   page_count?: number;
@@ -88,14 +91,21 @@ export interface PageList<T> {
   pageSize: number;
 }
 
-export function apiListKbs(page = 1, pageSize = 20, keyword = "") {
+export function apiListKbs(page = 1, pageSize = 20, keyword = "", scope?: string) {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (keyword) params.set("keyword", keyword);
+  if (scope) params.set("scope", scope);
   return request<PageList<KbItem>>(`/api/v1/kbs?${params.toString()}`);
 }
 
-export function apiCreateKb(payload: { name: string; label?: string; description?: string }) {
-  return request<{ id: string }>("/api/v1/kbs", {
+export function apiCreateKb(payload: {
+  name: string;
+  label?: string;
+  description?: string;
+  scope?: string;
+  team_name?: string;
+}) {
+  return request<{ id: string; scope?: string }>("/api/v1/kbs", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -582,6 +592,82 @@ export function apiGetSkillDetail(name: string) {
 
 export function apiDeleteSkill(name: string) {
   return request(`/api/v1/system/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+// -----------------------------------------------------------------------------
+// 分级 MCP / 技能注册表 (/mcps, /skills) —— personal / team / system 三级
+// -----------------------------------------------------------------------------
+
+export interface McpRegistryItem {
+  id: string;
+  scope: ModelScope;
+  name: string;
+  type: string;
+  url: string;
+  headers: Record<string, string>;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  owner_user_id: string;
+  owner_team_name: string;
+  enabled: boolean;
+  state: string;
+}
+
+export interface SkillRegistryItem {
+  id: string;
+  scope: ModelScope;
+  name: string;
+  description: string;
+  version: string;
+  package_size: number;
+  owner_user_id: string;
+  owner_team_name: string;
+  state: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export function apiListMcps(scope?: string) {
+  const qs = scope ? `?scope=${scope}` : "";
+  return request<{ items: McpRegistryItem[]; is_admin: boolean }>(`/api/v1/mcps${qs}`);
+}
+
+export function apiCreateMcp(payload: Record<string, unknown>) {
+  return request<{ item: McpRegistryItem }>("/api/v1/mcps", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateMcp(id: string, payload: Record<string, unknown>) {
+  return request<{ item: McpRegistryItem }>(`/api/v1/mcps/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiDeleteMcp(id: string) {
+  return request<{ deleted: boolean }>(`/api/v1/mcps/${id}`, { method: "DELETE" });
+}
+
+export function apiListSkillsRegistry(scope?: string) {
+  const qs = scope ? `?scope=${scope}` : "";
+  return request<{ items: SkillRegistryItem[]; is_admin: boolean }>(`/api/v1/skills${qs}`);
+}
+
+export function apiInstallSkillRegistry(file: File, scope: string) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("scope", scope);
+  return request<{ item: SkillRegistryItem }>("/api/v1/skills/install", {
+    method: "POST",
+    body: form,
+  });
+}
+
+export function apiDeleteSkillRegistry(id: string) {
+  return request<{ deleted: boolean }>(`/api/v1/skills/${id}`, { method: "DELETE" });
 }
 
 // ---------------------------------------------------------------------------

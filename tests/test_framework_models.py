@@ -84,8 +84,14 @@ MODEL_TABLES = {
     "kb_model",
 }
 
+# Scoped MCP / skill registry (kb_mcp_server / kb_skill) — framework store.
+MCP_SKILL_TABLES = {
+    "kb_mcp_server",
+    "kb_skill",
+}
+
 # Everything expected on the framework base.
-EXPECTED_TABLES = FRAMEWORK_TABLES | KNOWLEDGE_BUSINESS_TABLES | CHAT_TABLES | MODEL_TABLES
+EXPECTED_TABLES = FRAMEWORK_TABLES | KNOWLEDGE_BUSINESS_TABLES | CHAT_TABLES | MODEL_TABLES | MCP_SKILL_TABLES
 
 # Legacy business tables (data-synthesis domain) that MUST NOT be present
 # after extraction. Names are the REAL table names in the source DB — they

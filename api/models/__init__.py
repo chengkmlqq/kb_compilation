@@ -10,5 +10,6 @@ from api.models.framework import *  # noqa: F401,F403
 from api.models import knowledge  # noqa: F401  (registers knowledge models)
 from api.models import chat_session  # noqa: F401  (registers chat session/message models)
 from api.models import model  # noqa: F401  (registers scoped model registry kb_model)
+from api.models import mcp_skill  # noqa: F401  (registers kb_mcp_server / kb_skill)
 
-__all__ = ["framework", "knowledge", "chat_session", "model"]
+__all__ = ["framework", "knowledge", "chat_session", "model", "mcp_skill"]

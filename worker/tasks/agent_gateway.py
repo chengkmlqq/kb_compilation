@@ -134,8 +134,52 @@ def _handle_agent_gateway(job_id: str, task_params: str | None) -> dict:
     if instructions:
         payload["instructions"] = instructions
     config = params.get("config")
-    if isinstance(config, dict):
-        payload["config"] = config
+    if not isinstance(config, dict):
+        config = {}
+
+    # 1A/2A（2026-10-01）：技能与 MCP 配置数据在 kb_compilation（本地注册表），
+    # 网关是无状态执行器——任务提交时把载荷随 config 下发：
+    #   - skill_zip_base64: 技能 ZIP（base64），网关临时解压执行完即删
+    #   - mcp_servers:      可见的启用 MCP 配置（解密密钥），网关任务级构建
+    # 无用户上下文的后台任务解析系统级默认（管理员配置）。
+    try:
+        from api.db import get_sessionmaker
+        from api.services.mcps import resolve_task_mcp_servers
+        from api.services.skills import get_skill_package, list_skills
+
+        with get_sessionmaker()() as db:
+            skill_name = _first_str(config, "skill")
+            if skill_name:
+                # 后台任务无用户上下文：技能/MCP 均解析系统级（管理员配置）
+                skill_item = next(
+                    (
+                        s
+                        for s in list_skills(db, caller_user_id="", caller_team_name="", is_sys_admin=True)
+                        if s["name"] == skill_name
+                    ),
+                    None,
+                )
+                if skill_item:
+                    row = get_skill_package(db, skill_item["id"])
+                    if row and row.package_zip:
+                        import base64
+
+                        config["skill_zip_base64"] = base64.b64encode(
+                            bytes(row.package_zip)
+                        ).decode("ascii")
+                        config["skill"] = skill_item["name"]
+            mcps = resolve_task_mcp_servers(
+                db,
+                caller_user_id=str(params.get("userId") or ""),
+                caller_team_name=str(params.get("teamName") or ""),
+                is_sys_admin=True,  # 后台任务：解析系统级启用 MCP（管理员配置）
+            )
+            if mcps:
+                config["mcp_servers"] = mcps
+    except Exception as e:  # noqa: BLE001
+        logger.warning("failed to attach task-level skill/mcp payload: %s", e)
+
+    payload["config"] = config
 
     result: dict[str, Any] = {"success": False, "job_id": job_id}
     with httpx.Client(timeout=_HTTP_REQUEST_TIMEOUT_S) as client:

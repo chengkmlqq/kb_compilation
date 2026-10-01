@@ -107,18 +107,9 @@ def get_kbs(
     }
 
 
-class KBCreateRequest2(BaseModel):
-    name: str = Field(..., min_length=1, max_length=255)
-    label: str | None = None
-    description: str | None = None
-    indexing_strategy: dict | None = None
-    scope: str = "system"
-    team_name: str | None = None
-
-
 @router.post("")
 def post_kb(
-    req: KBCreateRequest2,
+    req: KBCreateRequest,
     db: Session = Depends(get_db),
     x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
 ) -> dict:

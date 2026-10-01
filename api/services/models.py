@@ -61,39 +61,20 @@ PROVIDER_LABELS: dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
-# Admin / team helpers
+# Admin / team helpers (delegated to api.services.scope — single source of truth)
 # ---------------------------------------------------------------------------
 
 
 def is_admin(db: Session, user_id: str) -> bool:
-    """A user is an administrator if any bound role is named 'admin' or has
-    role_type 'system' (modo_user_role_rela), or their team membership
-    carries an 'admin' role_name (modo_team_member)."""
-    user_id = (user_id or "").strip()
-    if not user_id:
-        return False
-    role_ids = list(
-        db.execute(select(UserRoleRela.role_id).where(UserRoleRela.user_id == user_id)).scalars()
-    )
-    if role_ids:
-        rows = db.execute(
-            select(UserRole.role_name, UserRole.role_type).where(UserRole.role_id.in_(role_ids))
-        ).all()
-        if any(
-            (name or "").strip().lower() == "admin" or (rtype or "").strip().lower() == "system"
-            for name, rtype in rows
-        ):
-            return True
-    member_role = (
-        db.execute(
-            select(TeamMember.role_name).where(
-                and_(TeamMember.user_id == user_id, TeamMember.state == "1")
-            )
-        )
-        .scalars()
-        .first()
-    )
-    return bool(member_role and member_role.strip().lower() == "admin")
+    from api.services.scope import is_admin as _is_admin
+
+    return _is_admin(db, user_id)
+
+
+def caller_context(db: Session, user_id: str) -> dict:
+    from api.services.scope import caller_context as _caller_context
+
+    return _caller_context(db, user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -501,23 +482,6 @@ def resolve_model_config(
         "dimension": m.dimension,
         "model_id": m.id,
         "scope": m.scope,
-    }
-
-
-def caller_context(db: Session, user_id: str) -> dict:
-    """Convenience: (user_id, team_name, is_admin) for a resolved identity
-    user_id (team_name from the identity cookie is preferred by callers, but
-    this fallback resolves the user's default team when only user_id is
-    available — e.g. service-layer callers)."""
-    team_name = ""
-    if user_id:
-        user = db.execute(select(User).where(User.user_id == user_id)).scalars().first()
-        if user and user.default_team:
-            team_name = user.default_team or ""
-    return {
-        "user_id": user_id or "",
-        "team_name": team_name or "",
-        "is_admin": is_admin(db, user_id),
     }
 
 
