@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { App, Button, Card, Form, Input, Typography } from "antd";
+import { Button, Card, Form, Input, Typography, message } from "antd";
 import { useRouter } from "next/navigation";
 import { apiLogin } from "@/lib/api";
 
@@ -11,7 +11,6 @@ interface LoginValues {
 }
 
 export default function LoginPage() {
-  const { message } = App.useApp();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
 
