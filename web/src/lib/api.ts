@@ -365,6 +365,122 @@ export interface ModelTestResult {
   error?: string;
 }
 
+// -----------------------------------------------------------------------------
+// 分级模型注册表 (/models) —— personal / team / system 三级
+// -----------------------------------------------------------------------------
+
+export type ModelScope = "personal" | "team" | "system";
+export type ModelType = "chat" | "embedding";
+
+export interface ModelItem {
+  id: string;
+  scope: ModelScope;
+  name: string;
+  display_name: string;
+  type: ModelType;
+  source: string;
+  provider: string;
+  description: string;
+  base_url: string;
+  interface_type: string;
+  dimension: number | null;
+  supports_vision: boolean;
+  custom_headers: Record<string, string>;
+  owner_user_id: string;
+  owner_team_name: string;
+  is_default: boolean;
+  status: string;
+  api_key_masked: string;
+  api_key_configured: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ModelProvider {
+  value: string;
+  label: string;
+  modelTypes: string[];
+  defaultUrls: Record<string, string>;
+}
+
+export interface ModelDebugResult {
+  ok?: boolean;
+  kind?: string;
+  text?: string;
+  dimension?: number;
+  error?: string;
+}
+
+export function apiListModels(params?: { type?: string; scope?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.type) qs.set("type", params.type);
+  if (params?.scope) qs.set("scope", params.scope);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request<{ items: ModelItem[]; is_admin: boolean }>(`/api/v1/models${suffix}`);
+}
+
+export function apiListModelProviders() {
+  return request<{ items: ModelProvider[] }>("/api/v1/models/providers");
+}
+
+export function apiGetModel(id: string) {
+  return request<{ item: ModelItem }>(`/api/v1/models/${id}`);
+}
+
+export interface ModelPayload {
+  scope: ModelScope;
+  name: string;
+  display_name?: string | null;
+  type: ModelType;
+  source?: string;
+  provider?: string | null;
+  description?: string | null;
+  base_url?: string | null;
+  api_key?: string | null;
+  interface_type?: string | null;
+  dimension?: number | null;
+  supports_vision?: boolean;
+  custom_headers?: Record<string, string> | null;
+  owner_team_name?: string | null;
+  is_default?: boolean;
+}
+
+export function apiCreateModel(payload: ModelPayload) {
+  return request<{ item: ModelItem }>("/api/v1/models", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateModel(id: string, payload: Partial<ModelPayload>) {
+  return request<{ item: ModelItem }>(`/api/v1/models/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiDeleteModel(id: string) {
+  return request<{ deleted: boolean }>(`/api/v1/models/${id}`, { method: "DELETE" });
+}
+
+export function apiSetModelDefault(id: string) {
+  return request<{ item: ModelItem }>(`/api/v1/models/${id}/default`, { method: "POST" });
+}
+
+export function apiTestModel(payload: { base_url: string; api_key: string; model: string }) {
+  return request<ModelTestResult>("/api/v1/models/test", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiDebugModel(id: string, payload: { input: string; model?: string }) {
+  return request<ModelDebugResult>(`/api/v1/models/${id}/debug`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // MCP 服务器管理 (system/mcp-servers, 代理 agent-gateway)
 // ---------------------------------------------------------------------------

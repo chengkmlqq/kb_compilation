@@ -37,10 +37,41 @@ class EmbeddingConfig:
     batch_size: int = DEFAULT_BATCH_SIZE
 
 
-def load_embedding_config(db: Session | None = None) -> EmbeddingConfig:
-    """Resolve embedding config: DB (SYSTEM_CONFIG) wins over env, like the
-    source platform's runtime-config precedence."""
+def load_embedding_config(
+    db: Session | None = None,
+    *,
+    user_id: str = "",
+    team_name: str = "",
+    is_sys_admin: bool = False,
+) -> EmbeddingConfig:
+    """Resolve embedding config with scoped model priority: scoped model
+    registry default (personal > team > system), then legacy DB (SYSTEM_CONFIG)
+    wins over env, like the source platform's runtime-config precedence.
+    Consumers with no user context resolve the system default first."""
     settings = get_settings()
+
+    if db is not None:
+        try:
+            from api.services.models import resolve_model_config
+
+            resolved = resolve_model_config(
+                db,
+                "embedding",
+                caller_user_id=user_id or "",
+                caller_team_name=team_name or "",
+                is_sys_admin=is_sys_admin,
+            )
+            if resolved and resolved.get("base_url"):
+                return EmbeddingConfig(
+                    base_url=resolved["base_url"],
+                    api_key=resolved.get("api_key") or "",
+                    model=resolved.get("model") or "",
+                    dim=int(resolved.get("dimension") or settings.EMBEDDING_DIM),
+                )
+        except Exception:
+            logger.warning(
+                "failed to resolve scoped embedding model; using legacy config", exc_info=True
+            )
 
     def _resolve(env_key: str, db_codes: list[str], fallback: str = "") -> str:
         if db is None:
@@ -137,20 +168,41 @@ class EmbeddingClient:
 
 
 _client_lock = threading.Lock()
-_client: EmbeddingClient | None = None
+_clients: dict[tuple, EmbeddingClient] = {}
 
 
-def get_embedding_client(db: Session | None = None) -> EmbeddingClient:
-    """Process-wide client singleton (config resolved on first use)."""
-    global _client
+def get_embedding_client(
+    db: Session | None = None,
+    *,
+    user_id: str = "",
+    team_name: str = "",
+    is_sys_admin: bool = False,
+) -> EmbeddingClient:
+    """Process-wide client cache keyed by resolution context.
+
+    Scoped model configs (personal/team/system) can resolve different
+    endpoints per caller, so the cache key is (user_id, team_name,
+    is_sys_admin) instead of a single global client. Reset after config
+    changes via reset_embedding_client()."""
+    global _clients
+    key = (user_id or "", team_name or "", bool(is_sys_admin))
     with _client_lock:
-        if _client is None:
-            _client = EmbeddingClient(load_embedding_config(db))
-        return _client
+        client = _clients.get(key)
+        if client is None:
+            cfg = load_embedding_config(
+                db,
+                user_id=user_id or "",
+                team_name=team_name or "",
+                is_sys_admin=is_sys_admin,
+            )
+            client = EmbeddingClient(cfg)
+            _clients = dict(_clients)
+            _clients[key] = client
+        return client
 
 
 def reset_embedding_client() -> None:
-    """Clear the cached client (after config changes / in tests)."""
-    global _client
+    """Clear the cached clients (after config changes / in tests)."""
+    global _clients
     with _client_lock:
-        _client = None
+        _clients = {}
