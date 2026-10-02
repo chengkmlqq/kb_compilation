@@ -98,6 +98,18 @@ def test_wiki_page_crud(db: Session) -> None:
     assert deleted.status == "archived"
 
 
+def test_wiki_delete_page_cleans_links(db: Session) -> None:
+    kb = "kb-del-links"
+    _make_page(db, kb, "a", "甲", content="引用[[b]]")
+    _make_page(db, kb, "b", "乙", content="被[[a]]引用")
+    kb_admin.wiki_rebuild_links(db, kb)
+    assert db.query(WikiLink).filter(WikiLink.kb_id == kb).count() == 2
+
+    kb_admin.wiki_delete_page(db, kb, "a")
+    # 删除 a 后其出入链应全部清理
+    assert db.query(WikiLink).filter(WikiLink.kb_id == kb).count() == 0
+
+
 def test_wiki_folder_crud(db: Session) -> None:
     kb = "kb-folder"
     f = kb_admin.wiki_create_folder(db, kb, {"name": "根目录"}, "u1")

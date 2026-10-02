@@ -628,13 +628,25 @@ def wiki_update_page(db: Session, kb_id: str, slug: str, data: dict) -> dict:
 
 
 def wiki_delete_page(db: Session, kb_id: str, slug: str) -> dict:
-    """删除 wiki 页面（软删：status=archived，保留数据便于恢复）。"""
+    """删除 wiki 页面（软删：status=archived，保留数据便于恢复）。
+
+    同时清理该页全部出入链（避免孤儿链接指向已归档页）。
+    """
     page = db.execute(
         select(WikiPage).where(WikiPage.kb_id == kb_id, WikiPage.slug == slug)
     ).scalars().first()
     if not page:
         raise ValueError(f"wiki 页不存在: {slug}")
     page.status = "archived"
+    # 清理关联链接：以该页为端点（出/入）的全部 wiki_link
+    from sqlalchemy import delete as sa_delete
+
+    db.execute(
+        sa_delete(WikiLink).where(
+            WikiLink.kb_id == kb_id,
+            (WikiLink.from_page_id == page.id) | (WikiLink.to_page_id == page.id),
+        )
+    )
     db.commit()
     return {"deleted": True, "slug": slug}
 
