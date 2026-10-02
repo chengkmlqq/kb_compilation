@@ -131,6 +131,50 @@ def test_wiki_search(db: Session) -> None:
     assert r4["total"] == 0
 
 
+def test_wiki_logs_and_feedback(db: Session) -> None:
+    kb = "kb-logfb"
+    # 建页触发日志
+    kb_admin.wiki_create_page(db, kb, {"title": "日志页", "content": "内容"}, "u1")
+    logs = kb_admin.wiki_list_logs(db, kb)
+    assert logs["total"] == 1
+    assert logs["items"][0]["action"] == "page_create"
+    assert logs["items"][0]["slug"] == "日志页"
+
+    # 更新触发日志
+    kb_admin.wiki_update_page(db, kb, "日志页", {"title": "改名"})
+    logs2 = kb_admin.wiki_list_logs(db, kb)
+    assert logs2["total"] == 2
+    assert any(it["action"] == "page_update" for it in logs2["items"])
+
+    # 反馈
+    fb = kb_admin.wiki_submit_feedback(db, kb, "日志页", "u1", "issue", "内容有误")
+    assert fb["status"] == "open"
+    fblist = kb_admin.wiki_list_feedback(db, kb, slug="日志页")
+    assert fblist["total"] == 1
+    assert fblist["items"][0]["feedback_type"] == "issue"
+
+    # 更新反馈状态
+    kb_admin.wiki_update_feedback_status(db, kb, fb["id"], "resolved")
+    fblist2 = kb_admin.wiki_list_feedback(db, kb, slug="日志页")
+    assert fblist2["items"][0]["status"] == "resolved"
+
+
+def test_wiki_index(db: Session) -> None:
+    kb = "kb-index"
+    f = kb_admin.wiki_create_folder(db, kb, {"name": "目录A"}, "u1")
+    kb_admin.wiki_create_page(db, kb, {"title": "页1", "content": "内容", "folder_id": f["id"]}, "u1")
+    kb_admin.wiki_create_page(db, kb, {"title": "页2", "content": "内容"}, "u1")
+
+    idx = kb_admin.wiki_index(db, kb)
+    assert idx["total_pages"] == 2
+    assert idx["total_folders"] == 1
+    assert len(idx["folder_tree"]) == 1
+    assert idx["folder_tree"][0]["name"] == "目录A"
+    assert idx["pages_by_type"].get("entity") == 2
+    assert len(idx["recent_pages"]) == 2
+    assert any(r["slug"] == "页1" and r["folder_id"] == f["id"] for r in idx["recent_pages"])
+
+
 def test_wiki_folder_crud(db: Session) -> None:
     kb = "kb-folder"
     f = kb_admin.wiki_create_folder(db, kb, {"name": "根目录"}, "u1")

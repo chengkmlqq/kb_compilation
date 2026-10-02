@@ -43,13 +43,18 @@ from api.services.kb_admin import (
     wiki_delete_folder,
     wiki_delete_page,
     wiki_graph,
+    wiki_index,
     wiki_lint,
+    wiki_list_feedback,
+    wiki_list_logs,
     wiki_rebuild_links,
     wiki_search,
     wiki_stats,
+    wiki_submit_feedback,
     wiki_tree,
     wiki_update_folder,
     wiki_update_page,
+    wiki_update_feedback_status,
 )
 from api.services.kb_admin import _remove_local_file  # noqa: PLC2701 (same package helper)
 
@@ -111,6 +116,15 @@ class WikiFolderCreate(BaseModel):
 class WikiFolderUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     parent_id: str | None = Field(default=None)
+
+
+class WikiFeedbackCreate(BaseModel):
+    feedback_type: str = Field(default="issue", pattern="^(helpful|issue)$")
+    content: str = Field(default="", max_length=2000)
+
+
+class WikiFeedbackStatusUpdate(BaseModel):
+    status: str = Field(..., pattern="^(open|resolved|ignored)$")
 
 
 @router.get("")
@@ -520,6 +534,67 @@ def search_wiki(
     if not get_kb(db, kb_id):
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
     return {"success": True, "data": wiki_search(db, kb_id, q, limit)}
+
+
+@router.get("/{kb_id}/wiki/logs")
+def get_wiki_logs(kb_id: str, db: Session = Depends(get_db)) -> dict:
+    """Wiki 操作日志（倒序）。"""
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    return {"success": True, "data": wiki_list_logs(db, kb_id)}
+
+
+@router.get("/{kb_id}/wiki/index")
+def get_wiki_index(kb_id: str, db: Session = Depends(get_db)) -> dict:
+    """Wiki 索引：目录树 + 类型统计 + 最近更新。"""
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    return {"success": True, "data": wiki_index(db, kb_id)}
+
+
+@router.post("/{kb_id}/wiki/pages/{slug}/feedback")
+def submit_wiki_feedback(
+    kb_id: str,
+    slug: str,
+    req: WikiFeedbackCreate,
+    user_id: str = Depends(_require_wiki_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """提交页面反馈（helpful=有帮助 / issue=问题上报）。"""
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    data = wiki_submit_feedback(
+        db, kb_id, slug, user_id, req.feedback_type, req.content
+    )
+    return {"success": True, "data": data}
+
+
+@router.get("/{kb_id}/wiki/pages/{slug}/feedback")
+def list_wiki_feedback(
+    kb_id: str,
+    slug: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    """某页面的反馈列表（倒序）。"""
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    return {"success": True, "data": wiki_list_feedback(db, kb_id, slug=slug)}
+
+
+@router.put("/{kb_id}/wiki/feedback/{feedback_id}/status")
+def update_wiki_feedback_status(
+    kb_id: str,
+    feedback_id: str,
+    req: WikiFeedbackStatusUpdate,
+    user_id: str = Depends(_require_wiki_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """更新反馈状态（open/resolved/ignored）。"""
+    try:
+        data = wiki_update_feedback_status(db, kb_id, feedback_id, req.status)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"success": True, "data": data}
 
 
 @router.post("/{kb_id}/search")

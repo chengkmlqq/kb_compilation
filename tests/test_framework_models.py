@@ -64,6 +64,8 @@ KNOWLEDGE_BUSINESS_TABLES = {
     "wiki_folder",
     "wiki_page",
     "wiki_link",
+    "wiki_operation_log",
+    "wiki_feedback",
     "kb_agent",
 }
 

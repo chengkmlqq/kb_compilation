@@ -26,8 +26,10 @@ from api.models.knowledge import (
     DocChunk,
     KbDatasource,
     KbDocument,
+    WikiFeedback,
     WikiFolder,
     WikiLink,
+    WikiOperationLog,
     WikiPage,
 )
 from api.services.retrieval import ChunkHit, hybrid_search
@@ -571,6 +573,161 @@ def wiki_search(db: Session, kb_id: str, query: str, limit: int = 20) -> dict:
     return {"query": q, "total": len(items), "items": items}
 
 
+def wiki_log_action(
+    db: Session,
+    kb_id: str,
+    action: str,
+    slug: str = "",
+    title: str = "",
+    detail: str = "",
+    operator: str = "",
+) -> None:
+    """记录一条 wiki 操作日志（页面/目录 CRUD、链接重建等）。"""
+    db.add(
+        WikiOperationLog(
+            id=uuid.uuid4().hex,
+            kb_id=kb_id,
+            action=action,
+            slug=slug,
+            title=title,
+            detail=detail,
+            operator=operator,
+        )
+    )
+
+
+def wiki_list_logs(db: Session, kb_id: str, limit: int = 100) -> dict:
+    """Wiki 操作日志（倒序，最近 limit 条）。"""
+    rows = (
+        db.execute(
+            select(WikiOperationLog)
+            .where(WikiOperationLog.kb_id == kb_id)
+            .order_by(WikiOperationLog.created_at.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "kb_id": kb_id,
+        "total": len(rows),
+        "items": [
+            {
+                "id": r.id,
+                "action": r.action,
+                "slug": r.slug,
+                "title": r.title,
+                "detail": r.detail,
+                "operator": r.operator,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }
+
+
+def wiki_submit_feedback(
+    db: Session, kb_id: str, slug: str, user_id: str, feedback_type: str, content: str
+) -> dict:
+    """提交页面反馈（helpful=有帮助 / issue=问题上报）。"""
+    fb = WikiFeedback(
+        id=uuid.uuid4().hex,
+        kb_id=kb_id,
+        slug=slug,
+        user_id=user_id,
+        feedback_type=feedback_type,
+        content=content,
+        status="open",
+    )
+    db.add(fb)
+    db.commit()
+    return {"id": fb.id, "feedback_type": fb.feedback_type, "status": fb.status}
+
+
+def wiki_list_feedback(db: Session, kb_id: str, slug: str = "", limit: int = 100) -> dict:
+    """页面反馈列表（可选按 slug 过滤，倒序）。"""
+    stmt = select(WikiFeedback).where(WikiFeedback.kb_id == kb_id)
+    if slug:
+        stmt = stmt.where(WikiFeedback.slug == slug)
+    rows = (
+        db.execute(stmt.order_by(WikiFeedback.created_at.desc()).limit(limit))
+        .scalars()
+        .all()
+    )
+    return {
+        "kb_id": kb_id,
+        "total": len(rows),
+        "items": [
+            {
+                "id": r.id,
+                "slug": r.slug,
+                "user_id": r.user_id,
+                "feedback_type": r.feedback_type,
+                "content": r.content,
+                "status": r.status,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }
+
+
+def wiki_update_feedback_status(
+    db: Session, kb_id: str, feedback_id: str, status: str
+) -> dict:
+    """更新反馈状态（open/resolved/ignored）。"""
+    fb = db.execute(
+        select(WikiFeedback).where(
+            WikiFeedback.kb_id == kb_id, WikiFeedback.id == feedback_id
+        )
+    ).scalars().first()
+    if not fb:
+        raise ValueError(f"反馈不存在: {feedback_id}")
+    fb.status = status
+    db.commit()
+    return {"id": fb.id, "status": fb.status}
+
+
+def wiki_index(db: Session, kb_id: str) -> dict:
+    """Wiki 索引：目录树 + 页面按类型统计 + 最近更新列表。"""
+    folders = db.execute(
+        select(WikiFolder).where(WikiFolder.kb_id == kb_id).order_by(WikiFolder.created_at)
+    ).scalars().all()
+    pages = db.execute(
+        select(WikiPage)
+        .where(WikiPage.kb_id == kb_id, WikiPage.status == "active")
+        .order_by(WikiPage.created_at.desc())
+    ).scalars().all()
+
+    by_type: dict[str, int] = {}
+    for p in pages:
+        by_type[p.page_type or "other"] = by_type.get(p.page_type or "other", 0) + 1
+
+    recent = [
+        {
+            "slug": p.slug,
+            "title": p.title,
+            "page_type": p.page_type,
+            "folder_id": p.folder_id or "",
+            "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+        }
+        for p in pages[:30]
+    ]
+
+    folder_tree = [
+        {"id": f.id, "name": f.name, "parent_id": f.parent_id or ""} for f in folders
+    ]
+
+    return {
+        "kb_id": kb_id,
+        "folder_tree": folder_tree,
+        "pages_by_type": by_type,
+        "recent_pages": recent,
+        "total_pages": len(pages),
+        "total_folders": len(folders),
+    }
+
+
 def wiki_stats(db: Session, kb_id: str) -> dict:
     """Wiki 统计：页数（按类型）/ 目录数 / 链接数 / 孤儿页数（无入链无出链）。"""
     pages = db.execute(
@@ -629,6 +786,10 @@ def wiki_create_page(db: Session, kb_id: str, data: dict, user_id: str | None = 
         created_by=user_id,
     )
     db.add(page)
+    wiki_log_action(
+        db, kb_id, "page_create", slug=page.slug, title=page.title,
+        detail=f"page_type={page.page_type}", operator=user_id or "",
+    )
     db.commit()
     return {"id": page.id, "slug": page.slug, "title": page.title}
 
@@ -655,6 +816,10 @@ def wiki_update_page(db: Session, kb_id: str, slug: str, data: dict) -> dict:
         page.folder_id = str(data["folder_id"] or "")
     if "status" in data:
         page.status = str(data["status"] or "active")
+    wiki_log_action(
+        db, kb_id, "page_update", slug=page.slug, title=page.title,
+        detail=f"updated fields: {','.join(data.keys())}",
+    )
     db.commit()
     return {"id": page.id, "slug": page.slug}
 
@@ -679,6 +844,9 @@ def wiki_delete_page(db: Session, kb_id: str, slug: str) -> dict:
             (WikiLink.from_page_id == page.id) | (WikiLink.to_page_id == page.id),
         )
     )
+    wiki_log_action(
+        db, kb_id, "page_delete", slug=page.slug, title=page.title, detail="soft-delete",
+    )
     db.commit()
     return {"deleted": True, "slug": slug}
 
@@ -698,6 +866,9 @@ def wiki_create_folder(
         created_by=user_id,
     )
     db.add(folder)
+    wiki_log_action(
+        db, kb_id, "folder_create", title=folder.name, operator=user_id or "",
+    )
     db.commit()
     return {"id": folder.id, "name": folder.name}
 
@@ -716,6 +887,10 @@ def wiki_update_folder(db: Session, kb_id: str, folder_id: str, data: dict) -> d
         folder.name = n
     if "parent_id" in data:
         folder.parent_id = str(data["parent_id"] or "")
+    wiki_log_action(
+        db, kb_id, "folder_update", title=folder.name,
+        detail=f"updated: {','.join(data.keys())}",
+    )
     db.commit()
     return {"id": folder.id, "name": folder.name}
 
@@ -743,6 +918,10 @@ def wiki_delete_folder(db: Session, kb_id: str, folder_id: str) -> dict:
     ).scalars().all()
     for cf in child_folders:
         cf.parent_id = ""  # 子目录上移到根
+    wiki_log_action(
+        db, kb_id, "folder_delete", title=folder.name,
+        detail=f"moved up {len(child_folders)} child folders",
+    )
     db.delete(folder)
     db.commit()
     return {"deleted": True, "folder_id": folder_id}
@@ -846,6 +1025,9 @@ def wiki_rebuild_links(db: Session, kb_id: str) -> dict:
                     )
                 )
                 added += 1
+    wiki_log_action(
+        db, kb_id, "rebuild_links", detail=f"added {added} links",
+    )
     db.commit()
     return {"added_links": added}
 
@@ -872,6 +1054,12 @@ __all__ = [
     "wiki_update_folder",
     "wiki_delete_folder",
     "wiki_rebuild_links",
+    "wiki_log_action",
+    "wiki_list_logs",
+    "wiki_submit_feedback",
+    "wiki_list_feedback",
+    "wiki_update_feedback_status",
+    "wiki_index",
     "_remove_local_file",
     "slugify",
 ]

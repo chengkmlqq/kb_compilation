@@ -227,6 +227,40 @@ class WikiLink(Base):
     )
 
 
+class WikiOperationLog(Base):
+    """Wiki 操作日志：页面/目录增删改、链接重建等管理动作审计。"""
+
+    __tablename__ = "wiki_operation_log"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kb_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)  # page_create/page_update/page_delete/folder_create/...
+    slug: Mapped[str | None] = mapped_column(String(255), default="")
+    title: Mapped[str | None] = mapped_column(String(255), default="")
+    detail: Mapped[str | None] = mapped_column(Text)
+    operator: Mapped[str | None] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class WikiFeedback(Base):
+    """页面反馈：用户对 wiki 页面的评价/问题上报。"""
+
+    __tablename__ = "wiki_feedback"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kb_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    slug: Mapped[str | None] = mapped_column(String(255), default="")
+    user_id: Mapped[str | None] = mapped_column(String(64), default="")
+    feedback_type: Mapped[str] = mapped_column(String(32), default="issue")  # helpful/issue
+    content: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="open")  # open/resolved/ignored
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
 class KbAgent(Base):
     """An AI agent (QA assistant) bound to knowledge bases.
 
