@@ -539,6 +539,273 @@ def json_search(
     ]
 
 
+def wiki_stats(db: Session, kb_id: str) -> dict:
+    """Wiki 统计：页数（按类型）/ 目录数 / 链接数 / 孤儿页数（无入链无出链）。"""
+    pages = db.execute(
+        select(WikiPage).where(WikiPage.kb_id == kb_id, WikiPage.status == "active")
+    ).scalars().all()
+    folders = db.execute(
+        select(WikiFolder).where(WikiFolder.kb_id == kb_id)
+    ).scalars().all()
+    links = db.execute(
+        select(WikiLink).where(WikiLink.kb_id == kb_id)
+    ).scalars().all()
+
+    by_type: dict[str, int] = {}
+    for p in pages:
+        by_type[p.page_type or "other"] = by_type.get(p.page_type or "other", 0) + 1
+
+    linked_page_ids = {
+        pid
+        for link in links
+        for pid in (link.from_page_id, link.to_page_id)
+    }
+    orphan_count = sum(1 for p in pages if p.id not in linked_page_ids)
+
+    return {
+        "kb_id": kb_id,
+        "total_pages": len(pages),
+        "total_folders": len(folders),
+        "total_links": len(links),
+        "pages_by_type": by_type,
+        "orphan_count": orphan_count,
+    }
+
+
+def wiki_create_page(db: Session, kb_id: str, data: dict, user_id: str | None = None) -> dict:
+    """创建 wiki 页面。slug 缺省由 title 生成（保证 kb 内唯一，重复加序号）。"""
+    title = str(data.get("title") or "").strip()
+    if not title:
+        raise ValueError("title 不能为空")
+    slug = str(data.get("slug") or "").strip() or slugify(title)
+    existing = db.execute(
+        select(WikiPage).where(WikiPage.kb_id == kb_id, WikiPage.slug == slug)
+    ).scalars().first()
+    if existing:
+        raise ValueError(f"slug 已存在: {slug}")
+    page = WikiPage(
+        id=uuid.uuid4().hex,
+        kb_id=kb_id,
+        slug=slug,
+        title=title,
+        page_type=str(data.get("page_type") or "entity"),
+        content=str(data.get("content") or ""),
+        summary=data.get("summary") or None,
+        source_refs=data.get("source_refs") or [],
+        folder_id=str(data.get("folder_id") or ""),
+        status="active",
+        created_by=user_id,
+    )
+    db.add(page)
+    db.commit()
+    return {"id": page.id, "slug": page.slug, "title": page.title}
+
+
+def wiki_update_page(db: Session, kb_id: str, slug: str, data: dict) -> dict:
+    """更新 wiki 页面（标题/content/摘要/类型/目录/状态）。slug 本身不可改。"""
+    page = db.execute(
+        select(WikiPage).where(WikiPage.kb_id == kb_id, WikiPage.slug == slug)
+    ).scalars().first()
+    if not page:
+        raise ValueError(f"wiki 页不存在: {slug}")
+    if "title" in data:
+        t = str(data["title"]).strip()
+        if not t:
+            raise ValueError("title 不能为空")
+        page.title = t
+    if "content" in data:
+        page.content = str(data["content"] or "")
+    if "summary" in data:
+        page.summary = data["summary"] or None
+    if "page_type" in data:
+        page.page_type = str(data["page_type"] or "entity")
+    if "folder_id" in data:
+        page.folder_id = str(data["folder_id"] or "")
+    if "status" in data:
+        page.status = str(data["status"] or "active")
+    db.commit()
+    return {"id": page.id, "slug": page.slug}
+
+
+def wiki_delete_page(db: Session, kb_id: str, slug: str) -> dict:
+    """删除 wiki 页面（软删：status=archived，保留数据便于恢复）。"""
+    page = db.execute(
+        select(WikiPage).where(WikiPage.kb_id == kb_id, WikiPage.slug == slug)
+    ).scalars().first()
+    if not page:
+        raise ValueError(f"wiki 页不存在: {slug}")
+    page.status = "archived"
+    db.commit()
+    return {"deleted": True, "slug": slug}
+
+
+def wiki_create_folder(
+    db: Session, kb_id: str, data: dict, user_id: str | None = None
+) -> dict:
+    """创建目录。parent_id 缺省为根。"""
+    name = str(data.get("name") or "").strip()
+    if not name:
+        raise ValueError("name 不能为空")
+    folder = WikiFolder(
+        id=uuid.uuid4().hex,
+        kb_id=kb_id,
+        name=name,
+        parent_id=str(data.get("parent_id") or ""),
+        created_by=user_id,
+    )
+    db.add(folder)
+    db.commit()
+    return {"id": folder.id, "name": folder.name}
+
+
+def wiki_update_folder(db: Session, kb_id: str, folder_id: str, data: dict) -> dict:
+    """重命名 / 移动目录。"""
+    folder = db.execute(
+        select(WikiFolder).where(WikiFolder.kb_id == kb_id, WikiFolder.id == folder_id)
+    ).scalars().first()
+    if not folder:
+        raise ValueError(f"目录不存在: {folder_id}")
+    if "name" in data:
+        n = str(data["name"]).strip()
+        if not n:
+            raise ValueError("name 不能为空")
+        folder.name = n
+    if "parent_id" in data:
+        folder.parent_id = str(data["parent_id"] or "")
+    db.commit()
+    return {"id": folder.id, "name": folder.name}
+
+
+def wiki_delete_folder(db: Session, kb_id: str, folder_id: str) -> dict:
+    """删除目录：仅当目录下无页面时允许；有页面则抛错提示先移走。"""
+    folder = db.execute(
+        select(WikiFolder).where(WikiFolder.kb_id == kb_id, WikiFolder.id == folder_id)
+    ).scalars().first()
+    if not folder:
+        raise ValueError(f"目录不存在: {folder_id}")
+    child_pages = db.execute(
+        select(WikiPage).where(
+            WikiPage.kb_id == kb_id,
+            WikiPage.status == "active",
+            WikiPage.folder_id == folder_id,
+        )
+    ).scalars().all()
+    if child_pages:
+        raise ValueError(f"目录下仍有 {len(child_pages)} 个页面，请先移走")
+    child_folders = db.execute(
+        select(WikiFolder).where(
+            WikiFolder.kb_id == kb_id, WikiFolder.parent_id == folder_id
+        )
+    ).scalars().all()
+    for cf in child_folders:
+        cf.parent_id = ""  # 子目录上移到根
+    db.delete(folder)
+    db.commit()
+    return {"deleted": True, "folder_id": folder_id}
+
+
+def wiki_lint(db: Session, kb_id: str, limit: int = 200) -> dict:
+    """Wiki 健康检查：空内容页 / 孤立页（无入链无出链）/ 断链目标。
+
+    返回 issue 列表：{slug, title, issue_type, detail}。
+    """
+    pages = {
+        p.slug: p
+        for p in db.execute(
+            select(WikiPage).where(WikiPage.kb_id == kb_id, WikiPage.status == "active")
+        ).scalars().all()
+    }
+    links = db.execute(
+        select(WikiLink).where(WikiLink.kb_id == kb_id)
+    ).scalars().all()
+
+    page_ids = {p.id for p in pages.values()}
+    slug_by_id = {p.id: p.slug for p in pages.values()}
+
+    linked_ids = {pid for l in links for pid in (l.from_page_id, l.to_page_id)}
+    issues: list[dict] = []
+
+    # 空内容页
+    for p in pages.values():
+        if not (p.content or "").strip():
+            issues.append(
+                {"slug": p.slug, "title": p.title, "issue_type": "empty_content", "detail": "页面内容为空"}
+            )
+
+    # 孤立页（无入链且无出链）
+    for p in pages.values():
+        if p.id not in linked_ids:
+            issues.append(
+                {"slug": p.slug, "title": p.title, "issue_type": "orphan", "detail": "无任何双向链接"}
+            )
+
+    # 断链：content 中的 [[slug]] 目标不存在
+    import re as _re
+
+    broken = 0
+    for p in pages.values():
+        targets = _re.findall(r"\[\[([^\]|]+)", p.content or "")
+        for t in targets:
+            if t not in pages:
+                broken += 1
+        if broken > limit:
+            break
+
+    return {
+        "kb_id": kb_id,
+        "total_issues": len(issues),
+        "issues": issues[:limit],
+        "broken_link_count": broken,
+    }
+
+
+def wiki_rebuild_links(db: Session, kb_id: str) -> dict:
+    """重建双向链接：清空该 kb 全部 wiki_link，按页面 content 中的 [[slug]]
+    wikilink 重新生成（A→B 与 B→A 各一条）。"""
+    pages = db.execute(
+        select(WikiPage).where(WikiPage.kb_id == kb_id, WikiPage.status == "active")
+    ).scalars().all()
+    slug_to_page = {p.slug: p for p in pages}
+
+    # 清空旧链
+    from sqlalchemy import delete as sa_delete
+
+    db.execute(sa_delete(WikiLink).where(WikiLink.kb_id == kb_id))
+    db.flush()
+
+    import re as _re
+
+    added = 0
+    for p in pages:
+        targets = _re.findall(r"\[\[([^\]|]+)", p.content or "")
+        for t in targets:
+            target = slug_to_page.get(t)
+            if not target or target.id == p.id:
+                continue
+            if (
+                db.execute(
+                    select(WikiLink).where(
+                        WikiLink.kb_id == kb_id,
+                        WikiLink.from_page_id == p.id,
+                        WikiLink.to_page_id == target.id,
+                    )
+                ).scalars().first()
+                is None
+            ):
+                db.add(
+                    WikiLink(
+                        id=uuid.uuid4().hex,
+                        kb_id=kb_id,
+                        from_page_id=p.id,
+                        to_page_id=target.id,
+                        link_type="related",
+                    )
+                )
+                added += 1
+    db.commit()
+    return {"added_links": added}
+
+
 __all__ = [
     "create_document",
     "create_kb",
@@ -551,6 +818,15 @@ __all__ = [
     "list_kbs",
     "update_kb",
     "wiki_tree",
+    "wiki_stats",
+    "wiki_lint",
+    "wiki_create_page",
+    "wiki_update_page",
+    "wiki_delete_page",
+    "wiki_create_folder",
+    "wiki_update_folder",
+    "wiki_delete_folder",
+    "wiki_rebuild_links",
     "_remove_local_file",
     "slugify",
 ]

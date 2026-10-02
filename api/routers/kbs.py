@@ -38,8 +38,17 @@ from api.services.kb_admin import (
     list_documents,
     list_kbs,
     update_kb,
+    wiki_create_folder,
+    wiki_create_page,
+    wiki_delete_folder,
+    wiki_delete_page,
     wiki_graph,
+    wiki_lint,
+    wiki_rebuild_links,
+    wiki_stats,
     wiki_tree,
+    wiki_update_folder,
+    wiki_update_page,
 )
 from api.services.kb_admin import _remove_local_file  # noqa: PLC2701 (same package helper)
 
@@ -73,6 +82,34 @@ class SearchRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=50)
     threshold: float = Field(default=0.2, ge=0.0, le=1.0)
     embed_query: bool = Field(default=True)
+
+
+class WikiPageCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    slug: str | None = Field(default=None, max_length=255)
+    page_type: str = Field(default="entity", max_length=32)
+    content: str = Field(default="", max_length=200000)
+    summary: str | None = Field(default=None)
+    folder_id: str | None = Field(default=None)
+
+
+class WikiPageUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    page_type: str | None = Field(default=None, max_length=32)
+    content: str | None = Field(default=None)
+    summary: str | None = Field(default=None)
+    folder_id: str | None = Field(default=None)
+    status: str | None = Field(default=None, max_length=32)
+
+
+class WikiFolderCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    parent_id: str | None = Field(default=None)
+
+
+class WikiFolderUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    parent_id: str | None = Field(default=None)
 
 
 @router.get("")
@@ -345,6 +382,130 @@ def get_wiki_page_route(kb_id: str, slug: str, db: Session = Depends(get_db)) ->
     if not page:
         raise HTTPException(status_code=404, detail=f"wiki 页不存在: {slug}")
     return {"success": True, "data": page}
+
+
+# ---- wiki 管理（页面/目录/统计/检查/重建链接）----
+
+def _require_wiki_user(
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+) -> str:
+    identity = decode_identity_cookie(x_next_identity or "")
+    if not identity or not identity.user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+    return identity.user_id
+
+
+@router.get("/{kb_id}/wiki/stats")
+def get_wiki_stats(kb_id: str, db: Session = Depends(get_db)) -> dict:
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    return {"success": True, "data": wiki_stats(db, kb_id)}
+
+
+@router.post("/{kb_id}/wiki/pages")
+def create_wiki_page(
+    kb_id: str,
+    req: WikiPageCreate,
+    user_id: str = Depends(_require_wiki_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    try:
+        data = wiki_create_page(db, kb_id, req.model_dump(exclude_none=True), user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.put("/{kb_id}/wiki/pages/{slug}")
+def update_wiki_page(
+    kb_id: str,
+    slug: str,
+    req: WikiPageUpdate,
+    user_id: str = Depends(_require_wiki_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        data = wiki_update_page(db, kb_id, slug, req.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "不存在" in str(e) else 400, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.delete("/{kb_id}/wiki/pages/{slug}")
+def delete_wiki_page(
+    kb_id: str,
+    slug: str,
+    user_id: str = Depends(_require_wiki_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        data = wiki_delete_page(db, kb_id, slug)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.post("/{kb_id}/wiki/folders")
+def create_wiki_folder(
+    kb_id: str,
+    req: WikiFolderCreate,
+    user_id: str = Depends(_require_wiki_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        data = wiki_create_folder(db, kb_id, req.model_dump(exclude_none=True), user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.put("/{kb_id}/wiki/folders/{folder_id}")
+def update_wiki_folder(
+    kb_id: str,
+    folder_id: str,
+    req: WikiFolderUpdate,
+    user_id: str = Depends(_require_wiki_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        data = wiki_update_folder(db, kb_id, folder_id, req.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "不存在" in str(e) else 400, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.delete("/{kb_id}/wiki/folders/{folder_id}")
+def delete_wiki_folder(
+    kb_id: str,
+    folder_id: str,
+    user_id: str = Depends(_require_wiki_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        data = wiki_delete_folder(db, kb_id, folder_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.post("/{kb_id}/wiki/rebuild-links")
+def rebuild_wiki_links(
+    kb_id: str,
+    user_id: str = Depends(_require_wiki_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    return {"success": True, "data": wiki_rebuild_links(db, kb_id)}
+
+
+@router.get("/{kb_id}/wiki/lint")
+def lint_wiki(kb_id: str, db: Session = Depends(get_db)) -> dict:
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    return {"success": True, "data": wiki_lint(db, kb_id)}
 
 
 @router.post("/{kb_id}/search")
