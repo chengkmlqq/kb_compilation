@@ -20,9 +20,12 @@ Requires the x-next-identity cookie; admin gating for system scope.
 
 from __future__ import annotations
 
+import json
+import time
 from dataclasses import dataclass
+from typing import Any
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException
+from fastapi import APIRouter, Cookie, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -304,21 +307,51 @@ def test_endpoint(payload: TestEndpointPayload) -> dict:
     return {"success": result["ok"], "data": result}
 
 
-class DebugPayload(BaseModel):
-    input: str = ""
-    model: str | None = None  # caller can override the model id mid-probe
+DEBUG_MAX_INPUT_BYTES = 64 * 1024
+DEBUG_MAX_FILE_BYTES = 20 * 1024 * 1024
+DEBUG_MAX_DOCUMENTS = 100
+
+
+def _parse_debug_options(raw: str) -> dict:
+    """Parse the JSON options string; validate ranges (WeKnora-compatible)."""
+    if not raw.strip():
+        return {}
+    try:
+        opts = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"options 不是合法 JSON: {e}") from e
+    if not isinstance(opts, dict):
+        raise HTTPException(status_code=400, detail="options 必须是 JSON 对象")
+    if opts.get("max_tokens") is not None:
+        if not 1 <= int(opts["max_tokens"]) <= 8192:
+            raise HTTPException(status_code=400, detail="max_tokens 必须在 1-8192 之间")
+    if opts.get("temperature") is not None:
+        if not 0 <= float(opts["temperature"]) <= 2:
+            raise HTTPException(status_code=400, detail="temperature 必须在 0-2 之间")
+    if opts.get("top_p") is not None:
+        if not 0 < float(opts["top_p"]) <= 1:
+            raise HTTPException(status_code=400, detail="top_p 必须在 (0,1] 之间")
+    return opts
 
 
 @router.post("/{model_id}/debug")
 def debug_model(
     model_id: str,
-    req: DebugPayload,
+    input: str = Form(""),
+    options: str = Form(""),
+    documents: str = Form(""),
+    file: UploadFile | None = File(None),
     caller: Caller = Depends(_require_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Live probe on a saved model: chat streams a short completion,
-    embedding returns the vector dimension. Mirrors WeKnora DebugModel's
-    per-type behaviour without the full cross-provider options surface."""
+    """Live probe on a saved model, multipart form (WeKnora DebugModel parity).
+
+    chat/vllm stream a completion (with thinking + generation options),
+    embedding returns the vector dimension, rerank really reranks query vs
+    documents, asr transcribes an uploaded audio file. Response carries
+    ok/elapsed_ms/request preview (secrets redacted)/raw_response/observations.
+    """
+    started = time.monotonic()
     m = get_model(db, model_id)
     if not m:
         raise HTTPException(status_code=404, detail="模型不存在")
@@ -328,15 +361,66 @@ def debug_model(
     if not visible:
         raise HTTPException(status_code=404, detail="模型不存在")
 
+    if len(input.encode("utf-8")) > DEBUG_MAX_INPUT_BYTES:
+        raise HTTPException(status_code=400, detail="input 过长")
+
+    opts = _parse_debug_options(options)
+    docs: list[str] = []
+    if documents.strip():
+        try:
+            docs = json.loads(documents)
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail="documents 必须是 JSON 字符串数组") from e
+        if not isinstance(docs, list) or not all(isinstance(d, str) for d in docs):
+            raise HTTPException(status_code=400, detail="documents 必须是 JSON 字符串数组")
+        if len(docs) > DEBUG_MAX_DOCUMENTS:
+            raise HTTPException(status_code=400, detail="documents 不能超过 100 条")
+
+    file_bytes = b""
+    file_name = ""
+    if file is not None:
+        file_bytes = file.file.read(DEBUG_MAX_FILE_BYTES + 1)
+        if len(file_bytes) > DEBUG_MAX_FILE_BYTES:
+            raise HTTPException(status_code=400, detail="文件不能超过 20 MB")
+        file_name = file.filename or ""
+
     from api.services.models import decrypt_secret
 
     base_url = (m.base_url or "").rstrip("/")
     if not base_url:
         raise HTTPException(status_code=400, detail="模型未配置端点地址")
     api_key = decrypt_secret(m.api_key)
-    use_model = req.model or m.name
+    use_model = m.name
+
+    request_preview: dict[str, Any] = {
+        "model_id": m.id,
+        "model_name": m.name,
+        "model_type": m.type,
+        "provider": m.provider or "",
+        "input": input,
+        "options": opts,
+    }
+    if docs:
+        request_preview["documents"] = docs
+    if file_name:
+        request_preview["file"] = {"name": file_name, "size": len(file_bytes)}
+    observations: dict[str, Any] = {}
+
+    def finish(ok: bool, raw: Any, err: str | None = None) -> dict:
+        data: dict[str, Any] = {
+            "ok": ok,
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+            "request": request_preview,
+            "raw_response": raw,
+            "observations": observations,
+        }
+        if err:
+            data["error"] = err
+        return {"success": True, "data": data}
 
     if m.type == "embedding":
+        if not input.strip():
+            raise HTTPException(status_code=400, detail="请输入要向量化的文本")
         from api.services.embedding import EmbeddingConfig, EmbeddingClient
 
         client = EmbeddingClient(
@@ -347,86 +431,104 @@ def debug_model(
                 dim=m.dimension or 1024,
             )
         )
-        vec = client.embed_query(req.input.strip() or "ping")
+        try:
+            vec = client.embed_query(input.strip())
+        except Exception as e:  # noqa: BLE001
+            return finish(False, None, str(e))
         if vec is None:
-            return {"success": False, "data": {"ok": False, "error": "向量化失败（端点不可达或模型不存在）"}}
-        return {
-            "success": True,
-            "data": {"ok": True, "kind": "embedding", "dimension": len(vec)},
-        }
+            return finish(False, None, "向量化失败（端点不可达或模型不存在）")
+        observations["dimension"] = len(vec)
+        return finish(True, vec)
 
     if m.type == "rerank":
-        # rerank: probe via POST /rerank (Jina/Cohere/阿里 compatible)
-        import json
-
+        # rerank: real POST /rerank (Jina/Cohere/阿里 compatible) with the
+        # caller's query + documents; returns the ranked result list.
+        if not input.strip() or not docs:
+            raise HTTPException(status_code=400, detail="查询文本与候选文档不能为空")
         import httpx
 
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        body = {
-            "model": use_model,
-            "query": req.input.strip() or "ping",
-            "documents": ["ping"],
-        }
+        body = {"model": use_model, "query": input.strip(), "documents": docs}
         try:
             with httpx.Client(timeout=30) as client:
                 resp = client.post(f"{base_url}/rerank", json=body, headers=headers)
             if resp.status_code >= 300:
-                return {
-                    "success": False,
-                    "data": {"ok": False, "error": f"rerank 端点返回 {resp.status_code}"},
-                }
+                return finish(False, None, f"rerank 端点返回 {resp.status_code}: {resp.text[:300]}")
             data = resp.json()
             results = data.get("results") or []
-            return {
-                "success": True,
-                "data": {"ok": True, "kind": "rerank", "text": f"命中 {len(results)} 条重排结果"},
-            }
+            observations["result_count"] = len(results)
+            return finish(True, results)
         except Exception as e:  # noqa: BLE001
-            return {"success": False, "data": {"ok": False, "error": str(e)}}
+            return finish(False, None, str(e))
 
     if m.type == "asr":
-        # asr: probe via GET /models (openai-compatible); a 200 with model
-        # list means the endpoint is reachable.
-        import httpx
+        # asr: real transcription of the uploaded audio file.
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail="请上传音频文件")
+        from api.services.asr import ASRClient, ASRConfig
 
-        headers = {}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
+        client = ASRClient(ASRConfig(base_url=base_url, api_key=api_key or "", model=use_model))
         try:
-            with httpx.Client(timeout=30) as client:
-                resp = client.get(f"{base_url}/models", headers=headers)
-            if resp.status_code >= 300:
-                return {
-                    "success": False,
-                    "data": {"ok": False, "error": f"ASR 端点返回 {resp.status_code}"},
-                }
-            data = resp.json()
-            ids = [m.get("id") for m in (data.get("data") or [])]
-            hit = use_model in ids if ids else True
-            return {
-                "success": True,
-                "data": {"ok": True, "kind": "asr", "text": f"端点可达，模型{'在' if hit else '不在'}列表"},
-            }
+            result = client.transcribe(file_bytes, file_name or "audio.bin")
         except Exception as e:  # noqa: BLE001
-            return {"success": False, "data": {"ok": False, "error": str(e)}}
+            return finish(False, None, str(e))
+        observations["text_characters"] = len(result.text)
+        observations["segment_count"] = len(result.segments)
+        return finish(True, {"text": result.text, "segments": result.segments})
 
-    # chat / vllm (openai-compatible chat probe)
+    # chat / vllm (openai-compatible chat probe; vllm requires an image file)
     from api.services.chat import ChatClient, ChatConfig, ChatMessage
 
-    client = ChatClient(
-        ChatConfig(base_url=base_url, api_key=api_key or "", model=use_model)
-    )
-    messages = [ChatMessage(role="user", content=req.input.strip() or "ping")]
+    messages: list[ChatMessage] = []
+    system_prompt = (opts.get("system_prompt") or "").strip()
+    if system_prompt:
+        messages.append(ChatMessage(role="system", content=system_prompt))
+    if m.type == "vllm":
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail="请上传图片文件")
+        import base64
+
+        data_url = "data:image/jpeg;base64," + base64.b64encode(file_bytes).decode("ascii")
+        messages.append(ChatMessage(role="user", content=input.strip() or "描述这张图片", images=[data_url]))
+    else:
+        if not input.strip():
+            raise HTTPException(status_code=400, detail="请输入问题")
+        messages.append(ChatMessage(role="user", content=input.strip()))
+
+    client = ChatClient(ChatConfig(base_url=base_url, api_key=api_key or "", model=use_model))
+    thinking_val = opts.get("thinking")
+    thinking: bool | None = None
+    if isinstance(thinking_val, bool):
+        thinking = thinking_val
+    observations["stream"] = True
+    if thinking is not None:
+        observations["requested_thinking"] = thinking
+    observations["thinking_control"] = m.thinking_control or "none"
+    observations["thinking_parameter_sent"] = thinking is not None and (m.thinking_control or "") != "off"
     try:
-        text = client.chat(messages, max_tokens=256)
+        answer_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        for ev in client.stream_events(
+            messages,
+            temperature=float(opts.get("temperature") or 0.7),
+            max_tokens=int(opts.get("max_tokens") or 1024),
+            top_p=float(opts["top_p"]) if opts.get("top_p") is not None else None,
+            thinking=thinking,
+        ):
+            if ev.get("type") == "thinking":
+                reasoning_parts.append(ev.get("text") or "")
+            elif ev.get("type") == "delta":
+                answer_parts.append(ev.get("text") or "")
     except Exception as e:  # noqa: BLE001
-        return {"success": False, "data": {"ok": False, "error": str(e)}}
-    return {
-        "success": True,
-        "data": {"ok": True, "kind": "chat", "text": (text or "")[:2000]},
-    }
+        return finish(False, None, str(e))
+    answer = "".join(answer_parts)
+    reasoning = "".join(reasoning_parts)
+    observations["reasoning_returned"] = bool(reasoning.strip())
+    observations["reasoning_characters"] = len(reasoning)
+    observations["answer_characters"] = len(answer)
+    return finish(True, {"content": answer, "reasoning_content": reasoning})
 
 
 __all__ = ["router"]

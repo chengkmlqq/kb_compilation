@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   App,
@@ -38,6 +38,7 @@ import {
   StarFilled,
   StarOutlined,
   ThunderboltOutlined,
+  UploadOutlined,
 } from "@ant-design/icons";
 import {
   apiCopyModel,
@@ -49,6 +50,7 @@ import {
   apiSetModelDefault,
   apiTestModel,
   apiUpdateModel,
+  ModelDebugPayload,
   ModelDebugResult,
   ModelItem,
   ModelProvider,
@@ -341,7 +343,12 @@ export default function ModelRegistryPage() {
         />
       )}
 
-      <ModelDebugDrawer target={debugTarget} onClose={() => setDebugTarget(null)} message={message} />
+      <ModelDebugDrawer
+        target={debugTarget}
+        models={items}
+        onClose={() => setDebugTarget(null)}
+        message={message}
+      />
     </Card>
   );
 }
@@ -592,85 +599,443 @@ function ModelEditorModal({
 
 function ModelDebugDrawer({
   target,
+  models,
   onClose,
   message,
 }: {
   target: ModelItem | null;
+  models: ModelItem[];
   onClose: () => void;
   message: ReturnType<typeof App.useApp>["message"];
 }) {
+  const [selectedType, setSelectedType] = useState<ModelType | null>(null);
+  const [selectedId, setSelectedId] = useState("");
   const [input, setInput] = useState("");
+  const [documentsText, setDocumentsText] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [thinking, setThinking] = useState(false);
+  const [temperature, setTemperature] = useState(0.7);
+  const [topP, setTopP] = useState(1);
+  const [maxTokens, setMaxTokens] = useState(1024);
+  const [systemPrompt, setSystemPrompt] = useState("");
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ModelDebugResult | null>(null);
+  const [resultTab, setResultTab] = useState<"response" | "request">("response");
+  const [history, setHistory] = useState<
+    Array<{ id: number; label: string; result: ModelDebugResult }>
+  >([]);
+  const runSequence = useRef(0);
 
+  const availableTypes = useMemo(
+    () => ALL_TYPES.filter((t) => models.some((m) => m.type === t)),
+    [models],
+  );
+  const filteredModels = useMemo(
+    () => models.filter((m) => m.type === selectedType),
+    [models, selectedType],
+  );
+  const selectedModel = useMemo(
+    () => models.find((m) => m.id === selectedId) ?? null,
+    [models, selectedId],
+  );
+  const isChat = selectedModel?.type === "chat";
+  const needsFile = selectedModel?.type === "vllm" || selectedModel?.type === "asr";
+  const supportsThinking = isChat && (selectedModel?.thinking_control ?? "") !== "off";
+
+  // 打开抽屉：初始化类型/模型选择（优先定位到来源卡片对应的模型）
   useEffect(() => {
-    if (!target) {
-      setInput("");
-      setResult(null);
+    if (!target || availableTypes.length === 0) return;
+    const t: ModelType = availableTypes.includes(target.type)
+      ? target.type
+      : availableTypes[0];
+    setSelectedType(t);
+    const firstOfType = models.find((m) => m.type === t);
+    setSelectedId(target.type === t ? target.id : (firstOfType?.id ?? ""));
+    setInput("");
+    setDocumentsText("");
+    setFile(null);
+    setThinking(false);
+    setTemperature(0.7);
+    setTopP(1);
+    setMaxTokens(1024);
+    setSystemPrompt("");
+    setResult(null);
+    setHistory([]);
+    setResultTab("response");
+  }, [target]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const resetResult = () => {
+    setResult(null);
+    setHistory([]);
+    setResultTab("response");
+  };
+
+  const selectType = (t: ModelType) => {
+    if (selectedType === t) return;
+    setSelectedType(t);
+    const first = models.find((m) => m.type === t);
+    setSelectedId(first?.id ?? "");
+    setInput("");
+    setDocumentsText("");
+    setFile(null);
+    resetResult();
+  };
+
+  const selectModel = (id: string) => {
+    setSelectedId(id);
+    setFile(null);
+    resetResult();
+  };
+
+  const canRun = useMemo(() => {
+    if (!selectedModel) return false;
+    if (needsFile && !file) return false;
+    if (selectedModel.type === "asr") return true;
+    if (selectedModel.type === "rerank") {
+      const docs = documentsText
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      return !!input.trim() && docs.length > 0;
     }
-  }, [target]);
+    return !!input.trim();
+  }, [selectedModel, needsFile, file, input, documentsText]);
 
   const run = async () => {
-    if (!target) return;
+    if (!selectedModel || !canRun || running) return;
     setRunning(true);
-    setResult(null);
     try {
-      const res = await apiDebugModel(target.id, { input: input || "ping" });
-      setResult(res.data ?? { error: "无返回" });
-      if (!res.data?.ok) message.warning(res.data?.error || "调试失败");
+      const docs = documentsText
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const payload: ModelDebugPayload = {
+        input: input.trim(),
+        ...(selectedModel.type === "rerank" ? { documents: docs } : {}),
+        ...(isChat
+          ? {
+              options: {
+                ...(systemPrompt.trim() ? { system_prompt: systemPrompt.trim() } : {}),
+                temperature,
+                top_p: topP,
+                max_tokens: maxTokens,
+                thinking: supportsThinking ? thinking : undefined,
+              },
+            }
+          : {}),
+        ...(file ? { file } : {}),
+      };
+      const res = await apiDebugModel(selectedModel.id, payload);
+      if (!res.success || !res.data) {
+        message.error(res.message || "调试失败");
+        return;
+      }
+      const next = res.data;
+      setResult(next);
+      runSequence.current += 1;
+      setHistory((prev) => {
+        const label = supportsThinking
+          ? thinking
+            ? "思考开"
+            : "思考关"
+          : `运行 ${runSequence.current}`;
+        return [{ id: runSequence.current, label, result: next }, ...prev].slice(0, 6);
+      });
+      setResultTab("response");
+      if (!next.ok) message.warning(next.error || "调试失败");
+    } catch (e) {
+      message.error((e as Error)?.message || "请求失败");
     } finally {
       setRunning(false);
     }
   };
 
+  const copyResult = async () => {
+    if (!result) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(result, null, 2));
+      message.success("已复制");
+    } catch {
+      message.error("复制失败");
+    }
+  };
+
+  const formattedResult = useMemo(() => {
+    if (!result) return "";
+    return JSON.stringify(
+      resultTab === "response" ? result.raw_response : result.request,
+      null,
+      2,
+    );
+  }, [result, resultTab]);
+
+  const METRIC_LABELS: Record<string, string> = {
+    dimension: "维度",
+    result_count: "结果数",
+    answer_characters: "回答字符数",
+    reasoning_characters: "思考字符数",
+    reasoning_returned: "返回思考",
+    text_characters: "文本字符数",
+    segment_count: "段落数",
+  };
+  const metrics = useMemo(() => {
+    const obs = result?.observations ?? {};
+    return Object.entries(METRIC_LABELS)
+      .filter(([k]) => obs[k] !== undefined && obs[k] !== null)
+      .map(([k, label]) => ({
+        key: k,
+        label,
+        value: typeof obs[k] === "boolean" ? (obs[k] ? "是" : "否") : String(obs[k]),
+      }));
+  }, [result]);
+
+  const inputPlaceholder =
+    selectedModel?.type === "embedding"
+      ? "输入一段文本，返回向量维度（实际调一次向量化）"
+      : selectedModel?.type === "rerank"
+        ? "输入查询文本"
+        : selectedModel?.type === "vllm"
+          ? "输入提示词（可留空，默认「描述这张图片」）"
+          : "输入问题，用该模型真实调用一次并返回回答";
+
   return (
     <Drawer
       title={target ? `模型调试：${target.display_name || target.name}` : "模型调试"}
-      width={480}
+      width={560}
       open={!!target}
       onClose={onClose}
       destroyOnClose
     >
       {target && (
-        <>
-          <Space direction="vertical" style={{ width: "100%" }} size={12}>
-            <Space wrap>
-              <Tag color={SCOPE_COLOR[target.scope]}>{SCOPE_LABEL[target.scope]}</Tag>
-              <Tag color={TYPE_COLOR[target.type as ModelType]}>{TYPE_LABEL[target.type as ModelType]}</Tag>
-              <Text code>{target.name}</Text>
-            </Space>
-            <Input.TextArea
-              rows={5}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={
-                target.type === "embedding"
-                  ? "输入一段文本，返回向量维度（实际调一次向量化）"
-                  : target.type === "rerank"
-                    ? "输入查询文本，返回重排探测结果"
-                    : target.type === "asr"
-                      ? "输入任意文本，探测 ASR 端点可达性与模型列表"
-                      : "输入问题，用该模型真实调用一次并返回回答"
-              }
+        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          {/* 模型选择 */}
+          {availableTypes.length > 0 && (
+            <Radio.Group
+              optionType="button"
+              buttonStyle="solid"
+              size="small"
+              value={selectedType ?? undefined}
+              onChange={(e) => selectType(e.target.value as ModelType)}
+              options={availableTypes.map((t) => ({
+                label: TYPE_LABEL[t],
+                value: t,
+              }))}
             />
-            <Button type="primary" loading={running} onClick={() => void run()}>
-              运行调试
-            </Button>
-            {result && (
-              <Card size="small" title="调试结果">
-                {result.ok ? (
-                  target.type === "embedding" ? (
-                    <Text>向量维度：{result.dimension}</Text>
-                  ) : (
-                    <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{result.text}</pre>
-                  )
-                ) : (
-                  <Text type="danger">{result.error}</Text>
-                )}
-              </Card>
-            )}
-          </Space>
-        </>
+          )}
+          <Select
+            showSearch
+            style={{ width: "100%" }}
+            value={selectedId || undefined}
+            placeholder="选择模型"
+            onChange={selectModel}
+            options={filteredModels.map((m) => ({
+              label: `${m.display_name || m.name}${m.provider ? ` · ${m.provider}` : ""}`,
+              value: m.id,
+            }))}
+          />
+
+          {selectedModel && (
+            <>
+              {/* 输入区 */}
+              {selectedModel.type !== "asr" && (
+                <Input.TextArea
+                  rows={4}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder={inputPlaceholder}
+                />
+              )}
+              {selectedModel.type === "rerank" && (
+                <>
+                  <Input.TextArea
+                    rows={4}
+                    value={documentsText}
+                    onChange={(e) => setDocumentsText(e.target.value)}
+                    placeholder={"候选文档，每行一条"}
+                  />
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    候选文档：换行分隔，逐条传给 rerank 端点
+                  </Text>
+                </>
+              )}
+              {needsFile && (
+                <Space direction="vertical" size={4}>
+                  <Space>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      style={{ display: "none" }}
+                      accept={selectedModel.type === "vllm" ? "image/*" : "audio/*"}
+                      onChange={(e) => {
+                        setFile(e.target.files?.[0] ?? null);
+                        resetResult();
+                      }}
+                    />
+                    <Button
+                      size="small"
+                      icon={<UploadOutlined />}
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      选择{selectedModel.type === "vllm" ? "图片" : "音频"}文件
+                    </Button>
+                    {file && (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {file.name} · {(file.size / 1024).toFixed(1)} KB
+                      </Text>
+                    )}
+                  </Space>
+                </Space>
+              )}
+
+              {/* chat 参数 */}
+              {isChat && (
+                <>
+                  <Space wrap size={12}>
+                    <Form.Item label="Temperature" style={{ marginBottom: 0 }}>
+                      <InputNumber
+                        min={0}
+                        max={2}
+                        step={0.1}
+                        value={temperature}
+                        onChange={(v) => setTemperature(v ?? 0.7)}
+                        style={{ width: 110 }}
+                      />
+                    </Form.Item>
+                    <Form.Item label="Top P" style={{ marginBottom: 0 }}>
+                      <InputNumber
+                        min={0.01}
+                        max={1}
+                        step={0.1}
+                        value={topP}
+                        onChange={(v) => setTopP(v ?? 1)}
+                        style={{ width: 110 }}
+                      />
+                    </Form.Item>
+                    <Form.Item label="Max Tokens" style={{ marginBottom: 0 }}>
+                      <InputNumber
+                        min={1}
+                        max={8192}
+                        step={128}
+                        value={maxTokens}
+                        onChange={(v) => setMaxTokens(v ?? 1024)}
+                        style={{ width: 130 }}
+                      />
+                    </Form.Item>
+                  </Space>
+                  <Input.TextArea
+                    rows={2}
+                    value={systemPrompt}
+                    onChange={(e) => setSystemPrompt(e.target.value)}
+                    placeholder="系统提示词（可选）"
+                  />
+                  {supportsThinking && (
+                    <Space>
+                      <Switch checked={thinking} onChange={setThinking} />
+                      <Text type="secondary">深度思考</Text>
+                    </Space>
+                  )}
+                </>
+              )}
+
+              <Button
+                type="primary"
+                loading={running}
+                disabled={!canRun}
+                onClick={() => void run()}
+              >
+                运行调试
+              </Button>
+
+              {/* 结果区 */}
+              {(result || history.length > 0) && (
+                <Card
+                  size="small"
+                  title="调试结果"
+                  extra={
+                    result ? (
+                      <Button
+                        size="small"
+                        icon={<CopyOutlined />}
+                        onClick={() => void copyResult()}
+                      >
+                        复制
+                      </Button>
+                    ) : undefined
+                  }
+                >
+                  <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                    {history.length > 1 && (
+                      <Space wrap size={4}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          历史：
+                        </Text>
+                        {history.map((h) => (
+                          <Tag
+                            key={h.id}
+                            color={result === h.result ? "blue" : undefined}
+                            style={{ cursor: "pointer" }}
+                            onClick={() => {
+                              setResult(h.result);
+                              setResultTab("response");
+                            }}
+                          >
+                            {h.label} · {h.result.elapsed_ms ?? "-"} ms
+                          </Tag>
+                        ))}
+                      </Space>
+                    )}
+                    {result && (
+                      <>
+                        <Space size={8}>
+                          {result.ok ? (
+                            <Tag color="success">成功</Tag>
+                          ) : (
+                            <Tag color="error">失败</Tag>
+                          )}
+                          {typeof result.elapsed_ms === "number" && (
+                            <Text type="secondary">{result.elapsed_ms} ms</Text>
+                          )}
+                        </Space>
+                        {metrics.length > 0 && (
+                          <Space wrap size={4}>
+                            {metrics.map((m2) => (
+                              <Tag key={m2.key}>
+                                {m2.label}: {m2.value}
+                              </Tag>
+                            ))}
+                          </Space>
+                        )}
+                        {result.error && <Text type="danger">{result.error}</Text>}
+                        <Tabs
+                          size="small"
+                          activeKey={resultTab}
+                          onChange={(k) => setResultTab(k as "response" | "request")}
+                          items={[
+                            { key: "response", label: "响应" },
+                            { key: "request", label: "请求预览" },
+                          ]}
+                        />
+                        <pre
+                          style={{
+                            whiteSpace: "pre-wrap",
+                            wordBreak: "break-all",
+                            margin: 0,
+                            maxHeight: 260,
+                            overflow: "auto",
+                            fontSize: 12,
+                          }}
+                        >
+                          {formattedResult || "(空)"}
+                        </pre>
+                      </>
+                    )}
+                  </Space>
+                </Card>
+              )}
+            </>
+          )}
+        </Space>
       )}
     </Drawer>
   );

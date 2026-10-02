@@ -721,10 +721,26 @@ export interface ModelProvider {
 
 export interface ModelDebugResult {
   ok?: boolean;
-  kind?: string;
-  text?: string;
-  dimension?: number;
+  elapsed_ms?: number;
+  request?: Record<string, unknown>;
+  raw_response?: unknown;
+  observations?: Record<string, unknown>;
   error?: string;
+}
+
+export interface ModelDebugOptions {
+  system_prompt?: string;
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+  thinking?: boolean;
+}
+
+export interface ModelDebugPayload {
+  input?: string;
+  documents?: string[];
+  options?: ModelDebugOptions;
+  file?: File;
 }
 
 export function apiListModels(params?: { type?: string; scope?: string }) {
@@ -796,10 +812,15 @@ export function apiTestModel(payload: { base_url: string; api_key: string; model
   });
 }
 
-export function apiDebugModel(id: string, payload: { input: string; model?: string }) {
+export function apiDebugModel(id: string, payload: ModelDebugPayload) {
+  const fd = new FormData();
+  if (payload.input) fd.append("input", payload.input);
+  if (payload.documents?.length) fd.append("documents", JSON.stringify(payload.documents));
+  if (payload.options) fd.append("options", JSON.stringify(payload.options));
+  if (payload.file) fd.append("file", payload.file);
   return request<ModelDebugResult>(`/api/v1/models/${id}/debug`, {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: fd,
   });
 }
 

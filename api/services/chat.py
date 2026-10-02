@@ -38,6 +38,7 @@ class ChatConfig:
 class ChatMessage:
     role: str  # system / user / assistant
     content: str
+    images: list[str] | None = None  # image data URLs (base64) for multimodal input
 
 
 def load_chat_config(
@@ -173,9 +174,11 @@ class ChatClient:
         messages: list[ChatMessage],
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        top_p: float | None = None,
+        thinking: bool | None = None,
     ) -> Iterator[str]:
         """Yield delta text chunks as they arrive (SSE-parsed)."""
-        for delta in self.stream_events(messages, temperature, max_tokens):
+        for delta in self.stream_events(messages, temperature, max_tokens, top_p, thinking):
             yield delta.get("text") or ""
 
     def stream_events(
@@ -183,12 +186,19 @@ class ChatClient:
         messages: list[ChatMessage],
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        top_p: float | None = None,
+        thinking: bool | None = None,
     ) -> Iterator[dict]:
         """Yield structured events as they arrive (SSE-parsed).
 
         Events: {"type": "thinking", "text": ...} for reasoning_content,
         {"type": "delta", "text": ...} for the answer content, and
         {"type": "done"} at the end.
+
+        top_p/thinking are optional; when given they are added to the
+        request payload (thinking maps to {"type": "enabled"|"disabled"}).
+        Messages carrying images are serialized as OpenAI content arrays
+        (image_url data URLs) for multimodal (vllm) probing.
         """
         endpoint = (self.cfg.base_url or "").rstrip("/")
         if not endpoint:
@@ -196,13 +206,25 @@ class ChatClient:
         if not endpoint.endswith("/chat/completions"):
             endpoint += "/chat/completions"
 
+        def _serialize(m: ChatMessage) -> dict:
+            if not m.images:
+                return {"role": m.role, "content": m.content}
+            parts: list[dict] = [{"type": "text", "text": m.content}]
+            for url in m.images:
+                parts.append({"type": "image_url", "image_url": {"url": url}})
+            return {"role": m.role, "content": parts}
+
         payload = {
             "model": self.cfg.model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": [_serialize(m) for m in messages],
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
         }
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if thinking is not None:
+            payload["thinking"] = {"type": "enabled" if thinking else "disabled"}
         headers = {"Content-Type": "application/json"}
         if self.cfg.api_key:
             headers["Authorization"] = f"Bearer {self.cfg.api_key}"
@@ -230,9 +252,9 @@ class ChatClient:
                         continue
                     delta = choices[0].get("delta") or {}
                     text = delta.get("content") or ""
-                    thinking = delta.get("reasoning_content") or ""
-                    if thinking:
-                        yield {"type": "thinking", "text": thinking}
+                    reasoning = delta.get("reasoning_content") or ""
+                    if reasoning:
+                        yield {"type": "thinking", "text": reasoning}
                     if text:
                         yield {"type": "delta", "text": text}
         yield {"type": "done"}
@@ -242,9 +264,11 @@ class ChatClient:
         messages: list[ChatMessage],
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        top_p: float | None = None,
+        thinking: bool | None = None,
     ) -> str:
         """Non-streaming convenience: join streamed deltas."""
-        return "".join(self.stream(messages, temperature, max_tokens))
+        return "".join(self.stream(messages, temperature, max_tokens, top_p, thinking))
 
 
 # ---------------------------------------------------------------------------
