@@ -2,7 +2,19 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-01
+最后更新：2026-10-02（晚间）
+
+## 2. 当前状态（2026-10-02 晚间追加）
+
+- **测试：228 个全部通过**（.venv/bin/python -m pytest）；前端 tsc + bun build 通过
+- **框架层/样式层对齐 data-synth（本次，commit 0f8bd4c）**：
+  - 主题体系全量迁入：`web/src/theme/modo-algorithm.ts`（15 组色系 1-10 全色阶注入 + preset 色系映射）+ `web/src/theme/antd-theme-token.tsx`（完整 token：主色阶/Hover/Active、controlHeight 28/24/32、boxShadow 三级、Input/Select/Form/Tree/Checkbox/Radio/Steps 组件级）+ `web/src/lib/antd-registry.tsx`（cssinjs SSR + **zhCN locale + dayjs zh-cn**）包装根布局；`lib/theme.ts` 基础值回写（fontSize 12 / radius 2 / 次文字 #79879C / Table.headerBg #F9FBFD，**废弃 globals.css 中自创的 !important 硬覆盖，回归 token 体系**）
+  - **两级菜单体系**（对齐 data-synth MenuContext/AppHeader/AppSider）：`(main)/_components/MenuContext.tsx`（topMenus 顶级 + siderMenus 子级，sessionStorage 记忆选中顶级，路径自动同步，flatMode 单级回退）+ `AppHeader.tsx`（45px、logo、Header 顶级横向导航 600/14px、用户下拉）+ `AppSider.tsx`（200px 折叠 45、**右下角悬浮圆形折叠钮**、Menu itemHeight 36 / itemColor #4D5E7D / 选中悬浮 #EFF4F9 / radius 4，CSS 类 `side-menu-kb`）；`(main)/layout.tsx` 改为服务端包装 LayoutContent
+  - **my_menus 祖先补全**（对齐 data-synth expandedIds 逻辑）：角色关联菜单 + 向上补全所有祖先，前端可构建完整树
+  - **kb 菜单种子**：`scripts/seed_framework_db.py` 新增 `root_kb`（知识库平台）+ 8 子菜单（kbs/chat/agents/datasources/wiki/jobs/models/system）并关联种子角色；联调库已种入 + huqiang 挂 kb_role（摘除 normal_user 的 data-synth 旧菜单关联）——my-menus 实测返回 kb 两级树
+  - 登录页：记住密码（localStorage 回填，对齐 data-synth saveRemember）
+- **待办（未做，按需）**：Header 通知铃/团队切换（需后端 WebSocket/团队 API）、全局水印 GlobalWatermark、SSO、菜单 icon 下拉选择、登录强校验 fail-open
+
 
 ## 1. 项目概况
 
