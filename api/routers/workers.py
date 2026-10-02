@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any
@@ -63,8 +64,12 @@ def _flower_timeout_s() -> int:
     return settings.FLOWER_API_TIMEOUT_S or 15
 
 
-def _call_flower(path: str) -> Any:
-    """GET Flower API path，返回解析后的 JSON（失败抛 HTTPException）。"""
+def _call_flower(path: str, allow_404: bool = False) -> Any:
+    """GET Flower API path，返回解析后的 JSON（失败抛 HTTPException）。
+
+    allow_404=True 时把 Flower 的 404（如 worker 不存在）当作空数据处理，
+    供 worker tasks 等查询不存在 worker 的场景返回空列表而非 502。
+    """
     url = f"{_flower_base_url()}{path}"
     req = urllib.request.Request(
         url,
@@ -76,6 +81,10 @@ def _call_flower(path: str) -> Any:
     try:
         with urllib.request.urlopen(req, timeout=_flower_timeout_s()) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        if allow_404 and exc.code == 404:
+            return None
+        raise HTTPException(status_code=502, detail=f"Flower API 不可达: {exc}") from exc
     except Exception as exc:  # urllib.error.URLError / socket.timeout 等
         raise HTTPException(status_code=502, detail=f"Flower API 不可达: {exc}") from exc
     try:
@@ -303,7 +312,7 @@ def worker_tasks(
     worker_path = f"/api/workers?refresh={refresh}&workername={worker_name}"
     tasks_path = f"/api/tasks?limit={recent_limit}&workername={worker_name}"
 
-    workers_map = _call_flower(worker_path) or {}
+    workers_map = _call_flower(worker_path, allow_404=True) or {}
     worker_raw: dict[str, Any] = {}
     if worker_name in _as_record(workers_map):
         worker_raw = _as_record(workers_map[worker_name])
@@ -315,7 +324,7 @@ def worker_tasks(
     active = _snapshot_tasks(worker_raw.get("active"))
     reserved = _snapshot_tasks(worker_raw.get("reserved"))
     scheduled = _snapshot_tasks(worker_raw.get("scheduled"))
-    tasks_map = _call_flower(tasks_path) or {}
+    tasks_map = _call_flower(tasks_path, allow_404=True) or {}
     recent = _recent_tasks(_as_record(tasks_map), worker_name)
 
     return {

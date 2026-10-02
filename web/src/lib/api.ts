@@ -1388,3 +1388,83 @@ export function apiWorkerRegisteredTasks(workerName: string) {
     `/api/v1/workers/${encodeURIComponent(workerName)}/registered-tasks`,
   );
 }
+
+// ---- 文件管理（对齐 data-synth system/files） ----
+
+export interface SysFileItem {
+  id: string;
+  file_name: string;
+  file_extension?: string | null;
+  file_size?: number | null;
+  mime_type?: string | null;
+  storage_type: string;
+  ds_name?: string | null;
+  bucket_name?: string | null;
+  storage_path: string;
+  team_id: string;
+  business_module: string;
+  created_by?: string | null;
+  create_date?: string | null;
+  update_date?: string | null;
+  state?: string | null;
+  // explorer 附加字段
+  name?: string;
+  isFolder?: boolean;
+  type?: string;
+  sourcePath?: string;
+}
+
+export interface FileExplorerResponse {
+  list: SysFileItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export function apiFileExplore(params: {
+  current_path?: string;
+  search?: string;
+  page?: number;
+  page_size?: number;
+}) {
+  const q = new URLSearchParams();
+  if (params.current_path) q.set("current_path", params.current_path);
+  if (params.search) q.set("search", params.search);
+  if (params.page) q.set("page", String(params.page));
+  if (params.page_size) q.set("page_size", String(params.page_size));
+  const qs = q.toString();
+  return request<FileExplorerResponse>(`/api/v1/files/explore${qs ? `?${qs}` : ""}`);
+}
+
+export function apiFileUpload(file: File, module = "default") {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("module", module);
+  return fetch("/api/v1/files/upload", {
+    method: "POST",
+    body: form,
+    credentials: "same-origin",
+  }).then((r) => r.json() as Promise<ApiEnvelope<SysFileItem>>);
+}
+
+export function apiFileDownloadUrl(fileId: string) {
+  return `/api/v1/files/${encodeURIComponent(fileId)}/download`;
+}
+
+export function apiFileDelete(fileId: string) {
+  return request<{ id: string; deleted: boolean }>(
+    `/api/v1/files/${encodeURIComponent(fileId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function apiFileRmdir(path: string) {
+  return request<{ total: number }>(
+    `/api/v1/files/rmdir?path=${encodeURIComponent(path)}`,
+    { method: "POST" },
+  );
+}
+
+export function apiFileZipUrl(path: string) {
+  return `/api/v1/files/zip?path=${encodeURIComponent(path)}`;
+}

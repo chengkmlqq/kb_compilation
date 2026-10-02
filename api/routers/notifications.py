@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Cookie, Depends
+from fastapi import APIRouter, Cookie, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import and_, desc, func, or_, select, update
 from sqlalchemy.orm import Session
@@ -125,12 +125,14 @@ def mark_read(
     uid = _user_id(x_next_identity)
     if not uid:
         return {"success": False, "message": "未登录", "data": None}
-    db.execute(
+    result = db.execute(
         update(SystemMessage)
         .where(and_(SystemMessage.id == message_id, _scope(uid)))
         .values(is_read="1", read_date=datetime.now())
     )
     db.commit()
+    if result.rowcount == 0:
+        return {"success": False, "message": "消息不存在或无权限", "data": None}
     return {"success": True, "message": "已标记已读"}
 
 

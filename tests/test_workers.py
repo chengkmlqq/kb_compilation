@@ -102,7 +102,7 @@ def test_workers_overview(monkeypatch) -> None:
         import api.routers.workers as workers_mod
 
         # flower 返回 workers 映射（含 status 字段），status?true 单独端点
-        def fake_call_flower(path: str) -> Any:
+        def fake_call_flower(path: str, allow_404: bool = False) -> Any:
             if path.startswith("/api/workers?status=true"):
                 return {"celery@host1": True, "celery@host2": False}
             if path.startswith("/api/workers"):
@@ -167,7 +167,7 @@ def test_worker_tasks(monkeypatch) -> None:
     try:
         import api.routers.workers as workers_mod
 
-        def fake_call_flower(path: str) -> Any:
+        def fake_call_flower(path: str, allow_404: bool = False) -> Any:
             if path.startswith("/api/tasks"):
                 return _fake_tasks_map()
             if path.startswith("/api/workers"):
@@ -237,7 +237,7 @@ def test_worker_registered_tasks(monkeypatch) -> None:
     try:
         import api.routers.workers as workers_mod
 
-        def fake_call_flower(path: str) -> Any:
+        def fake_call_flower(path: str, allow_404: bool = False) -> Any:
             if path.startswith("/api/workers"):
                 return _fake_flower_map()
             return None

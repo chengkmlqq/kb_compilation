@@ -57,7 +57,8 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("models", "models", "模型配置", "/models", "root_kb", "CloudServerOutlined", 8),
     ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "root_kb", "ApiOutlined", 9),
     ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "root_kb", "ToolOutlined", 10),
-    ("system", "system", "系统管理", "/system", "root_kb", "SettingOutlined", 11),
+    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "root_kb", "FileOutlined", 11),
+    ("system", "system", "系统管理", "/system", "root_kb", "SettingOutlined", 12),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，
