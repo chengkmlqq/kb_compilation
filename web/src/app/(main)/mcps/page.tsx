@@ -11,12 +11,12 @@ import {
   Input,
   Modal,
   Popconfirm,
-  Radio,
   Select,
   Space,
   Spin,
   Switch,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from "antd";
@@ -50,39 +50,39 @@ export default function McpManagePage() {
   const [items, setItems] = useState<McpRegistryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [scope, setScope] = useState<ModelScope>("system");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<McpRegistryItem | null>(null);
   const [testTarget, setTestTarget] = useState<McpRegistryItem | null>(null);
 
-  const load = useCallback(
-    async (s?: ModelScope) => {
-      setLoading(true);
-      try {
-        const res = await apiListMcps(s ?? scope);
-        if (res.success && res.data) {
-          setItems(res.data.items);
-          setIsAdmin(!!res.data.is_admin);
-        } else {
-          message.error(res.message || "加载失败");
-        }
-      } finally {
-        setLoading(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiListMcps();
+      if (res.success && res.data) {
+        setItems(res.data.items);
+        setIsAdmin(!!res.data.is_admin);
+      } else {
+        message.error(res.message || "加载失败");
       }
-    },
-    [scope, message],
-  );
+    } finally {
+      setLoading(false);
+    }
+  }, [message]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const visibleScopes = useMemo(() => {
-    if (isAdmin) return ["personal", "team", "system"] as ModelScope[];
-    return ["personal", "team"] as ModelScope[];
-  }, [isAdmin]);
+  const filtered = useMemo(() => {
+    if (typeFilter === "all") return items;
+    return items.filter((it) => it.type === typeFilter);
+  }, [items, typeFilter]);
 
-  const filtered = useMemo(() => items.filter((it) => it.scope === scope), [items, scope]);
+  const countByType = useCallback(
+    (t: string) => items.filter((it) => it.type === t).length,
+    [items],
+  );
 
   const handleDelete = async (item: McpRegistryItem) => {
     const res = await apiDeleteMcp(item.id);
@@ -118,22 +118,15 @@ export default function McpManagePage() {
         </Space>
       }
     >
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="MCP 服务器分三级：我的（仅本人）/ 团队（团队成员）/ 系统（仅管理员）。密钥 AES 加密落库，回显掩码；编辑时留空=保持不变。保存后热生效（网关侧无状态执行）。"
-      />
-      <Radio.Group
-        value={scope}
-        onChange={(e) => {
-          setScope(e.target.value);
-          void load(e.target.value);
-        }}
-        optionType="button"
-        buttonStyle="solid"
-        style={{ marginBottom: 16 }}
-        options={visibleScopes.map((s) => ({ label: SCOPE_LABEL[s], value: s }))}
+      <Tabs
+        activeKey={typeFilter}
+        onChange={setTypeFilter}
+        style={{ marginBottom: 8 }}
+        items={[
+          { key: "all", label: `全部 (${items.length})` },
+          { key: "streamable_http", label: `streamable_http (${countByType("streamable_http")})` },
+          { key: "stdio", label: `stdio (${countByType("stdio")})` },
+        ]}
       />
       <Table
         rowKey="id"
@@ -193,7 +186,7 @@ export default function McpManagePage() {
         <McpEditorModal
           open={editOpen}
           item={editing}
-          scope={scope}
+          scope="personal"
           isAdmin={isAdmin}
           onClose={() => setEditOpen(false)}
           onSaved={() => {

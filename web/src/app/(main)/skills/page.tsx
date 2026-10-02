@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Alert,
   App,
   Button,
   Card,
@@ -52,39 +51,33 @@ export default function SkillManagePage() {
   const [items, setItems] = useState<SkillRegistryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [scope, setScope] = useState<ModelScope>("system");
+  const [installScope, setInstallScope] = useState<ModelScope>("personal");
+  const [installOpen, setInstallOpen] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [detailTarget, setDetailTarget] = useState<SkillRegistryItem | null>(null);
   const [detailText, setDetailText] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
 
-  const load = useCallback(
-    async (s?: ModelScope) => {
-      setLoading(true);
-      try {
-        const res = await apiListSkillsRegistry(s ?? scope);
-        if (res.success && res.data) {
-          setItems(res.data.items);
-          setIsAdmin(!!res.data.is_admin);
-        } else {
-          message.error(res.message || "加载失败");
-        }
-      } finally {
-        setLoading(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiListSkillsRegistry();
+      if (res.success && res.data) {
+        setItems(res.data.items);
+        setIsAdmin(!!res.data.is_admin);
+      } else {
+        message.error(res.message || "加载失败");
       }
-    },
-    [scope, message],
-  );
+    } finally {
+      setLoading(false);
+    }
+  }, [message]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const visibleScopes = useMemo(() => {
-    if (isAdmin) return ["personal", "team", "system"] as ModelScope[];
-    return ["personal", "team"] as ModelScope[];
-  }, [isAdmin]);
-
-  const filtered = useMemo(() => items.filter((it) => it.scope === scope), [items, scope]);
+  const filtered = useMemo(() => items, [items]);
 
   const handleDelete = async (item: SkillRegistryItem) => {
     const res = await apiDeleteSkillRegistry(item.id);
@@ -96,19 +89,28 @@ export default function SkillManagePage() {
     }
   };
 
-  const handleInstall = async (file: File) => {
+  const handleInstall = (file: File) => {
     if (!file.name.toLowerCase().endsWith(".zip")) {
       message.warning("仅支持 ZIP 文件");
       return false;
     }
-    const res = await apiInstallSkillRegistry(file, scope);
+    setPendingFile(file);
+    setInstallScope("personal");
+    setInstallOpen(true);
+    return false;
+  };
+
+  const confirmInstall = async () => {
+    if (!pendingFile) return;
+    const res = await apiInstallSkillRegistry(pendingFile, installScope);
     if (res.success) {
-      message.success(`技能已安装：${res.data?.item.name ?? file.name}`);
+      message.success(`技能已安装：${res.data?.item.name ?? pendingFile.name}`);
+      setInstallOpen(false);
+      setPendingFile(null);
       void load();
     } else {
       message.error(res.message || "安装失败");
     }
-    return false;
   };
 
   const openDetail = async (item: SkillRegistryItem) => {
@@ -185,28 +187,6 @@ export default function SkillManagePage() {
         </Space>
       }
     >
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="技能按 ZIP 包安装（含 SKILL.md，服务端校验解析 name/description/version）。分三级：我的（仅本人）/ 团队（团队成员）/ 系统（仅管理员）。安装后后台任务通过 agent-gateway 无状态执行。"
-      />
-      <Space style={{ marginBottom: 16 }}>
-        <span>安装/查看级别：</span>
-        <Radio.Group
-          value={scope}
-          onChange={(e) => {
-            setScope(e.target.value);
-            void load(e.target.value);
-          }}
-          optionType="button"
-          buttonStyle="solid"
-          options={visibleScopes.map((s) => ({ label: SCOPE_LABEL[s], value: s }))}
-        />
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          安装到当前选中级别，列表仅展示该级别
-        </Text>
-      </Space>
       <Table
         rowKey="id"
         size="small"
@@ -274,6 +254,35 @@ export default function SkillManagePage() {
           </Space>
         )}
       </Drawer>
+      <Modal
+        title="安装技能"
+        open={installOpen}
+        onCancel={() => {
+          setInstallOpen(false);
+          setPendingFile(null);
+        }}
+        onOk={() => void confirmInstall()}
+        okText="安装"
+      >
+        <Space direction="vertical" style={{ display: "flex" }} size={12}>
+          <Text type="secondary">文件：{pendingFile?.name}</Text>
+          <div>
+            <Text>安装到</Text>
+            <Radio.Group
+              value={installScope}
+              onChange={(e) => setInstallScope(e.target.value)}
+              optionType="button"
+              buttonStyle="solid"
+              style={{ marginLeft: 8 }}
+              options={[
+                { label: "我的（仅自己）", value: "personal" },
+                { label: "团队（团队共用）", value: "team" },
+                ...(isAdmin ? [{ label: "系统（仅管理员）", value: "system" }] : []),
+              ]}
+            />
+          </div>
+        </Space>
+      </Modal>
     </Card>
   );
 }
