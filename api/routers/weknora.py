@@ -43,16 +43,26 @@ def _proxy(path: str, params: dict | None = None) -> dict:
     return resp.json()
 
 
+def _wrap(payload: dict) -> dict:
+    """统一包一层 {success, data}——前端 request<T> 约定该结构。
+
+    WeKnora 原响应有 data 字段（如知识库列表）则直接复用；否则整体作为 data。
+    """
+    if isinstance(payload, dict) and "data" in payload and payload.get("success") is not None:
+        return payload
+    return {"success": True, "data": payload}
+
+
 @router.get("/kbs")
 def list_kbs(_user_id: str = Depends(_require_user_id)) -> dict:
     """WeKnora 知识库列表（供前端选择器）。"""
-    return _proxy("knowledge-bases")
+    return _wrap(_proxy("knowledge-bases"))
 
 
 @router.get("/kbs/{kb_id}/stats")
 def kb_stats(kb_id: str, _user_id: str = Depends(_require_user_id)) -> dict:
     """wiki 统计（页数/类型分布/链接数）。"""
-    return _proxy(f"knowledgebase/{kb_id}/wiki/stats")
+    return _wrap(_proxy(f"knowledgebase/{kb_id}/wiki/stats"))
 
 
 @router.get("/kbs/{kb_id}/pages")
@@ -63,13 +73,15 @@ def kb_pages(
     _user_id: str = Depends(_require_user_id),
 ) -> dict:
     """wiki 页面列表（时间倒序由 WeKnora 决定，可翻页）。"""
-    return _proxy(
-        f"knowledgebase/{kb_id}/wiki/pages",
-        {"page": page, "page_size": page_size},
+    return _wrap(
+        _proxy(
+            f"knowledgebase/{kb_id}/wiki/pages",
+            {"page": page, "page_size": page_size},
+        )
     )
 
 
 @router.get("/kbs/{kb_id}/pages/{slug:path}")
 def kb_page(kb_id: str, slug: str, _user_id: str = Depends(_require_user_id)) -> dict:
     """单页详情（含双向链接 in_links/out_links）。"""
-    return _proxy(f"knowledgebase/{kb_id}/wiki/pages/{slug}")
+    return _wrap(_proxy(f"knowledgebase/{kb_id}/wiki/pages/{slug}"))
