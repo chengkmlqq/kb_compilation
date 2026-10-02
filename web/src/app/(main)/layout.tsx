@@ -25,6 +25,7 @@ const MENU_ITEMS = [
   { key: "/datasources", icon: <DatabaseOutlined />, label: "数据源" },
   { key: "/wiki", icon: <BookOutlined />, label: "Wiki 总览" },
   { key: "/jobs", icon: <DashboardOutlined />, label: "任务监控" },
+  { key: "/weknora", icon: <AppstoreOutlined />, label: "WeKnora 库" },
   { key: "/models", icon: <CloudServerOutlined />, label: "模型配置" },
   { key: "/system", icon: <SettingOutlined />, label: "系统管理" },
 ];
