@@ -138,6 +138,22 @@ export default function ChatPage() {
     })();
   }, [loadSessions]);
 
+  // 切页续传：挂载时检测是否有未完成流锚点（qa-resume:{sessionId}），
+  // 有则自动打开该会话（openSession 内部会 tryResume 续拉）
+  useEffect(() => {
+    const keys: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith("qa-resume:")) keys.push(k);
+    }
+    if (keys.length === 0) return;
+    // 取最新的锚点会话
+    const lastKey = keys[keys.length - 1];
+    const sid = lastKey.slice("qa-resume:".length);
+    if (sid) void openSession(sid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 打开会话：加载历史 + 推荐问题
   const openSession = useCallback(
     async (sessionId: string) => {
