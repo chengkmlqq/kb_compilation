@@ -47,6 +47,14 @@ class QARequest(BaseModel):
 def _sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
+def _fail(stream_id: str, message: str) -> None:
+    """Terminal failure: emit error + done so tailing clients always finish."""
+    store.append_event(stream_id, {"type": "error", "message": message})
+    store.append_event(stream_id, {"type": "done"})
+    store.mark_done(stream_id)
+
+
+
 
 def _run_generation(
     req: QARequest,
@@ -72,8 +80,7 @@ def _run_generation(
             select(KbDatasource).where(KbDatasource.id == req.kb_id)
         ).scalars().first()
         if not kb:
-            store.append_event(stream_id, {"type": "error", "message": f"知识库不存在: {req.kb_id}"})
-            store.mark_done(stream_id)
+            _fail(stream_id, f"知识库不存在: {req.kb_id}")
             return
 
         identity = decode_identity_cookie(x_next_identity or "")
@@ -93,15 +100,13 @@ def _run_generation(
         history: list[dict] = []
         if req.session_id:
             if not identity or not identity.user_id:
-                store.append_event(stream_id, {"type": "error", "message": "未登录"})
-                store.mark_done(stream_id)
+                _fail(stream_id, "未登录")
                 return
             user_id = identity.user_id
             try:
                 session = get_session(db, user_id, req.session_id)
             except Exception as e:  # noqa: BLE001
-                store.append_event(stream_id, {"type": "error", "message": str(e)})
-                store.mark_done(stream_id)
+                _fail(stream_id, str(e))
                 return
             history = [
                 {"role": m["role"], "content": m["content"]}
@@ -201,8 +206,7 @@ def _run_generation(
     except Exception as e:  # noqa: BLE001
         logger.exception("qa generation crashed")
         try:
-            store.append_event(stream_id, {"type": "error", "message": str(e)})
-            store.mark_done(stream_id)
+            _fail(stream_id, str(e))
         except Exception:  # noqa: BLE001
             pass
     finally:
