@@ -13,7 +13,10 @@
 | 最终形态 | Next.js 纯前端 + Python FastAPI 后端 + Celery 任务；知识库**业务表**走框架关系库（MySQL 默认，可换任意关系库），**向量**走独立向量库（PG+pgvector，预留 ES） |
 | 上游参考 | `/home/jenkins/chengkai/data-synth`（框架层来源）、`/home/jenkins/chengkai/WeKnora`（知识库功能来源） |
 
-## 2. 当前状态（2026-10-01）
+## 2. 当前状态（2026-10-02）
+
+- **测试：217 个全部通过**（`uv run pytest` / `.venv/bin/python -m pytest`）
+- **菜单授权迁移（2026-10-02 落地）**：系统管理从只读升级为完整 RBAC——角色 CRUD、角色-菜单分配（saveRoleMenus 语义）、角色-用户配置（plat-mgr 角色）、菜单树 CRUD、my-menus（当前用户可见菜单）；新增 FastAPI 中间件守卫（对齐上游 proxy.ts：白名单 + AUTH_ADMIN_USERS 绕过 + check_path_permission，未受控路径放行）；前端 Sider 按 my-menus 动态渲染（空回退内置菜单）。**现在可通过角色菜单分配控制用户侧边栏与页面访问**（真实库验证：受控+未授权 → 403，受控+已授权 → 放行）
 
 - **测试：142 个全部通过**（`uv run pytest` / `.venv/bin/python -m pytest`）
 - **存储拆分（2026-10-01 落地）**：知识库 7 张业务表（kb_datasource/kb_document/doc_chunk/wiki_folder/wiki_page/wiki_link/kb_agent）迁到**框架关系库**（MySQL，可移植类型，DDL 经 MySQL 8 真库验证）；PG 只留 1 张向量表 `kb_embedding`（pgvector+HNSW）；向量 IO 全部走 `api/services/vector_store.py` 的 `VectorStore` 抽象（`VECTOR_STORE_TYPE=pg|es`，es 已留桩）
@@ -58,9 +61,12 @@
 - [x] 页面：/login（登录写 x-next-identity cookie）、主布局（Sider 菜单+登录守卫）、/kbs、/kbs/[id]（上传+wiki 树+检索+**解析状态自动轮询**）、/kbs/[id]/wiki/[slug]（**react-markdown+GFM 渲染**）、/chat（SSE 流式）、/agents、/wiki、/datasources、**/system（用户/角色/团队/菜单/操作日志）**
 - [x] 构建：bun install / build / type-check 全过；生产模式联调验证（页面渲染、代理转发、SSE event-stream 头透传）
 
-### 3.5 系统管理 API（P12 收尾，本次新增）✅
+### 3.5 系统管理 API（P12 收尾 + 菜单授权 2026-10-02）✅
 - [x] 只读查询：users（分页/关键字）/ roles / teams / menus（排序树）/ operation-logs（分页/关键字）
-- [x] 说明：用户/角色编辑属管理敏感操作，本期只读，写操作留待 auth 加固阶段
+- [x] 写操作（对齐上游 role-actions/menu-actions）：角色 CRUD（save_role/delete_role）、角色-菜单分配（get/save_role_menus，全量替换语义）、角色-用户配置（get/save_role_users，仅 plat-mgr 类型角色前端展示）、菜单 CRUD（save_menu/delete_menu，含 menu_ext_conf 组装、子菜单/被引用删除保护）
+- [x] my-menus：当前用户可见菜单（Sider 渲染；plat-mgr/admin 全量，普通用户按 role_menu_rela 关联）
+- [x] RBAC 路径守卫：`api/middleware.py` —— 白名单（/health、/api/v1/auth/、/api/v1/me、/api/v1/open/、/api/v1/system/my-menus）→ 身份 cookie → AUTH_ADMIN_USERS 绕过（env，默认 admin；**不用 role_type 判定**，共享库 normal_user 等非管理员角色也标了 plat-mgr）→ check_path_permission；未受控路径/无身份请求放行（登录强校验留 auth 加固阶段）
+- [x] 前端：Sider 按 my-menus 动态渲染（空回退内置 8 项，平滑过渡）；角色 Tab 增新建/编辑/删除/分配菜单（Tree 勾选）/用户配置（Transfer）；菜单 Tab 增树 CRUD（新增根/子、编辑、删除）
 
 ## 4. 关键文件地图
 
@@ -110,16 +116,16 @@ deploy/                   部署落地（docker-compose + nginx + Dockerfile）
   Dockerfile.web          bun 构建（standalone 运行）
   nginx/default.conf      统一入口（SSE 关缓冲）
   README.md               部署步骤/初始化/运维/验证
-tests/                    134 个测试（test_*.py，含 test_kb_admin.py / test_system_admin.py）
+tests/                    217 个测试（test_*.py，含 test_kb_admin.py / test_system_admin.py / test_rbac_guard.py）
 ```
 
 ## 5. 验证方式（每次改动后必跑）
 
 ```bash
 cd /home/jenkins/chengkai/kb_compilation
-.venv/bin/python -m pytest tests/ -q          # 全量测试（127）
+.venv/bin/python -m pytest tests/ -q          # 全量测试（217）
 .venv/bin/python -c "from fastapi.testclient import TestClient; from api.main import app; print(list(TestClient(app).get('/openapi.json').json()['paths']))"
-cd web && bun run build && bun run type-check  # 前端构建（web/ 下）
+cd web && bun run build && bun run type-check  # 前端构建（web/ 下；type-check 用 ./node_modules/.bin/tsc --noEmit，宿主机无 tsgo）
 ```
 
 真实库联调配方（已实测通过）：
@@ -181,10 +187,10 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下）
 - [x] 待实际起容器验证（本机无 docker compose 插件，已做 YAML/变量一致性校验）；MySQL 知识库业务表已挂载 DDL 自动建（docker-entrypoint-initdb.d），框架 modo_* 表仍需手动建表+种子
 
 ### 8.3 增强项（按需）
-- wiki 页链接健康检查（wiki_lint：死链清理，参考 WeKnora wiki_lint.go）
-- 多实例配置缓存失效（当前进程内 TTL，与源平台一致；如需跨实例用 Redis）
+- 登录强校验：当前 RBAC 守卫对「无身份请求」放行（fail-open），完整登录拦截（401/重定向）留待 auth 加固阶段统一做
 - Open API 鉴权层（当前 auth 只登录，open/* 数据源路由未加 X-API-Key 校验）
 - 上传文件校验（扩展名白名单 / 病毒扫描 / 去重）
+- 菜单管理增强：菜单 icon 下拉选择（当前手填组件名）、菜单 ext-conf 可视化编辑（当前仅基本字段 + JSON）
 
 ## 9. 开工检查单（新会话）
 

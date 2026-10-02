@@ -203,28 +203,16 @@ def resolve_active_user_identity(
     )
 
 
-def check_path_permission(db: Session, user_id: str, pathname: str) -> tuple[bool, str]:
-    """RBAC: route -> menu -> user roles (direct + team) -> role-menu link.
+def collect_user_role_ids(db: Session, user_id: str) -> list[str]:
+    """All role ids bound to a user: direct user_role_rela + team role (state='1').
 
-    Ported from rawCheckPathPermission in src/app/actions/role-actions.ts.
+    Shared by check_path_permission / my_menus / platform-admin detection
+    (mirrors steps 2-3 of rawCheckPathPermission).
     """
-    # 1. Exact route match against modo_menu.
-    menu = (
-        db.execute(
-            select(Menu.menu_id).where(and_(Menu.state == "1", Menu.route == pathname)).limit(1)
-        )
-        .scalars()
-        .first()
-    )
-    if not menu:
-        return True, "路径未受控"  # not a controlled route — allow
-
-    # 2. Collect user role ids (direct relations).
     role_ids = list(
         db.execute(select(UserRoleRela.role_id).where(UserRoleRela.user_id == user_id)).scalars()
     )
 
-    # 3. Team role via team membership (state='1').
     team_role_rows = (
         db.execute(
             select(TeamMember.role_name)
@@ -241,6 +229,27 @@ def check_path_permission(db: Session, user_id: str, pathname: str) -> tuple[boo
     )
     if team_role_rows and team_role_rows not in role_ids:
         role_ids.append(team_role_rows)
+    return role_ids
+
+
+def check_path_permission(db: Session, user_id: str, pathname: str) -> tuple[bool, str]:
+    """RBAC: route -> menu -> user roles (direct + team) -> role-menu link.
+
+    Ported from rawCheckPathPermission in src/app/actions/role-actions.ts.
+    """
+    # 1. Exact route match against modo_menu.
+    menu = (
+        db.execute(
+            select(Menu.menu_id).where(and_(Menu.state == "1", Menu.route == pathname)).limit(1)
+        )
+        .scalars()
+        .first()
+    )
+    if not menu:
+        return True, "路径未受控"  # not a controlled route — allow
+
+    # 2-3. Collect user role ids (direct relations + team role).
+    role_ids = collect_user_role_ids(db, user_id)
 
     if not role_ids:
         return False, "用户无角色"

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from api.config import get_settings
 from api.db import get_db
+from api.middleware import rbac_guard
 from api.routers import agents, auth, chat_sessions, datasources, jobs, kbs, mcps, models, qa, skills, system, system_config, weknora
 from api.services.identity import Identity, decode_identity_cookie
 
@@ -19,6 +20,11 @@ app = FastAPI(
     description="Framework layer + WeKnora RAG capabilities (KB wiki platform)",
     version="0.1.0",
 )
+
+# RBAC path guard: whitelist + identity cookie + role-menu assignment check
+# (source proxy.ts equivalent). Registered before routers so every /api/v1
+# request passes through it.
+app.middleware("http")(rbac_guard)
 
 _settings = get_settings()
 

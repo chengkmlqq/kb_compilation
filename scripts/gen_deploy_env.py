@@ -75,6 +75,8 @@ def main() -> None:
         "FLOWER_BASIC_AUTH=admin:admin",
         "",
         "COOKIES_MAX_AGE=172800",
+        "# 平台管理员账号（逗号分隔，绕过菜单授权校验；不配置则所有用户严格按角色菜单授权）",
+        "AUTH_ADMIN_USERS=admin",
         "JOB_BEAT_SCAN_INTERVAL_SECONDS=30",
         "LOG_LEVEL=info",
     ]

@@ -44,6 +44,9 @@ class Settings:
     SSO_ENABLED: bool = os.getenv("SSO_ENABLED", "0") == "1"
     SSO_URL: str = os.getenv("SSO_URL", "")
     COOKIES_MAX_AGE: int = int(os.getenv("COOKIES_MAX_AGE", "172800"))
+    # Comma-separated user ids that bypass the RBAC path check (source
+    # proxy's AUTH_ADMIN_USERS equivalent). plat-mgr role also bypasses.
+    AUTH_ADMIN_USERS: str = os.getenv("AUTH_ADMIN_USERS", "")
 
     # --- Redis / Celery ---
     # All URLs come from env only. If unset, Celery falls back to its own

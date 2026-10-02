@@ -1,21 +1,32 @@
-"""System management read service — users, roles, teams, menus, operation logs.
+"""System management service — users, roles, teams, menus, operation logs.
 
-Read-only queries backing the frontend "系统管理" pages. Kept deliberately
-read-only for this phase: the source platform's user/role editing is
-admin-scoped, and identity/RBAC mutations are a later hardening item
-(the current auth layer only handles login + decode).
+Read queries back the frontend "系统管理" pages. Role/menu mutations
+(save/delete + role-menu / role-user assignments) were migrated from the
+source platform's role-actions.ts / menu-actions.ts server actions so the
+platform can control page access via role-menu assignment (RBAC).
 
 All functions take an explicit framework-store session.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from api.models.framework import Menu, OperLog, Team, User, UserRole, UserRoleRela
+from api.models.framework import (
+    Menu,
+    OperLog,
+    RoleMenuRela,
+    Team,
+    User,
+    UserRole,
+    UserRoleRela,
+)
+from api.services.identity import collect_user_role_ids
 
 logger = logging.getLogger(__name__)
 
@@ -143,11 +154,296 @@ def user_roles(db: Session, user_id: str) -> list[str]:
     return list(names)
 
 
+# ============================================================================
+# Role CRUD (saveRoleAction / deleteRoleAction)
+# ============================================================================
+
+
+def save_role(db: Session, payload: dict) -> dict:
+    """Create or update a role. `is_edit=true` updates the existing role_id.
+
+    Mirrors the source role form: role_id (immutable when editing),
+    role_name, role_type (plat-mgr | team-role), role_descr, state (1/0).
+    """
+    role_id = (payload.get("role_id") or "").strip()
+    role_name = (payload.get("role_name") or "").strip()
+    role_type = (payload.get("role_type") or "team-role").strip()
+    role_descr = payload.get("role_descr") or ""
+    state = str(payload.get("state") or "1")
+    is_edit = bool(payload.get("is_edit"))
+
+    if not role_id or not role_name:
+        return {"success": False, "message": "角色编码与角色名称必填"}
+    if role_type not in ("plat-mgr", "team-role"):
+        return {"success": False, "message": "非法角色类型"}
+
+    existing = db.execute(select(UserRole).where(UserRole.role_id == role_id)).scalars().first()
+    if is_edit:
+        if not existing:
+            return {"success": False, "message": f"角色不存在: {role_id}"}
+        existing.role_name = role_name
+        existing.role_type = role_type
+        existing.role_descr = role_descr
+        existing.state = state
+        db.commit()
+        return {"success": True, "message": "更新成功"}
+    if existing:
+        return {"success": False, "message": f"角色编码已存在: {role_id}"}
+    db.add(
+        UserRole(
+            role_id=role_id,
+            role_name=role_name,
+            role_type=role_type,
+            role_descr=role_descr,
+            state=state,
+        )
+    )
+    db.commit()
+    return {"success": True, "message": "创建成功"}
+
+
+def delete_role(db: Session, role_id: str) -> dict:
+    """Delete a role. Refuses when users are still bound; cascades role-menu links."""
+    role = db.execute(select(UserRole).where(UserRole.role_id == role_id)).scalars().first()
+    if not role:
+        return {"success": False, "message": f"角色不存在: {role_id}"}
+    bound = db.execute(
+        select(UserRoleRela.rela_id).where(UserRoleRela.role_id == role_id).limit(1)
+    ).scalars().first()
+    if bound:
+        return {"success": False, "message": "该角色仍绑定用户，请先解除用户配置"}
+    db.execute(delete(RoleMenuRela).where(RoleMenuRela.role_id == role_id))
+    db.delete(role)
+    db.commit()
+    return {"success": True, "message": "删除成功"}
+
+
+# ============================================================================
+# Role -> Menu assignment (getRoleMenusAction / saveRoleMenusAction)
+# ============================================================================
+
+
+def get_role_menus(db: Session, role_id: str) -> dict:
+    rows = db.execute(
+        select(RoleMenuRela.menu_id).where(RoleMenuRela.role_id == role_id)
+    ).scalars().all()
+    return {"menuIds": list(rows)}
+
+
+def save_role_menus(db: Session, role_id: str, menu_ids: list[str]) -> dict:
+    """Replace the role's menu assignment (delete old links, insert new ones)."""
+    role = db.execute(select(UserRole).where(UserRole.role_id == role_id)).scalars().first()
+    if not role:
+        return {"success": False, "message": f"角色不存在: {role_id}"}
+    valid = []
+    for menu_id in menu_ids or []:
+        exists = db.execute(
+            select(Menu.menu_id).where(Menu.menu_id == menu_id).limit(1)
+        ).scalars().first()
+        if exists:
+            valid.append(menu_id)
+    db.execute(delete(RoleMenuRela).where(RoleMenuRela.role_id == role_id))
+    for menu_id in valid:
+        db.add(RoleMenuRela(rela_id=uuid.uuid4().hex, role_id=role_id, menu_id=menu_id))
+    db.commit()
+    return {"success": True, "message": f"已分配 {len(valid)} 个菜单"}
+
+
+# ============================================================================
+# Role -> User assignment (getRoleUsersAction / saveRoleUsersAction)
+# ============================================================================
+
+
+def get_role_users(db: Session, role_id: str) -> dict:
+    rows = db.execute(
+        select(UserRoleRela.user_id).where(UserRoleRela.role_id == role_id)
+    ).scalars().all()
+    return {"userIds": list(rows)}
+
+
+def save_role_users(db: Session, role_id: str, user_ids: list[str]) -> dict:
+    """Replace the role's user assignment (delete old links, insert new ones)."""
+    role = db.execute(select(UserRole).where(UserRole.role_id == role_id)).scalars().first()
+    if not role:
+        return {"success": False, "message": f"角色不存在: {role_id}"}
+    valid = []
+    for user_id in user_ids or []:
+        exists = db.execute(
+            select(User.user_id).where(User.user_id == user_id).limit(1)
+        ).scalars().first()
+        if exists:
+            valid.append(user_id)
+    db.execute(delete(UserRoleRela).where(UserRoleRela.role_id == role_id))
+    for user_id in valid:
+        db.add(UserRoleRela(rela_id=uuid.uuid4().hex, role_id=role_id, user_id=user_id))
+    db.commit()
+    return {"success": True, "message": f"已配置 {len(valid)} 个用户"}
+
+
+# ============================================================================
+# Menu CRUD (saveMenuAction / deleteMenuAction)
+# ============================================================================
+
+_MENU_ROUTE_FIELDS = ("open_type", "link_type", "fetch_mode", "route", "route_param", "url")
+
+
+def save_menu(db: Session, payload: dict) -> dict:
+    """Create or update a menu. `is_edit=true` updates menu_id.
+
+    The source menu form submits basic fields plus an ext-conf JSON
+    ({openType, linkType, fetchMode, route, routeParam, url}); we build
+    menu_ext_conf the same way when a dict is passed.
+    """
+    menu_name = (payload.get("menu_name") or "").strip()
+    menu_label = (payload.get("menu_label") or "").strip()
+    if not menu_name or not menu_label:
+        return {"success": False, "message": "模块编码与模块中文名必填"}
+
+    parent_id = (payload.get("parent_id") or "").strip() or None
+    try:
+        sort_num = int(payload.get("sort_num") or 1)
+    except (TypeError, ValueError):
+        sort_num = 1
+    state = str(payload.get("state") or "1")
+    menu_type = str(payload.get("menu_type") or "frame")
+    route = (payload.get("route") or "").strip() or None
+    menu_icon = payload.get("menu_icon") or None
+    menu_descr = payload.get("menu_descr") or None
+
+    ext_conf = payload.get("menu_ext_conf")
+    if isinstance(ext_conf, dict):
+        ext_conf = (
+            json.dumps({k: v for k, v in ext_conf.items() if k in _MENU_ROUTE_FIELDS}, ensure_ascii=False)
+            if ext_conf
+            else None
+        )
+    elif isinstance(ext_conf, str):
+        ext_conf = ext_conf or None
+
+    if bool(payload.get("is_edit")):
+        menu_id = payload.get("menu_id")
+        menu = db.execute(select(Menu).where(Menu.menu_id == menu_id)).scalars().first()
+        if not menu:
+            return {"success": False, "message": f"菜单不存在: {menu_id}"}
+        menu.menu_name = menu_name
+        menu.menu_label = menu_label
+        menu.parent_id = parent_id
+        menu.sort_num = sort_num
+        menu.state = state
+        menu.menu_type = menu_type
+        menu.route = route
+        menu.menu_icon = menu_icon
+        menu.menu_descr = menu_descr
+        if ext_conf is not None:
+            menu.menu_ext_conf = ext_conf
+        db.commit()
+        return {"success": True, "message": "更新成功"}
+    new_id = uuid.uuid4().hex
+    db.add(
+        Menu(
+            menu_id=new_id,
+            menu_name=menu_name,
+            menu_label=menu_label,
+            menu_descr=menu_descr,
+            menu_ext_conf=ext_conf,
+            menu_icon=menu_icon,
+            menu_type=menu_type,
+            route=route,
+            parent_id=parent_id,
+            sort_num=sort_num,
+            state=state,
+        )
+    )
+    db.commit()
+    return {"success": True, "message": "创建成功", "data": {"menu_id": new_id}}
+
+
+def delete_menu(db: Session, menu_id: str) -> dict:
+    """Delete a menu. Refuses when child menus exist or a role still references it."""
+    menu = db.execute(select(Menu).where(Menu.menu_id == menu_id)).scalars().first()
+    if not menu:
+        return {"success": False, "message": f"菜单不存在: {menu_id}"}
+    child = db.execute(
+        select(Menu.menu_id).where(Menu.parent_id == menu_id).limit(1)
+    ).scalars().first()
+    if child:
+        return {"success": False, "message": "存在子菜单，请先删除子菜单"}
+    ref = db.execute(
+        select(RoleMenuRela.rela_id).where(RoleMenuRela.menu_id == menu_id).limit(1)
+    ).scalars().first()
+    if ref:
+        return {"success": False, "message": "该菜单已被角色引用，请先解除授权"}
+    db.delete(menu)
+    db.commit()
+    return {"success": True, "message": "删除成功"}
+
+
+# ============================================================================
+# Current-user navigation menus (getNavigationMenusAction equivalent)
+# ============================================================================
+
+
+def my_menus(db: Session, user_id: str, is_admin: bool = False) -> dict:
+    """Menus visible to the current user (state='1', sorted by sort_num).
+
+    Platform admins (plat-mgr role or AUTH_ADMIN_USERS) get the full tree;
+    other users get only menus linked to their roles.
+    """
+    stmt = select(Menu).where(Menu.state == "1").order_by(Menu.sort_num, Menu.create_date)
+    if not is_admin:
+        role_ids = collect_user_role_ids(db, user_id)
+        if not role_ids:
+            return {"items": [], "total": 0}
+        linked = db.execute(
+            select(RoleMenuRela.menu_id).where(RoleMenuRela.role_id.in_(role_ids))
+        ).scalars().all()
+        if not linked:
+            return {"items": [], "total": 0}
+        stmt = stmt.where(Menu.menu_id.in_(linked))
+    rows = db.execute(stmt).scalars().all()
+    items = [
+        {
+            "menu_id": m.menu_id,
+            "menu_name": m.menu_name,
+            "menu_label": m.menu_label,
+            "menu_type": m.menu_type,
+            "menu_icon": m.menu_icon,
+            "route": m.route,
+            "parent_id": m.parent_id,
+            "sort_num": m.sort_num,
+            "state": m.state,
+        }
+        for m in rows
+    ]
+    return {"items": items, "total": len(items)}
+
+
+def is_platform_admin(db: Session, user_id: str, admin_users: list[str] | None = None) -> bool:
+    """True when the user is an explicit platform admin.
+
+    Mirrors the source proxy's ADMIN_USERS bypass (env AUTH_ADMIN_USERS),
+    NOT the role_type column — the shared seed data marks several non-admin
+    roles with role_type='plat-mgr', so a role-type check would silently
+    bypass the guard for ordinary users. `db` is kept for call-site symmetry.
+    """
+    return bool(admin_users and user_id in admin_users)
+
+
 __all__ = [
+    "delete_menu",
+    "delete_role",
+    "get_role_menus",
+    "get_role_users",
+    "is_platform_admin",
     "list_menus",
     "list_operation_logs",
     "list_roles",
     "list_teams",
     "list_users",
+    "my_menus",
+    "save_menu",
+    "save_role",
+    "save_role_menus",
+    "save_role_users",
     "user_roles",
 ]

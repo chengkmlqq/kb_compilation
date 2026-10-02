@@ -336,10 +336,12 @@ export interface SysMenuItem {
   menu_name?: string;
   menu_label?: string | null;
   menu_type?: string | null;
+  menu_icon?: string | null;
   route?: string | null;
   parent_id?: string | null;
   sort_num?: number | null;
   state?: string | null;
+  menu_descr?: string | null;
 }
 
 export interface SysLogItem {
@@ -377,6 +379,105 @@ export function apiListOperationLogs(page = 1, pageSize = 20, keyword = "") {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (keyword) params.set("keyword", keyword);
   return request<PageList<SysLogItem>>(`/api/v1/system/operation-logs?${params.toString()}`);
+}
+
+// ---------------------------------------------------------------------------
+// 系统管理写接口：角色 CRUD / 角色菜单授权 / 角色用户配置 / 菜单 CRUD / my-menus
+// ---------------------------------------------------------------------------
+
+export interface SysRoleWrite {
+  role_id?: string;
+  role_name: string;
+  role_type: string; // plat-mgr | team-role
+  role_descr?: string;
+  state?: string;
+}
+
+export interface SysMenuWrite {
+  menu_id?: string;
+  menu_name: string;
+  menu_label: string;
+  parent_id?: string | null;
+  sort_num?: number;
+  menu_icon?: string | null;
+  state?: string;
+  menu_type?: string;
+  route?: string | null;
+  menu_descr?: string | null;
+  menu_ext_conf?: Record<string, unknown> | string | null;
+}
+
+/** 当前用户可见菜单（Sider 渲染用；plat-mgr / AUTH_ADMIN_USERS 全量） */
+export function apiMyMenus() {
+  return request<{ items: SysMenuItem[]; total: number }>("/api/v1/system/my-menus");
+}
+
+export function apiCreateRole(payload: SysRoleWrite) {
+  return request<{ success: boolean; message?: string }>("/api/v1/system/roles", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateRole(roleId: string, payload: SysRoleWrite) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/roles/${encodeURIComponent(roleId)}`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export function apiDeleteRole(roleId: string) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/roles/${encodeURIComponent(roleId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function apiGetRoleMenus(roleId: string) {
+  return request<{ menuIds: string[] }>(
+    `/api/v1/system/roles/${encodeURIComponent(roleId)}/menus`,
+  );
+}
+
+export function apiSaveRoleMenus(roleId: string, menuIds: string[]) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/roles/${encodeURIComponent(roleId)}/menus`,
+    { method: "PUT", body: JSON.stringify({ menuIds }) },
+  );
+}
+
+export function apiGetRoleUsers(roleId: string) {
+  return request<{ userIds: string[] }>(
+    `/api/v1/system/roles/${encodeURIComponent(roleId)}/users`,
+  );
+}
+
+export function apiSaveRoleUsers(roleId: string, userIds: string[]) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/roles/${encodeURIComponent(roleId)}/users`,
+    { method: "PUT", body: JSON.stringify({ userIds }) },
+  );
+}
+
+export function apiCreateMenu(payload: SysMenuWrite) {
+  return request<{ success: boolean; message?: string }>("/api/v1/system/menus", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateMenu(menuId: string, payload: SysMenuWrite) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/menus/${encodeURIComponent(menuId)}`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export function apiDeleteMenu(menuId: string) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/menus/${encodeURIComponent(menuId)}`,
+    { method: "DELETE" },
+  );
 }
 
 // ---------------------------------------------------------------------------
