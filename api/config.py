@@ -73,6 +73,10 @@ class Settings:
     AGENT_GATEWAY_BASE_URL: str = os.getenv("AGENT_GATEWAY_BASE_URL", "http://127.0.0.1:8080")
     # Admin token for the gateway's management APIs (MCP/skills). Empty = no token.
     AGENT_GATEWAY_ADMIN_TOKEN: str = os.getenv("AGENT_GATEWAY_ADMIN_TOKEN", "")
+    # WeKnora API proxy (view KB wiki pages built by agent-gateway skills).
+    # MASTER key allows cross-KB read of wiki pages/graphs; sent as X-API-Key.
+    WEKNORA_BASE_URL: str = os.getenv("WEKNORA_BASE_URL", "http://host.docker.internal:8085")
+    WEKNORA_API_KEY: str = os.getenv("WEKNORA_API_KEY", "")
     # Global wait budget for a single gateway task (a full skill run takes
     # 10-25 min; mirrors the gateway's SKILL_SCRIPT_TIMEOUT_S=3600).
     AGENT_GATEWAY_TIMEOUT_S: int = int(os.getenv("AGENT_GATEWAY_TIMEOUT_S", "3600"))
