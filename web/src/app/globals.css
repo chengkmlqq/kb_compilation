@@ -180,4 +180,50 @@ body {
   text-align: left;
 }
 .kb-markdown th { background: #fafafa; font-weight: 600; }
+
+/* ============================================================
+   任务监控 / 主机监控（对齐 data-synth job-monitor.module.css）
+   ============================================================ */
+.modo-stat-card:hover {
+  box-shadow: 0 4px 12px rgba(36, 46, 67, 0.08);
+}
+
+.modo-stat-icon-running {
+  animation: modo-rotate 1.2s linear infinite;
+  display: inline-flex;
+}
+
+@keyframes modo-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.modo-running-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.modo-running-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #1677ff;
+  animation: modo-pulse 1s ease-in-out infinite;
+}
+
+@keyframes modo-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.8); }
+}
+
+.modo-running-duration {
+  color: #1677ff;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.modo-running-row td {
+  background: #f6f8fb !important;
+}
 .kb-markdown a { color: #3261ce; }

@@ -1131,6 +1131,7 @@ export function apiListJobs(params: {
   task_class?: string;
   state?: string;
   keyword?: string;
+  queue_name?: string;
 } = {}) {
   const q = new URLSearchParams();
   if (params.page) q.set("page", String(params.page));
@@ -1138,6 +1139,7 @@ export function apiListJobs(params: {
   if (params.task_class) q.set("task_class", params.task_class);
   if (params.state) q.set("state", params.state);
   if (params.keyword) q.set("keyword", params.keyword);
+  if (params.queue_name) q.set("queue_name", params.queue_name);
   const qs = q.toString();
   return request<{ items: JobItem[]; total: number; page: number; page_size: number }>(
     `/api/v1/jobs${qs ? `?${qs}` : ""}`,
@@ -1237,4 +1239,134 @@ export interface AuthModeConfig {
 
 export function apiAuthMode() {
   return request<AuthModeConfig>("/api/v1/auth/auth-mode");
+}
+
+// ---- 任务监控统计 / 队列 / 停止 / 删除（对齐 data-synth JobStatistics） ----
+
+export interface JobStatistics {
+  total: number;
+  running: number;
+  success: number;
+  failed: number;
+  stopped: number;
+  queued: number;
+}
+
+export function apiJobStatistics() {
+  return request<JobStatistics>("/api/v1/jobs/statistics");
+}
+
+export interface JobQueueOption {
+  queueName: string;
+  queueLabel?: string | null;
+}
+
+export function apiJobQueues() {
+  return request<JobQueueOption[]>("/api/v1/jobs/queues");
+}
+
+export function apiStopJob(jobId: string) {
+  return request<{ id: string; state: string }>(
+    `/api/v1/jobs/${encodeURIComponent(jobId)}/stop`,
+    { method: "POST" },
+  );
+}
+
+export function apiDeleteJob(jobId: string) {
+  return request<{ id: string; deleted: boolean }>(
+    `/api/v1/jobs/${encodeURIComponent(jobId)}`,
+    { method: "DELETE" },
+  );
+}
+
+// ---- Worker 监控（Flower，对齐 data-synth system/workers） ----
+
+export interface FlowerWorkerOverview {
+  workerName: string;
+  status: "ONLINE" | "OFFLINE";
+  activeQueueNames: string[];
+  registeredTaskCount: number;
+  registeredTaskNames: string[];
+  processedTaskCount: number;
+  concurrency: number;
+  prefetchCount: number;
+  activeTaskCount: number;
+  reservedTaskCount: number;
+  scheduledTaskCount: number;
+  lastHeartbeatAt?: string | null;
+}
+
+export interface FlowerWorkersOverview {
+  workers: FlowerWorkerOverview[];
+  summary: { total: number; online: number; offline: number };
+  collectedAt: string;
+}
+
+export function apiFlowerWorkers(forceRefresh = false) {
+  return request<FlowerWorkersOverview>(
+    `/api/v1/workers?force_refresh=${forceRefresh ? "true" : "false"}`,
+  );
+}
+
+export interface FlowerWorkerTaskItem {
+  taskId: string;
+  taskName: string;
+  state: string;
+  queueName?: string | null;
+  argsText?: string;
+  kwargsText?: string;
+  receivedAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  runtimeSeconds?: number | null;
+  resultText?: string | null;
+  exceptionText?: string | null;
+}
+
+export interface FlowerWorkerTaskOverview {
+  workerName: string;
+  activeTasks: FlowerWorkerTaskItem[];
+  reservedTasks: FlowerWorkerTaskItem[];
+  scheduledTasks: FlowerWorkerTaskItem[];
+  recentTasks: FlowerWorkerTaskItem[];
+  summary: { active: number; reserved: number; scheduled: number; recent: number };
+  collectedAt: string;
+}
+
+export function apiFlowerWorkerTasks(workerName: string, recentLimit = 50) {
+  return request<FlowerWorkerTaskOverview>(
+    `/api/v1/workers/${encodeURIComponent(workerName)}/tasks?recent_limit=${recentLimit}`,
+  );
+}
+
+export interface WorkerRegisteredTaskCronConfig {
+  id: string;
+  name?: string | null;
+  label?: string | null;
+  cronExpression?: string | null;
+  queueName?: string | null;
+  state?: string | null;
+  nextFireTime?: string | null;
+}
+
+export interface WorkerRegisteredTaskConfigItem {
+  taskName: string;
+  taskClass: string;
+  cronConfigs: WorkerRegisteredTaskCronConfig[];
+}
+
+export interface WorkerRegisteredTaskConfigOverview {
+  workerName: string;
+  tasks: WorkerRegisteredTaskConfigItem[];
+  summary: {
+    taskCount: number;
+    configuredTaskCount: number;
+    cronConfigCount: number;
+  };
+}
+
+export function apiWorkerRegisteredTasks(workerName: string) {
+  return request<WorkerRegisteredTaskConfigOverview>(
+    `/api/v1/workers/${encodeURIComponent(workerName)}/registered-tasks`,
+  );
 }

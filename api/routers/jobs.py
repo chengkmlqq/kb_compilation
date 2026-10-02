@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.db import get_db
-from api.models.framework import Job
+from api.models.framework import Job, JobQueue
 from api.services.identity import decode_identity_cookie
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -62,6 +62,7 @@ def list_jobs(
     task_class: str | None = Query(None),
     state: str | None = Query(None),
     keyword: str | None = Query(None, description="job id 或 task_id 模糊匹配"),
+    queue_name: str | None = Query(None, description="队列名精确匹配"),
     db: Session = Depends(get_db),
 ) -> dict:
     """任务列表：时间倒序，支持 task_class / state / keyword 过滤 + 分页。
@@ -81,6 +82,9 @@ def list_jobs(
         like = f"%{keyword}%"
         stmt = stmt.where(Job.id.like(like) | Job.task_id.like(like))
         count_stmt = count_stmt.where(Job.id.like(like) | Job.task_id.like(like))
+    if queue_name:
+        stmt = stmt.where(Job.queue_name == queue_name)
+        count_stmt = count_stmt.where(Job.queue_name == queue_name)
 
     total = db.execute(count_stmt).scalar() or 0
     rows = (
@@ -101,6 +105,86 @@ def list_jobs(
             "page_size": page_size,
         },
     }
+
+
+@router.get("/statistics")
+def job_statistics(
+    _user_id: str = Depends(_require_user_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """任务统计：按 state 分组计数（对齐 data-synth JobStatistics）。"""
+    rows = db.execute(
+        select(Job.state, func.count()).group_by(Job.state)
+    ).all()
+    counts: dict[str, int] = {}
+    for state, count in rows:
+        counts[str(state or "")] = int(count)
+
+    return {
+        "success": True,
+        "data": {
+            "total": sum(counts.values()),
+            "running": counts.get("RUNNING", 0),
+            "success": counts.get("SUCCESS", 0),
+            "failed": counts.get("FAILED", 0),
+            "stopped": counts.get("STOPPED", 0),
+            "queued": counts.get("PENDING", 0),
+        },
+    }
+
+
+@router.get("/queues")
+def job_queues(
+    _user_id: str = Depends(_require_user_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """队列列表：modo_job 实际出现的 queue_name 去重（供筛选下拉）。"""
+    rows = db.execute(
+        select(Job.queue_name)
+        .where(Job.queue_name.is_not(None), Job.queue_name != "")
+        .distinct()
+    ).all()
+    items = [
+        {"queueName": str(name), "queueLabel": None}
+        for (name,) in rows
+        if str(name or "").strip()
+    ]
+    items.sort(key=lambda q: q["queueName"].lower())
+    return {"success": True, "data": items}
+
+
+@router.post("/{job_id}/stop")
+def stop_job(
+    job_id: str,
+    _user_id: str = Depends(_require_user_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """停止任务：仅运行中（RUNNING）可停，置为 STOPPED。"""
+    job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
+    if job.state != "RUNNING":
+        raise HTTPException(status_code=400, detail=f"任务当前状态 {job.state}，不可停止")
+    job.state = "STOPPED"
+    job.end_time = func.now()
+    db.add(job)
+    db.commit()
+    return {"success": True, "data": {"id": job_id, "state": "STOPPED"}}
+
+
+@router.delete("/{job_id}")
+def delete_job(
+    job_id: str,
+    _user_id: str = Depends(_require_user_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """删除任务记录（modo_job 行）。"""
+    job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
+    db.delete(job)
+    db.commit()
+    return {"success": True, "data": {"id": job_id, "deleted": True}}
 
 
 @router.get("/{job_id}")

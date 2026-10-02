@@ -136,6 +136,11 @@ services:
       - --basic_auth=${FLOWER_BASIC_AUTH}
     <<: *api-env
     environment:
+      # 注意：显式 environment 键会整体覆盖 anchor 的 environment（YAML merge
+      # 是浅合并），所以 broker/backend 必须在此重列，否则 flower 拿不到
+      # CELERY_BROKER_URL → 回退 localhost → worker 全部离线（Connection refused）。
+      CELERY_BROKER_URL: ${KB_CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${KB_CELERY_RESULT_BACKEND}
       FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH}
     depends_on:
       redis:

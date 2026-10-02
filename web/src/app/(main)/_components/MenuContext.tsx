@@ -43,10 +43,11 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "datasources", menu_name: "datasources", menu_label: "数据源", route: "/datasources", menu_icon: "DatabaseOutlined", sort_num: 4, state: "1" },
   { menu_id: "wiki", menu_name: "wiki", menu_label: "Wiki 总览", route: "/wiki", menu_icon: "BookOutlined", sort_num: 5, state: "1" },
   { menu_id: "jobs", menu_name: "jobs", menu_label: "任务监控", route: "/jobs", menu_icon: "DashboardOutlined", sort_num: 6, state: "1" },
-  { menu_id: "models", menu_name: "models", menu_label: "模型配置", route: "/models", menu_icon: "CloudServerOutlined", sort_num: 7, state: "1" },
-  { menu_id: "mcps", menu_name: "mcps", menu_label: "MCP 管理", route: "/mcps", menu_icon: "ApiOutlined", sort_num: 8, state: "1" },
-  { menu_id: "skills", menu_name: "skills", menu_label: "技能管理", route: "/skills", menu_icon: "ToolOutlined", sort_num: 9, state: "1" },
-  { menu_id: "system", menu_name: "system", menu_label: "系统管理", route: "/system", menu_icon: "SettingOutlined", sort_num: 10, state: "1" },
+  { menu_id: "workers", menu_name: "workers", menu_label: "主机监控", route: "/workers", menu_icon: "CloudServerOutlined", sort_num: 7, state: "1" },
+  { menu_id: "models", menu_name: "models", menu_label: "模型配置", route: "/models", menu_icon: "CloudServerOutlined", sort_num: 8, state: "1" },
+  { menu_id: "mcps", menu_name: "mcps", menu_label: "MCP 管理", route: "/mcps", menu_icon: "ApiOutlined", sort_num: 9, state: "1" },
+  { menu_id: "skills", menu_name: "skills", menu_label: "技能管理", route: "/skills", menu_icon: "ToolOutlined", sort_num: 10, state: "1" },
+  { menu_id: "system", menu_name: "system", menu_label: "系统管理", route: "/system", menu_icon: "SettingOutlined", sort_num: 11, state: "1" },
 ];
 
 /** 平铺列表 → 树（对齐 data-synth menu-actions buildTree 语义） */

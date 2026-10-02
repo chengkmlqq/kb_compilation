@@ -69,6 +69,16 @@ class Settings:
     # the framework store; only chunk embeddings go to the vector backend.
     VECTOR_STORE_TYPE: str = os.getenv("VECTOR_STORE_TYPE", "pg")
 
+    # --- Flower (Celery worker 监控，worker monitor page) ---
+    # Base URL of the Flower HTTP API. In docker-compose the api-server reaches
+    # the flower container by service name (http://flower:5555). Local dev can
+    # point at a locally-running flower.
+    FLOWER_API_BASE_URL: str = os.getenv("FLOWER_API_BASE_URL", "http://flower:5555")
+    # Basic auth for the Flower HTTP API (user:password).
+    FLOWER_BASIC_AUTH: str = os.getenv("FLOWER_BASIC_AUTH", "admin:admin")
+    # Timeout (seconds) for each Flower API call.
+    FLOWER_API_TIMEOUT_S: int = int(os.getenv("FLOWER_API_TIMEOUT_S", "15"))
+
     # --- Agent gateway (hermes-agent skill execution service) ---
     # Base URL of the separately-deployed agent-gateway (default host:8080).
     # In docker-compose the worker reaches it via host.docker.internal:8080
