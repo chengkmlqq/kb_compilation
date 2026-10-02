@@ -1,12 +1,119 @@
+/* MODO design-system base (aligned with data-synth) */
+:root {
+  --color-modo-6: #3261ce;
+  --color-gray-1: #f9fbfd;
+  --color-gray-2: #eff4f9;
+  --color-gray-3: #e3e9ef;
+  --color-gray-6: #79879c;
+  --color-gray-10: #242e43;
+}
+
 html,
 body {
   margin: 0;
   padding: 0;
-  background: #f5f5f5;
+  background: #f5f7fa;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* ============================================================
+   MODO 页面容器：外层灰底 + 内层白卡片（对齐 ModoContainer）
+   ============================================================ */
+.modo-page {
+  background: var(--color-gray-2, #eff4f9);
+  padding: 10px 12px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 56px);
+}
+.modo-page > .ant-card,
+.modo-page-body {
+  flex: 1;
+  min-height: 0;
+  background: #ffffff;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 2px 5px #242e431a;
+}
+
+/* ============================================================
+   Ant Design 全局覆盖 -> MODO 视觉
+   ============================================================ */
+/* 卡片：白底圆角 6、无边框、浅阴影（对齐 ModoContainer） */
+.ant-card {
+  border: none !important;
+  border-radius: 6px !important;
+  box-shadow: 0 2px 5px #242e431a;
+}
+.ant-card .ant-card-head {
+  border-bottom: 1px solid var(--color-gray-2);
+}
+
+/* 按钮：扁平无阴影（对齐 ModoButton） */
+.ant-btn {
+  box-shadow: none !important;
+}
+
+/* 表格：白表头、无竖分隔线、行底浅灰、文字深色（对齐 ModoTable） */
+.ant-table-thead > tr > th {
+  background: #ffffff !important;
+  color: var(--color-gray-10) !important;
+  border-bottom: 1px solid var(--color-gray-2) !important;
+  padding: 7px 8px !important;
+}
+.ant-table-thead > tr > th::before {
+  display: none !important;
+}
+.ant-table-tbody > tr > td {
+  color: var(--color-gray-10);
+  border-bottom: 1px solid var(--color-gray-2) !important;
+  padding: 7px 8px !important;
+}
+.ant-table-tbody > tr.ant-table-row:hover > td {
+  background: #f5f7fa !important;
+}
+
+/* Tabs：无底部白边（页面 Tab 直接贴在卡片头下方） */
+.ant-tabs .ant-tabs-nav {
+  margin-bottom: 0;
+}
+
+/* 侧边菜单：一级加粗 600 高 44、选中/悬浮 #EFF4F9、圆角 4（对齐 side-menu） */
+.modo-sider .ant-layout-sider-children {
+  overflow: hidden auto;
+}
+.modo-sider .ant-menu-inline .ant-menu-item,
+.modo-sider .ant-menu-inline .ant-menu-submenu-title {
+  font-weight: 400 !important;
+  margin-block: 4px !important;
+  margin-inline: 8px !important;
+  width: calc(100% - 16px) !important;
+  border-radius: 4px !important;
+}
+.modo-sider .root-menu-item {
+  height: 44px !important;
+  line-height: 44px !important;
+  font-weight: 600 !important;
+}
+.modo-sider .root-menu-item .ant-menu-title-content {
+  margin-left: 16px !important;
+}
+.modo-sider .ant-menu-sub .ant-menu-item,
+.modo-sider .ant-menu-sub .ant-menu-submenu-title {
+  padding-left: 37px !important;
+  border-radius: 4px !important;
+}
+.modo-sider .ant-menu-sub .ant-menu-item .anticon,
+.modo-sider .ant-menu-sub .ant-menu-submenu-title .anticon {
+  display: none !important;
+}
+.modo-sider .ant-menu-sub .ant-menu-item .ant-menu-title-content,
+.modo-sider .ant-menu-sub .ant-menu-submenu-title .ant-menu-title-content {
+  margin-left: 0 !important;
 }
 
 /* Wiki page markdown rendering */
@@ -45,7 +152,7 @@ body {
 .kb-markdown blockquote {
   margin: 0.6em 0;
   padding: 0.2em 1em;
-  border-left: 3px solid #1677ff;
+  border-left: 3px solid #3261ce;
   background: #f6f8fb;
   color: rgba(0, 0, 0, 0.65);
 }
@@ -61,4 +168,4 @@ body {
   text-align: left;
 }
 .kb-markdown th { background: #fafafa; font-weight: 600; }
-.kb-markdown a { color: #1677ff; }
+.kb-markdown a { color: #3261ce; }

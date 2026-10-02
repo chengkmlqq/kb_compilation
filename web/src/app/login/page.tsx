@@ -43,10 +43,17 @@ export default function LoginPage() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "linear-gradient(135deg, #1f3b73 0%, #3a6bc0 100%)",
+        background: "rgba(45, 132, 251, 0.05)",
+        position: "relative",
       }}
     >
-      <Card style={{ width: 380, boxShadow: "0 8px 24px rgba(0,0,0,0.2)" }}>
+      <Card
+        style={{
+          width: 400,
+          borderRadius: 6,
+          boxShadow: "0 1px 30px 0 rgb(117 145 175 / 18%)",
+        }}
+      >
         <Typography.Title level={3} style={{ textAlign: "center", marginTop: 0 }}>
           知识库平台
         </Typography.Title>

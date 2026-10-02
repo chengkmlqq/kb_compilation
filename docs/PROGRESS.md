@@ -15,7 +15,8 @@
 
 ## 2. 当前状态（2026-10-02）
 
-- **测试：217 个全部通过**（`uv run pytest` / `.venv/bin/python -m pytest`）
+- **测试：217 个全部通过**（`uv run pytest` / `.venv/bin/python -m pytest`）；前端 tsc + build 通过
+- **样式交互对齐 data-synth（2026-10-02 落地）**：全局 MODO 主题（主色 #3261CE、文字 #242E43、圆角 4/6）——`web/src/lib/theme.ts` + `globals.css` 全局覆盖（卡片白底圆角 6 浅阴影 / 表格白表头无竖线行底 #EFF4F9 / 按钮扁平无阴影）；主布局改 data-synth 结构（Header 顶部白条 + **浅色树形 Sider** + Content #F5F7FA 灰底 padding 10/12），Sider 对齐 side-menu 交互（一级加粗 600 高 44、选中悬浮 #EFF4F9、圆角 4、折叠按钮、当前路径自动展开父级、菜单图标映射）；登录页配色对齐（浅蓝底 + 白卡片圆角 6 阴影）
 - **菜单授权迁移（2026-10-02 落地）**：系统管理从只读升级为完整 RBAC——角色 CRUD、角色-菜单分配（saveRoleMenus 语义）、角色-用户配置（plat-mgr 角色）、菜单树 CRUD、my-menus（当前用户可见菜单）；新增 FastAPI 中间件守卫（对齐上游 proxy.ts：白名单 + AUTH_ADMIN_USERS 绕过 + check_path_permission，未受控路径放行）；前端 Sider 按 my-menus 动态渲染（空回退内置菜单）。**现在可通过角色菜单分配控制用户侧边栏与页面访问**（真实库验证：受控+未授权 → 403，受控+已授权 → 放行）
 
 - **测试：142 个全部通过**（`uv run pytest` / `.venv/bin/python -m pytest`）
