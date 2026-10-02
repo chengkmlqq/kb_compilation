@@ -36,6 +36,20 @@ const TYPE_COLOR: Record<string, string> = {
   summary: "gold",
 };
 
+// 把内容里的 [[slug]] 双链转成 markdown 链接（渲染成可点击的 wiki 页跳转）
+// 转义已有 markdown 链接避免破坏，且只处理未被 [](...) 包裹的双链
+function renderWikiLinks(content: string, kbId: string): string {
+  if (!content) return content;
+  const wikiLinkRe = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
+  return content.replace(wikiLinkRe, (_m, slug: string, alias?: string) => {
+    const clean = (slug || "").trim();
+    if (!clean) return _m;
+    const label = (alias || "").trim() || clean;
+    const href = `/kbs/${encodeURIComponent(kbId)}/wiki/${encodeURIComponent(clean)}`;
+    return `[${label}](${href})`;
+  });
+}
+
 const TYPE_OPTIONS = [
   { value: "entity", label: "实体" },
   { value: "concept", label: "概念" },
@@ -212,7 +226,9 @@ export default function WikiPageDetailPage() {
           )}
           <hr />
           <div className="kb-markdown">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{page.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {renderWikiLinks(page.content || "", id)}
+            </ReactMarkdown>
           </div>
         </Space>
       </Card>
