@@ -145,3 +145,46 @@ CREATE TABLE IF NOT EXISTS kb_agent (
     updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_kb_agent_team ON kb_agent (team_name);
+
+-- -------------------------------------------------------------------- mcp server
+CREATE TABLE IF NOT EXISTS kb_mcp_server (
+    id             VARCHAR(36) PRIMARY KEY,
+    scope          VARCHAR(16) NOT NULL,          -- personal | team | system
+    name           VARCHAR(128) NOT NULL,         -- 网关侧 server name（唯一）
+    type           VARCHAR(32) DEFAULT 'streamable_http',
+    url            TEXT,
+    headers        JSON,                          -- 额外请求头；敏感值加密存
+    command        VARCHAR(255),                  -- stdio 启动命令
+    args           JSON,                          -- stdio 参数
+    env            JSON,                          -- stdio 环境变量
+    owner_user_id  VARCHAR(64),
+    owner_team_name VARCHAR(64),
+    enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+    state          VARCHAR(8) NOT NULL DEFAULT '1',
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_kb_mcp_scope ON kb_mcp_server (scope);
+CREATE INDEX idx_kb_mcp_name ON kb_mcp_server (name);
+CREATE INDEX idx_kb_mcp_owner_user ON kb_mcp_server (owner_user_id);
+CREATE INDEX idx_kb_mcp_owner_team ON kb_mcp_server (owner_team_name);
+
+-- ---------------------------------------------------------------------- skill
+CREATE TABLE IF NOT EXISTS kb_skill (
+    id             VARCHAR(36) PRIMARY KEY,
+    scope          VARCHAR(16) NOT NULL,          -- personal | team | system
+    name           VARCHAR(128) NOT NULL,         -- 技能名（frontmatter name）
+    description    TEXT,
+    version        VARCHAR(32),
+    package_zip    MEDIUMBLOB,                    -- ZIP 安装包（最大 16MB；PG 部署用 BYTEA，见 ORM LargeBinary）
+    package_size   INTEGER,
+    owner_user_id  VARCHAR(64),
+    owner_team_name VARCHAR(64),
+    state          VARCHAR(8) NOT NULL DEFAULT '1',
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_kb_skill_scope ON kb_skill (scope);
+CREATE INDEX idx_kb_skill_name ON kb_skill (name);
+CREATE INDEX idx_kb_skill_owner_user ON kb_skill (owner_user_id);
+CREATE INDEX idx_kb_skill_owner_team ON kb_skill (owner_team_name);
