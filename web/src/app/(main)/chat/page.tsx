@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   App,
   Button,
   Card,
+  Drawer,
   Empty,
   Input,
   List,
@@ -47,6 +49,8 @@ import {
   apiUploadAttachment,
   ChatAttachmentItem,
   ChatMessageItem,
+  ChatRefItem,
+  QaStreamEvent,
   ChatSessionItem,
   KbItem,
 } from "@/lib/api";
@@ -60,8 +64,12 @@ interface UiMessage extends ChatMessageItem {
   followUpsDismissed?: boolean;
 }
 
+// 切页续传锚点：qa-resume:{sessionId} → {stream_id, offset}
+const QA_RESUME_KEY = (sid: string) => `qa-resume:${sid}`;
+
 export default function ChatPage() {
   const { message: toast } = App.useApp();
+  const router = useRouter();
   const [kbs, setKbs] = useState<KbItem[]>([]);
   const [kbId, setKbId] = useState<string>();
   const [input, setInput] = useState("");
@@ -73,6 +81,11 @@ export default function ChatPage() {
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const msgsRef = useRef<UiMessage[]>([]);
+  // 保持 msgsRef 与 msgs 同步（供 tryResume 读最新列表）
+  useEffect(() => {
+    msgsRef.current = msgs;
+  }, [msgs]);
   const [renameTarget, setRenameTarget] = useState<ChatSessionItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
   // L3：Agent 模式 + 附件 + 消息搜索
@@ -83,6 +96,14 @@ export default function ChatPage() {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [searchResults, setSearchResults] = useState<(ChatMessageItem & { session_id: string; session_title: string })[]>([]);
   const [searching, setSearching] = useState(false);
+  // 引用抽屉（WeKnora 对齐：气泡角标 → 右侧抽屉看全部引用原文）
+  const [refDrawer, setRefDrawer] = useState<{
+    open: boolean;
+    refs: ChatRefItem[];
+    answer: string;
+  }>({ open: false, refs: [], answer: "" });
+  // 切页续传：记录当前流 id 与已收事件数（localStorage），回来时 resume
+  const [resuming, setResuming] = useState(false);
 
   const scrollBottom = () => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
@@ -136,6 +157,8 @@ export default function ChatPage() {
         // 加载附件
         const att = await apiListAttachments(sessionId);
         if (att.success) setAttachments(att.data?.items || []);
+        // 切页续传：若该会话有未完成的流（后台仍在生成），继续拉取
+        await tryResume(sessionId);
       } finally {
         setLoadingMsgs(false);
         scrollBottom();
@@ -144,6 +167,105 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sessions],
   );
+
+  // 切页续传：读取 localStorage 锚点，从 offset 续拉后台仍在生成的流
+  const tryResume = async (sessionId: string) => {
+    const raw = sessionStorage.getItem(QA_RESUME_KEY(sessionId));
+    if (!raw) return;
+    let anchor: { stream_id: string; offset: number };
+    try {
+      anchor = JSON.parse(raw);
+    } catch {
+      sessionStorage.removeItem(QA_RESUME_KEY(sessionId));
+      return;
+    }
+    const { stream_id, offset } = anchor;
+    setResuming(true);
+    try {
+      const resp = await fetch(`/api/v1/qa/stream/${stream_id}?after=${offset}`, {
+        headers: { "content-type": "application/json" },
+      });
+      if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let evtCount = offset;
+      let full = "";
+      let fullThinking = "";
+      let refs: ChatRefItem[] = [];
+      // 补一个续传占位消息（若最后一条不是本流助手消息）
+      const lastMsg = msgsRef.current?.[msgsRef.current.length - 1];
+      const needPlaceholder =
+        !lastMsg || lastMsg.role !== "assistant" || lastMsg.streaming !== true;
+      const placeholderId = `resume-ai-${Date.now()}`;
+      if (needPlaceholder) {
+        setMsgs((prev) => [
+          ...prev,
+          {
+            id: placeholderId,
+            role: "assistant",
+            content: "",
+            refs: [],
+            streaming: true,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      const applyId = needPlaceholder ? placeholderId : (lastMsg?.id ?? placeholderId);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            const ev = JSON.parse(line.slice(5).trim()) as QaStreamEvent;
+            if (ev.type === "delta") {
+              full += ev.text || "";
+              setMsgs((prev) =>
+                prev.map((m) => (m.id === applyId ? { ...m, content: full } : m)),
+              );
+              scrollBottom();
+            } else if (ev.type === "thinking") {
+              fullThinking += ev.text || "";
+              setMsgs((prev) =>
+                prev.map((m) => (m.id === applyId ? { ...m, thinking: fullThinking } : m)),
+              );
+            } else if (ev.type === "context") {
+              refs = (ev.hits || []).map((h) => ({
+                chunk_id: h.chunk_id,
+                content: h.content || "",
+                document_id: h.document_id || "",
+                kb_id: h.kb_id || "",
+                score: h.score || 0,
+                meta: h.meta || {},
+              }));
+            }
+            evtCount += 1;
+          } catch {
+            // ignore
+          }
+        }
+      }
+      setMsgs((prev) =>
+        prev.map((m) =>
+          m.id === applyId
+            ? { ...m, content: full, refs, thinking: fullThinking || undefined, streaming: false }
+            : m,
+        ),
+      );
+      sessionStorage.removeItem(QA_RESUME_KEY(sessionId));
+      setStreaming(false);
+    } catch (e) {
+      console.warn("resume failed", e);
+      sessionStorage.removeItem(QA_RESUME_KEY(sessionId));
+      setStreaming(false);
+    } finally {
+      setResuming(false);
+    }
+  };
 
   // 新建会话
   const newSession = async () => {
@@ -242,7 +364,10 @@ export default function ChatPage() {
       const decoder = new TextDecoder();
       let buffer = "";
       let full = "";
-      let refs: { chunk_id: string; score: number }[] = [];
+      let fullThinking = "";
+      let refs: ChatRefItem[] = [];
+      let streamId = "";
+      let eventCount = 0;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -253,20 +378,47 @@ export default function ChatPage() {
         for (const line of lines) {
           if (!line.startsWith("data:")) continue;
           try {
-            const evt = JSON.parse(line.slice(5).trim());
+            const evt: QaStreamEvent = JSON.parse(line.slice(5).trim());
             if (evt.type === "delta") {
               full += evt.text || "";
               setMsgs((prev) =>
                 prev.map((m) => (m.id === placeholder.id ? { ...m, content: full } : m)),
               );
               scrollBottom();
+            } else if (evt.type === "thinking") {
+              fullThinking += evt.text || "";
+              setMsgs((prev) =>
+                prev.map((m) =>
+                  m.id === placeholder.id ? { ...m, thinking: fullThinking } : m,
+                ),
+              );
             } else if (evt.type === "context") {
-              refs = (evt.hits || []).map((h: { chunk_id: string; score: number }) => ({
+              refs = (evt.hits || []).map((h) => ({
                 chunk_id: h.chunk_id,
-                score: h.score,
+                content: h.content || "",
+                document_id: h.document_id || "",
+                kb_id: h.kb_id || "",
+                score: h.score || 0,
+                meta: h.meta || {},
               }));
+            } else if (evt.type === "stream_meta") {
+              streamId = evt.stream_id || "";
+              // 记录续传锚点：切页回来时从已收事件数继续
+              if (sessionId && streamId) {
+                sessionStorage.setItem(
+                  QA_RESUME_KEY(sessionId),
+                  JSON.stringify({ stream_id: streamId, offset: 0 }),
+                );
+              }
             } else if (evt.type === "error") {
               toast.error(evt.message || "问答失败");
+            }
+            eventCount += 1;
+            if (sessionId && streamId) {
+              sessionStorage.setItem(
+                QA_RESUME_KEY(sessionId),
+                JSON.stringify({ stream_id: streamId, offset: eventCount }),
+              );
             }
           } catch {
             // 非 JSON 行（如 keep-alive）忽略
@@ -277,10 +429,13 @@ export default function ChatPage() {
       // 完成：标记 streaming 结束，触发追问建议 + 标题
       setMsgs((prev) =>
         prev.map((m) =>
-          m.id === placeholder.id ? { ...m, content: full, refs, streaming: false } : m,
+          m.id === placeholder.id
+            ? { ...m, content: full, refs, thinking: fullThinking || undefined, streaming: false }
+            : m,
         ),
       );
       setStreaming(false);
+      if (sessionId) sessionStorage.removeItem(QA_RESUME_KEY(sessionId));
       // 后台生成标题（成功会话）
       if (sessionId) {
         void apiGenerateTitle(sessionId).then(() => loadSessions());
@@ -553,6 +708,9 @@ export default function ChatPage() {
                       wordBreak: "break-word",
                     }}
                   >
+                    {m.role === "assistant" && m.thinking && (
+                      <ThinkingBlock thinking={m.thinking} streaming={!!m.streaming} />
+                    )}
                     {m.content || (m.streaming ? "思考中…" : "")}
                     {m.streaming && m.content && (
                       <span style={{ display: "inline-block", animation: "none", marginLeft: 2 }}>
@@ -566,10 +724,44 @@ export default function ChatPage() {
                   <div style={{ marginTop: 6 }}>
                     <Space size={4} wrap>
                       {m.refs.slice(0, 5).map((r, i) => (
-                        <Tag key={i} color="blue" style={{ fontSize: 11 }}>
-                          引用 {i + 1} · {(r.score || 0).toFixed(2)}
-                        </Tag>
+                        <Tooltip
+                          key={i}
+                          title={
+                            <div style={{ maxWidth: 360 }}>
+                              {r.content ? (
+                                <div style={{ maxHeight: 160, overflow: "auto", marginBottom: 6 }}>
+                                  {r.content.slice(0, 300)}
+                                  {r.content.length > 300 ? "…" : ""}
+                                </div>
+                              ) : (
+                                <Text type="secondary">（无原文）</Text>
+                              )}
+                              {r.meta?.source_file && (
+                                <Text type="secondary" style={{ fontSize: 11 }}>
+                                  来源：{r.meta.source_file}
+                                </Text>
+                              )}
+                            </div>
+                          }
+                          mouseEnterDelay={0.3}
+                        >
+                          <Tag
+                            color="blue"
+                            style={{ fontSize: 11, cursor: "pointer" }}
+                            onClick={() => setRefDrawer({ open: true, refs: m.refs || [], answer: m.content })}
+                          >
+                            引用 {i + 1} · {(r.score || 0).toFixed(2)}
+                          </Tag>
+                        </Tooltip>
                       ))}
+                      {m.refs.length > 5 && (
+                        <Tag
+                          style={{ fontSize: 11, cursor: "pointer" }}
+                          onClick={() => setRefDrawer({ open: true, refs: m.refs || [], answer: m.content })}
+                        >
+                          +{m.refs.length - 5}
+                        </Tag>
+                      )}
                     </Space>
                   </div>
                 )}
@@ -685,9 +877,100 @@ export default function ChatPage() {
         </div>
       </Modal>
 
+      {/* 引用抽屉（WeKnora 对齐） */}
+      <Drawer
+        title="回答引用"
+        open={refDrawer.open}
+        onClose={() => setRefDrawer((p) => ({ ...p, open: false }))}
+        width={560}
+      >
+        <Space direction="vertical" style={{ display: "flex" }} size={12}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            共 {refDrawer.refs.length} 条引用 · 点击跳转 wiki 页面
+          </Text>
+          {refDrawer.refs.map((r, i) => (
+            <Card key={i} size="small" title={`引用 ${i + 1} · 相似度 ${(r.score || 0).toFixed(2)}`}>
+              <Space direction="vertical" size={4} style={{ display: "flex" }}>
+                {r.content && (
+                  <Text style={{ fontSize: 13 }}>{r.content.slice(0, 400)}{r.content.length > 400 ? "…" : ""}</Text>
+                )}
+                <Space size={8} wrap>
+                  {r.meta?.source_file && (
+                    <Tag color="geekblue">📄 {r.meta.source_file}</Tag>
+                  )}
+                  <Button
+                    size="small"
+                    type="link"
+                    style={{ fontSize: 12 }}
+                    disabled={!r.kb_id || !r.chunk_id}
+                    onClick={() => {
+                      if (r.kb_id && r.chunk_id) {
+                        void router.push(`/kbs/${r.kb_id}/wiki/${r.chunk_id}`);
+                      }
+                    }}
+                  >
+                    跳转原文 →
+                  </Button>
+                </Space>
+              </Space>
+            </Card>
+          ))}
+        </Space>
+      </Drawer>
+
       <style jsx global>{`
         @keyframes kb-blink { 0%,100% { opacity: 1 } 50% { opacity: 0 } }
       `}</style>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 思考过程折叠块（WeKnora 对齐：LLM reasoning_content 可展开查看）
+// ---------------------------------------------------------------------------
+
+function ThinkingBlock({ thinking, streaming }: { thinking: string; streaming?: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div
+        onClick={() => setOpen(!open)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          cursor: "pointer",
+          fontSize: 12,
+          color: streaming ? "#fa8c16" : "#888",
+          background: "#fff7e6",
+          border: "1px solid #ffd591",
+          borderRadius: 6,
+          padding: "2px 10px",
+          userSelect: "none",
+        }}
+      >
+        <span>{streaming ? "💭 思考中…" : "💭 思考过程"}</span>
+        <span style={{ fontSize: 10 }}>{open ? "▾" : "▸"}</span>
+      </div>
+      {open && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: "8px 12px",
+            background: "#fffbe6",
+            borderLeft: "3px solid #faad14",
+            borderRadius: 4,
+            fontSize: 12,
+            color: "#666",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            maxHeight: 240,
+            overflow: "auto",
+          }}
+        >
+          {thinking}
+        </div>
+      )}
     </div>
   );
 }

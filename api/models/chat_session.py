@@ -63,6 +63,8 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(Text, default="")
     # JSON 字符串：引用 refs [{chunk_id, score, content?}]（assistant 消息）
     refs: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 思考过程全文（assistant 消息，LLM reasoning_content）
+    thinking: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32), default=_now_iso)
 
 

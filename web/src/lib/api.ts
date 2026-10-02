@@ -995,12 +995,30 @@ export interface ChatSessionItem {
   updated_at: string;
 }
 
+export interface ChatRefItem {
+  chunk_id: string;
+  score: number;
+  content?: string;
+  document_id?: string;
+  kb_id?: string;
+  meta?: Record<string, string>;
+}
+
 export interface ChatMessageItem {
   id: string;
   role: "user" | "assistant";
   content: string;
-  refs?: { chunk_id: string; score: number }[];
+  refs?: ChatRefItem[];
+  thinking?: string | null;
   created_at: string;
+}
+
+export interface QaStreamEvent {
+  type: string;
+  stream_id?: string;
+  hits?: ChatRefItem[];
+  text?: string;
+  message?: string;
 }
 
 export function apiCreateSession(kb_id?: string | null, title?: string) {

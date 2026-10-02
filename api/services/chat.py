@@ -175,6 +175,21 @@ class ChatClient:
         max_tokens: int = 2048,
     ) -> Iterator[str]:
         """Yield delta text chunks as they arrive (SSE-parsed)."""
+        for delta in self.stream_events(messages, temperature, max_tokens):
+            yield delta.get("text") or ""
+
+    def stream_events(
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> Iterator[dict]:
+        """Yield structured events as they arrive (SSE-parsed).
+
+        Events: {"type": "thinking", "text": ...} for reasoning_content,
+        {"type": "delta", "text": ...} for the answer content, and
+        {"type": "done"} at the end.
+        """
         endpoint = (self.cfg.base_url or "").rstrip("/")
         if not endpoint:
             raise RuntimeError("AI_CHAT_API_ENDPOINT is not configured")
@@ -215,8 +230,12 @@ class ChatClient:
                         continue
                     delta = choices[0].get("delta") or {}
                     text = delta.get("content") or ""
+                    thinking = delta.get("reasoning_content") or ""
+                    if thinking:
+                        yield {"type": "thinking", "text": thinking}
                     if text:
-                        yield text
+                        yield {"type": "delta", "text": text}
+        yield {"type": "done"}
 
     def chat(
         self,
@@ -276,5 +295,8 @@ def answer_question(
         normalized = []
     messages = build_messages(question, hits, normalized, extra_context=extra_context, agent_prompt=agent_prompt)
     client = ChatClient(chat_cfg)
-    for delta in client.stream(messages):
-        yield {"type": "delta", "text": delta}
+    for ev in client.stream_events(messages):
+        if ev.get("type") == "delta":
+            yield {"type": "delta", "text": ev.get("text") or ""}
+        elif ev.get("type") == "thinking":
+            yield {"type": "thinking", "text": ev.get("text") or ""}

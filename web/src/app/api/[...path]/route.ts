@@ -72,6 +72,11 @@ async function proxy(req: NextRequest): Promise<NextResponse> {
     responseHeaders.set("cache-control", "no-cache");
     responseHeaders.set("connection", "keep-alive");
     responseHeaders.set("x-accel-buffering", "no");
+    // custom header passthrough (e.g. X-Stream-Id for SSE resume)
+    const xStreamId = upstream.headers.get("x-stream-id");
+    if (xStreamId) {
+      responseHeaders.set("x-stream-id", xStreamId);
+    }
     return new NextResponse(upstream.body, {
       status: upstream.status,
       headers: responseHeaders,

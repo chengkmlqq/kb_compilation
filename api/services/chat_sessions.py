@@ -152,6 +152,7 @@ def _message_dict(m: ChatMessage) -> dict:
         "role": m.role,
         "content": m.content,
         "refs": refs,
+        "thinking": m.thinking or None,
         "created_at": m.created_at,
     }
 
@@ -190,6 +191,7 @@ def append_message(
     role: str,
     content: str,
     refs: list[dict] | None = None,
+    thinking: str | None = None,
 ) -> dict:
     get_session(db, user_id, session_id)
     max_seq = db.execute(
@@ -202,6 +204,7 @@ def append_message(
         role=role,
         content=content or "",
         refs=json.dumps(refs or [], ensure_ascii=False) if refs else None,
+        thinking=thinking or None,
     )
     db.add(msg)
     s = db.execute(select(ChatSession).where(ChatSession.id == session_id)).scalars().first()
