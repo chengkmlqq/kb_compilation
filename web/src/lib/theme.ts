@@ -7,6 +7,12 @@ import type { ThemeConfig } from "antd";
  * - Borders/rows: --color-gray-2 #EFF4F9
  * - Layout bg:    #F5F7FA
  * - Radius 4 (components), 6 (containers)
+ *
+ * NOTE: the authoritative MODO theme is modoThemeToken + modoAlgorithm in
+ * src/theme/ (wired by antd-registry). This legacy export is kept for
+ * call-sites that configure <ConfigProvider theme={modoTheme}> directly
+ * (e.g. the Sider menu theme overrides); it stays in sync with the same
+ * palette values.
  */
 export const modoTheme: ThemeConfig = {
   token: {
@@ -14,23 +20,23 @@ export const modoTheme: ThemeConfig = {
     colorInfo: "#3261CE",
     colorLink: "#3261CE",
     colorText: "#242E43",
-    colorTextSecondary: "#5E708A",
-    colorBgLayout: "#F5F7FA",
+    colorTextSecondary: "#79879C",
+    colorBgLayout: "#F9FBFD",
     colorBorder: "#E3E9EF",
     colorBorderSecondary: "#EFF4F9",
-    borderRadius: 4,
-    fontSize: 14,
-    controlHeight: 32,
+    borderRadius: 2,
+    fontSize: 12,
+    controlHeight: 28,
   },
   components: {
     Table: {
-      headerBg: "#ffffff",
+      headerBg: "#F9FBFD",
       headerColor: "#242E43",
       headerSplitColor: "transparent",
       cellPaddingBlock: 7,
       cellPaddingInline: 8,
-      borderColor: "#EFF4F9",
-      rowHoverBg: "#F5F7FA",
+      borderColor: "#E3E9EF",
+      rowHoverBg: "#F9FBFD",
     },
     Card: {
       borderRadiusLG: 6,

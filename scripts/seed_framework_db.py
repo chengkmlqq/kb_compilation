@@ -19,6 +19,8 @@ from api.db import get_sessionmaker
 from api.lib.crypto import aes_encrypt
 from api.models.framework import (
     Base,
+    Menu,
+    RoleMenuRela,
     Team,
     TeamMember,
     User,
@@ -31,6 +33,20 @@ SEED_USER_ID = os.getenv("KB_SEED_USER_ID", "huqiang")
 SEED_PASSWORD = os.getenv("KB_SEED_PASSWORD", "sys")
 SEED_TEAM = os.getenv("KB_SEED_TEAM", "默认团队")
 SEED_ROLE = os.getenv("KB_SEED_ROLE", "admin")
+
+# kb 两级菜单（对齐 data-synth root_data_synth 结构：1 顶级 + 子菜单）
+KB_MENUS: list[tuple[str, str, str, str | None, str | None]] = [
+    # (menu_id, menu_name, menu_label, route, parent_id)
+    ("root_kb", "kb", "知识库平台", None, None),
+    ("kbs", "kbs", "知识库管理", "/kbs", "root_kb"),
+    ("chat", "chat", "智能问答", "/chat", "root_kb"),
+    ("agents", "agents", "智能体配置", "/agents", "root_kb"),
+    ("datasources", "datasources", "数据源", "/datasources", "root_kb"),
+    ("wiki", "wiki", "Wiki 总览", "/wiki", "root_kb"),
+    ("jobs", "jobs", "任务监控", "/jobs", "root_kb"),
+    ("models", "models", "模型配置", "/models", "root_kb"),
+    ("system", "system", "系统管理", "/system", "root_kb"),
+]
 
 
 def main() -> None:
@@ -128,6 +144,45 @@ def main() -> None:
             )
             db.commit()
         print(f"[4/4] 角色/关联 OK: {SEED_ROLE}")
+
+        # 5) kb 菜单树 + 全部关联到种子角色（幂等）
+        menu_role = db.execute(
+            select(UserRole).where(UserRole.role_name == SEED_ROLE)
+        ).scalars().first()
+        for mid, mname, mlabel, route, parent in KB_MENUS:
+            existing = db.execute(
+                select(Menu).where(Menu.menu_id == mid)
+            ).scalars().first()
+            if not existing:
+                db.add(
+                    Menu(
+                        menu_id=mid,
+                        menu_name=mname,
+                        menu_label=mlabel,
+                        menu_type="frame",
+                        route=route,
+                        parent_id=parent,
+                        sort_num=KB_MENUS.index((mid, mname, mlabel, route, parent)),
+                        state="1",
+                    )
+                )
+            if menu_role:
+                rel = db.execute(
+                    select(RoleMenuRela).where(
+                        RoleMenuRela.role_id == menu_role.role_id,
+                        RoleMenuRela.menu_id == mid,
+                    )
+                ).scalars().first()
+                if not rel:
+                    db.add(
+                        RoleMenuRela(
+                            rela_id=uuid.uuid4().hex,
+                            role_id=menu_role.role_id,
+                            menu_id=mid,
+                        )
+                    )
+        db.commit()
+        print(f"[5/5] kb 菜单树 OK: {len(KB_MENUS)} 项 (root_kb + 8 子菜单) → 角色 {SEED_ROLE}")
 
         print("\nDONE — 登录: " + SEED_USER_ID + "/" + SEED_PASSWORD)
     finally:

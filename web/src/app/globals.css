@@ -28,7 +28,7 @@ body {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 56px);
+  min-height: calc(100vh - 45px);
 }
 .modo-page > .ant-card,
 .modo-page-body {
@@ -58,9 +58,9 @@ body {
   box-shadow: none !important;
 }
 
-/* 表格：白表头、无竖分隔线、行底浅灰、文字深色（对齐 ModoTable） */
+/* 表格：浅灰表头、无竖分隔线、行底浅灰、文字深色（对齐 ModoTable / data-synth token Table.headerBg #F9FBFD） */
 .ant-table-thead > tr > th {
-  background: #ffffff !important;
+  background: #f9fbfd !important;
   color: var(--color-gray-10) !important;
   border-bottom: 1px solid var(--color-gray-2) !important;
   padding: 7px 8px !important;
@@ -74,7 +74,7 @@ body {
   padding: 7px 8px !important;
 }
 .ant-table-tbody > tr.ant-table-row:hover > td {
-  background: #f5f7fa !important;
+  background: #f9fbfd !important;
 }
 
 /* Tabs：无底部白边（页面 Tab 直接贴在卡片头下方） */
@@ -82,37 +82,49 @@ body {
   margin-bottom: 0;
 }
 
-/* 侧边菜单：一级加粗 600 高 44、选中/悬浮 #EFF4F9、圆角 4（对齐 side-menu） */
-.modo-sider .ant-layout-sider-children {
+/* 侧边菜单：一级加粗 600 高 44、选中/悬浮 #EFF4F9、圆角 4（对齐 data-synth side-menu CSS module） */
+.side-menu-kb .ant-layout-sider-children {
   overflow: hidden auto;
 }
-.modo-sider .ant-menu-inline .ant-menu-item,
-.modo-sider .ant-menu-inline .ant-menu-submenu-title {
+.side-menu-kb .ant-menu-inline .ant-menu-item,
+.side-menu-kb .ant-menu-inline .ant-menu-submenu-title {
   font-weight: 400 !important;
-  margin-block: 4px !important;
-  margin-inline: 8px !important;
+  margin-top: 0 !important;
+  margin-bottom: 4px !important;
+  margin-left: 8px !important;
+  margin-right: 8px !important;
   width: calc(100% - 16px) !important;
   border-radius: 4px !important;
 }
-.modo-sider .root-menu-item {
+.side-menu-kb .ant-menu-inline .ant-menu-submenu {
+  margin-top: 0 !important;
+  margin-bottom: 4px !important;
+}
+.side-menu-kb .root-menu-item {
+  height: auto !important;
+  font-weight: 600 !important;
+}
+.side-menu-kb .root-menu-item.ant-menu-item,
+.side-menu-kb .root-menu-item > .ant-menu-submenu-title {
   height: 44px !important;
   line-height: 44px !important;
   font-weight: 600 !important;
 }
-.modo-sider .root-menu-item .ant-menu-title-content {
+.side-menu-kb .root-menu-item .ant-menu-title-content {
   margin-left: 16px !important;
 }
-.modo-sider .ant-menu-sub .ant-menu-item,
-.modo-sider .ant-menu-sub .ant-menu-submenu-title {
+.side-menu-kb .ant-menu-sub .ant-menu-item,
+.side-menu-kb .ant-menu-sub .ant-menu-submenu-title {
   padding-left: 37px !important;
+  padding-right: 12px !important;
   border-radius: 4px !important;
 }
-.modo-sider .ant-menu-sub .ant-menu-item .anticon,
-.modo-sider .ant-menu-sub .ant-menu-submenu-title .anticon {
+.side-menu-kb .ant-menu-sub .ant-menu-item .anticon,
+.side-menu-kb .ant-menu-sub .ant-menu-submenu-title .anticon {
   display: none !important;
 }
-.modo-sider .ant-menu-sub .ant-menu-item .ant-menu-title-content,
-.modo-sider .ant-menu-sub .ant-menu-submenu-title .ant-menu-title-content {
+.side-menu-kb .ant-menu-sub .ant-menu-item .ant-menu-title-content,
+.side-menu-kb .ant-menu-sub .ant-menu-submenu-title .ant-menu-title-content {
   margin-left: 0 !important;
 }
 

@@ -387,10 +387,17 @@ def my_menus(db: Session, user_id: str, is_admin: bool = False) -> dict:
     """Menus visible to the current user (state='1', sorted by sort_num).
 
     Platform admins (plat-mgr role or AUTH_ADMIN_USERS) get the full tree;
-    other users get only menus linked to their roles.
+    other users get only menus linked to their roles, PLUS all ancestor menus
+    (aligned with data-synth getNavigationMenusAction expandedIds logic), so
+    the frontend can always build a complete tree from the flat list.
     """
-    stmt = select(Menu).where(Menu.state == "1").order_by(Menu.sort_num, Menu.create_date)
-    if not is_admin:
+    all_rows = db.execute(
+        select(Menu).where(Menu.state == "1").order_by(Menu.sort_num, Menu.create_date)
+    ).scalars().all()
+
+    if is_admin:
+        rows = all_rows
+    else:
         role_ids = collect_user_role_ids(db, user_id)
         if not role_ids:
             return {"items": [], "total": 0}
@@ -399,8 +406,18 @@ def my_menus(db: Session, user_id: str, is_admin: bool = False) -> dict:
         ).scalars().all()
         if not linked:
             return {"items": [], "total": 0}
-        stmt = stmt.where(Menu.menu_id.in_(linked))
-    rows = db.execute(stmt).scalars().all()
+        # 从角色关联的 menu_id 向上补全所有祖先（对齐 source expandedIds）
+        menu_map = {m.menu_id: m for m in all_rows}
+        expanded = set(linked)
+        for mid in linked:
+            cur = menu_map.get(mid)
+            while cur and cur.parent_id:
+                if cur.parent_id in expanded:
+                    break
+                expanded.add(cur.parent_id)
+                cur = menu_map.get(cur.parent_id)
+        rows = [m for m in all_rows if m.menu_id in expanded]
+
     items = [
         {
             "menu_id": m.menu_id,
