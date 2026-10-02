@@ -4,6 +4,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import { Layout, Menu, ConfigProvider } from "antd";
 import type { MenuProps } from "antd";
 import {
+  ApiOutlined,
   AppstoreOutlined,
   BookOutlined,
   CloudServerOutlined,
@@ -15,6 +16,7 @@ import {
   LeftOutlined,
   RightOutlined,
   RobotOutlined,
+  ToolOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
 import { useRouter, usePathname } from "next/navigation";
@@ -35,6 +37,8 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   DashboardOutlined: <DashboardOutlined />,
   FileOutlined: <FileOutlined />,
   FolderOutlined: <FolderOutlined />,
+  ApiOutlined: <ApiOutlined />,
+  ToolOutlined: <ToolOutlined />,
 };
 const DEFAULT_ICON = <AppstoreOutlined />;
 

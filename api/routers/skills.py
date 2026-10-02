@@ -110,7 +110,64 @@ def detail_skill_route(
         caller.is_admin,
     ):
         raise HTTPException(status_code=404, detail="技能不存在")
-    return {"success": True, "data": {"item": skill_to_dict(m)}}
+    # SKILL.md 内容预览（从包内提取，供详情展示）
+    markdown_preview = ""
+    if m.package_zip:
+        import io
+        import zipfile
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(bytes(m.package_zip))) as zf:
+                for name in zf.namelist():
+                    if name.lower().endswith(".md") and name.count("/") <= 1:
+                        preview_bytes = zf.read(name)
+                        markdown_preview = preview_bytes.decode("utf-8", errors="replace")
+                        if len(markdown_preview) > 4000:
+                            markdown_preview = markdown_preview[:4000] + "\n…（截断）"
+                        break
+        except Exception:  # noqa: BLE001
+            markdown_preview = ""
+    return {
+        "success": True,
+        "data": {"item": skill_to_dict(m), "sk_markdown_preview": markdown_preview},
+    }
+
+
+@router.get("/{skill_id}/package")
+def export_skill_package_route(
+    skill_id: str,
+    caller: Caller = Depends(_require_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """导出技能 ZIP 包（base64，供前端下载/备份）。"""
+    from api.services.skills import get_skill_package
+
+    m = get_skill_package(db, skill_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="技能不存在")
+    from api.services.scope import ResourceRow, can_see
+
+    if not can_see(
+        ResourceRow.from_obj(m),
+        caller.user_id,
+        caller.team_name,
+        caller.is_admin,
+    ):
+        raise HTTPException(status_code=404, detail="技能不存在")
+    if not m.package_zip:
+        raise HTTPException(status_code=404, detail="技能包为空")
+    import base64
+
+    raw = bytes(m.package_zip)
+    return {
+        "success": True,
+        "data": {
+            "name": m.name,
+            "version": m.version,
+            "package_size": len(raw),
+            "package_base64": base64.b64encode(raw).decode("ascii"),
+        },
+    }
 
 
 class SkillUpdatePayload(BaseModel):

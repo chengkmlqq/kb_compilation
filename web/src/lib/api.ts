@@ -892,6 +892,39 @@ export interface McpRegistryItem {
   state: string;
 }
 
+export interface McpToolInfo {
+  name: string;
+  description: string;
+  params: unknown[];
+}
+
+export interface McpTestResult {
+  ok: boolean;
+  name?: string;
+  transport?: string;
+  tool_count?: number;
+  tools?: McpToolInfo[];
+  error?: string;
+  elapsed_ms?: number;
+}
+
+export function apiTestMcp(item: McpRegistryItem) {
+  return request<McpTestResult>("/api/v1/mcps/test", {
+    method: "POST",
+    body: JSON.stringify({
+      server: {
+        name: item.name,
+        type: item.type || "streamable_http",
+        url: item.url || "",
+        headers: item.headers || {},
+        command: item.command || "",
+        args: item.args || [],
+        env: item.env || {},
+      },
+    }),
+  });
+}
+
 export interface SkillRegistryItem {
   id: string;
   scope: ModelScope;
