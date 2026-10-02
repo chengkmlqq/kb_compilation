@@ -256,6 +256,68 @@ export function apiWikiLint(kbId: string) {
   return request<WikiLintData>(`/api/v1/kbs/${kbId}/wiki/lint`);
 }
 
+export interface WikiLogItem {
+  id: string;
+  action: string;
+  slug: string;
+  title: string;
+  detail: string;
+  operator: string;
+  created_at: string | null;
+}
+
+export function apiWikiLogs(kbId: string) {
+  return request<{ total: number; items: WikiLogItem[] }>(`/api/v1/kbs/${kbId}/wiki/logs`);
+}
+
+export interface WikiIndexData {
+  folder_tree: { id: string; name: string; parent_id: string }[];
+  pages_by_type: Record<string, number>;
+  recent_pages: {
+    slug: string;
+    title: string;
+    page_type: string;
+    folder_id: string;
+    updated_at: string | null;
+  }[];
+  total_pages: number;
+  total_folders: number;
+}
+
+export function apiWikiIndex(kbId: string) {
+  return request<WikiIndexData>(`/api/v1/kbs/${kbId}/wiki/index`);
+}
+
+export interface WikiFeedbackItem {
+  id: string;
+  slug: string;
+  user_id: string;
+  feedback_type: string;
+  content: string;
+  status: string;
+  created_at: string | null;
+}
+
+export function apiWikiSubmitFeedback(kbId: string, slug: string, feedbackType: string, content: string) {
+  return request<{ id: string; feedback_type: string; status: string }>(
+    `/api/v1/kbs/${kbId}/wiki/pages/${encodeURIComponent(slug)}/feedback`,
+    { method: "POST", body: JSON.stringify({ feedback_type: feedbackType, content }) }
+  );
+}
+
+export function apiWikiListFeedback(kbId: string, slug: string) {
+  return request<{ total: number; items: WikiFeedbackItem[] }>(
+    `/api/v1/kbs/${kbId}/wiki/pages/${encodeURIComponent(slug)}/feedback`
+  );
+}
+
+export function apiWikiUpdateFeedbackStatus(kbId: string, feedbackId: string, status: string) {
+  return request<{ id: string; status: string }>(
+    `/api/v1/kbs/${kbId}/wiki/feedback/${feedbackId}/status`,
+    { method: "PUT", body: JSON.stringify({ status }) }
+  );
+}
+
 export interface WikiSearchItem {
   slug: string;
   title: string;

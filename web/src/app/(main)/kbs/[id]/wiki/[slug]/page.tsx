@@ -10,17 +10,25 @@ import {
   Form,
   Input,
   Modal,
+  Radio,
   Select,
   Space,
   Spin,
   Tag,
   Typography,
 } from "antd";
-import { ApartmentOutlined, EditOutlined } from "@ant-design/icons";
+import { ApartmentOutlined, EditOutlined, MessageOutlined } from "@ant-design/icons";
 import { useParams, useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { apiWikiPage, apiWikiUpdatePage, WikiPageDetail } from "@/lib/api";
+import {
+  apiWikiListFeedback,
+  apiWikiPage,
+  apiWikiSubmitFeedback,
+  apiWikiUpdatePage,
+  WikiFeedbackItem,
+  WikiPageDetail,
+} from "@/lib/api";
 
 const TYPE_COLOR: Record<string, string> = {
   entity: "purple",
@@ -96,6 +104,40 @@ export default function WikiPageDetailPage() {
     }
   };
 
+  // 反馈弹窗
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackType, setFeedbackType] = useState("helpful");
+  const [feedbackContent, setFeedbackContent] = useState("");
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [pageFeedback, setPageFeedback] = useState<WikiFeedbackItem[]>([]);
+
+  const loadFeedback = useCallback(async () => {
+    if (!page) return;
+    const res = await apiWikiListFeedback(id, page.slug);
+    if (res.success && res.data) setPageFeedback(res.data.items);
+  }, [id, page]);
+
+  useEffect(() => {
+    if (feedbackOpen) void loadFeedback();
+  }, [feedbackOpen, loadFeedback]);
+
+  const submitFeedback = async () => {
+    if (!page) return;
+    setFeedbackSaving(true);
+    try {
+      const res = await apiWikiSubmitFeedback(id, page.slug, feedbackType, feedbackContent);
+      if (res.success) {
+        message.success("反馈已提交");
+        setFeedbackContent("");
+        void loadFeedback();
+      } else {
+        message.error(res.message || "提交失败");
+      }
+    } finally {
+      setFeedbackSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <Card>
@@ -148,6 +190,13 @@ export default function WikiPageDetailPage() {
             <Space>
               <Button size="small" icon={<EditOutlined />} onClick={openEdit}>
                 编辑
+              </Button>
+              <Button
+                size="small"
+                icon={<MessageOutlined />}
+                onClick={() => setFeedbackOpen(true)}
+              >
+                反馈
               </Button>
               <Button
                 size="small"
@@ -210,6 +259,47 @@ export default function WikiPageDetailPage() {
             <Input.TextArea rows={12} />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={`反馈：${page.title}`}
+        open={feedbackOpen}
+        onCancel={() => setFeedbackOpen(false)}
+        onOk={() => void submitFeedback()}
+        confirmLoading={feedbackSaving}
+      >
+        <Space direction="vertical" style={{ display: "flex" }} size="small">
+          <Radio.Group
+            value={feedbackType}
+            onChange={(e) => setFeedbackType(e.target.value)}
+            optionType="button"
+            buttonStyle="solid"
+          >
+            <Radio.Button value="helpful">有帮助</Radio.Button>
+            <Radio.Button value="issue">问题上报</Radio.Button>
+          </Radio.Group>
+          <Input.TextArea
+            rows={3}
+            placeholder="补充说明（可选）"
+            value={feedbackContent}
+            onChange={(e) => setFeedbackContent(e.target.value)}
+            maxLength={2000}
+          />
+          {pageFeedback.length > 0 && (
+            <div style={{ maxHeight: 160, overflow: "auto" }}>
+              <Typography.Text type="secondary">已有反馈：</Typography.Text>
+              {pageFeedback.map((fb) => (
+                <div key={fb.id} style={{ marginTop: 4 }}>
+                  <Tag color={fb.feedback_type === "helpful" ? "green" : "red"}>
+                    {fb.feedback_type === "helpful" ? "有帮助" : "问题"}
+                  </Tag>
+                  <Tag>{fb.status}</Tag>
+                  <Typography.Text>{fb.content}</Typography.Text>
+                </div>
+              ))}
+            </div>
+          )}
+        </Space>
       </Modal>
     </Space>
   );

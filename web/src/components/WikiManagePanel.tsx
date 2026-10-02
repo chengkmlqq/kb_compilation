@@ -18,6 +18,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Spin,
   Statistic,
   Table,
   Tag,
@@ -29,6 +30,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   FileAddOutlined,
+  FileSearchOutlined,
   FolderAddOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -40,12 +42,16 @@ import {
   apiWikiCreatePage,
   apiWikiDeleteFolder,
   apiWikiDeletePage,
+  apiWikiIndex,
   apiWikiLint,
+  apiWikiLogs,
   apiWikiRebuildLinks,
   apiWikiSearch,
   apiWikiStats,
   apiWikiTree,
   apiWikiUpdatePage,
+  WikiIndexData,
+  WikiLogItem,
   WikiSearchItem,
   WikiStatsData,
   WikiTree,
@@ -65,6 +71,38 @@ const ISSUE_TYPE_LABEL: Record<string, string> = {
   broken_link: "断链",
 };
 
+const ACTION_LABEL: Record<string, string> = {
+  page_create: "新建页面",
+  page_update: "更新页面",
+  page_delete: "删除页面",
+  folder_create: "新建目录",
+  folder_update: "更新目录",
+  folder_delete: "删除目录",
+  rebuild_links: "重建链接",
+};
+
+const ACTION_COLOR: Record<string, string> = {
+  page_create: "green",
+  page_update: "blue",
+  page_delete: "red",
+  folder_create: "green",
+  folder_update: "blue",
+  folder_delete: "red",
+  rebuild_links: "cyan",
+};
+
+const TYPE_LABEL: Record<string, string> = {
+  entity: "实体",
+  concept: "概念",
+  summary: "摘要",
+};
+
+const TYPE_COLOR: Record<string, string> = {
+  entity: "purple",
+  concept: "blue",
+  summary: "gold",
+};
+
 export default function WikiManagePanel({ kbId }: { kbId: string }) {
   const { message } = App.useApp();
   const router = useRouter();
@@ -77,6 +115,38 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
   const [searchQ, setSearchQ] = useState("");
   const [searchItems, setSearchItems] = useState<WikiSearchItem[] | null>(null);
   const [searching, setSearching] = useState(false);
+
+  // wiki 索引 / 操作日志
+  const [logOpen, setLogOpen] = useState(false);
+  const [indexOpen, setIndexOpen] = useState(false);
+  const [logs, setLogs] = useState<WikiLogItem[]>([]);
+  const [indexData, setIndexData] = useState<WikiIndexData | null>(null);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [indexLoading, setIndexLoading] = useState(false);
+
+  const openLogs = async () => {
+    setLogOpen(true);
+    setLogsLoading(true);
+    try {
+      const res = await apiWikiLogs(kbId);
+      if (res.success && res.data) setLogs(res.data.items);
+      else message.error(res.message || "加载日志失败");
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  const openIndex = async () => {
+    setIndexOpen(true);
+    setIndexLoading(true);
+    try {
+      const res = await apiWikiIndex(kbId);
+      if (res.success && res.data) setIndexData(res.data);
+      else message.error(res.message || "加载索引失败");
+    } finally {
+      setIndexLoading(false);
+    }
+  };
 
   // 页面编辑弹窗
   const [editOpen, setEditOpen] = useState(false);
@@ -264,6 +334,12 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
             onClear={clearSearch}
             style={{ width: 260 }}
           />
+          <Button size="small" icon={<AuditOutlined />} onClick={() => void openLogs()}>
+            操作日志
+          </Button>
+          <Button size="small" icon={<FileSearchOutlined />} onClick={() => void openIndex()}>
+            索引
+          </Button>
           {stats && (
             <>
               <Statistic title="页面" value={stats.total_pages} suffix={`/ ${stats.total_folders} 目录`} />
@@ -451,6 +527,103 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
                 ]}
               />
             )}
+          </Space>
+        )}
+      </Drawer>
+
+      <Drawer title="操作日志" open={logOpen} onClose={() => setLogOpen(false)} width={560}>
+        <Table
+          rowKey="id"
+          size="small"
+          loading={logsLoading}
+          dataSource={logs}
+          pagination={{ pageSize: 20, showSizeChanger: false }}
+          locale={{ emptyText: <Text type="secondary">暂无操作记录（页面/目录增删改、链接重建会记录）</Text> }}
+          columns={[
+            {
+              title: "动作",
+              dataIndex: "action",
+              width: 130,
+              render: (v: string) => <Tag color={ACTION_COLOR[v] || "default"}>{ACTION_LABEL[v] || v}</Tag>,
+            },
+            { title: "对象", dataIndex: "title", ellipsis: true },
+            {
+              title: "详情",
+              dataIndex: "detail",
+              render: (v: string) => <Text style={{ fontSize: 12 }}>{v}</Text>,
+            },
+            {
+              title: "操作人",
+              dataIndex: "operator",
+              width: 90,
+              render: (v: string) => <Text>{v || "-"}</Text>,
+            },
+            {
+              title: "时间",
+              dataIndex: "created_at",
+              width: 150,
+              render: (v: string) => <Text style={{ fontSize: 12 }}>{v ? v.replace("T", " ").slice(0, 16) : "-"}</Text>,
+            },
+          ]}
+        />
+      </Drawer>
+
+      <Drawer title="Wiki 索引" open={indexOpen} onClose={() => setIndexOpen(false)} width={520}>
+        {!indexData ? (
+          <Spin />
+        ) : (
+          <Space direction="vertical" style={{ display: "flex" }} size="middle">
+            <Space wrap>
+              <Statistic title="页面" value={indexData.total_pages} />
+              <Statistic title="目录" value={indexData.total_folders} />
+            </Space>
+            <div>
+              <Typography.Text strong>页类型分布</Typography.Text>
+              <div style={{ marginTop: 6 }}>
+                {Object.entries(indexData.pages_by_type).map(([t, n]) => (
+                  <Tag key={t} color={TYPE_COLOR[t] || "default"}>
+                    {TYPE_LABEL[t] || t}: {n}
+                  </Tag>
+                ))}
+              </div>
+            </div>
+            <div>
+              <Typography.Text strong>最近更新</Typography.Text>
+              <Table
+                rowKey="slug"
+                size="small"
+                pagination={false}
+                dataSource={indexData.recent_pages}
+                columns={[
+                  {
+                    title: "页面",
+                    dataIndex: "title",
+                    render: (v: string, r) => (
+                      <a
+                        onClick={() => {
+                          setIndexOpen(false);
+                          void router.push(`/kbs/${kbId}/wiki/${r.slug}`);
+                        }}
+                      >
+                        {v}
+                      </a>
+                    ),
+                  },
+                  {
+                    title: "类型",
+                    dataIndex: "page_type",
+                    width: 90,
+                    render: (v: string) => <Tag color={TYPE_COLOR[v] || "default"}>{TYPE_LABEL[v] || v}</Tag>,
+                  },
+                  {
+                    title: "更新时间",
+                    dataIndex: "updated_at",
+                    width: 130,
+                    render: (v: string) => <Text style={{ fontSize: 12 }}>{v ? v.replace("T", " ").slice(0, 16) : "-"}</Text>,
+                  },
+                ]}
+              />
+            </div>
           </Space>
         )}
       </Drawer>
