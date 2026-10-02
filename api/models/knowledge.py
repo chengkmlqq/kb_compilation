@@ -61,6 +61,7 @@ class KbDatasource(Base):
     # team-level ownership (team_name from the framework store)
     team_name: Mapped[str | None] = mapped_column(String(64), index=True)
     owner_user_id: Mapped[str | None] = mapped_column(String(64))
+    owner_team_name: Mapped[str | None] = mapped_column(String(64), index=True)
 
     # Pipeline toggles — mirrors WeKnora indexing_strategy:
     # {"vector_enabled": bool, "keyword_enabled": bool, "wiki_enabled": bool, "graph_enabled": bool}
