@@ -19,6 +19,7 @@ import {
 import { InboxOutlined, ReloadOutlined, ShareAltOutlined } from "@ant-design/icons";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import WikiGraphView from "@/components/WikiGraphView";
+import WikiManagePanel from "@/components/WikiManagePanel";
 import {
   apiDeleteDocument,
   apiListDocuments,
@@ -149,8 +150,6 @@ export default function KbDetailPage() {
     }
   };
 
-  const wikiPages = wiki?.pages || [];
-
   return (
     <Space direction="vertical" size="large" style={{ display: "flex" }}>
       <Card
@@ -242,36 +241,7 @@ export default function KbDetailPage() {
         ) : wikiView === "graph" ? (
           <WikiGraphView kbId={kbId} focusSlug={focusSlug} />
         ) : (
-          <Spin spinning={wikiLoading}>
-            {wikiPages.length === 0 ? (
-              <Empty description="暂无 wiki 页面，文档解析入库后由后台自动生成" />
-            ) : (
-              <Table<WikiTree["pages"][number]>
-                rowKey="slug"
-                size="small"
-                dataSource={wikiPages}
-                pagination={false}
-                columns={[
-                  {
-                    title: "页面标题",
-                    dataIndex: "title",
-                    render: (title: string, row) => (
-                      <Typography.Link onClick={() => router.push(`/kbs/${kbId}/wiki/${row.slug}`)}>
-                        {title}
-                      </Typography.Link>
-                    ),
-                  },
-                  { title: "类型", dataIndex: "page_type", width: 110 },
-                  {
-                    title: "摘要",
-                    dataIndex: "summary",
-                    ellipsis: true,
-                    render: (v: string | null) => v || "-",
-                  },
-                ]}
-              />
-            )}
-          </Spin>
+          <WikiManagePanel kbId={kbId} />
         )}
       </Card>
     </Space>

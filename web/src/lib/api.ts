@@ -223,6 +223,79 @@ export function apiWikiGraph(
   return request<WikiGraphData>(`/api/v1/kbs/${kbId}/wiki/graph${qs ? `?${qs}` : ""}`);
 }
 
+// ---- wiki 管理（页面/目录 CRUD + 统计/检查/重建链接）----
+
+export interface WikiStatsData {
+  kb_id: string;
+  total_pages: number;
+  total_folders: number;
+  total_links: number;
+  pages_by_type: Record<string, number>;
+  orphan_count: number;
+}
+
+export interface WikiLintIssue {
+  slug: string;
+  title: string;
+  issue_type: string;
+  detail: string;
+}
+
+export interface WikiLintData {
+  kb_id: string;
+  total_issues: number;
+  issues: WikiLintIssue[];
+  broken_link_count: number;
+}
+
+export function apiWikiStats(kbId: string) {
+  return request<WikiStatsData>(`/api/v1/kbs/${kbId}/wiki/stats`);
+}
+
+export function apiWikiLint(kbId: string) {
+  return request<WikiLintData>(`/api/v1/kbs/${kbId}/wiki/lint`);
+}
+
+export function apiWikiRebuildLinks(kbId: string) {
+  return request<{ added_links: number }>(`/api/v1/kbs/${kbId}/wiki/rebuild-links`, { method: "POST" });
+}
+
+export function apiWikiCreatePage(
+  kbId: string,
+  data: { title: string; slug?: string; page_type?: string; content?: string; summary?: string; folder_id?: string },
+) {
+  return request<{ id: string; slug: string; title: string }>(`/api/v1/kbs/${kbId}/wiki/pages`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function apiWikiUpdatePage(
+  kbId: string,
+  slug: string,
+  data: { title?: string; page_type?: string; content?: string; summary?: string; folder_id?: string; status?: string },
+) {
+  return request<{ id: string; slug: string }>(`/api/v1/kbs/${kbId}/wiki/pages/${encodeURIComponent(slug)}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export function apiWikiDeletePage(kbId: string, slug: string) {
+  return request(`/api/v1/kbs/${kbId}/wiki/pages/${encodeURIComponent(slug)}`, { method: "DELETE" });
+}
+
+export function apiWikiCreateFolder(kbId: string, data: { name: string; parent_id?: string }) {
+  return request<{ id: string; name: string }>(`/api/v1/kbs/${kbId}/wiki/folders`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function apiWikiDeleteFolder(kbId: string, folderId: string) {
+  return request(`/api/v1/kbs/${kbId}/wiki/folders/${folderId}`, { method: "DELETE" });
+}
+
 export function apiWikiPage(kbId: string, slug: string) {
   // Next 16 客户端导航(router.push)时 useParams 返回未解码的编码串，
   // 硬导航时返回解码中文 —— 先 decode 再 encode 幂等兼容两种输入
