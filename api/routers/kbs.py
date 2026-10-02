@@ -552,6 +552,22 @@ def get_wiki_index(kb_id: str, db: Session = Depends(get_db)) -> dict:
     return {"success": True, "data": wiki_index(db, kb_id)}
 
 
+@router.get("/{kb_id}/wiki/feedback")
+def list_all_wiki_feedback(
+    kb_id: str,
+    status: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    """全库反馈列表（可按状态过滤，倒序）。"""
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    data = wiki_list_feedback(db, kb_id, slug="")
+    if status:
+        data["items"] = [it for it in data["items"] if it["status"] == status]
+        data["total"] = len(data["items"])
+    return {"success": True, "data": data}
+
+
 @router.post("/{kb_id}/wiki/pages/{slug}/feedback")
 def submit_wiki_feedback(
     kb_id: str,

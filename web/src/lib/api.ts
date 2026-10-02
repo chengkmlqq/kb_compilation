@@ -311,6 +311,13 @@ export function apiWikiListFeedback(kbId: string, slug: string) {
   );
 }
 
+export function apiWikiListAllFeedback(kbId: string, status?: string) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  return request<{ total: number; items: WikiFeedbackItem[] }>(
+    `/api/v1/kbs/${kbId}/wiki/feedback${qs}`
+  );
+}
+
 export function apiWikiUpdateFeedbackStatus(kbId: string, feedbackId: string, status: string) {
   return request<{ id: string; status: string }>(
     `/api/v1/kbs/${kbId}/wiki/feedback/${feedbackId}/status`,

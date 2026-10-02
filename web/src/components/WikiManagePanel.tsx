@@ -16,6 +16,7 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Radio,
   Select,
   Space,
   Spin,
@@ -32,6 +33,7 @@ import {
   FileAddOutlined,
   FileSearchOutlined,
   FolderAddOutlined,
+  MessageOutlined,
   ReloadOutlined,
   SearchOutlined,
   TeamOutlined,
@@ -44,12 +46,15 @@ import {
   apiWikiDeletePage,
   apiWikiIndex,
   apiWikiLint,
+  apiWikiListAllFeedback,
   apiWikiLogs,
   apiWikiRebuildLinks,
   apiWikiSearch,
   apiWikiStats,
   apiWikiTree,
+  apiWikiUpdateFeedbackStatus,
   apiWikiUpdatePage,
+  WikiFeedbackItem,
   WikiIndexData,
   WikiLogItem,
   WikiSearchItem,
@@ -145,6 +150,50 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
       else message.error(res.message || "加载索引失败");
     } finally {
       setIndexLoading(false);
+    }
+  };
+
+  // 反馈管理
+  const [fbOpen, setFbOpen] = useState(false);
+  const [fbItems, setFbItems] = useState<WikiFeedbackItem[]>([]);
+  const [fbLoading, setFbLoading] = useState(false);
+  const [fbStatus, setFbStatus] = useState("");
+
+  const loadFeedbackList = useCallback(async (status = fbStatus) => {
+    setFbLoading(true);
+    try {
+      const res = await apiWikiListAllFeedback(kbId, status || undefined);
+      if (res.success && res.data) setFbItems(res.data.items);
+      else message.error(res.message || "加载反馈失败");
+    } finally {
+      setFbLoading(false);
+    }
+  }, [kbId, fbStatus]);
+
+  const openFeedback = async () => {
+    setFbOpen(true);
+    await loadFeedbackList();
+  };
+
+  const setFbStatusFilter = async (v: string) => {
+    setFbStatus(v);
+    setFbLoading(true);
+    try {
+      const res = await apiWikiListAllFeedback(kbId, v || undefined);
+      if (res.success && res.data) setFbItems(res.data.items);
+      else message.error(res.message || "加载反馈失败");
+    } finally {
+      setFbLoading(false);
+    }
+  };
+
+  const changeFbStatus = async (id: string, status: string) => {
+    const res = await apiWikiUpdateFeedbackStatus(kbId, id, status);
+    if (res.success) {
+      message.success("状态已更新");
+      await loadFeedbackList();
+    } else {
+      message.error(res.message || "更新失败");
     }
   };
 
@@ -336,6 +385,9 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
           />
           <Button size="small" icon={<AuditOutlined />} onClick={() => void openLogs()}>
             操作日志
+          </Button>
+          <Button size="small" icon={<MessageOutlined />} onClick={() => void openFeedback()}>
+            反馈
           </Button>
           <Button size="small" icon={<FileSearchOutlined />} onClick={() => void openIndex()}>
             索引
@@ -626,6 +678,86 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
             </div>
           </Space>
         )}
+      </Drawer>
+      <Drawer
+        title="页面反馈"
+        open={fbOpen}
+        onClose={() => setFbOpen(false)}
+        width={640}
+      >
+        <Space direction="vertical" style={{ display: "flex" }} size="small">
+          <Radio.Group
+            value={fbStatus}
+            onChange={(e) => void setFbStatusFilter(e.target.value)}
+            optionType="button"
+            size="small"
+          >
+            <Radio.Button value="">全部</Radio.Button>
+            <Radio.Button value="open">待处理</Radio.Button>
+            <Radio.Button value="resolved">已解决</Radio.Button>
+            <Radio.Button value="ignored">已忽略</Radio.Button>
+          </Radio.Group>
+          <Table
+            rowKey="id"
+            size="small"
+            loading={fbLoading}
+            dataSource={fbItems}
+            pagination={{ pageSize: 10, showSizeChanger: false }}
+            locale={{ emptyText: <Text type="secondary">暂无反馈</Text> }}
+            columns={[
+              {
+                title: "页面",
+                dataIndex: "slug",
+                width: 140,
+                ellipsis: true,
+                render: (v: string) => (
+                  <a onClick={() => void router.push(`/kbs/${kbId}/wiki/${v}`)}>{v}</a>
+                ),
+              },
+              {
+                title: "类型",
+                dataIndex: "feedback_type",
+                width: 80,
+                render: (v: string) =>
+                  <Tag color={v === "helpful" ? "green" : "red"}>{v === "helpful" ? "有帮助" : "问题"}</Tag>,
+              },
+              { title: "内容", dataIndex: "content", ellipsis: true },
+              {
+                title: "状态",
+                dataIndex: "status",
+                width: 90,
+                render: (v: string) => (
+                  <Tag color={v === "open" ? "orange" : v === "resolved" ? "green" : "default"}>
+                    {v === "open" ? "待处理" : v === "resolved" ? "已解决" : "已忽略"}
+                  </Tag>
+                ),
+              },
+              {
+                title: "操作",
+                width: 130,
+                render: (_: unknown, r: WikiFeedbackItem) => (
+                  <Space size={4}>
+                    {r.status !== "resolved" && (
+                      <Button size="small" type="link" onClick={() => void changeFbStatus(r.id, "resolved")}>
+                        解决
+                      </Button>
+                    )}
+                    {r.status !== "ignored" && (
+                      <Button size="small" type="link" onClick={() => void changeFbStatus(r.id, "ignored")}>
+                        忽略
+                      </Button>
+                    )}
+                    {r.status !== "open" && (
+                      <Button size="small" type="link" onClick={() => void changeFbStatus(r.id, "open")}>
+                        重开
+                      </Button>
+                    )}
+                  </Space>
+                ),
+              },
+            ]}
+          />
+        </Space>
       </Drawer>
     </>
   );
