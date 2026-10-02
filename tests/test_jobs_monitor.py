@@ -36,8 +36,14 @@ def _make_session() -> Session:
 
 
 def _auth_cookie() -> None:
-    """Patch the jobs router's imported decode_identity_cookie so the
-    _require_user_id dependency accepts a fake cookie value."""
+    """Patch the jobs router's imported decode_identity_cookie AND provide a
+    real, middleware-decodable identity cookie so the fail-closed RBAC guard
+    (no identity on a controlled path → 401) lets the request through.
+
+    The shared cookie is a real encode (same AES secret both sides use), so the
+    middleware decodes it; the router-level patch only adds the fake-able
+    variant for jobs that construct cookies differently.
+    """
     import api.routers.jobs as jobs_mod
     from api.services.identity import Identity
 
@@ -102,7 +108,7 @@ def test_scheduler_writes_duration_fields(monkeypatch) -> None:
     assert job.duration_ms >= 0
 
 
-def test_jobs_list_and_detail() -> None:
+def test_jobs_list_and_detail(monkeypatch) -> None:
     db = _make_session()
     # 清掉前一个测试（共享 StaticPool engine）残留的 JOB_T
     db.query(Job).delete()
@@ -141,7 +147,25 @@ def test_jobs_list_and_detail() -> None:
     try:
         client = TestClient(app)
         _auth_cookie()
-        client.cookies.set("x-next-identity", "auth-cookie-123")
+        # Real middleware-decodable identity cookie (fail-closed guard requires it)
+        from api.services.identity import Identity, encode_identity_cookie
+
+        # The fail-closed RBAC middleware reaches get_settings()/get_sessionmaker()
+        # once a decodable identity is present — route it to the in-memory DB and
+        # mark u1 as platform admin so the guard bypasses (no role/menu rows here).
+        import types
+
+        monkeypatch.setattr(
+            "api.middleware.get_sessionmaker", lambda: type("SM", (), {"__call__": lambda s: db})()
+        )
+        monkeypatch.setattr(
+            "api.middleware.get_settings",
+            lambda: types.SimpleNamespace(AUTH_ADMIN_USERS="u1"),
+        )
+        client.cookies.set(
+            "x-next-identity",
+            encode_identity_cookie(Identity(user_id="u1", user_name="u1", team_name="team1")),
+        )
 
         # list
         r = client.get("/api/v1/jobs")

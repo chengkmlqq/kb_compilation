@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api.db import get_db
+from api.config import get_settings
 from api.lib.crypto import aes_encrypt
 from api.models.framework import OperLog, User
 from api.services.identity import (
@@ -83,6 +84,27 @@ def get_identity_from_cookie(token: str | None, db: Session) -> Identity | None:
     from api.services.identity import decode_identity_cookie
 
     return decode_identity_cookie(token)
+
+
+@router.get("/auth-mode")
+def auth_mode() -> dict:
+    """Runtime auth configuration for the login page.
+
+    Mirrors data-synth /api/open/auth-mode: lets the frontend decide between
+    local login and SSO. Default ssoEnabled=false → plain local login; set
+    SSO_* env vars to enable later without touching the frontend.
+    """
+    settings = get_settings()
+    sso_enabled = bool(getattr(settings, "SSO_ENABLED", "") or "")
+    return {
+        "success": True,
+        "data": {
+            "authMode": "sso" if sso_enabled else "local",
+            "ssoEnabled": sso_enabled,
+            "appLogo": "",
+            "defaultRedirectPath": "/kbs",
+        },
+    }
 
 
 __all__ = ["router", "LoginRequest", "LoginResponse", "get_identity_from_cookie"]

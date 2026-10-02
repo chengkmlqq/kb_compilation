@@ -95,9 +95,11 @@ def test_whitelisted_always_allowed(client) -> None:
     assert r.json()["success"] is False  # no cookie -> not logged in, but not blocked
 
 
-def test_controlled_path_without_identity_fail_open(client) -> None:
+def test_controlled_path_without_identity_fail_closed(client) -> None:
     r = client.get("/api/v1/kbs")
-    assert r.status_code == 200  # fail-open until full auth hardening
+    assert r.status_code == 401  # fail-closed since auth hardening
+    body = r.json()
+    assert body["error"] == "未登录"
 
 
 def test_platform_admin_bypasses_guard(client) -> None:

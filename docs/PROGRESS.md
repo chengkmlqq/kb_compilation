@@ -13,7 +13,15 @@
   - **my_menus 祖先补全**（对齐 data-synth expandedIds 逻辑）：角色关联菜单 + 向上补全所有祖先，前端可构建完整树
   - **kb 菜单种子**：`scripts/seed_framework_db.py` 新增 `root_kb`（知识库平台）+ 8 子菜单（kbs/chat/agents/datasources/wiki/jobs/models/system）并关联种子角色；联调库已种入 + huqiang 挂 kb_role（摘除 normal_user 的 data-synth 旧菜单关联）——my-menus 实测返回 kb 两级树
   - 登录页：记住密码（localStorage 回填，对齐 data-synth saveRemember）
-- **待办（未做，按需）**：Header 通知铃/团队切换（需后端 WebSocket/团队 API）、全局水印 GlobalWatermark、SSO、菜单 icon 下拉选择、登录强校验 fail-open
+- **剩余差距补齐（本次，commit 待定）**：
+  - **全局水印**：`web/src/components/GlobalWatermark.tsx`（antd Watermark 轻量版，显示 用户名+用户ID，NEXT_PUBLIC_WATERMARK_ENABLED 控制，默认开）包在 LayoutContent Content 内
+  - **Header 通知铃**：`NotificationBell.tsx`（未读 Badge + 下拉 Tabs 未读/全部 + 标记已读/全部已读 + 分页，轮询模式）+ 后端 `api/routers/notifications.py`（modo_system_message 表：unread-count / list / {id}/read / read-all；**create_date UTC→CST +8h 转换**）
+  - **Header 团队切换**：后端 system.py 加 my-teams / switch-team（校验成员→重编码 identity_cookie 返回，前端写回，对齐 rawSwitchTeamAction 契约）/ default-team GET+POST；前端 AppHeader 加团队面板（选择团队 Tag）+ 设置默认团队弹窗
+  - **菜单 icon 下拉**：system.py 加 /system/icons（10 个 antd 图标名）；前端菜单 Tab icon 字段 Input → Select（对齐 icon-actions）
+  - **登录强校验 fail-open→fail-closed**：middleware 受控路径无身份 → 401（未登录）；test_rbac_guard/jobs/notifications 测试同步更新
+  - **SSO 支持**：auth.py 加 GET /auth/auth-mode（SSO_ENABLED env 控制，默认 local）；前端登录页探测 auth-mode，ssoEnabled 时显示提示条
+- **联调库数据**：huqiang 挂 kb_role + 团队 ROOT/test（默认 ROOT）；测试通知已插一条
+- **待办（未做）**：WebSocket 实时推送（当前通知轮询）、SSO 真实对接（仅探测+提示）、远程注入式水印（当前 antd 本地渲染）
 
 
 ## 1. 项目概况

@@ -1114,3 +1114,94 @@ export function apiListJobs(params: {
 export function apiGetJob(jobId: string) {
   return request<JobItem>(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
 }
+
+// ---- 我的团队 / 切换团队 / 默认团队（对齐 data-synth team-actions） ----
+
+export interface UserTeamItem {
+  teamName: string;
+  teamId: string;
+  teamLabel: string;
+}
+
+export function apiMyTeams() {
+  return request<UserTeamItem[]>("/api/v1/system/my-teams");
+}
+
+export function apiSwitchTeam(teamName: string) {
+  return request<{ identity_cookie?: string } & Identity>(
+    "/api/v1/system/switch-team",
+    { method: "POST", body: JSON.stringify({ teamName }) },
+  );
+}
+
+export function apiGetDefaultTeam() {
+  return request<string>("/api/v1/system/default-team");
+}
+
+export function apiSetDefaultTeam(teamName: string) {
+  return request<{ success: boolean; message?: string }>(
+    "/api/v1/system/default-team",
+    { method: "POST", body: JSON.stringify({ teamName }) },
+  );
+}
+
+// ---- 通知（系统消息，modo_system_message） ----
+
+export interface NotificationItem {
+  id: string;
+  title: string;
+  content: string;
+  type?: string;
+  is_read?: string;
+  priority?: string;
+  link_url?: string | null;
+  sender_id?: string | null;
+  create_date?: string;
+}
+
+export function apiNotificationUnreadCount() {
+  return request<{ unread_count: number }>("/api/v1/system/notifications/unread-count");
+}
+
+export function apiListNotifications(params: { tab?: "unread" | "all"; page?: number; page_size?: number } = {}) {
+  const q = new URLSearchParams();
+  q.set("tab", params.tab || "unread");
+  if (params.page) q.set("page", String(params.page));
+  if (params.page_size) q.set("page_size", String(params.page_size));
+  return request<{ items: NotificationItem[]; total: number }>(
+    `/api/v1/system/notifications?${q.toString()}`,
+  );
+}
+
+export function apiMarkNotificationRead(messageId: string) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/notifications/${encodeURIComponent(messageId)}/read`,
+    { method: "POST" },
+  );
+}
+
+export function apiMarkAllNotificationsRead() {
+  return request<{ success: boolean; message?: string }>(
+    "/api/v1/system/notifications/read-all",
+    { method: "POST" },
+  );
+}
+
+// ---- 菜单图标目录 ----
+
+export function apiListMenuIcons() {
+  return request<string[]>("/api/v1/system/icons");
+}
+
+// ---- 登录页运行时认证配置（对齐 data-synth /api/open/auth-mode） ----
+
+export interface AuthModeConfig {
+  authMode: "local" | "sso";
+  ssoEnabled: boolean;
+  appLogo?: string;
+  defaultRedirectPath?: string;
+}
+
+export function apiAuthMode() {
+  return request<AuthModeConfig>("/api/v1/auth/auth-mode");
+}

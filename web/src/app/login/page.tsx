@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Button, Card, Checkbox, Form, Input, Typography, message } from "antd";
+import { Alert, Button, Card, Checkbox, Form, Input, Typography, message } from "antd";
 import { useRouter } from "next/navigation";
-import { apiLogin } from "@/lib/api";
+import { apiAuthMode, apiLogin, AuthModeConfig } from "@/lib/api";
 
 interface LoginValues {
   userId: string;
@@ -15,6 +15,23 @@ export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm<LoginValues>();
+  const [authMode, setAuthMode] = useState<AuthModeConfig | null>(null);
+
+  // 运行时认证配置探测（对齐 data-synth /api/open/auth-mode）
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiAuthMode();
+        if (!cancelled && res.success && res.data) setAuthMode(res.data);
+      } catch {
+        /* ignore — 默认本地登录 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 回填记住的账号（对齐 data-synth 登录页 localStorage 逻辑）
   useEffect(() => {
@@ -91,6 +108,14 @@ export default function LoginPage() {
         <Typography.Paragraph type="secondary" style={{ textAlign: "center" }}>
           文档解析 · 向量检索 · Wiki 生成 · 智能问答
         </Typography.Paragraph>
+        {authMode?.ssoEnabled && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="系统已启用统一认证（SSO），如无法登录请联系管理员"
+          />
+        )}
         <Form<LoginValues> form={form} layout="vertical" onFinish={onFinish} size="large">
           <Form.Item label="账号名称" name="userId" rules={[{ required: true, message: "请输入账号" }]}>
             <Input placeholder="请输入账号" autoComplete="username" />

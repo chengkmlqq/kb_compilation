@@ -75,8 +75,11 @@ async def rbac_guard(request: Request, call_next):
 
     identity = decode_identity_cookie(request.cookies.get("x-next-identity") or "")
     if not identity or not identity.user_id:
-        # No identity: fail-open (login enforcement is a later hardening item).
-        return await call_next(request)
+        # No identity on a controlled path: fail-closed (login enforcement).
+        return JSONResponse(
+            status_code=401,
+            content={"success": False, "error": "未登录", "reason": "需要登录后访问"},
+        )
 
     db = get_sessionmaker()()
     try:

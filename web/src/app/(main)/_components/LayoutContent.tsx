@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AppHeader } from "./AppHeader";
 import { AppSider } from "./AppSider";
 import { MenuProvider } from "./MenuContext";
+import { GlobalWatermark } from "@/components/GlobalWatermark";
 import { apiMe } from "@/lib/api";
 
 const { Content } = Layout;
@@ -50,7 +51,7 @@ export function LayoutContent({ children }: { children: React.ReactNode }) {
                   overflow: "hidden",
                 }}
               >
-                {children}
+                <GlobalWatermark>{children}</GlobalWatermark>
               </Content>
             </Layout>
           </Layout>

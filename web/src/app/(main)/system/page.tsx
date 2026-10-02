@@ -13,6 +13,7 @@ import {
   Modal,
   Popconfirm,
   Radio,
+  Select,
   Space,
   Table,
   Tabs,
@@ -36,6 +37,7 @@ import {
   apiInstallSkill,
   apiListMcpServers,
   apiListMenus,
+  apiListMenuIcons,
   apiListOperationLogs,
   apiListRoles,
   apiListSkills,
@@ -491,6 +493,8 @@ function MenusTab() {
   const { message } = App.useApp();
   const [items, setItems] = useState<SysMenuItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [menuIcons, setMenuIcons] = useState<string[]>([]);
+  const [menuIconsLoading, setMenuIconsLoading] = useState(false);
 
   // 菜单新建/编辑
   const [menuModalOpen, setMenuModalOpen] = useState(false);
@@ -509,9 +513,23 @@ function MenusTab() {
     }
   }, []);
 
+  // 图标目录（对齐 data-synth icon-actions；菜单 icon 下拉选择用）
+  const loadIcons = useCallback(async () => {
+    setMenuIconsLoading(true);
+    try {
+      const res = await apiListMenuIcons();
+      if (res.success && res.data) setMenuIcons(res.data);
+    } catch {
+      /* ignore */
+    } finally {
+      setMenuIconsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadIcons();
+  }, [load, loadIcons]);
 
   const treeData = menusToTreeData(items);
 
@@ -664,8 +682,17 @@ function MenusTab() {
           <Form.Item name="sort_num" label="排序">
             <InputNumber min={1} style={{ width: "100%" }} />
           </Form.Item>
-          <Form.Item name="menu_icon" label="图标" extra="图标组件名，如 AppstoreOutlined / SettingOutlined（留空用默认）">
-            <Input placeholder="AppstoreOutlined" />
+          <Form.Item name="menu_icon" label="图标" extra="留空用默认图标">
+            <Select
+              allowClear
+              showSearch
+              placeholder="选择图标"
+              loading={menuIconsLoading}
+              options={menuIcons.map((name) => ({
+                label: name,
+                value: name,
+              }))}
+            />
           </Form.Item>
           <Form.Item name="menu_type" label="菜单类型">
             <Radio.Group>
