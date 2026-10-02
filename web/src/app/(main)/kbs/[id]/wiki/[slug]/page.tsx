@@ -1,12 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Breadcrumb, Button, Card, Empty, Space, Spin, Tag, Typography } from "antd";
-import { ApartmentOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useState } from "react";
+import {
+  App,
+  Breadcrumb,
+  Button,
+  Card,
+  Empty,
+  Form,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+} from "antd";
+import { ApartmentOutlined, EditOutlined } from "@ant-design/icons";
 import { useParams, useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { apiWikiPage, WikiPageDetail } from "@/lib/api";
+import { apiWikiPage, apiWikiUpdatePage, WikiPageDetail } from "@/lib/api";
 
 const TYPE_COLOR: Record<string, string> = {
   entity: "purple",
@@ -14,26 +28,73 @@ const TYPE_COLOR: Record<string, string> = {
   summary: "gold",
 };
 
+const TYPE_OPTIONS = [
+  { value: "entity", label: "实体" },
+  { value: "concept", label: "概念" },
+  { value: "summary", label: "摘要" },
+];
+
 export default function WikiPageDetailPage() {
   const { id, slug } = useParams<{ id: string; slug: string }>();
   const router = useRouter();
+  const { message } = App.useApp();
   const [page, setPage] = useState<WikiPageDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const res = await apiWikiPage(id, slug);
-      if (res.success && res.data) {
-        setPage(res.data);
-        setNotFound(false);
-      } else {
-        setNotFound(true);
-      }
-      setLoading(false);
-    })();
+  // 编辑弹窗
+  const [editOpen, setEditOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editForm] = Form.useForm();
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const res = await apiWikiPage(id, slug);
+    if (res.success && res.data) {
+      setPage(res.data);
+      setNotFound(false);
+    } else {
+      setNotFound(true);
+    }
+    setLoading(false);
   }, [id, slug]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const openEdit = () => {
+    if (!page) return;
+    editForm.setFieldsValue({
+      title: page.title,
+      page_type: page.page_type,
+      summary: page.summary || "",
+      content: page.content || "",
+    });
+    setEditOpen(true);
+  };
+
+  const submitEdit = async () => {
+    const values = await editForm.validateFields();
+    setSaving(true);
+    try {
+      const res = await apiWikiUpdatePage(id, page!.slug, {
+        title: values.title,
+        page_type: values.page_type,
+        summary: values.summary || undefined,
+        content: values.content || "",
+      });
+      if (res.success) {
+        message.success("页面已保存");
+        setEditOpen(false);
+        void load();
+      } else {
+        message.error(res.message || "保存失败");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -84,13 +145,18 @@ export default function WikiPageDetailPage() {
               </Typography.Title>
               <Tag color={TYPE_COLOR[page.page_type] || "default"}>{page.page_type}</Tag>
             </Space>
-            <Button
-              size="small"
-              icon={<ApartmentOutlined />}
-              onClick={() => router.push(`/kbs/${id}?wiki=graph&focus=${encodeURIComponent(page.slug)}`)}
-            >
-              图谱中查看
-            </Button>
+            <Space>
+              <Button size="small" icon={<EditOutlined />} onClick={openEdit}>
+                编辑
+              </Button>
+              <Button
+                size="small"
+                icon={<ApartmentOutlined />}
+                onClick={() => router.push(`/kbs/${id}?wiki=graph&focus=${encodeURIComponent(page.slug)}`)}
+              >
+                图谱中查看
+              </Button>
+            </Space>
           </Space>
           {page.summary && (
             <Typography.Paragraph type="secondary">{page.summary}</Typography.Paragraph>
@@ -121,6 +187,30 @@ export default function WikiPageDetailPage() {
           </Space>
         </Card>
       )}
+
+      <Modal
+        title={`编辑页面：${page.title}`}
+        open={editOpen}
+        onCancel={() => setEditOpen(false)}
+        onOk={() => void submitEdit()}
+        confirmLoading={saving}
+        width={680}
+      >
+        <Form form={editForm} layout="vertical">
+          <Form.Item name="title" label="标题" rules={[{ required: true, message: "请输入标题" }]}>
+            <Input maxLength={255} />
+          </Form.Item>
+          <Form.Item name="page_type" label="类型">
+            <Select options={TYPE_OPTIONS} />
+          </Form.Item>
+          <Form.Item name="summary" label="摘要">
+            <Input.TextArea rows={2} maxLength={500} />
+          </Form.Item>
+          <Form.Item name="content" label="内容（支持 Markdown + [[slug]] 双链）">
+            <Input.TextArea rows={12} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </Space>
   );
 }

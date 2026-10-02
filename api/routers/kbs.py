@@ -18,7 +18,7 @@ import logging
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -45,6 +45,7 @@ from api.services.kb_admin import (
     wiki_graph,
     wiki_lint,
     wiki_rebuild_links,
+    wiki_search,
     wiki_stats,
     wiki_tree,
     wiki_update_folder,
@@ -506,6 +507,19 @@ def lint_wiki(kb_id: str, db: Session = Depends(get_db)) -> dict:
     if not get_kb(db, kb_id):
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
     return {"success": True, "data": wiki_lint(db, kb_id)}
+
+
+@router.get("/{kb_id}/wiki/search")
+def search_wiki(
+    kb_id: str,
+    q: str = Query("", max_length=500),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Wiki 页面内搜索：按标题/内容 ilike 匹配页面（区别于 /search 的混合检索）。"""
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    return {"success": True, "data": wiki_search(db, kb_id, q, limit)}
 
 
 @router.post("/{kb_id}/search")

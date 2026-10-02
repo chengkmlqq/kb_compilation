@@ -110,6 +110,27 @@ def test_wiki_delete_page_cleans_links(db: Session) -> None:
     assert db.query(WikiLink).filter(WikiLink.kb_id == kb).count() == 0
 
 
+def test_wiki_search(db: Session) -> None:
+    kb = "kb-search"
+    _make_page(db, kb, "a", "政府采购", content="# 甲\n政府采购法相关内容")
+    _make_page(db, kb, "b", "招标投标", content="# 乙\n招标投标规则")
+    _make_page(db, kb, "c", "无关页", content="# 丙\n完全无关内容")
+
+    r = kb_admin.wiki_search(db, kb, "采购")
+    assert r["total"] == 1
+    assert r["items"][0]["slug"] == "a"
+
+    r2 = kb_admin.wiki_search(db, kb, "招标")
+    assert r2["total"] == 1
+    assert r2["items"][0]["slug"] == "b"
+
+    r3 = kb_admin.wiki_search(db, kb, "不存在")
+    assert r3["total"] == 0
+
+    r4 = kb_admin.wiki_search(db, kb, "")
+    assert r4["total"] == 0
+
+
 def test_wiki_folder_crud(db: Session) -> None:
     kb = "kb-folder"
     f = kb_admin.wiki_create_folder(db, kb, {"name": "根目录"}, "u1")

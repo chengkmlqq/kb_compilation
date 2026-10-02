@@ -31,6 +31,7 @@ import {
   FileAddOutlined,
   FolderAddOutlined,
   ReloadOutlined,
+  SearchOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
@@ -41,9 +42,11 @@ import {
   apiWikiDeletePage,
   apiWikiLint,
   apiWikiRebuildLinks,
+  apiWikiSearch,
   apiWikiStats,
   apiWikiTree,
   apiWikiUpdatePage,
+  WikiSearchItem,
   WikiStatsData,
   WikiTree,
 } from "@/lib/api";
@@ -69,6 +72,11 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
   const [wiki, setWiki] = useState<WikiTree | null>(null);
   const [stats, setStats] = useState<WikiStatsData | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // wiki 搜索
+  const [searchQ, setSearchQ] = useState("");
+  const [searchItems, setSearchItems] = useState<WikiSearchItem[] | null>(null);
+  const [searching, setSearching] = useState(false);
 
   // 页面编辑弹窗
   const [editOpen, setEditOpen] = useState(false);
@@ -98,6 +106,27 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const doSearch = async () => {
+    const q = searchQ.trim();
+    if (!q) {
+      setSearchItems(null);
+      return;
+    }
+    setSearching(true);
+    try {
+      const res = await apiWikiSearch(kbId, q);
+      if (res.success && res.data) setSearchItems(res.data.items);
+      else message.error(res.message || "搜索失败");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const clearSearch = () => {
+    setSearchQ("");
+    setSearchItems(null);
+  };
 
   const folderOptions = (wiki?.folders || []).map((f) => ({ value: f.id, label: f.name }));
 
@@ -207,11 +236,34 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
   };
 
   const pages = wiki?.pages || [];
+  // 搜索结果结构略异（无 folder_id），映射为表格行兼容结构
+  const tableData = (
+    searchItems
+      ? searchItems.map((s) => ({
+          id: s.slug,
+          slug: s.slug,
+          title: s.title,
+          page_type: s.page_type,
+          folder_id: "" as string,
+          summary: s.summary ?? s.content_head ?? null,
+        }))
+      : pages
+  );
 
   return (
     <>
       <Space direction="vertical" style={{ display: "flex" }} size="small">
         <Space wrap>
+          <Input.Search
+            placeholder="搜索 wiki 页面（标题/内容）"
+            value={searchQ}
+            onChange={(e) => setSearchQ(e.target.value)}
+            onSearch={() => void doSearch()}
+            loading={searching}
+            allowClear
+            onClear={clearSearch}
+            style={{ width: 260 }}
+          />
           {stats && (
             <>
               <Statistic title="页面" value={stats.total_pages} suffix={`/ ${stats.total_folders} 目录`} />
@@ -240,10 +292,14 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
         <Table
           rowKey="slug"
           size="small"
-          loading={loading}
-          dataSource={pages}
+          loading={loading || searching}
+          dataSource={tableData}
           pagination={false}
-          locale={{ emptyText: <Text type="secondary">暂无 wiki 页面，文档解析入库后由后台自动生成，或手动新建</Text> }}
+          locale={{
+            emptyText: searchItems
+              ? <Text type="secondary">未找到匹配「{searchQ}」的页面</Text>
+              : <Text type="secondary">暂无 wiki 页面，文档解析入库后由后台自动生成，或手动新建</Text>,
+          }}
           columns={[
             {
               title: "页面标题",

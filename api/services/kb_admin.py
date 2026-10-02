@@ -18,7 +18,7 @@ import os
 import uuid
 from pathlib import Path
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from api.config import get_settings
@@ -539,6 +539,38 @@ def json_search(
     ]
 
 
+def wiki_search(db: Session, kb_id: str, query: str, limit: int = 20) -> dict:
+    """Wiki 页面内搜索：按标题或内容 ilike 匹配（分页式、应用侧小结果集）。
+
+    返回：{query, total, items:[{slug,title,page_type,summary,content_head}]}
+    """
+    q = (query or "").strip()
+    if not q:
+        return {"query": q, "total": 0, "items": []}
+    like = f"%{q}%"
+    stmt = (
+        select(WikiPage)
+        .where(
+            WikiPage.kb_id == kb_id,
+            WikiPage.status == "active",
+            or_(WikiPage.title.like(like), WikiPage.content.like(like)),
+        )
+        .limit(limit)
+    )
+    pages = db.execute(stmt).scalars().all()
+    items = [
+        {
+            "slug": p.slug,
+            "title": p.title,
+            "page_type": p.page_type,
+            "summary": p.summary,
+            "content_head": (p.content or "")[:200],
+        }
+        for p in pages
+    ]
+    return {"query": q, "total": len(items), "items": items}
+
+
 def wiki_stats(db: Session, kb_id: str) -> dict:
     """Wiki 统计：页数（按类型）/ 目录数 / 链接数 / 孤儿页数（无入链无出链）。"""
     pages = db.execute(
@@ -831,6 +863,7 @@ __all__ = [
     "update_kb",
     "wiki_tree",
     "wiki_stats",
+    "wiki_search",
     "wiki_lint",
     "wiki_create_page",
     "wiki_update_page",

@@ -256,6 +256,24 @@ export function apiWikiLint(kbId: string) {
   return request<WikiLintData>(`/api/v1/kbs/${kbId}/wiki/lint`);
 }
 
+export interface WikiSearchItem {
+  slug: string;
+  title: string;
+  page_type: string;
+  summary?: string | null;
+  content_head?: string;
+}
+
+export interface WikiSearchData {
+  query: string;
+  total: number;
+  items: WikiSearchItem[];
+}
+
+export function apiWikiSearch(kbId: string, q: string, limit = 20) {
+  return request<WikiSearchData>(`/api/v1/kbs/${kbId}/wiki/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+}
+
 export function apiWikiRebuildLinks(kbId: string) {
   return request<{ added_links: number }>(`/api/v1/kbs/${kbId}/wiki/rebuild-links`, { method: "POST" });
 }
