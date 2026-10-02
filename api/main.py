@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from api.config import get_settings
 from api.db import get_db
 from api.middleware import rbac_guard
-from api.routers import agents, auth, chat_sessions, datasources, jobs, kbs, mcps, models, qa, skills, system, system_config, weknora
+from api.routers import agents, auth, chat_sessions, datasources, jobs, kbs, mcps, models, qa, skills, system, system_config
 from api.services.identity import Identity, decode_identity_cookie
 
 app = FastAPI(
@@ -35,7 +35,6 @@ app.include_router(chat_sessions.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
 app.include_router(kbs.router, prefix="/api/v1")
 app.include_router(jobs.router, prefix="/api/v1")
-app.include_router(weknora.router, prefix="/api/v1")
 app.include_router(system.router, prefix="/api/v1")
 app.include_router(system_config.router, prefix="/api/v1")
 app.include_router(models.router, prefix="/api/v1")
