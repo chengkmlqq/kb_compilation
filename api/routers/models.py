@@ -34,6 +34,7 @@ from api.services.models import (
     MODEL_TYPES,
     PROVIDER_LABELS,
     create_model,
+    copy_model,
     delete_model,
     get_model,
     is_admin,
@@ -95,6 +96,8 @@ class ModelPayload(BaseModel):
     custom_headers: dict | None = None
     owner_team_name: str | None = None
     is_default: bool = False
+    max_concurrency: int | None = None
+    thinking_control: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +258,30 @@ def set_default_route(
         raise HTTPException(status_code=403, detail=str(e)) from e
 
 
+@router.post("/{model_id}/copy")
+def copy_model_route(
+    model_id: str,
+    caller: Caller = Depends(_require_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """复制模型：名称自动加 -copy 后缀（重名则递增计数）。"""
+    try:
+        item = copy_model(
+            db,
+            model_id,
+            caller_user_id=caller.user_id,
+            caller_team_name=caller.team_name,
+            is_sys_admin=caller.is_admin,
+        )
+        return {"success": True, "data": {"item": item}}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 # ---------------------------------------------------------------------------
 # Test / debug
 # ---------------------------------------------------------------------------
@@ -328,7 +355,64 @@ def debug_model(
             "data": {"ok": True, "kind": "embedding", "dimension": len(vec)},
         }
 
-    # chat
+    if m.type == "rerank":
+        # rerank: probe via POST /rerank (Jina/Cohere/阿里 compatible)
+        import json
+
+        import httpx
+
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        body = {
+            "model": use_model,
+            "query": req.input.strip() or "ping",
+            "documents": ["ping"],
+        }
+        try:
+            with httpx.Client(timeout=30) as client:
+                resp = client.post(f"{base_url}/rerank", json=body, headers=headers)
+            if resp.status_code >= 300:
+                return {
+                    "success": False,
+                    "data": {"ok": False, "error": f"rerank 端点返回 {resp.status_code}"},
+                }
+            data = resp.json()
+            results = data.get("results") or []
+            return {
+                "success": True,
+                "data": {"ok": True, "kind": "rerank", "text": f"命中 {len(results)} 条重排结果"},
+            }
+        except Exception as e:  # noqa: BLE001
+            return {"success": False, "data": {"ok": False, "error": str(e)}}
+
+    if m.type == "asr":
+        # asr: probe via GET /models (openai-compatible); a 200 with model
+        # list means the endpoint is reachable.
+        import httpx
+
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        try:
+            with httpx.Client(timeout=30) as client:
+                resp = client.get(f"{base_url}/models", headers=headers)
+            if resp.status_code >= 300:
+                return {
+                    "success": False,
+                    "data": {"ok": False, "error": f"ASR 端点返回 {resp.status_code}"},
+                }
+            data = resp.json()
+            ids = [m.get("id") for m in (data.get("data") or [])]
+            hit = use_model in ids if ids else True
+            return {
+                "success": True,
+                "data": {"ok": True, "kind": "asr", "text": f"端点可达，模型{'在' if hit else '不在'}列表"},
+            }
+        except Exception as e:  # noqa: BLE001
+            return {"success": False, "data": {"ok": False, "error": str(e)}}
+
+    # chat / vllm (openai-compatible chat probe)
     from api.services.chat import ChatClient, ChatConfig, ChatMessage
 
     client = ChatClient(

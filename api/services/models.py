@@ -34,7 +34,7 @@ from api.services.runtime_config import mask_sensitive_value
 # ---------------------------------------------------------------------------
 
 MODEL_SCOPES = ("personal", "team", "system")
-MODEL_TYPES = ("chat", "embedding")
+MODEL_TYPES = ("chat", "embedding", "rerank", "vllm", "asr")
 
 # (type, provider) -> default base URL (mirrors WeKnora's provider default URLs)
 DEFAULT_PROVIDER_URLS: dict[tuple[str, str], str] = {
@@ -48,6 +48,13 @@ DEFAULT_PROVIDER_URLS: dict[tuple[str, str], str] = {
     ("embedding", "dashscope"): "https://dashscope.aliyuncs.com/compatible-mode/v1",
     ("embedding", "siliconflow"): "https://api.siliconflow.cn/v1",
     ("embedding", "generic"): "",
+    ("rerank", "jina"): "https://api.jina.ai/v1",
+    ("rerank", "dashscope"): "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    ("rerank", "cohere"): "https://api.cohere.com/v1",
+    ("rerank", "generic"): "",
+    ("vllm", "generic"): "",
+    ("asr", "openai"): "https://api.openai.com/v1",
+    ("asr", "generic"): "",
 }
 
 PROVIDER_LABELS: dict[str, str] = {
@@ -56,6 +63,8 @@ PROVIDER_LABELS: dict[str, str] = {
     "deepseek": "DeepSeek",
     "siliconflow": "硅基流动 SiliconFlow",
     "zhipu": "智谱 AI",
+    "jina": "Jina AI",
+    "cohere": "Cohere",
     "generic": "通用 OpenAI 兼容",
 }
 
@@ -127,6 +136,8 @@ def model_to_dict(m: KbModel) -> dict:
         "owner_user_id": m.owner_user_id or "",
         "owner_team_name": m.owner_team_name or "",
         "is_default": bool(m.is_default),
+        "max_concurrency": m.max_concurrency,
+        "thinking_control": m.thinking_control,
         "status": m.status,
         "state": m.state,
         "api_key_masked": mask_api_key(m.api_key),
@@ -257,6 +268,16 @@ def create_model(
         owner_user_id=owner_user_id or None,
         owner_team_name=owner_team_name or None,
         is_default=bool(payload.get("is_default", False)),
+        max_concurrency=(
+            int(payload["max_concurrency"])
+            if payload.get("max_concurrency") not in (None, "", 0)
+            else None
+        ),
+        thinking_control=(
+            str(payload["thinking_control"]).strip()
+            if payload.get("thinking_control") not in (None, "")
+            else None
+        ),
         status="active",
         state="1",
     )
@@ -323,8 +344,79 @@ def update_model(
             m.is_default = True
         elif not want:
             m.is_default = False
+    if "max_concurrency" in payload:
+        m.max_concurrency = (
+            int(payload["max_concurrency"])
+            if payload.get("max_concurrency") not in (None, "", 0)
+            else None
+        )
+    if "thinking_control" in payload:
+        m.thinking_control = (
+            str(payload["thinking_control"]).strip()
+            if payload.get("thinking_control") not in (None, "")
+            else None
+        )
     db.commit()
     return model_to_dict(m)
+
+
+def copy_model(
+    db: Session,
+    model_id: str,
+    *,
+    caller_user_id: str,
+    caller_team_name: str,
+    is_sys_admin: bool,
+) -> dict:
+    """Duplicate a model under the caller's context. New name gets a
+    `-copy` suffix, de-duplicated with a counter when taken. Mirrors
+    WeKnora's ModelSettings copy action (edit menu → 复制)."""
+    src = get_model(db, model_id)
+    if not src:
+        raise KeyError("模型不存在")
+    if not can_manage(db, src, caller_user_id, caller_team_name, is_sys_admin):
+        raise PermissionError("无权复制该模型")
+
+    existing = {
+        (m.name or "") for m in db.execute(select(KbModel)).scalars().all()
+    }
+    base_name = f"{src.name}-copy"
+    name = base_name
+    counter = 2
+    while name in existing:
+        name = f"{base_name} {counter}"
+        counter += 1
+
+    clone = KbModel(
+        id=uuid.uuid4().hex[:36],
+        scope="personal" if not is_sys_admin else src.scope,
+        name=name,
+        display_name=src.display_name,
+        type=src.type,
+        source=src.source,
+        provider=src.provider,
+        description=src.description,
+        base_url=src.base_url,
+        api_key=src.api_key,  # encrypted value copied as-is
+        interface_type=src.interface_type,
+        dimension=src.dimension,
+        supports_vision=src.supports_vision,
+        custom_headers=src.custom_headers,
+        owner_user_id=caller_user_id if (not is_sys_admin or src.scope == "personal") else None,
+        owner_team_name=(
+            caller_team_name
+            if (not is_sys_admin and caller_team_name)
+            else (src.owner_team_name if src.scope == "team" and is_sys_admin else None)
+        ),
+        is_default=False,
+        max_concurrency=src.max_concurrency,
+        thinking_control=src.thinking_control,
+        status="active",
+        state="1",
+    )
+    db.add(clone)
+    db.commit()
+    return model_to_dict(clone)
 
 
 def delete_model(
@@ -495,6 +587,7 @@ __all__ = [
     "get_model",
     "create_model",
     "update_model",
+    "copy_model",
     "delete_model",
     "set_default",
     "resolve_model_config",

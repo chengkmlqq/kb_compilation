@@ -684,7 +684,7 @@ export interface ModelTestResult {
 // -----------------------------------------------------------------------------
 
 export type ModelScope = "personal" | "team" | "system";
-export type ModelType = "chat" | "embedding";
+export type ModelType = "chat" | "embedding" | "rerank" | "vllm" | "asr";
 
 export interface ModelItem {
   id: string;
@@ -703,6 +703,8 @@ export interface ModelItem {
   owner_user_id: string;
   owner_team_name: string;
   is_default: boolean;
+  max_concurrency: number | null;
+  thinking_control: string | null;
   status: string;
   api_key_masked: string;
   api_key_configured: boolean;
@@ -757,6 +759,8 @@ export interface ModelPayload {
   custom_headers?: Record<string, string> | null;
   owner_team_name?: string | null;
   is_default?: boolean;
+  max_concurrency?: number | null;
+  thinking_control?: string | null;
 }
 
 export function apiCreateModel(payload: ModelPayload) {
@@ -775,6 +779,10 @@ export function apiUpdateModel(id: string, payload: Partial<ModelPayload>) {
 
 export function apiDeleteModel(id: string) {
   return request<{ deleted: boolean }>(`/api/v1/models/${id}`, { method: "DELETE" });
+}
+
+export function apiCopyModel(id: string) {
+  return request<{ item: ModelItem }>(`/api/v1/models/${id}/copy`, { method: "POST" });
 }
 
 export function apiSetModelDefault(id: string) {

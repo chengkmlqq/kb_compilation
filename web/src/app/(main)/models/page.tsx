@@ -7,6 +7,7 @@ import {
   Button,
   Card,
   Drawer,
+  Dropdown,
   Form,
   Input,
   InputNumber,
@@ -19,17 +20,27 @@ import {
   Switch,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import {
+  AudioOutlined,
+  CopyOutlined,
+  DatabaseOutlined,
   DeleteOutlined,
+  EditOutlined,
+  EllipsisOutlined,
   ExperimentOutlined,
+  MessageOutlined,
   PlusOutlined,
   ReloadOutlined,
+  SortAscendingOutlined,
   StarFilled,
   StarOutlined,
+  ThunderboltOutlined,
 } from "@ant-design/icons";
 import {
+  apiCopyModel,
   apiCreateModel,
   apiDebugModel,
   apiDeleteModel,
@@ -59,9 +70,31 @@ const SCOPE_TIP: Record<ModelScope, string> = {
   system: "仅管理员可见和使用的平台级模型配置",
 };
 
+// WeKnora 对齐：类型 tabs 带数量（all/chat/embedding/rerank/vllm/asr）
+const ALL_TYPES: ModelType[] = ["chat", "embedding", "rerank", "vllm", "asr"];
+
 const TYPE_LABEL: Record<ModelType, string> = {
   chat: "问答",
   embedding: "向量",
+  rerank: "重排",
+  vllm: "推理",
+  asr: "语音",
+};
+
+const TYPE_ICON: Record<ModelType, React.ReactNode> = {
+  chat: <MessageOutlined />,
+  embedding: <DatabaseOutlined />,
+  rerank: <SortAscendingOutlined />,
+  vllm: <ThunderboltOutlined />,
+  asr: <AudioOutlined />,
+};
+
+const TYPE_COLOR: Record<ModelType, string> = {
+  chat: "geekblue",
+  embedding: "orange",
+  rerank: "cyan",
+  vllm: "volcano",
+  asr: "gold",
 };
 
 const SCOPE_COLOR: Record<ModelScope, string> = {
@@ -122,6 +155,11 @@ export default function ModelRegistryPage() {
     return list;
   }, [items, scope, typeFilter]);
 
+  const countByType = useCallback(
+    (t: string) => items.filter((it) => it.scope === scope && it.type === t).length,
+    [items, scope],
+  );
+
   const handleDelete = async (item: ModelItem) => {
     const res = await apiDeleteModel(item.id);
     if (res.success) {
@@ -139,6 +177,16 @@ export default function ModelRegistryPage() {
       void load();
     } else {
       message.error(res.message || "设置失败");
+    }
+  };
+
+  const handleCopy = async (item: ModelItem) => {
+    const res = await apiCopyModel(item.id);
+    if (res.success) {
+      message.success(`已复制为 ${res.data?.item.name ?? "新模型"}`);
+      void load();
+    } else {
+      message.error(res.message || "复制失败");
     }
   };
 
@@ -206,9 +254,11 @@ export default function ModelRegistryPage() {
           optionType="button"
           buttonStyle="solid"
           options={[
-            { label: "全部", value: "all" },
-            { label: "问答 (chat)", value: "chat" },
-            { label: "向量 (embedding)", value: "embedding" },
+            { label: `全部 (${items.filter((it) => it.scope === scope).length})`, value: "all" },
+            ...ALL_TYPES.map((t) => ({
+              label: `${TYPE_LABEL[t]} (${countByType(t)})`,
+              value: t,
+            })),
           ]}
         />
       </Space>
@@ -229,66 +279,91 @@ export default function ModelRegistryPage() {
           }}
         >
           {filtered.map((item) => (
-            <Card key={item.id} size="small" style={{ borderColor: item.is_default ? "#52c41a" : undefined }}>
-              <Space style={{ width: "100%", justifyContent: "space-between" }} align="start">
-                <Space direction="vertical" size={2}>
-                  <Space>
-                    <Text strong style={{ fontSize: 15 }}>
-                      {item.display_name || item.name}
-                    </Text>
-                    <Tag color={SCOPE_COLOR[item.scope]}>{SCOPE_LABEL[item.scope]}</Tag>
-                    <Tag color={item.type === "chat" ? "geekblue" : "orange"}>{TYPE_LABEL[item.type]}</Tag>
-                    {item.is_default && (
-                      <Tag color="success" icon={<StarFilled />}>
-                        默认
-                      </Tag>
-                    )}
-                  </Space>
-                  <Text type="secondary" code>
-                    {item.name}
-                    {item.provider ? ` · ${item.provider}` : ""}
-                  </Text>
-                  {item.base_url ? <Text type="secondary" style={{ fontSize: 12 }}>{item.base_url}</Text> : null}
-                  {item.type === "embedding" && item.dimension ? (
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      维度 {item.dimension}
-                    </Text>
-                  ) : null}
-                  {item.description ? (
-                    <Text type="secondary" style={{ fontSize: 12 }} ellipsis={{ tooltip: item.description }}>
-                      {item.description}
-                    </Text>
-                  ) : null}
+            <Card
+              key={item.id}
+              size="small"
+              hoverable
+              onClick={() => openEdit(item)}
+              style={{ borderColor: item.is_default ? "#52c41a" : undefined, cursor: "pointer" }}
+              title={
+                <Space>
+                  <span style={{ color: TYPE_COLOR[item.type as ModelType] }}>
+                    {TYPE_ICON[item.type as ModelType]}
+                  </span>
+                  <Text strong>{item.display_name || item.name}</Text>
+                  <Tag color={SCOPE_COLOR[item.scope]}>{SCOPE_LABEL[item.scope]}</Tag>
+                  <Tag color={TYPE_COLOR[item.type as ModelType]}>{TYPE_LABEL[item.type as ModelType]}</Tag>
+                  {item.is_default && (
+                    <Tag color="success" icon={<StarFilled />}>
+                      默认
+                    </Tag>
+                  )}
                 </Space>
-                <Space direction="vertical" size={4} align="end">
-                  <Text type={item.api_key_configured ? "success" : "danger"} style={{ fontSize: 12 }}>
-                    {item.api_key_configured ? `密钥已配置 ${item.api_key_masked}` : "未配置密钥"}
-                  </Text>
-                  <Space size={4} wrap style={{ justifyContent: "flex-end" }}>
-                    {!item.is_default && (
+              }
+              extra={
+                <Space size={0} onClick={(e) => e.stopPropagation()}>
+                  {!item.is_default && (
+                    <Tooltip title="设为默认">
                       <Button
                         size="small"
                         type="text"
                         icon={<StarOutlined />}
-                        title="设为默认"
                         onClick={() => void handleSetDefault(item)}
                       />
-                    )}
-                    <Button size="small" icon={<ExperimentOutlined />} onClick={() => setDebugTarget(item)}>
-                      调试
-                    </Button>
-                    <Button size="small" onClick={() => openEdit(item)}>
-                      编辑
-                    </Button>
-                    <Popconfirm
-                      title={`删除模型 ${item.name}？`}
-                      description="删除后不可恢复"
-                      onConfirm={() => void handleDelete(item)}
-                    >
-                      <Button size="small" danger icon={<DeleteOutlined />} />
-                    </Popconfirm>
-                  </Space>
+                    </Tooltip>
+                  )}
+                  <Dropdown
+                    menu={{
+                      items: [
+                        { key: "edit", icon: <EditOutlined />, label: "编辑" },
+                        { key: "copy", icon: <CopyOutlined />, label: "复制" },
+                      ],
+                      onClick: ({ key }) => {
+                        if (key === "edit") openEdit(item);
+                        else if (key === "copy") void handleCopy(item);
+                      },
+                    }}
+                  >
+                    <Button size="small" type="text" icon={<EllipsisOutlined />} />
+                  </Dropdown>
+                  <Popconfirm
+                    title={`删除模型 ${item.name}？`}
+                    description="删除后不可恢复"
+                    onConfirm={() => void handleDelete(item)}
+                  >
+                    <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                  </Popconfirm>
                 </Space>
+              }
+            >
+              <Space direction="vertical" size={2}>
+                <Text type="secondary" code>
+                  {item.name}
+                  {item.provider ? ` · ${item.provider}` : ""}
+                </Text>
+                {item.base_url ? <Text type="secondary" style={{ fontSize: 12 }}>{item.base_url}</Text> : null}
+                <Space size={4} wrap>
+                  {item.type === "embedding" && item.dimension ? (
+                    <Tag>维度 {item.dimension}</Tag>
+                  ) : null}
+                  {item.supports_vision && item.type === "chat" ? <Tag>视觉</Tag> : null}
+                  {item.max_concurrency ? <Tag>并发 {item.max_concurrency}</Tag> : null}
+                  {item.thinking_control ? <Tag>思考 {item.thinking_control}</Tag> : null}
+                </Space>
+                {item.description ? (
+                  <Text type="secondary" style={{ fontSize: 12 }} ellipsis={{ tooltip: item.description }}>
+                    {item.description}
+                  </Text>
+                ) : null}
+                <Text type={item.api_key_configured ? "success" : "danger"} style={{ fontSize: 12 }}>
+                  {item.api_key_configured ? `密钥已配置 ${item.api_key_masked}` : "未配置密钥"}
+                </Text>
+                <Button size="small" icon={<ExperimentOutlined />} onClick={(e) => {
+                  e.stopPropagation();
+                  setDebugTarget(item);
+                }}>
+                  调试
+                </Button>
               </Space>
             </Card>
           ))}
@@ -375,6 +450,8 @@ function ModelEditorModal({
         dimension: item.dimension,
         supports_vision: item.supports_vision,
         is_default: item.is_default,
+        max_concurrency: item.max_concurrency ?? undefined,
+        thinking_control: item.thinking_control ?? undefined,
       });
     } else {
       form.setFieldsValue({
@@ -420,6 +497,8 @@ function ModelEditorModal({
         dimension: v.type === "embedding" ? v.dimension || null : null,
         supports_vision: !!v.supports_vision,
         is_default: !!v.is_default,
+        max_concurrency: v.max_concurrency || null,
+        thinking_control: v.thinking_control || null,
       };
       if (v.api_key) payload.api_key = v.api_key;
       const res = editing
@@ -440,7 +519,7 @@ function ModelEditorModal({
     <Modal
       open={open}
       title={editing ? "编辑模型" : "新建模型"}
-      width={620}
+      width={680}
       okText={editing ? "保存" : "创建"}
       confirmLoading={saving}
       onOk={() => void doSave()}
@@ -458,13 +537,11 @@ function ModelEditorModal({
             ]}
           />
         </Form.Item>
-        <Form.Item name="type" label="模型类型" style={{ maxWidth: 240 }}>
+        <Form.Item name="type" label="模型类型" style={{ maxWidth: 420 }}>
           <Radio.Group
-            disabled={editing}
-            options={[
-              { label: "问答 (chat)", value: "chat" },
-              { label: "向量 (embedding)", value: "embedding" },
-            ]}
+            optionType="button"
+            buttonStyle="solid"
+            options={ALL_TYPES.map((t) => ({ label: TYPE_LABEL[t], value: t }))}
           />
         </Form.Item>
         <Form.Item name="provider" label="厂商" style={{ maxWidth: 400 }}>
@@ -510,9 +587,27 @@ function ModelEditorModal({
             <InputNumber min={128} max={4096} placeholder="如 1024" style={{ width: "100%" }} />
           </Form.Item>
         )}
-        {watchType === "chat" && (
+        {(watchType === "chat" || watchType === "vllm") && (
           <Form.Item name="supports_vision" label="支持多模态（图片输入）" valuePropName="checked">
             <Switch />
+          </Form.Item>
+        )}
+        {watchType === "chat" && (
+          <Form.Item name="thinking_control" label="深度思考控制" style={{ maxWidth: 240 }}>
+            <Select
+              allowClear
+              placeholder="默认（跟随模型）"
+              options={[
+                { label: "关闭", value: "off" },
+                { label: "自动", value: "auto" },
+                { label: "开启", value: "on" },
+              ]}
+            />
+          </Form.Item>
+        )}
+        {["chat", "embedding", "vllm"].includes(watchType) && (
+          <Form.Item name="max_concurrency" label="并发上限（0/空=默认）" style={{ maxWidth: 240 }}>
+            <InputNumber min={0} placeholder="如 8" style={{ width: "100%" }} />
           </Form.Item>
         )}
         <Form.Item name="is_default" label="设为默认" valuePropName="checked">
@@ -586,7 +681,7 @@ function ModelDebugDrawer({
           <Space direction="vertical" style={{ width: "100%" }} size={12}>
             <Space wrap>
               <Tag color={SCOPE_COLOR[target.scope]}>{SCOPE_LABEL[target.scope]}</Tag>
-              <Tag color={target.type === "chat" ? "geekblue" : "orange"}>{TYPE_LABEL[target.type]}</Tag>
+              <Tag color={TYPE_COLOR[target.type as ModelType]}>{TYPE_LABEL[target.type as ModelType]}</Tag>
               <Text code>{target.name}</Text>
             </Space>
             <Input.TextArea
@@ -596,7 +691,11 @@ function ModelDebugDrawer({
               placeholder={
                 target.type === "embedding"
                   ? "输入一段文本，返回向量维度（实际调一次向量化）"
-                  : "输入问题，用该模型真实调用一次并返回回答"
+                  : target.type === "rerank"
+                    ? "输入查询文本，返回重排探测结果"
+                    : target.type === "asr"
+                      ? "输入任意文本，探测 ASR 端点可达性与模型列表"
+                      : "输入问题，用该模型真实调用一次并返回回答"
               }
             />
             <Button type="primary" loading={running} onClick={() => void run()}>

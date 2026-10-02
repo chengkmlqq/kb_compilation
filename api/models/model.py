@@ -58,6 +58,10 @@ class KbModel(Base):
 
     # 每 (scope, type) 至多一个默认模型
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    # chat/embedding/vllm 并发上限（0/空 = 沿用全局默认）
+    max_concurrency: Mapped[int | None] = mapped_column(Integer)
+    # chat 深度思考控制（off / auto / on，映射到请求参数）
+    thinking_control: Mapped[str | None] = mapped_column(String(16))
     # active | downloading | download_failed（Ollama 预留；remote 恒 active）
     status: Mapped[str] = mapped_column(String(32), default="active")
     # 1=active 0=deleted

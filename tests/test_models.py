@@ -118,7 +118,63 @@ def test_create_invalid_scope_and_type(model_db):
     with pytest.raises(ValueError):
         _create(model_db, "banana")
     with pytest.raises(ValueError):
-        _create(model_db, "personal", type="vllm")  # only chat/embedding supported
+        _create(model_db, "personal", type="vision")  # 不在 5 类型内
+
+
+def test_create_all_five_types(model_db):
+    """WeKnora 对齐：chat/embedding/rerank/vllm/asr 五种类型均可创建。"""
+    for t in ("chat", "embedding", "rerank", "vllm", "asr"):
+        m = _create(model_db, "personal", type=t, name=f"模型-{t}")
+        assert m["type"] == t
+
+
+def test_create_with_concurrency_and_thinking(model_db):
+    m = _create(
+        model_db,
+        "personal",
+        type="chat",
+        max_concurrency=8,
+        thinking_control="auto",
+    )
+    assert m["max_concurrency"] == 8
+    assert m["thinking_control"] == "auto"
+    # 0/空 → 不落库（None）
+    m2 = _create(model_db, "personal", type="chat", max_concurrency=0)
+    assert m2["max_concurrency"] is None
+
+
+def test_copy_model(model_db):
+    from api.services.models import copy_model
+
+    orig = _create(model_db, "personal", type="chat", name="deepseek-v4-pro")
+    clone = copy_model(
+        model_db,
+        orig["id"],
+        caller_user_id="alice",
+        caller_team_name="",
+        is_sys_admin=False,
+    )
+    assert clone["name"] == "deepseek-v4-pro-copy"
+    assert clone["type"] == "chat"
+    assert clone["is_default"] is False
+    # 复制第二次 → 名称去重递增
+    clone2 = copy_model(
+        model_db,
+        orig["id"],
+        caller_user_id="alice",
+        caller_team_name="",
+        is_sys_admin=False,
+    )
+    assert clone2["name"] == "deepseek-v4-pro-copy 2"
+    # 非 owner 复制 → 无权
+    with pytest.raises(PermissionError):
+        copy_model(
+            model_db,
+            orig["id"],
+            caller_user_id="carol",
+            caller_team_name="",
+            is_sys_admin=False,
+        )
 
 
 # ---------------------------------------------------------------------------
