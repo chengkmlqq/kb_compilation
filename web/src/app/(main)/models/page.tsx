@@ -64,20 +64,14 @@ const SCOPE_LABEL: Record<ModelScope, string> = {
   system: "系统模型",
 };
 
-const SCOPE_TIP: Record<ModelScope, string> = {
-  personal: "仅自己可见和使用的模型配置",
-  team: "本团队所有成员可见和使用的模型配置",
-  system: "仅管理员可见和使用的平台级模型配置",
-};
-
 // WeKnora 对齐：类型 tabs 带数量（all/chat/embedding/rerank/vllm/asr）
 const ALL_TYPES: ModelType[] = ["chat", "embedding", "rerank", "vllm", "asr"];
 
 const TYPE_LABEL: Record<ModelType, string> = {
-  chat: "问答",
-  embedding: "向量",
-  rerank: "重排",
-  vllm: "推理",
+  chat: "对话",
+  embedding: "Embedding",
+  rerank: "Rerank",
+  vllm: "视觉",
   asr: "语音",
 };
 
@@ -108,7 +102,6 @@ export default function ModelRegistryPage() {
   const [items, setItems] = useState<ModelItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [scope, setScope] = useState<ModelScope>("personal");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [providers, setProviders] = useState<ModelProvider[]>([]);
   const [editing, setEditing] = useState<ModelItem | null>(null);
@@ -116,23 +109,20 @@ export default function ModelRegistryPage() {
   const [modalSaving, setModalSaving] = useState(false);
   const [debugTarget, setDebugTarget] = useState<ModelItem | null>(null);
 
-  const load = useCallback(
-    async (targetScope?: ModelScope) => {
-      setLoading(true);
-      try {
-        const res = await apiListModels({ scope: targetScope ?? scope });
-        if (res.success && res.data) {
-          setItems(res.data.items);
-          setIsAdmin(!!res.data.is_admin);
-        } else {
-          message.error(res.message || "加载失败");
-        }
-      } finally {
-        setLoading(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiListModels();
+      if (res.success && res.data) {
+        setItems(res.data.items);
+        setIsAdmin(!!res.data.is_admin);
+      } else {
+        message.error(res.message || "加载失败");
       }
-    },
-    [scope, message],
-  );
+    } finally {
+      setLoading(false);
+    }
+  }, [message]);
 
   const loadProviders = useCallback(async () => {
     const res = await apiListModelProviders();
@@ -144,20 +134,14 @@ export default function ModelRegistryPage() {
     void loadProviders();
   }, [load, loadProviders]);
 
-  const visibleScopes = useMemo(() => {
-    if (isAdmin) return ["personal", "team", "system"] as ModelScope[];
-    return ["personal", "team"] as ModelScope[];
-  }, [isAdmin]);
-
   const filtered = useMemo(() => {
-    let list = items.filter((it) => it.scope === scope);
-    if (typeFilter !== "all") list = list.filter((it) => it.type === typeFilter);
-    return list;
-  }, [items, scope, typeFilter]);
+    if (typeFilter === "all") return items;
+    return items.filter((it) => it.type === typeFilter);
+  }, [items, typeFilter]);
 
   const countByType = useCallback(
-    (t: string) => items.filter((it) => it.scope === scope && it.type === t).length,
-    [items, scope],
+    (t: string) => items.filter((it) => it.type === t).length,
+    [items],
   );
 
   const handleDelete = async (item: ModelItem) => {
@@ -222,53 +206,24 @@ export default function ModelRegistryPage() {
         </Space>
       }
     >
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="模型配置分三级：我的模型（仅本人）/ 团队模型（团队成员）/ 系统模型（仅管理员）。密钥加密落库，回显只显示掩码；编辑时留空=保持不变。"
-      />
       <Tabs
-        activeKey={scope}
-        onChange={(k) => {
-          setScope(k as ModelScope);
-          setTypeFilter("all");
-          void load(k as ModelScope);
-        }}
-        items={visibleScopes.map((s) => ({
-          key: s,
-          label: (
-            <Space size={4}>
-              {SCOPE_LABEL[s]}
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {SCOPE_TIP[s]}
-              </Text>
-            </Space>
-          ),
-        }))}
+        activeKey={typeFilter}
+        onChange={setTypeFilter}
+        items={[
+          { key: "all", label: `全部 (${items.length})` },
+          ...ALL_TYPES.map((t) => ({
+            key: t,
+            label: `${TYPE_LABEL[t]} (${countByType(t)})`,
+          })),
+        ]}
       />
-      <Space style={{ marginBottom: 16 }}>
-        <Radio.Group
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
-          optionType="button"
-          buttonStyle="solid"
-          options={[
-            { label: `全部 (${items.filter((it) => it.scope === scope).length})`, value: "all" },
-            ...ALL_TYPES.map((t) => ({
-              label: `${TYPE_LABEL[t]} (${countByType(t)})`,
-              value: t,
-            })),
-          ]}
-        />
-      </Space>
 
       {filtered.length === 0 ? (
         <Alert
           type="warning"
           showIcon
-          message="当前级别下还没有模型配置"
-          description={`点击右上角「新建模型」创建${SCOPE_LABEL[scope]}配置。`}
+          message="还没有模型配置"
+          description="点击右上角「新建模型」创建模型配置。"
         />
       ) : (
         <div
@@ -374,7 +329,7 @@ export default function ModelRegistryPage() {
         <ModelEditorModal
           open={modalOpen}
           item={editing}
-          scope={scope}
+          scope="personal"
           isAdmin={isAdmin}
           providers={providers}
           onClose={() => setModalOpen(false)}
