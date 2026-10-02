@@ -8,9 +8,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -198,3 +202,144 @@ def get_job(
     if not job:
         raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
     return {"success": True, "data": _job_to_dict(job)}
+
+
+# ---------------------------------------------------------------------------
+# 实时日志流（SSE）——对齐 data-synth job-monitor/log-stream
+# ---------------------------------------------------------------------------
+
+# 增量日志快照：error_message 槽位（agent-gateway 轮询进度实时写入）+
+# 可选 log_path 本地文件（未来 worker 写文件时自动生效）
+async def _read_incremental(
+    db: Session,
+    job: Job,
+    offset_bytes: int,
+) -> dict:
+    content = ""
+    source = "none"
+
+    # 1) 本地日志文件（若 log_path 有值且文件存在）
+    if job.log_path:
+        abs_path = job.log_path if os.path.isabs(job.log_path) else os.path.join(
+            get_settings().kb_storage_dir, job.log_path
+        )
+        if os.path.exists(abs_path):
+            try:
+                size = os.path.getsize(abs_path)
+                if size > offset_bytes:
+                    with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                        f.seek(offset_bytes)
+                        content = f.read()
+                    source = "local"
+                    offset_bytes = size
+            except OSError:
+                pass
+
+    # 2) error_message 槽位（实时进度：agent-gateway 每轮 poll 覆盖写入）
+    if not content and job.error_message:
+        err = str(job.error_message)
+        if len(err) > offset_bytes:
+            content = err[offset_bytes:]
+            source = "error_message"
+            offset_bytes = len(err)
+        elif len(err) == offset_bytes:
+            source = "error_message"
+
+    return {"content": content, "next_offset": offset_bytes, "source": source}
+
+
+@router.get("/{job_id}/log-stream")
+async def job_log_stream(
+    request: Request,
+    job_id: str,
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """SSE 实时日志流：增量推送 error_message 进度 / log_path 文件内容。
+
+    语义对齐 data-synth /api/job-monitor/log-stream：
+    - data: {"type":"chunk","payload":{content,offset,state,source,ts}}
+    - data: {"type":"warning"|"error"|"finish", ...}
+    终态（SUCCESS/FAILED/STOPPED）后自动 close；1s 轮询；30s 空闲超时。
+    """
+    identity = decode_identity_cookie(x_next_identity or "")
+    if not identity or not identity.user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    TERMINAL_STATES = {"SUCCESS", "FAILED", "STOPPED"}
+    POLL_INTERVAL_S = 1.0
+    MAX_IDLE_LOOPS = 30
+    TERMINAL_GRACE_LOOPS = 5
+
+    async def _sse(data: dict) -> str:
+        return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    async def generate():
+        offset_bytes = max(0, offset)
+        idle_loops = 0
+        terminal_grace = 0
+        last_warning = ""
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                job = db.execute(
+                    select(Job).where(Job.id == job_id)
+                ).scalars().first()
+                if not job:
+                    yield await _sse({"type": "finish", "payload": {
+                        "state": "NOT_FOUND", "reason": "作业不存在",
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                    }})
+                    break
+
+                state = str(job.state or "").upper()
+                read = await _read_incremental(db, job, offset_bytes)
+
+                if read["content"]:
+                    offset_bytes = read["next_offset"]
+                    idle_loops = 0
+                    terminal_grace = 0
+                    yield await _sse({"type": "chunk", "payload": {
+                        "content": read["content"], "offset": offset_bytes,
+                        "state": state, "source": read["source"],
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                    }})
+                else:
+                    idle_loops += 1
+
+                if state in TERMINAL_STATES:
+                    if not read["content"]:
+                        terminal_grace += 1
+                    if terminal_grace >= 1:
+                        yield await _sse({"type": "finish", "payload": {
+                            "state": state, "offset": offset_bytes,
+                            "source": read["source"],
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                        }})
+                        break
+
+                if idle_loops >= MAX_IDLE_LOOPS:
+                    yield await _sse({"type": "finish", "payload": {
+                        "state": state or "TIMEOUT", "offset": offset_bytes,
+                        "reason": "SSE idle timeout",
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                    }})
+                    break
+
+                await asyncio.sleep(POLL_INTERVAL_S)
+        except Exception as exc:  # noqa: BLE001
+            yield await _sse({"type": "error", "payload": {
+                "message": str(exc),
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )

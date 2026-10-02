@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Button,
   Descriptions,
@@ -23,7 +23,7 @@ interface JobLogDrawerProps {
   onStateChange?: (job: JobItem) => void;
 }
 
-const { Paragraph, Text } = Typography;
+const { Text } = Typography;
 
 const STATE_COLOR: Record<string, string> = {
   PENDING: "purple",
@@ -80,34 +80,183 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [job, setJob] = useState<JobItem | null>(null);
+  // SSE 实时日志流状态（对齐 data-synth job-log-drawer）
+  const [streamConnected, setStreamConnected] = useState(false);
+  const [streamFinished, setStreamFinished] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const [logContent, setLogContent] = useState("");
+  const [logScrollPercent, setLogScrollPercent] = useState(0);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const logContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const fetchDetail = async (silent = false) => {
-    if (!jobId) return;
+  const closeStream = useCallback(() => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    setStreamConnected(false);
+  }, []);
+
+  const updateLogScrollPercent = useCallback((container: HTMLDivElement | null) => {
+    if (!container) {
+      setLogScrollPercent(0);
+      return;
+    }
+    const maxScrollable = container.scrollHeight - container.clientHeight;
+    if (maxScrollable <= 0) {
+      setLogScrollPercent(100);
+      return;
+    }
+    const percent = Math.round((container.scrollTop / maxScrollable) * 100);
+    setLogScrollPercent(Math.max(0, Math.min(100, percent)));
+  }, []);
+
+  const handleLogScroll = useCallback(() => {
+    updateLogScrollPercent(logContainerRef.current);
+  }, [updateLogScrollPercent]);
+
+  const fetchDetail = async (silent = false): Promise<JobItem | null> => {
+    if (!jobId) return null;
     if (!silent) setLoading(true);
     try {
       const res = await apiGetJob(jobId);
       if (res.success && res.data) {
         setJob(res.data);
         onStateChange?.(res.data);
+        return res.data;
       }
+      return null;
     } finally {
       if (!silent) setLoading(false);
     }
   };
 
+  // 启动 SSE 实时日志流（数据源：error_message 增量 + log_path 文件）
+  const startLogStream = useCallback(
+    (targetJobId: string) => {
+      closeStream();
+      setStreamError(null);
+      setStreamFinished(false);
+
+      const es = new EventSource(`/api/v1/jobs/${encodeURIComponent(targetJobId)}/log-stream`);
+      eventSourceRef.current = es;
+
+      es.onopen = () => {
+        setStreamConnected(true);
+        setStreamError(null);
+      };
+
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as {
+            type?: string;
+            payload?: {
+              content?: string;
+              offset?: number;
+              state?: string;
+              source?: string;
+              message?: string;
+              reason?: string;
+            };
+          };
+          const payload = data.payload || {};
+
+          if (data.type === "chunk") {
+            if (payload.content) {
+              setLogContent((prev) => `${prev}${payload.content}`);
+            }
+            return;
+          }
+          if (data.type === "warning") {
+            setStreamError(payload.message || "");
+            return;
+          }
+          if (data.type === "error") {
+            setStreamError(payload.message || "日志流读取异常");
+            return;
+          }
+          if (data.type === "finish") {
+            setStreamFinished(true);
+            closeStream();
+            void fetchDetail(true);
+          }
+        } catch {
+          /* 忽略畸形 payload */
+        }
+      };
+
+      es.onerror = () => {
+        setStreamError("日志流连接中断，可点击刷新按钮兜底获取最新日志");
+        closeStream();
+      };
+    },
+    [closeStream, fetchDetail],
+  );
+
   useEffect(() => {
     if (visible && jobId) {
       setJob(null);
-      void fetchDetail();
+      setLogContent("");
+      void fetchDetail().then((detail) => {
+        if (!detail || !jobId) return;
+        // 已有 error_message 作为初始日志（SSE 从其后增量追加）
+        setLogContent(detail.error_message || "");
+        // 初始 offset：error_message 已有长度（对齐 ds getByteLength 语义）
+        const initOffset = (detail.error_message || "").length;
+        const es = new EventSource(
+          `/api/v1/jobs/${encodeURIComponent(jobId)}/log-stream?offset=${initOffset}`,
+        );
+        eventSourceRef.current = es;
+        es.onopen = () => {
+          setStreamConnected(true);
+          setStreamError(null);
+        };
+        es.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data) as {
+              type?: string;
+              payload?: { content?: string; message?: string; reason?: string };
+            };
+            const payload = data.payload || {};
+            if (data.type === "chunk" && payload.content) {
+              setLogContent((prev) => `${prev}${payload.content}`);
+            } else if (data.type === "warning" || data.type === "error") {
+              setStreamError(payload.message || "");
+            } else if (data.type === "finish") {
+              setStreamFinished(true);
+              closeStream();
+              void fetchDetail(true);
+            }
+          } catch {
+            /* ignore */
+          }
+        };
+        es.onerror = () => {
+          setStreamError("日志流连接中断，可点击刷新按钮兜底获取最新日志");
+          closeStream();
+        };
+      });
+      return;
     }
-  }, [visible, jobId]);
+    closeStream();
+    setJob(null);
+    setStreamError(null);
+    setStreamFinished(false);
+    setLogContent("");
+  }, [visible, jobId, closeStream, fetchDetail]);
 
-  // RUNNING 任务每 5s 轮询一次详情（刷新进度/错误）
+  // 日志滚动位置跟踪
   useEffect(() => {
-    if (!visible || job?.state !== "RUNNING") return;
-    const timer = setInterval(() => void fetchDetail(true), 5000);
-    return () => clearInterval(timer);
-  }, [visible, job?.state]);
+    updateLogScrollPercent(logContainerRef.current);
+  }, [logContent, visible, updateLogScrollPercent]);
+
+  const handleRefresh = () => {
+    if (!jobId) return;
+    void fetchDetail().then(() => {
+      setLogContent("");
+      startLogStream(jobId);
+    });
+  };
 
   return (
     <Drawer
@@ -115,11 +264,20 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
         <Space size={8}>
           <span>作业详情与日志</span>
           {job && getStateTag(job.state || null)}
+          {streamError ? (
+            <Tag color="error">日志流异常</Tag>
+          ) : streamFinished ? (
+            <Tag color="success">日志流已结束</Tag>
+          ) : streamConnected ? (
+            <Tag color="processing">实时流中</Tag>
+          ) : (
+            <Tag>未连接</Tag>
+          )}
           <Button
             type="text"
             size="small"
             icon={<ReloadOutlined />}
-            onClick={() => void fetchDetail()}
+            onClick={handleRefresh}
             loading={loading}
           />
         </Space>
@@ -198,38 +356,50 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
             </Descriptions>
 
             <div>
-              <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 8 }}>
-                进度 / 异常信息
+              <div
+                style={{
+                  fontWeight: 500,
+                  fontSize: 15,
+                  marginBottom: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                }}
+              >
+                <span>实时日志（Span 进度流）</span>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  当前位置：{logScrollPercent}%
+                </Text>
               </div>
-              {job.error_message ? (
+              {streamError ? (
+                <div style={{ fontSize: 12, color: "#cf1322", marginBottom: 8 }}>
+                  {streamError}
+                </div>
+              ) : null}
+              {logContent || job?.error_message ? (
                 <div
+                  ref={logContainerRef}
+                  onScroll={handleLogScroll}
                   style={{
-                    background:
-                      job.state === "FAILED" ? "#fff1f0" : "#fffbe6",
+                    background: "#1f2630",
+                    color: "#d7e0ea",
                     padding: 12,
                     borderRadius: 6,
-                    border:
-                      job.state === "FAILED"
-                        ? "1px solid #ffccc7"
-                        : "1px solid #ffe58f",
+                    border: "1px solid #2e3a4a",
+                    maxHeight: 320,
+                    overflow: "auto",
+                    fontFamily: "monospace",
+                    fontSize: 12,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-all",
                   }}
                 >
-                  <Paragraph
-                    style={{
-                      marginBottom: 0,
-                      color: job.state === "FAILED" ? "#cf1322" : "#666",
-                      fontFamily: "monospace",
-                      fontSize: 12,
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-all",
-                    }}
-                  >
-                    {job.error_message}
-                  </Paragraph>
+                  {logContent || job?.error_message || ""}
                 </div>
               ) : (
                 <Text type="secondary" italic>
-                  无异常信息
+                  暂无日志内容（任务运行中实时进度将在此展示）
                 </Text>
               )}
             </div>
