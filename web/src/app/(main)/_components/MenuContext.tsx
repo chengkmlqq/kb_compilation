@@ -47,7 +47,8 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "models", menu_name: "models", menu_label: "模型配置", route: "/models", menu_icon: "CloudServerOutlined", sort_num: 8, state: "1" },
   { menu_id: "mcps", menu_name: "mcps", menu_label: "MCP 管理", route: "/mcps", menu_icon: "ApiOutlined", sort_num: 9, state: "1" },
   { menu_id: "skills", menu_name: "skills", menu_label: "技能管理", route: "/skills", menu_icon: "ToolOutlined", sort_num: 10, state: "1" },
-  { menu_id: "system", menu_name: "system", menu_label: "系统管理", route: "/system", menu_icon: "SettingOutlined", sort_num: 11, state: "1" },
+  { menu_id: "files", menu_name: "files", menu_label: "文件管理", route: "/files", menu_icon: "FileOutlined", sort_num: 11, state: "1" },
+  { menu_id: "system", menu_name: "system", menu_label: "系统管理", route: "/system", menu_icon: "SettingOutlined", sort_num: 12, state: "1" },
 ];
 
 /** 平铺列表 → 树（对齐 data-synth menu-actions buildTree 语义） */
