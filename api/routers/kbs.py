@@ -360,6 +360,53 @@ def del_document(kb_id: str, document_id: str, db: Session = Depends(get_db)) ->
     return result
 
 
+@router.get("/{kb_id}/documents/{document_id}/chunks")
+def get_document_chunks(
+    kb_id: str,
+    document_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    """读取文档解析后的 chunks（技能/wiki 构建用）。
+
+    返回该文档的所有文本块（content/seq/embedding 状态），供外部技能
+    脚本拉取文档内容后生成 wiki 页面。
+    """
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    from api.models.knowledge import DocChunk
+    from sqlalchemy import select
+
+    rows = db.execute(
+        select(
+            DocChunk.id,
+            DocChunk.seq,
+            DocChunk.content,
+            DocChunk.meta,
+            DocChunk.enabled,
+        )
+        .where(DocChunk.kb_id == kb_id, DocChunk.document_id == document_id)
+        .order_by(DocChunk.seq)
+    ).all()
+    return {
+        "success": True,
+        "data": {
+            "kb_id": kb_id,
+            "document_id": document_id,
+            "total": len(rows),
+            "items": [
+                {
+                    "chunk_id": r[0],
+                    "seq": r[1],
+                    "content": r[2],
+                    "meta": r[3],
+                    "enabled": r[4],
+                }
+                for r in rows
+            ],
+        },
+    }
+
+
 @router.get("/{kb_id}/wiki")
 def get_wiki(kb_id: str, db: Session = Depends(get_db)) -> dict:
     if not get_kb(db, kb_id):

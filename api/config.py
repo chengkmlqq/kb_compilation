@@ -79,6 +79,18 @@ class Settings:
     # Timeout (seconds) for each Flower API call.
     FLOWER_API_TIMEOUT_S: int = int(os.getenv("FLOWER_API_TIMEOUT_S", "15"))
 
+    # --- Wiki skill auto-trigger (文档处理完成后自动技能构建) ---
+    # 上传文档解析/向量化成功后，自动向 agent-gateway 提交的技能任务：
+    #   WIKI_SKILL_NAME      技能名（kb_skill 表 scope=system 的 wiki 构建技能）
+    #   KB_PUBLIC_BASE_URL   技能脚本调 kb API 的入口（宿主 nginx）
+    WIKI_SKILL_NAME: str = os.getenv("WIKI_SKILL_NAME", "kb-wiki-builder")
+    KB_PUBLIC_BASE_URL: str = os.getenv("KB_PUBLIC_BASE_URL", "http://10.1.215.50")
+    # 技能任务执行的 LLM（config 注入后 gateway runner 转 WEKNORA_LLM_*）：
+    # 默认对齐 Hermes 当前供应商 Infer AI；部署 .env 覆写
+    WIKI_LLM_BASE_URL: str = os.getenv("WIKI_LLM_BASE_URL", "https://inferaiapi.com/v1")
+    WIKI_LLM_MODEL: str = os.getenv("WIKI_LLM_MODEL", "deepseek-v4-pro")
+    WIKI_LLM_API_KEY: str = os.getenv("WIKI_LLM_API_KEY", "")
+
     # --- Agent gateway (hermes-agent skill execution service) ---
     # Base URL of the separately-deployed agent-gateway (default host:8080).
     # In docker-compose the worker reaches it via host.docker.internal:8080

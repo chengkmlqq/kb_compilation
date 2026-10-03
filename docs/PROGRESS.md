@@ -2,7 +2,20 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-02（晚间）
+最后更新：2026-10-03
+
+## 3. 当前状态（2026-10-03 追加）
+
+- **上传文档自动触发「基于技能的 wiki 构建」（方案 1，commit 待定）**：
+  - 链路：上传 → `KbDocumentProcessTask`（解析/向量化）SUCCESS（`parse_state==READY`）→ 自动 enqueue `KbAgentGatewayTask`（WIKI_SKILL_* 任务，任务监控可见）→ agent-gateway 执行技能 `kb-wiki-builder` 的 `build_wiki.py` → 读文档 chunks（新增 `GET /kbs/{kb_id}/documents/{doc_id}/chunks` 端点）→ LLM 生成摘要+实体页 → `POST /wiki/pages` 写入
+  - 技能包 `kb-wiki-builder`：SKILL.md + config.yaml + `scripts/kb_rpc.py`（登录/API/LLM 封装）+ `scripts/build_wiki.py`；需**同时安装到两处**：kb_skill 表（scope=system，平台技能管理页可见）+ **agent-gateway 的 `/skills/install`**（gateway 按本地 SKILLS_DIR 扫描技能工具，kb_skill 里的技能 agent 看不到）
+  - LLM 供应商：**Infer AI**（`https://inferaiapi.com/v1` + `deepseek-v4-pro`，与 Hermes 一致）；配置走 `WIKI_LLM_BASE_URL/MODEL/API_KEY` env（deploy/.env 已加 WIKI_LLM_API_KEY）；worker 自动链把 model/base_url/api_key 注入任务 config → gateway runner 转 `WEKNORA_LLM_*` 环境变量给技能脚本
+  - gateway runner 技能工具契约：任务 config 的 `kb_id/doc_name` → `WEKNORA_KB_ID/WEKNORA_DOC_NAME`；`model/base_url/api_key` → `WEKNORA_LLM_*`；`skill` → `WEKNORA_SKILL`。**input 必须写明用 `run_skill_script(skill_name=..., script='build_wiki.py')` 执行，并禁止 agent 用 MCP 工具查库**（否则 agent 会自作主张调 WeKnora MCP 而失败）
+  - 实测：上传 md → 自动链触发 → 技能脚本 exit 0 → wiki 页自动生成（摘要页 + 实体页）
+  - **坑位**：① 文档解析器不支持 .txt，要传 .md/pdf 等；② gateway `/skills/install` 要求 ZIP 带 `<name>/SKILL.md` 结构或传 `name=` 参数，否则技能名推断错（config.yaml 被当技能名）；③ 技能脚本从 10.1.215.50 调 kb API（gateway 容器 → 宿主 nginx 可达）
+  - scope.is_admin 修复：对齐 `AUTH_ADMIN_USERS` env（此前 admin 因角色 role_type 全是 plat-mgr 被判非管理员，技能管理页装不了 system 技能）
+  - 测试：新增 `test_doc_chunks.py`（3 例）+ `test_wiki_skill_chain.py`（5 例），全量 262 passed
+  - 改动文件：`api/config.py`（WIKI_* 配置）、`api/routers/kbs.py`（chunks 端点）、`api/services/scope.py`（is_admin）、`worker/tasks/doc_process.py`（自动链）、`tests/test_doc_chunks.py`、`tests/test_wiki_skill_chain.py`、`deploy/.env`（WIKI_LLM_API_KEY）
 
 ## 2. 当前状态（2026-10-02 晚间追加）
 

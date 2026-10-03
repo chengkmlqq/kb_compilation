@@ -55,10 +55,25 @@ class ResourceRow:
 def is_admin(db: Session, user_id: str) -> bool:
     """A user is an administrator if any bound role is named 'admin' or has
     role_type 'system' (modo_user_role_rela), or their team membership
-    carries an 'admin' role_name (modo_team_member)."""
+    carries an 'admin' role_name (modo_team_member).
+
+    Also honored: AUTH_ADMIN_USERS env (comma-separated user ids) — the same
+    bypass used by is_platform_admin (system_admin). The shared seed data
+    marks EVERY role role_type='plat-mgr', so role_type must NOT be used
+    directly; explicit admin-user listing is the reliable signal.
+    """
     user_id = (user_id or "").strip()
     if not user_id:
         return False
+    # AUTH_ADMIN_USERS env bypass（与 system_admin.is_platform_admin 一致）
+    try:
+        from api.config import get_settings
+
+        admin_users = get_settings().AUTH_ADMIN_USERS or ""
+        if user_id in {u.strip() for u in admin_users.split(",") if u.strip()}:
+            return True
+    except Exception:  # noqa: BLE001
+        pass
     role_ids = list(
         db.execute(select(UserRoleRela.role_id).where(UserRoleRela.user_id == user_id)).scalars()
     )
