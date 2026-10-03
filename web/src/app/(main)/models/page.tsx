@@ -438,7 +438,29 @@ function ModelEditorModal({
     setTesting(true);
     setTestResult(null);
     try {
-      const t = await apiTestModel({ base_url: v.base_url, api_key: v.api_key || "", model: v.name });
+      if (editing && item?.id) {
+        // 编辑模式：api_key 留空 = 保持已保存密钥不变，表单里没有明文，
+        // 直接拿空 key 去测必然 401 —— 改走 /models/{id}/debug 用服务端
+        // 解密后的已保存密钥做真实探测。
+        if (item.type === "vllm" || item.type === "asr") {
+          message.info("该类型需在「调试」抽屉中上传文件测试，此处仅校验连通性可先保存后到调试里验证");
+          setTestResult({ ok: false, error: "vllm/asr 类型请到调试抽屉上传文件测试" });
+          return;
+        }
+        const debugPayload: ModelDebugPayload = { input: "ping" };
+        if (item.type === "rerank") debugPayload.documents = ["ping"];
+        const t = await apiDebugModel(item.id, debugPayload);
+        setTestResult(t.data ?? { error: "无返回" });
+        if (t.data?.ok) message.success("连通正常");
+        else message.warning(t.data?.error || "连通失败");
+        return;
+      }
+      if (!v.api_key) {
+        message.warning("请先填写 API 密钥（新建模型未保存，无可用的已存密钥）");
+        setTestResult({ ok: false, error: "缺少 API 密钥" });
+        return;
+      }
+      const t = await apiTestModel({ base_url: v.base_url, api_key: v.api_key, model: v.name });
       setTestResult(t.data ?? { error: "无返回" });
       if (t.data?.ok) message.success("连通正常");
       else message.warning(t.data?.error || "连通失败");
