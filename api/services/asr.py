@@ -20,6 +20,7 @@ class ASRConfig:
     api_key: str
     model: str
     timeout: float = DEFAULT_TIMEOUT
+    custom_headers: dict | None = None  # extra request headers (model-scoped)
 
 
 @dataclass
@@ -45,6 +46,8 @@ class ASRClient:
         headers = {}
         if self.cfg.api_key:
             headers["Authorization"] = f"Bearer {self.cfg.api_key}"
+        if self.cfg.custom_headers:
+            headers.update(self.cfg.custom_headers)
 
         with httpx.Client(timeout=self.cfg.timeout) as client:
             resp = client.post(

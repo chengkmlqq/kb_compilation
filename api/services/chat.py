@@ -32,6 +32,7 @@ class ChatConfig:
     api_key: str
     model: str
     timeout: float = DEFAULT_TIMEOUT
+    custom_headers: dict | None = None  # extra request headers (model-scoped)
 
 
 @dataclass
@@ -73,6 +74,7 @@ def load_chat_config(
                     base_url=resolved["base_url"],
                     api_key=resolved.get("api_key") or "",
                     model=resolved.get("model") or "",
+                    custom_headers=resolved.get("custom_headers") or None,
                 )
         except Exception:
             logger.warning("failed to resolve scoped chat model; using legacy config", exc_info=True)
@@ -233,6 +235,10 @@ class ChatClient:
         headers = {"Content-Type": "application/json"}
         if self.cfg.api_key:
             headers["Authorization"] = f"Bearer {self.cfg.api_key}"
+        if self.cfg.custom_headers:
+            # model-scoped custom headers win over the defaults (custom auth
+            # schemes like X-Api-Key are configured per model)
+            headers.update(self.cfg.custom_headers)
 
         with httpx.Client(timeout=self.cfg.timeout) as client:
             with client.stream("POST", endpoint, json=payload, headers=headers) as resp:

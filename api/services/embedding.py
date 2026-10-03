@@ -35,6 +35,7 @@ class EmbeddingConfig:
     dim: int
     timeout: float = DEFAULT_TIMEOUT
     batch_size: int = DEFAULT_BATCH_SIZE
+    custom_headers: dict | None = None  # extra request headers (model-scoped)
 
 
 def load_embedding_config(
@@ -67,6 +68,7 @@ def load_embedding_config(
                     api_key=resolved.get("api_key") or "",
                     model=resolved.get("model") or "",
                     dim=int(resolved.get("dimension") or settings.EMBEDDING_DIM),
+                    custom_headers=resolved.get("custom_headers") or None,
                 )
         except Exception:
             logger.warning(
@@ -129,6 +131,8 @@ class EmbeddingClient:
         headers = {"Content-Type": "application/json"}
         if self.cfg.api_key:
             headers["Authorization"] = f"Bearer {self.cfg.api_key}"
+        if self.cfg.custom_headers:
+            headers.update(self.cfg.custom_headers)
 
         last_err: Exception | None = None
         for attempt in range(3):

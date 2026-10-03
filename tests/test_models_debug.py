@@ -55,6 +55,7 @@ def client(monkeypatch):
                 "base_url": "https://api.example.com/v1",
                 "api_key": "sk-test123",
                 "dimension": 768 if t == "embedding" else None,
+                "custom_headers": {"X-Api-Key": "hunter2"} if t == "chat" else None,
             },
         )
     db.commit()
@@ -149,6 +150,10 @@ def test_debug_chat_streams_with_options(client, monkeypatch):
     cfg = FakeChatClient.last_cfg
     assert cfg.base_url == "https://api.example.com/v1"
     assert cfg.model == "m-chat"
+    assert cfg.custom_headers == {"X-Api-Key": "hunter2"}
+    # request preview lists header NAMES only, never the secret value
+    assert data["request"]["custom_header_names"] == ["X-Api-Key"]
+    assert "hunter2" not in json.dumps(data)
     messages, temperature, max_tokens, top_p, thinking = FakeChatClient.last_call
     assert messages[0].role == "system"
     assert messages[0].content == "你是测试助手"

@@ -574,6 +574,7 @@ def resolve_model_config(
         "dimension": m.dimension,
         "model_id": m.id,
         "scope": m.scope,
+        "custom_headers": m.custom_headers or {},
     }
 
 

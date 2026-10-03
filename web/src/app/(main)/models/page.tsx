@@ -414,6 +414,10 @@ function ModelEditorModal({
         is_default: item.is_default,
         max_concurrency: item.max_concurrency ?? undefined,
         thinking_control: item.thinking_control ?? undefined,
+        custom_headers:
+          item.custom_headers && Object.keys(item.custom_headers).length > 0
+            ? JSON.stringify(item.custom_headers, null, 2)
+            : "",
       });
     } else {
       form.setFieldsValue({
@@ -463,6 +467,19 @@ function ModelEditorModal({
         thinking_control: v.thinking_control || null,
       };
       if (v.api_key) payload.api_key = v.api_key;
+      if (v.custom_headers && String(v.custom_headers).trim()) {
+        try {
+          const parsed = JSON.parse(String(v.custom_headers));
+          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+            message.error("自定义请求头必须是 JSON 对象，如 {\"X-Api-Key\":\"xxx\"}");
+            return;
+          }
+          payload.custom_headers = parsed as Record<string, string>;
+        } catch {
+          message.error("自定义请求头不是合法 JSON，如 {\"X-Api-Key\":\"xxx\"}");
+          return;
+        }
+      }
       const res = editing
         ? await apiUpdateModel(item!.id, payload)
         : await apiCreateModel(payload as never);
@@ -578,6 +595,13 @@ function ModelEditorModal({
         <Form.Item name="description" label="描述">
           <Input.TextArea rows={2} placeholder="可选" />
         </Form.Item>
+        <Form.Item
+          name="custom_headers"
+          label="自定义请求头 (JSON)"
+          extra={'可选。追加到该模型的请求头，如 {"X-Api-Key":"xxx"}（键名会在调试请求预览中列出，值不泄露）'}
+        >
+          <Input.TextArea rows={3} placeholder={'{"X-Api-Key": "xxx"}'} />
+        </Form.Item>
       </Form>
       <Space style={{ marginTop: -12 }}>
         <Button loading={testing} onClick={() => void doTest()}>
@@ -626,6 +650,7 @@ function ModelDebugDrawer({
     Array<{ id: number; label: string; result: ModelDebugResult }>
   >([]);
   const runSequence = useRef(0);
+  const [drawerWidth, setDrawerWidth] = useState(560);
 
   const availableTypes = useMemo(
     () => ALL_TYPES.filter((t) => models.some((m) => m.type === t)),
@@ -802,7 +827,16 @@ function ModelDebugDrawer({
   return (
     <Drawer
       title={target ? `模型调试：${target.display_name || target.name}` : "模型调试"}
-      width={560}
+      width={drawerWidth}
+      extra={
+        <Button
+          size="small"
+          type="text"
+          onClick={() => setDrawerWidth(drawerWidth === 560 ? 840 : 560)}
+        >
+          {drawerWidth === 560 ? "加宽" : "收窄"}
+        </Button>
+      }
       open={!!target}
       onClose={onClose}
       destroyOnClose
@@ -811,17 +845,19 @@ function ModelDebugDrawer({
         <Space direction="vertical" style={{ width: "100%" }} size={12}>
           {/* 模型选择 */}
           {availableTypes.length > 0 && (
-            <Radio.Group
-              optionType="button"
-              buttonStyle="solid"
-              size="small"
-              value={selectedType ?? undefined}
-              onChange={(e) => selectType(e.target.value as ModelType)}
-              options={availableTypes.map((t) => ({
-                label: TYPE_LABEL[t],
-                value: t,
-              }))}
-            />
+            <Space wrap size={4}>
+              {availableTypes.map((t) => (
+                <Button
+                  key={t}
+                  size="small"
+                  type={selectedType === t ? "primary" : "default"}
+                  icon={TYPE_ICON[t]}
+                  onClick={() => selectType(t)}
+                >
+                  {TYPE_LABEL[t]}
+                </Button>
+              ))}
+            </Space>
           )}
           <Select
             showSearch

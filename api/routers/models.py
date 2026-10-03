@@ -404,6 +404,9 @@ def debug_model(
         request_preview["documents"] = docs
     if file_name:
         request_preview["file"] = {"name": file_name, "size": len(file_bytes)}
+    if m.custom_headers:
+        # 只列键名，不泄露值（对齐 WeKnora custom_header_names）
+        request_preview["custom_header_names"] = sorted(m.custom_headers.keys())
     observations: dict[str, Any] = {}
 
     def finish(ok: bool, raw: Any, err: str | None = None) -> dict:
@@ -429,6 +432,7 @@ def debug_model(
                 api_key=api_key or "",
                 model=use_model,
                 dim=m.dimension or 1024,
+                custom_headers=m.custom_headers or None,
             )
         )
         try:
@@ -450,6 +454,8 @@ def debug_model(
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        if m.custom_headers:
+            headers.update(m.custom_headers)
         body = {"model": use_model, "query": input.strip(), "documents": docs}
         try:
             with httpx.Client(timeout=30) as client:
@@ -469,7 +475,14 @@ def debug_model(
             raise HTTPException(status_code=400, detail="请上传音频文件")
         from api.services.asr import ASRClient, ASRConfig
 
-        client = ASRClient(ASRConfig(base_url=base_url, api_key=api_key or "", model=use_model))
+        client = ASRClient(
+            ASRConfig(
+                base_url=base_url,
+                api_key=api_key or "",
+                model=use_model,
+                custom_headers=m.custom_headers or None,
+            )
+        )
         try:
             result = client.transcribe(file_bytes, file_name or "audio.bin")
         except Exception as e:  # noqa: BLE001
@@ -497,7 +510,14 @@ def debug_model(
             raise HTTPException(status_code=400, detail="请输入问题")
         messages.append(ChatMessage(role="user", content=input.strip()))
 
-    client = ChatClient(ChatConfig(base_url=base_url, api_key=api_key or "", model=use_model))
+    client = ChatClient(
+        ChatConfig(
+            base_url=base_url,
+            api_key=api_key or "",
+            model=use_model,
+            custom_headers=m.custom_headers or None,
+        )
+    )
     thinking_val = opts.get("thinking")
     thinking: bool | None = None
     if isinstance(thinking_val, bool):
