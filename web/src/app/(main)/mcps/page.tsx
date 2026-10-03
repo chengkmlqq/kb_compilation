@@ -21,6 +21,7 @@ import {
   Typography,
 } from "antd";
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import CodeViewer from "@/components/CodeViewer";
 import {
   apiCreateMcp,
   apiDeleteMcp,
@@ -222,6 +223,28 @@ function McpEditorModal({
   const editing = !!item;
   const [saving, setSaving] = useState(false);
   const [headers, setHeaders] = useState<{ key: string; value: string }[]>([]);
+  const [tab, setTab] = useState("form");
+  const watched = Form.useWatch([], form);
+
+  // JSON 视图：表单当前值 + headers 派生的完整 server 配置（只读高亮）
+  const jsonText = useMemo(() => {
+    const headersMap: Record<string, string> = {};
+    for (const h of headers) {
+      if (h.key.trim()) headersMap[h.key.trim()] = h.value;
+    }
+    return JSON.stringify(
+      {
+        scope: watched?.scope ?? item?.scope ?? scope,
+        name: watched?.name ?? item?.name ?? "",
+        type: watched?.type ?? item?.type ?? "streamable_http",
+        url: watched?.url ?? item?.url ?? "",
+        headers: headersMap,
+        enabled: watched?.enabled !== false,
+      },
+      null,
+      2,
+    );
+  }, [watched, headers, item, scope]);
 
   useEffect(() => {
     if (item) {
@@ -282,7 +305,17 @@ function McpEditorModal({
       onCancel={onClose}
       destroyOnClose
     >
-      <Form form={form} layout="vertical" initialValues={{ scope, type: "streamable_http", enabled: true }}>
+      <Tabs
+        size="small"
+        activeKey={tab}
+        onChange={setTab}
+        items={[
+          { key: "form", label: "配置表单" },
+          { key: "json", label: "JSON 视图" },
+        ]}
+      />
+      {tab === "form" ? (
+        <Form form={form} layout="vertical" initialValues={{ scope, type: "streamable_http", enabled: true }}>
         <Form.Item name="scope" label="配置级别" style={{ maxWidth: 240 }}>
           <Select
             disabled={editing}
@@ -354,6 +387,9 @@ function McpEditorModal({
           <Switch />
         </Form.Item>
       </Form>
+      ) : (
+        <CodeViewer value={jsonText} fileName="mcp.json" height={380} />
+      )}
     </Modal>
   );
 }

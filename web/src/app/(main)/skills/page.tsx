@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Drawer,
+  Empty,
   Modal,
   Popconfirm,
   Radio,
@@ -14,10 +15,14 @@ import {
   Spin,
   Table,
   Tag,
+  Tree,
   Typography,
   Upload,
 } from "antd";
 import { DeleteOutlined, DownloadOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from "@ant-design/icons";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import CodeViewer from "@/components/CodeViewer";
 import {
   apiDeleteSkillRegistry,
   apiInstallSkillRegistry,
@@ -43,7 +48,50 @@ function fmtSize(n: number): string {
   if (!n) return "-";
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function isMarkdown(p: string): boolean {
+  const l = p.toLowerCase();
+  return l.endsWith(".md") || l.endsWith(".markdown");
+}
+
+type TreeNode = {
+  title: string;
+  key: string;
+  children?: TreeNode[];
+};
+
+// 由扁平文件清单构建目录树（目录在前、按名排序）
+function buildFileTree(files: { path: string; size: number }[]): TreeNode[] {
+  const root: TreeNode[] = [];
+  for (const f of files) {
+    const parts = f.path.split("/").filter(Boolean);
+    if (parts.length === 0) continue;
+    let level = root;
+    parts.forEach((seg, i) => {
+      const isLeaf = i === parts.length - 1;
+      const key = parts.slice(0, i + 1).join("/");
+      let node = level.find((n) => n.key === key);
+      if (!node) {
+        node = { title: seg, key, children: isLeaf ? undefined : [] };
+        level.push(node);
+      }
+      if (!isLeaf && !node.children) node.children = [];
+      level = node.children ?? [];
+    });
+  }
+  const sortFn = (list: TreeNode[]) => {
+    list.sort((a, b) => {
+      const ad = !!a.children && a.children.length > 0;
+      const bd = !!b.children && b.children.length > 0;
+      if (ad !== bd) return ad ? -1 : 1;
+      return a.title.localeCompare(b.title);
+    });
+    list.forEach((n) => n.children && sortFn(n.children));
+  };
+  sortFn(root);
+  return root;
 }
 
 export default function SkillManagePage() {
@@ -55,8 +103,17 @@ export default function SkillManagePage() {
   const [installOpen, setInstallOpen] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [detailTarget, setDetailTarget] = useState<SkillRegistryItem | null>(null);
-  const [detailText, setDetailText] = useState("");
+  const [detailFiles, setDetailFiles] = useState<{ path: string; size: number }[]>([]);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [fileData, setFileData] = useState<{
+    path: string;
+    content: string;
+    truncated: boolean;
+    binary: boolean;
+    size: number;
+  } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [fileLoading, setFileLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -114,31 +171,55 @@ export default function SkillManagePage() {
   };
 
   const openDetail = async (item: SkillRegistryItem) => {
-    setDetailTarget(item);
-    setDetailText("");
-    setDetailLoading(true);
-    try {
-      // 详情走旧代理？不——直接请求新注册表详情端点（含 package_base64）
-      const res = await fetch(`/api/v1/skills/${item.id}`, {
-        headers: { "Content-Type": "application/json" },
-      });
-      const json = await res.json();
-      if (json.success && json.data) {
-        const d = json.data;
-        setDetailText(
-          d.sk_markdown_preview ||
-            d.item?.description ||
-            "（无内容）",
-        );
-      } else {
-        setDetailText("加载失败");
+      setDetailTarget(item);
+      setDetailFiles([]);
+      setSelectedPath(null);
+      setFileData(null);
+      setDetailLoading(true);
+      try {
+        const res = await fetch(`/api/v1/skills/${item.id}`, {
+          headers: { "Content-Type": "application/json" },
+        });
+        const json = await res.json();
+        if (json.success && json.data) {
+          const d = json.data;
+          const files: { path: string; size: number }[] = d.files ?? [];
+          setDetailFiles(files);
+          // 默认选中第一个 Markdown 文档（通常 SKILL.md）
+          const md = files.find((f) => f.path.toLowerCase().endsWith(".md"));
+          const first = md ?? files[0];
+          if (first) void loadFile(item.id, first.path);
+        } else {
+          setFileData({ path: "", content: "加载失败", truncated: false, binary: false, size: 0 });
+        }
+      } catch {
+        setFileData({ path: "", content: "加载失败", truncated: false, binary: false, size: 0 });
+      } finally {
+        setDetailLoading(false);
       }
-    } catch {
-      setDetailText("加载失败");
-    } finally {
-      setDetailLoading(false);
-    }
-  };
+    };
+
+    const loadFile = async (skillId: string, path: string) => {
+      setSelectedPath(path);
+      setFileLoading(true);
+      setFileData(null);
+      try {
+        const res = await fetch(
+          `/api/v1/skills/${skillId}/files/${encodeURIComponent(path.split("/").map(encodeURIComponent).join("/"))}`,
+          { headers: { "Content-Type": "application/json" } },
+        );
+        const json = await res.json();
+        if (json.success && json.data) {
+          setFileData(json.data);
+        } else {
+          setFileData({ path, content: "加载失败", truncated: false, binary: false, size: 0 });
+        }
+      } catch {
+        setFileData({ path, content: "加载失败", truncated: false, binary: false, size: 0 });
+      } finally {
+        setFileLoading(false);
+      }
+    };
 
   const handleExport = (item: SkillRegistryItem) => {
     // 导出走后端 package 下载端点：GET /api/v1/skills/{id}/package → base64
@@ -234,24 +315,76 @@ export default function SkillManagePage() {
       />
       <Drawer
         title={detailTarget ? `技能详情：${detailTarget.name}` : "技能详情"}
-        width={560}
+        width={840}
         open={!!detailTarget}
         onClose={() => setDetailTarget(null)}
         destroyOnClose
       >
         {detailTarget && (
-          <Space direction="vertical" style={{ display: "flex" }} size={12}>
-            <Space wrap>
-              <Tag color={SCOPE_COLOR[detailTarget.scope]}>{SCOPE_LABEL[detailTarget.scope]}</Tag>
-              <Tag>v{detailTarget.version || "-"}</Tag>
-              <Text type="secondary" style={{ fontSize: 12 }}>{fmtSize(detailTarget.package_size)}</Text>
-            </Space>
-            {detailLoading ? (
-              <Spin />
-            ) : (
-              <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: 12 }}>{detailText}</pre>
-            )}
-          </Space>
+          <div style={{ display: "flex", gap: 16, minHeight: 480 }}>
+            {/* 左侧：元信息 + 文件树 */}
+            <div
+              style={{
+                width: 250,
+                flex: "0 0 250px",
+                borderRight: "1px solid rgba(0,0,0,0.06)",
+                paddingRight: 12,
+                overflow: "auto",
+                maxHeight: 620,
+              }}
+            >
+              <Space wrap size={4} style={{ marginBottom: 10 }}>
+                <Tag color={SCOPE_COLOR[detailTarget.scope]}>{SCOPE_LABEL[detailTarget.scope]}</Tag>
+                <Tag>v{detailTarget.version || "-"}</Tag>
+                <Text type="secondary" style={{ fontSize: 12 }}>{fmtSize(detailTarget.package_size)}</Text>
+              </Space>
+              {detailLoading ? (
+                <Spin />
+              ) : detailFiles.length === 0 ? (
+                <Empty description="包内无文件" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              ) : (
+                <Tree
+                  treeData={buildFileTree(detailFiles)}
+                  selectedKeys={selectedPath ? [selectedPath] : []}
+                  defaultExpandAll
+                  onSelect={(keys) => {
+                    const k = keys[0] as string | undefined;
+                    if (k && detailTarget) void loadFile(detailTarget.id, k);
+                  }}
+                  showIcon={false}
+                  blockNode
+                />
+              )}
+            </div>
+            {/* 右侧：文件预览 */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {fileLoading ? (
+                <div style={{ textAlign: "center", paddingTop: 120 }}>
+                  <Spin />
+                </div>
+              ) : !fileData ? (
+                <Empty description="从左侧选择文件预览" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              ) : fileData.binary ? (
+                <Empty description={`${fileData.path} 为二进制文件（${fmtSize(fileData.size)}），不支持内联预览，可「导出」整包`} />
+              ) : fileData.truncated ? (
+                <Empty description={`${fileData.path} 超过 512KB（${fmtSize(fileData.size)}），仅展示元信息`} />
+              ) : isMarkdown(fileData.path) ? (
+                <div
+                  style={{
+                    maxHeight: 620,
+                    overflow: "auto",
+                    padding: "0 10px",
+                    fontSize: 13,
+                    lineHeight: 1.7,
+                  }}
+                >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{fileData.content}</ReactMarkdown>
+                </div>
+              ) : (
+                <CodeViewer value={fileData.content} fileName={fileData.path} height={620} />
+              )}
+            </div>
+          </div>
         )}
       </Drawer>
       <Modal
