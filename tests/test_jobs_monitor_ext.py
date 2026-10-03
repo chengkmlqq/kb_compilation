@@ -214,6 +214,9 @@ def test_job_log_stream_sse(monkeypatch) -> None:
         user_id="u1", user_name="u1", team_name="team1"
     )
 
+    # SSE 端点每轮用独立短会话(get_sessionmaker())——将其指向测试内存引擎
+    monkeypatch.setattr("api.routers.jobs.get_sessionmaker", lambda: Session)
+
     import types
 
     monkeypatch.setattr(

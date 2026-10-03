@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from api.db import get_db
+from api.db import get_db, get_sessionmaker
 from api.models.framework import Job, JobQueue
 from api.services.identity import decode_identity_cookie
 
@@ -254,7 +254,6 @@ async def job_log_stream(
     job_id: str,
     x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db),
 ):
     """SSE 实时日志流：增量推送 error_message 进度 / log_path 文件内容。
 
@@ -262,6 +261,11 @@ async def job_log_stream(
     - data: {"type":"chunk","payload":{content,offset,state,source,ts}}
     - data: {"type":"warning"|"error"|"finish", ...}
     终态（SUCCESS/FAILED/STOPPED）后自动 close；1s 轮询；30s 空闲超时。
+
+    **连接不持有长 DB session**：每轮查询用独立短会话（get_sessionmaker()()）
+    轮末即还——SSE 流可能持续数秒到数十秒，若用 Depends(get_db) 的 session，
+    并发日志流会占满 QueuePool(size 10) 导致整个 api-server 的 DB 接口
+    TimeoutError 挂起（实测：EventSource 重连风暴 + 多流并发 → 全部接口 30s 超时）。
     """
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity or not identity.user_id:
@@ -284,18 +288,20 @@ async def job_log_stream(
             while True:
                 if await request.is_disconnected():
                     break
-                job = db.execute(
-                    select(Job).where(Job.id == job_id)
-                ).scalars().first()
-                if not job:
-                    yield await _sse({"type": "finish", "payload": {
-                        "state": "NOT_FOUND", "reason": "作业不存在",
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                    }})
-                    break
+                # 独立短会话：每轮查询即开即关，SSE 流期间不占连接池
+                with get_sessionmaker()() as sdb:
+                    job = sdb.execute(
+                        select(Job).where(Job.id == job_id)
+                    ).scalars().first()
+                    if not job:
+                        yield await _sse({"type": "finish", "payload": {
+                            "state": "NOT_FOUND", "reason": "作业不存在",
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                        }})
+                        break
 
-                state = str(job.state or "").upper()
-                read = await _read_incremental(db, job, offset_bytes)
+                    state = str(job.state or "").upper()
+                    read = await _read_incremental(sdb, job, offset_bytes)
 
                 if read["content"]:
                     offset_bytes = read["next_offset"]
