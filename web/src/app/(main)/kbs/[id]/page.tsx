@@ -16,10 +16,16 @@ import {
   Typography,
   Upload,
 } from "antd";
-import { InboxOutlined, ReloadOutlined, ShareAltOutlined } from "@ant-design/icons";
+import {
+  InboxOutlined,
+  ReloadOutlined,
+  ShareAltOutlined,
+  SlidersOutlined,
+} from "@ant-design/icons";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import WikiGraphView from "@/components/WikiGraphView";
 import WikiManagePanel from "@/components/WikiManagePanel";
+import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 import {
   apiDeleteDocument,
   apiListDocuments,
@@ -55,6 +61,7 @@ export default function KbDetailPage() {
   const [searching, setSearching] = useState(false);
   const [wikiView, setWikiView] = useState<"list" | "graph">("list");
   const [focusSlug, setFocusSlug] = useState<string | undefined>(undefined);
+  const [chunkingOpen, setChunkingOpen] = useState(false);
   const searchParams = useSearchParams();
 
   // 从 wiki 页「图谱中查看」跳入时：?wiki=graph&focus=<slug>
@@ -159,6 +166,9 @@ export default function KbDetailPage() {
             <Button icon={<ReloadOutlined />} onClick={() => void load()}>
               刷新
             </Button>
+            <Button icon={<SlidersOutlined />} onClick={() => setChunkingOpen(true)}>
+              切片配置
+            </Button>
             <Upload.Dragger {...uploadProps} style={{ width: 260, padding: "8px 12px" }}>
               点击或拖拽上传文档（md/pdf/docx/xlsx/pptx/epub 等）
             </Upload.Dragger>
@@ -244,6 +254,12 @@ export default function KbDetailPage() {
           <WikiManagePanel kbId={kbId} />
         )}
       </Card>
+
+      <ChunkingConfigModal
+        open={chunkingOpen}
+        kbId={kbId}
+        onClose={() => setChunkingOpen(false)}
+      />
     </Space>
   );
 }

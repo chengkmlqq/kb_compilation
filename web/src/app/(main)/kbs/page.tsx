@@ -2,9 +2,17 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { App, Button, Card, Empty, Form, Input, List, Modal, Space, Tag, Typography } from "antd";
-import { BookOutlined, DeleteOutlined, FileTextOutlined, FolderOpenOutlined, PlusOutlined } from "@ant-design/icons";
+import {
+  BookOutlined,
+  DeleteOutlined,
+  FileTextOutlined,
+  FolderOpenOutlined,
+  PlusOutlined,
+  SlidersOutlined,
+} from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 import { apiCreateKb, apiDeleteKb, apiListKbs, KbItem } from "@/lib/api";
+import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 
 export default function KbsPage() {
   const { message, modal } = App.useApp();
@@ -12,6 +20,7 @@ export default function KbsPage() {
   const [kbs, setKbs] = useState<KbItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [chunkingKbId, setChunkingKbId] = useState<string | null>(null);
   const [form] = Form.useForm();
 
   const load = useCallback(async () => {
@@ -88,6 +97,14 @@ export default function KbsPage() {
                 打开
               </Button>,
               <Button
+                key="chunking"
+                type="link"
+                icon={<SlidersOutlined />}
+                onClick={() => setChunkingKbId(kb.id)}
+              >
+                切片配置
+              </Button>,
+              <Button
                 key="del"
                 type="link"
                 danger
@@ -147,6 +164,12 @@ export default function KbsPage() {
           </Form.Item>
         </Form>
       </Modal>
+
+      <ChunkingConfigModal
+        open={chunkingKbId !== null}
+        kbId={chunkingKbId ?? ""}
+        onClose={() => setChunkingKbId(null)}
+      />
     </Card>
   );
 }

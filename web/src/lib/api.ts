@@ -1570,3 +1570,116 @@ export function apiFileRmdir(path: string) {
 export function apiFileZipUrl(path: string) {
   return `/api/v1/files/zip?path=${encodeURIComponent(path)}`;
 }
+
+// ---- chunking config & parser engines ----
+
+export interface ParserEngineRule {
+  file_types: string[];
+  engine: string;
+}
+
+export interface ChunkingConfig {
+  chunk_size: number;
+  chunk_overlap: number;
+  separators: string[];
+  enable_parent_child: boolean;
+  parent_chunk_size: number;
+  child_chunk_size: number;
+  strategy: string;
+  token_limit: number;
+  languages: string[];
+  parser_engine_rules: ParserEngineRule[];
+}
+
+export interface ChunkingDefaults {
+  chunk_size: number;
+  chunk_overlap: number;
+  strategy: string;
+  parent_chunk_size: number;
+  child_chunk_size: number;
+}
+
+export interface ChunkingConfigData {
+  chunking: Partial<ChunkingConfig>;
+  defaults: ChunkingDefaults;
+}
+
+export function apiGetChunkingConfig(kbId: string) {
+  return request<ChunkingConfigData>(`/api/v1/kbs/${kbId}/chunking-config`);
+}
+
+export function apiPutChunkingConfig(kbId: string, chunking: Partial<ChunkingConfig>) {
+  return request<{ chunking: ChunkingConfig }>(`/api/v1/kbs/${kbId}/chunking-config`, {
+    method: "PUT",
+    body: JSON.stringify(chunking),
+  });
+}
+
+export interface PreviewChunk {
+  seq: number;
+  content: string;
+  chars: number;
+  tokens: number;
+  is_parent: boolean;
+  parent_seq: number | null;
+}
+
+export interface PreviewProfile {
+  total_chars: number;
+  total_lines: number;
+  avg_line_len: number;
+  md_heading_total: number;
+  heading_density: number;
+  dominant_heading_level: number;
+  has_tables: boolean;
+  has_code: boolean;
+  detected_langs: string[];
+}
+
+export interface PreviewDiagnostics {
+  selected_tier: string;
+  tier_chain: string[];
+  rejected: { tier: string; reason: string }[];
+  profile: PreviewProfile | null;
+}
+
+export interface ChunkPreviewData {
+  chunks: PreviewChunk[];
+  parents?: PreviewChunk[];
+  diagnostics: PreviewDiagnostics;
+}
+
+export function apiPreviewChunk(text: string, config?: Partial<ChunkingConfig>) {
+  return request<ChunkPreviewData>("/api/v1/kbs/chunk-preview", {
+    method: "POST",
+    body: JSON.stringify({ text, config }),
+  });
+}
+
+export interface ParserEngineItem {
+  name: string;
+  display_name: string;
+  description?: string;
+  available: boolean;
+  reason?: string | null;
+  file_types: string[];
+}
+
+export function apiListParserEngines() {
+  return request<ParserEngineItem[]>("/api/v1/parsers/engines");
+}
+
+// 文档解析分块（分块调试抽屉「使用文档内容」用）——后端已有该端点
+export interface DocChunkItem {
+  chunk_id: string;
+  seq: number;
+  content: string;
+  meta?: Record<string, unknown> | null;
+  enabled?: boolean;
+}
+
+export function apiGetDocumentChunks(kbId: string, docId: string) {
+  return request<{ total: number; items: DocChunkItem[] }>(
+    `/api/v1/kbs/${kbId}/documents/${docId}/chunks`,
+  );
+}
