@@ -87,6 +87,9 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
   const [logContent, setLogContent] = useState("");
   const [logScrollPercent, setLogScrollPercent] = useState(0);
   const eventSourceRef = useRef<EventSource | null>(null);
+  // finish 之后浏览器 EventSource 仍会触发一次 onerror，用 ref 记录终态以区分
+  // 「正常收尾」与「真实中断」，并避免 finish 后无限自动重连
+  const streamFinishedRef = useRef(false);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
 
   const closeStream = useCallback(() => {
@@ -137,6 +140,7 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
       closeStream();
       setStreamError(null);
       setStreamFinished(false);
+      streamFinishedRef.current = false;
 
       const es = new EventSource(`/api/v1/jobs/${encodeURIComponent(targetJobId)}/log-stream`);
       eventSourceRef.current = es;
@@ -176,6 +180,11 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
             return;
           }
           if (data.type === "finish") {
+            // 服务器发完 finish 后关闭连接，浏览器 EventSource 会把它当作
+            // 「连接中断」无限自动重连（标准 SSE 行为）→ 收到终态必须立即
+            // close() 掉这个闭包实例，否则请求风暴 + onerror 误报「日志流异常」
+            streamFinishedRef.current = true;
+            es.close();
             setStreamFinished(true);
             closeStream();
             void fetchDetail(true);
@@ -186,7 +195,14 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
       };
 
       es.onerror = () => {
+        // finish 之后的 error 是正常收尾噪音，不算异常
+        if (streamFinishedRef.current) {
+          es.close();
+          closeStream();
+          return;
+        }
         setStreamError("日志流连接中断，可点击刷新按钮兜底获取最新日志");
+        es.close();
         closeStream();
       };
     },
@@ -201,6 +217,7 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
         if (!detail || !jobId) return;
         // 已有 error_message 作为初始日志（SSE 从其后增量追加）
         setLogContent(detail.error_message || "");
+        streamFinishedRef.current = false;
         // 初始 offset：error_message 已有长度（对齐 ds getByteLength 语义）
         const initOffset = (detail.error_message || "").length;
         const es = new EventSource(
@@ -223,6 +240,8 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
             } else if (data.type === "warning" || data.type === "error") {
               setStreamError(payload.message || "");
             } else if (data.type === "finish") {
+              streamFinishedRef.current = true;
+              es.close();
               setStreamFinished(true);
               closeStream();
               void fetchDetail(true);
@@ -232,7 +251,13 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
           }
         };
         es.onerror = () => {
+          if (streamFinishedRef.current) {
+            es.close();
+            closeStream();
+            return;
+          }
           setStreamError("日志流连接中断，可点击刷新按钮兜底获取最新日志");
+          es.close();
           closeStream();
         };
       });
