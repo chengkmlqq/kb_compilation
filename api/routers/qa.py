@@ -26,6 +26,7 @@ from api.services import qa_stream_store as store
 from api.services.chat_sessions import (
     append_message,
     attachment_contents,
+    attachment_images,
     get_context_messages,
     get_session,
 )
@@ -97,6 +98,7 @@ def _run_generation(
         session = None
         user_id = None
         attachment_ctx = ""
+        image_urls: list[str] = []
         history: list[dict] = []
         if req.session_id:
             if not identity or not identity.user_id:
@@ -116,6 +118,10 @@ def _run_generation(
                 attachment_ctx = attachment_contents(db, req.session_id)
             except Exception:  # noqa: BLE001
                 attachment_ctx = ""
+            try:
+                image_urls = attachment_images(db, req.session_id)
+            except Exception:  # noqa: BLE001
+                image_urls = []
         else:
             history = [
                 {"role": str(m.get("role", "user")), "content": str(m.get("content", ""))}
@@ -154,6 +160,26 @@ def _run_generation(
         thinking_parts: list[str] = []
         refs: list[dict] = []
         try:
+            if image_urls:
+                # 图片问答要求对话模型支持视觉（supports_vision）
+                try:
+                    from api.models.model import KbModel
+                    from api.services.chat import load_chat_config
+
+                    chat_cfg = load_chat_config(
+                        db,
+                        user_id=ctx_user_id,
+                        team_name=ctx_team_name,
+                        is_sys_admin=ctx_is_admin,
+                    )
+                    mrow = db.execute(
+                        select(KbModel).where(KbModel.name == chat_cfg.model)
+                    ).scalars().first()
+                    if mrow and not mrow.supports_vision:
+                        _fail(stream_id, "当前对话模型不支持图片输入，请在模型配置中选用支持视觉的对话模型")
+                        return
+                except Exception:  # noqa: BLE001
+                    pass
             for event in answer_question(
                 kb_db=db,
                 kb=kb,
@@ -162,6 +188,7 @@ def _run_generation(
                 retrieval_overrides=overrides,
                 history=history,
                 extra_context=attachment_ctx,
+                image_urls=image_urls,
                 user_id=ctx_user_id,
                 team_name=ctx_team_name,
                 is_sys_admin=ctx_is_admin,

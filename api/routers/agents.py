@@ -120,6 +120,7 @@ def agent_qa_stream(
         user_id = None
         history: list[dict] = []
         attachment_ctx = ""
+        image_urls: list[str] = []
         # 身份（无 session 也解析：用于个人/团队模型作用域）
         identity = decode_identity_cookie(x_next_identity or "")
         ctx_user_id = identity.user_id if identity else ""
@@ -143,6 +144,7 @@ def agent_qa_stream(
                 from api.services.chat_sessions import (
                     append_message,
                     attachment_contents,
+                    attachment_images,
                     get_context_messages,
                     get_session,
                 )
@@ -153,6 +155,7 @@ def agent_qa_stream(
                     for m in get_context_messages(db, req.session_id, limit=20)
                 ]
                 attachment_ctx = attachment_contents(db, req.session_id)
+                image_urls = attachment_images(db, req.session_id)
                 # 持久化用户消息
                 append_message(db, user_id, req.session_id, "user", req.question)
             except Exception as e:  # noqa: BLE001
@@ -194,7 +197,28 @@ def agent_qa_stream(
         refs: list[dict] = []
         last_kb_id = ""
         try:
-            # 对每个 KB 依次流式回答；extra_context 只在首个 KB 注入避免重复
+            if image_urls:
+                # 图片问答要求对话模型支持视觉（supports_vision）
+                try:
+                    from api.models.model import KbModel
+                    from api.services.chat import load_chat_config
+
+                    chat_cfg = load_chat_config(
+                        db,
+                        user_id=ctx_user_id,
+                        team_name=ctx_team_name,
+                        is_sys_admin=ctx_is_admin,
+                    )
+                    mrow = db.execute(
+                        select(KbModel).where(KbModel.name == chat_cfg.model)
+                    ).scalars().first()
+                    if mrow and not mrow.supports_vision:
+                        yield _sse({"type": "error", "message": "当前对话模型不支持图片输入，请在模型配置中选用支持视觉的对话模型"})
+                        yield _sse({"type": "done"})
+                        return
+                except Exception:  # noqa: BLE001
+                    pass
+            # 对每个 KB 依次流式回答；extra_context/图片只在首个 KB 注入避免重复
             for idx, kb in enumerate(kbs):
                 last_kb_id = kb.id
                 extra = attachment_ctx if idx == 0 else ""
@@ -207,6 +231,7 @@ def agent_qa_stream(
                     history=history,
                     chat_cfg=None,
                     extra_context=extra,
+                    image_urls=image_urls if idx == 0 else None,
                     agent_prompt=agent_prompt,
                     user_id=ctx_user_id,
                     team_name=ctx_team_name,

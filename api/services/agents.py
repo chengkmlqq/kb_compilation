@@ -53,6 +53,9 @@ class AgentConfig:
     top_k: int = 5
     threshold: float = 0.2
     embed_query: bool = True
+    # 图片问答门禁（对齐 WeKnora CustomAgentConfig.ImageUploadEnabled）：
+    # 仅 agent 会话且开启时允许上传图片，图片随 QA 挂到 user 消息 images
+    image_upload_enabled: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -71,6 +74,7 @@ class AgentConfig:
             "top_k": self.top_k,
             "threshold": self.threshold,
             "embed_query": self.embed_query,
+            "image_upload_enabled": self.image_upload_enabled,
         }
 
 
@@ -94,6 +98,7 @@ def config_from_dict(data: dict | None) -> AgentConfig:
         top_k=int(data.get("top_k") or allowed.top_k),
         threshold=float(data.get("threshold") or allowed.threshold),
         embed_query=bool(data.get("embed_query", allowed.embed_query)),
+        image_upload_enabled=bool(data.get("image_upload_enabled") or False),
     )
 
 

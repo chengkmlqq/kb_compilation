@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { App, Button, Card, Empty, Form, Input, List, Modal, Select, Space, Tag, Typography } from "antd";
+import { App, Button, Card, Empty, Form, Input, List, Modal, Select, Space, Switch, Tag, Typography } from "antd";
 import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import { apiCreateAgent, apiDeleteAgent, apiListAgents, AgentItem, apiListKbs } from "@/lib/api";
 
@@ -42,6 +42,7 @@ export default function AgentsPage() {
       threshold: 0.2,
       embed_query: true,
       citation_enabled: true,
+      image_upload_enabled: !!values.image_upload_enabled,
     };
     if (values.kb_selection_mode === "selected" && values.knowledge_bases?.length) {
       config.knowledge_bases = values.knowledge_bases;
@@ -154,6 +155,14 @@ export default function AgentsPage() {
           </Form.Item>
           <Form.Item name="knowledge_bases" label="指定知识库（范围=指定时）">
             <Select mode="multiple" options={kbs} placeholder="选择知识库" />
+          </Form.Item>
+          <Form.Item
+            name="image_upload_enabled"
+            label="图片上传"
+            valuePropName="checked"
+            extra="开启后会话内可上传图片，问答时发给支持视觉的模型识别（对齐 WeKnora）"
+          >
+            <Switch />
           </Form.Item>
         </Form>
       </Modal>

@@ -1118,6 +1118,7 @@ export interface ChatAttachmentItem {
   session_id: string;
   file_name: string;
   file_ext: string;
+  media_type?: string;
   file_size: number;
   created_at: string;
 }

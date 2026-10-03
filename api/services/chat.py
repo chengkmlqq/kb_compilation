@@ -136,12 +136,15 @@ def build_messages(
     history: list[ChatMessage] | None = None,
     extra_context: str = "",
     agent_prompt: str = "",
+    image_urls: list[str] | None = None,
 ) -> list[ChatMessage]:
     """Build the message list: system (with context) + history + user question.
 
     extra_context (session attachments, already markdown) is appended to the
     system prompt so the model can answer from attached documents.
     agent_prompt overrides the default system prompt (agent persona).
+    image_urls (session image attachments, data URLs) are attached to the
+    user message as OpenAI content-array image parts (multimodal QA).
     """
     context = serialize_context(hits)
     if context or extra_context:
@@ -159,7 +162,9 @@ def build_messages(
         system = agent_prompt or "你是一个知识库问答助手。若检索片段不足以回答，请明确说明。"
     messages = [ChatMessage(role="system", content=system)]
     messages.extend(history or [])
-    messages.append(ChatMessage(role="user", content=question))
+    messages.append(
+        ChatMessage(role="user", content=question, images=image_urls or None)
+    )
     return messages
 
 
@@ -286,6 +291,7 @@ def answer_question(
     chat_cfg: ChatConfig | None = None,
     extra_context: str = "",
     agent_prompt: str = "",
+    image_urls: list[str] | None = None,
     user_id: str = "",
     team_name: str = "",
     is_sys_admin: bool = False,
@@ -296,6 +302,7 @@ def answer_question(
     {"type": "delta", "text": "..."} per chunk. history accepts either
     ChatMessage objects or {"role", "content"} dicts. extra_context is
     injected into the system prompt (used for session attachments).
+    image_urls attaches session images to the user message (multimodal QA).
     user_id/team_name/is_sys_admin scope the resolved chat model
     (personal > team > system > legacy) when chat_cfg is not given.
     """
@@ -317,7 +324,10 @@ def answer_question(
         ]
     else:
         normalized = []
-    messages = build_messages(question, hits, normalized, extra_context=extra_context, agent_prompt=agent_prompt)
+    messages = build_messages(
+        question, hits, normalized,
+        extra_context=extra_context, agent_prompt=agent_prompt, image_urls=image_urls,
+    )
     client = ChatClient(chat_cfg)
     for ev in client.stream_events(messages):
         if ev.get("type") == "delta":

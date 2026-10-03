@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from api.db import Base
@@ -47,8 +47,13 @@ class ChatAttachment(Base):
     file_name: Mapped[str] = mapped_column(String(256), default="")
     file_ext: Mapped[str] = mapped_column(String(16), default="")
     file_size: Mapped[int] = mapped_column(Integer, default=0)
+    # text = docreader 解析出的 markdown（注入 system 上下文）
+    # image = 图片附件（原始字节存 file_data，QA 时挂 user 消息 images）
+    media_type: Mapped[str] = mapped_column(String(16), default="text")
     # 解析后的 markdown 全文（docreader 产出）
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 图片原始字节（media_type=image 时）
+    file_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32), default=_now_iso)
 
 

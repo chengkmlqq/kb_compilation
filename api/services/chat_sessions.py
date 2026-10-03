@@ -396,10 +396,24 @@ def follow_up_suggestions(
 
 
 # ---------------------------------------------------------------------------
-# 附件（临时文档问答）
+# 附件（临时文档问答 / 图片问答）
 # ---------------------------------------------------------------------------
 
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20MB
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+IMAGE_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+}
+
+
+def is_image_ext(ext: str) -> bool:
+    return (ext or "").lower() in IMAGE_EXTS
 
 
 def _attachment_dict(a: ChatAttachment) -> dict:
@@ -409,6 +423,7 @@ def _attachment_dict(a: ChatAttachment) -> dict:
         "file_name": a.file_name,
         "file_ext": a.file_ext,
         "file_size": a.file_size,
+        "media_type": a.media_type or "text",
         "created_at": a.created_at,
     }
 
@@ -421,6 +436,8 @@ def create_attachment(
     file_ext: str,
     file_size: int,
     content: str,
+    media_type: str = "text",
+    file_data: bytes | None = None,
 ) -> dict:
     get_session(db, user_id, session_id)
     att = ChatAttachment(
@@ -430,7 +447,9 @@ def create_attachment(
         file_name=file_name,
         file_ext=file_ext,
         file_size=file_size,
+        media_type=media_type,
         content=content,
+        file_data=file_data,
     )
     db.add(att)
     db.commit()
@@ -478,6 +497,8 @@ def attachment_contents(db: Session, session_id: str, max_chars: int = 6000) -> 
     parts = []
     budget = max_chars
     for a in rows:
+        if a.media_type == "image":
+            continue  # 图片不注入文本上下文，走 attachment_images
         content = (a.content or "").strip()
         if not content:
             continue
@@ -487,6 +508,36 @@ def attachment_contents(db: Session, session_id: str, max_chars: int = 6000) -> 
         if budget <= 0:
             break
     return "\n\n".join(parts)
+
+
+def attachment_images(db: Session, session_id: str) -> list[str]:
+    """图片附件转 data URL 列表（QA 时挂 user 消息 images，按上传顺序）。
+
+    与 WeKnora 「图片仅随当轮请求注入」的差异：kb 附件是会话级，图片
+    每轮随当前 user 消息重发，删除附件后不再携带。历史消息不含图片。
+    """
+    rows = (
+        db.execute(
+            select(ChatAttachment)
+            .where(
+                ChatAttachment.session_id == session_id,
+                ChatAttachment.media_type == "image",
+            )
+            .order_by(ChatAttachment.created_at.asc())
+        )
+        .scalars()
+        .all()
+    )
+    out = []
+    for a in rows:
+        if not a.file_data:
+            continue
+        mime = IMAGE_MIME.get((a.file_ext or "").lower(), "image/png")
+        import base64
+
+        b64 = base64.b64encode(a.file_data).decode("ascii")
+        out.append(f"data:{mime};base64,{b64}")
+    return out
 
 
 # ---------------------------------------------------------------------------

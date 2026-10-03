@@ -281,11 +281,16 @@ async def api_upload_attachment(
     user_id: str = Depends(_require_user_id),
     file: UploadFile = File(...),
 ) -> dict:
-    """上传临时文档附件：docreader 解析为 markdown 后入库，问答时自动注入。"""
+    """上传附件：文档走 docreader 解析为 markdown；图片仅在智能体会话且
+    该智能体开启「图片上传」时允许，原字节入库供 QA 多模态注入。"""
     from fastapi import HTTPException as _HTTPException
 
     from api.models.chat_session import MAX_ATTACHMENT_BYTES
-    from api.services.chat_sessions import create_attachment
+    from api.services.agents import config_from_dict
+    from api.services.chat_sessions import (
+        create_attachment,
+        is_image_ext,
+    )
     from api.services.ingest import parse_document
 
     data = await file.read()
@@ -295,6 +300,33 @@ async def api_upload_attachment(
         raise _HTTPException(status_code=413, detail=f"附件超过 {MAX_ATTACHMENT_BYTES // (1024 * 1024)}MB")
     file_name = (file.filename or "untitled").strip()
     ext = Path(file_name).suffix.lower()
+
+    if is_image_ext(ext):
+        # 图片门禁（对齐 WeKnora：Web 端仅开启图片上传的智能体会话可传图）
+        from api.models.chat_session import ChatSession
+        from api.models.knowledge import KbAgent
+        from sqlalchemy import select
+
+        session = db.execute(
+            select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user_id)
+        ).scalars().first()
+        if not session:
+            raise _HTTPException(status_code=404, detail="会话不存在")
+        if not session.agent_id:
+            raise _HTTPException(status_code=400, detail="仅智能体会话支持图片上传，请为会话绑定智能体")
+        agent = db.execute(select(KbAgent).where(KbAgent.id == session.agent_id)).scalars().first()
+        cfg = config_from_dict(agent.config or {}) if agent else None
+        if not agent or not cfg.image_upload_enabled:
+            raise _HTTPException(
+                status_code=400,
+                detail=f"智能体「{agent.name if agent else '未知'}」未开启图片上传，请在智能体配置中打开",
+            )
+        att = create_attachment(
+            db, user_id, session_id, file_name, ext, len(data), "",
+            media_type="image", file_data=data,
+        )
+        return {"success": True, "data": att}
+
     try:
         markdown = parse_document(file_name, ext, data)
     except Exception as e:  # noqa: BLE001

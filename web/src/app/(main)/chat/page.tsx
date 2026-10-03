@@ -89,7 +89,7 @@ export default function ChatPage() {
   const [renameTarget, setRenameTarget] = useState<ChatSessionItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
   // L3：Agent 模式 + 附件 + 消息搜索
-  const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
+  const [agents, setAgents] = useState<{ id: string; name: string; config?: Record<string, unknown> }[]>([]);
   const [agentMode, setAgentMode] = useState<string>(); // 选中的 agent id
   const [attachments, setAttachments] = useState<ChatAttachmentItem[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -133,7 +133,13 @@ export default function ChatPage() {
     void (async () => {
       const res = await apiListAgents(1, 100);
       if (res.success) {
-        setAgents((res.data?.items || []).map((a) => ({ id: a.id, name: a.name })));
+        setAgents(
+          (res.data?.items || []).map((a) => ({
+            id: a.id,
+            name: a.name,
+            config: a.config,
+          })),
+        );
       }
     })();
   }, [loadSessions]);
@@ -553,6 +559,13 @@ export default function ChatPage() {
     }
   };
 
+  // 图片问答门禁（对齐 WeKnora ImageUploadEnabled）：仅绑定智能体开启时可传图
+  const activeAgentCfg = agents.find((a) => a.id === agentMode)?.config ?? {};
+  const canUploadImage = !!activeAgentCfg.image_upload_enabled;
+  const UPLOAD_ACCEPT = canUploadImage
+    ? ".pdf,.doc,.docx,.md,.txt,.html,.xlsx,.pptx,.png,.jpg,.jpeg,.gif,.webp,.bmp"
+    : ".pdf,.doc,.docx,.md,.txt,.html,.xlsx,.pptx";
+
   // L3：消息搜索
   const doSearch = async () => {
     if (!searchKeyword.trim()) {
@@ -807,12 +820,18 @@ export default function ChatPage() {
           {(attachments.length > 0 || true) && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
               {attachments.map((a) => (
-                <Tag key={a.id} closable onClose={() => void removeAttachment(a.id)} style={{ maxWidth: 240 }}>
-                  📎 {a.file_name}
+                <Tag
+                  key={a.id}
+                  closable
+                  onClose={() => void removeAttachment(a.id)}
+                  style={{ maxWidth: 240 }}
+                  title={a.media_type === "image" ? `图片：${a.file_name}` : a.file_name}
+                >
+                  {a.media_type === "image" ? "🖼️" : "📎"} {a.file_name}
                 </Tag>
               ))}
               <Upload
-                accept=".pdf,.doc,.docx,.md,.txt,.html,.xlsx,.pptx"
+                accept={UPLOAD_ACCEPT}
                 showUploadList={false}
                 beforeUpload={(file) => {
                   void uploadAttachment(file as File);
@@ -823,6 +842,11 @@ export default function ChatPage() {
                   上传附件
                 </Button>
               </Upload>
+              {canUploadImage && (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  可传文档或图片（图片随问答发给模型识别）
+                </Text>
+              )}
             </div>
           )}
           <div style={{ display: "flex", gap: 8 }}>
