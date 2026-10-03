@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Cookie, Depends, File, Form, HTTPException, Query, Response, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.orm import Session
 
@@ -301,11 +301,16 @@ async def upload_file(
     file_name = _sanitize_file_name(file.filename or "untitled")
     team_id = identity.team_id or "system"
     storage_path = _build_physical_path(module, team_id, file_name, file_id)
-    root = _file_root()
-    abs_path = os.path.join(root, storage_path)
-    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-    with open(abs_path, "wb") as f:
-        f.write(content)
+    # 写对象（MinIO 启用 → minio://bucket/sys_files/<rel>；否则本地 _file_root/<rel>）
+    from api.services import storage as storage_svc
+
+    full_path = _resolve_stored_path(storage_path)
+    try:
+        storage_svc.put_bytes(full_path, content)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("failed to persist uploaded file %s", file_name)
+        raise HTTPException(status_code=500, detail=f"文件存储失败: {exc}") from exc
+    use_remote = storage_svc.is_remote(full_path)
 
     row = SysFile(
         id=file_id,
@@ -313,9 +318,9 @@ async def upload_file(
         file_extension=_extension(file_name),
         file_size=len(content),
         mime_type=file.content_type,
-        storage_type="local",
-        ds_name=None,
-        bucket_name=None,
+        storage_type="s3" if use_remote else "local",
+        ds_name="minio" if use_remote else None,
+        bucket_name=(get_settings().MINIO_BUCKET if use_remote else None),
         storage_path=storage_path,
         team_id=team_id,
         business_module=_sanitize_segment(module, DEFAULT_MODULE),
@@ -327,6 +332,58 @@ async def upload_file(
     db.add(row)
     db.commit()
     return {"success": True, "data": _file_to_dict(row)}
+
+
+def _content_disposition(file_name: str) -> str:
+    """RFC 5987 编码的 Content-Disposition（中文/特殊字符文件名必须走 filename*）。"""
+    from urllib.parse import quote
+
+    ascii_fallback = re.sub(r'[^\x20-\x7e]', "_", file_name).replace('"', "")
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(file_name)}"
+
+
+def _resolve_stored_path(rel_path: str) -> str:
+    """把相对 storage_path 解析为实际存储路径（minio:// 或本地绝对路径）。
+
+    本地分支沿用 _file_root()（KB_STORAGE_DIR/sys_files），保持历史行为不变。
+    """
+    from api.services import storage as storage_svc
+
+    if storage_svc.remote_enabled():
+        return storage_svc.resolve_new_path(f"sys_files/{rel_path}")
+    return os.path.join(_file_root(), rel_path)
+
+
+def _local_fallback_path(rel_path: str) -> str:
+    """历史本地文件回退路径（MinIO 启用后旧文件仍在本地 sys_files 下）。"""
+    return os.path.join(_file_root(), rel_path)
+
+
+def _is_s3_row(row) -> bool:
+    """该行是否落在 MinIO（storage_type=s3；旧数据为空时按当前配置判定）。"""
+    from api.services import storage as storage_svc
+
+    if (row.storage_type or "").strip().lower() == "s3":
+        return True
+    if not (row.storage_type or "").strip():
+        return storage_svc.remote_enabled()
+    return False
+
+
+def _read_stored_bytes(row) -> bytes:
+    """读文件内容：MinIO → 回退本地历史文件 → 本地（幂等兼容存量数据）。"""
+    from api.services import storage as storage_svc
+
+    if _is_s3_row(row):
+        try:
+            return storage_svc.get_bytes(_resolve_stored_path(row.storage_path))
+        except Exception:  # noqa: BLE001 — MinIO 无此对象时回退本地历史文件
+            fallback = _local_fallback_path(row.storage_path)
+            if os.path.exists(fallback):
+                with open(fallback, "rb") as fh:
+                    return fh.read()
+            raise
+    return storage_svc.get_bytes(_local_fallback_path(row.storage_path))
 
 
 # ---------------------------------------------------------------------------
@@ -349,13 +406,26 @@ def download_file(
     if not _is_admin(identity) and f.team_id != (identity.team_id or ""):
         raise HTTPException(status_code=403, detail="无权限下载该文件")
 
-    abs_path = os.path.join(_file_root(), f.storage_path)
-    if not os.path.exists(abs_path):
+    from api.services import storage as storage_svc
+
+    # 本地文件（历史数据 / 本地后端）优先走 FileResponse；否则 s3 行从 MinIO 流式读
+    local_path = _local_fallback_path(f.storage_path)
+    if os.path.exists(local_path):
+        return FileResponse(
+            local_path,
+            media_type=f.mime_type or "application/octet-stream",
+            filename=f.file_name,
+        )
+    if not _is_s3_row(f):
         raise HTTPException(status_code=404, detail="物理文件缺失")
-    return FileResponse(
-        abs_path,
+    try:
+        data = _read_stored_bytes(f)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail="物理文件缺失") from None
+    return StreamingResponse(
+        io.BytesIO(data),
         media_type=f.mime_type or "application/octet-stream",
-        filename=f.file_name,
+        headers={"Content-Disposition": _content_disposition(f.file_name)},
     )
 
 
@@ -455,9 +525,10 @@ def download_directory_zip(
     zip_name = f"{team}_{date}.zip"
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in rows:
-            abs_path = os.path.join(_file_root(), f.storage_path)
-            if os.path.exists(abs_path):
-                zf.write(abs_path, arcname=f.file_name)
+            try:
+                zf.writestr(f.file_name, _read_stored_bytes(f))
+            except Exception:  # noqa: BLE001 — 单个文件读失败跳过（物理缺失）
+                continue
     buffer.seek(0)
     return Response(
         content=buffer.getvalue(),

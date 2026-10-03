@@ -91,6 +91,16 @@ class Settings:
     WIKI_LLM_MODEL: str = os.getenv("WIKI_LLM_MODEL", "deepseek-v4-pro")
     WIKI_LLM_API_KEY: str = os.getenv("WIKI_LLM_API_KEY", "")
 
+    # --- MinIO 对象存储（2026-10-03 引入，本地磁盘为默认后端）---
+    # 上传路径形如 minio://bucket/key 时走 MinIO，其余走 KB_STORAGE_DIR 本地磁盘
+    # （历史数据零迁移）。MINIO_ENDPOINT 留空 = 不启用 MinIO。
+    MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "")
+    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "")
+    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "")
+    MINIO_SECURE: str = os.getenv("MINIO_SECURE", "false").lower() in ("1", "true", "yes")
+    # 默认 bucket（kb 文档/文件上传用）
+    MINIO_BUCKET: str = os.getenv("MINIO_BUCKET", "kb-compilation")
+
     # --- Agent gateway (hermes-agent skill execution service) ---
     # Base URL of the separately-deployed agent-gateway (default host:8080).
     # In docker-compose the worker reaches it via host.docker.internal:8080

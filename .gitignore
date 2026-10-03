@@ -22,3 +22,5 @@ dist/
 *.swp
 .idea/
 .vscode/
+# 本地文件存储根（KB_STORAGE_DIR 默认回退目录，勿入库）
+data/

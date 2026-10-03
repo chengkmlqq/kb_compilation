@@ -41,13 +41,14 @@ def _load_document(document_id: str) -> KbDocument | None:
 
 
 def _load_document_bytes(storage_path: str | None) -> bytes:
-    """Load file bytes from a local storage_path (upload flow writes absolute paths)."""
+    """Load file bytes from a storage_path (local disk or minio:// bucket/key)."""
     if not storage_path:
         return b""
     try:
-        with open(storage_path, "rb") as fh:
-            return fh.read()
-    except OSError as e:
+        from api.services.storage import get_bytes
+
+        return get_bytes(storage_path)
+    except Exception as e:  # noqa: BLE001
         logger.warning("failed to read document bytes from %s: %s", storage_path, e)
         return b""
 
@@ -74,17 +75,7 @@ def process_document(document_id: str, file_content: bytes, parser_engine: str |
                 }
 
         client = get_embedding_client(db)
-        # load the KB's chunking config so the worker honours per-KB settings
-        # (strategy / parent-child / engine rules). ingest_document resolves
-        # the parser engine from these rules when parser_engine is None.
-        from api.services.kb_chunking import load_chunk_config
-
-        chunk_cfg = load_chunk_config(db, document.kb_id)
-        return ingest_document(
-            db, document, file_content, client,
-            parser_engine=parser_engine,
-            chunk_cfg=chunk_cfg,
-        )
+        return ingest_document(db, document, file_content, client, parser_engine=parser_engine)
     finally:
         db.close()
 

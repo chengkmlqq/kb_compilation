@@ -36,6 +36,12 @@ x-api-env: &api-env
     AGENT_GATEWAY_ADMIN_TOKEN: ${AGENT_GATEWAY_ADMIN_TOKEN:-}
     AGENT_GATEWAY_TIMEOUT_S: ${AGENT_GATEWAY_TIMEOUT_S:-3600}
     AGENT_GATEWAY_POLL_INTERVAL_S: ${AGENT_GATEWAY_POLL_INTERVAL_S:-15}
+    # MinIO 对象存储（api-server / worker 均经 kb-net 访问 minio:9000）
+    MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+    MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-kbminioadmin}
+    MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-}
+    MINIO_SECURE: ${MINIO_SECURE:-false}
+    MINIO_BUCKET: ${MINIO_BUCKET:-kb-compilation}
 
 services:
   nginx:
@@ -200,11 +206,33 @@ services:
     networks:
       - kb-net
 
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: kb-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-kbminioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD 必填（deploy/.env）}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - kb-net
+
 volumes:
   pg-data:
   mysql-data:
   redis-data:
   kb-docs:
+  minio-data:
 
 networks:
   kb-net:

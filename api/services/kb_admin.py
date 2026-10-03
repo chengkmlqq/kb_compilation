@@ -295,13 +295,15 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
 
 
 def _remove_local_file(storage_path: str | None) -> None:
+    """删除物理文件（本地磁盘或 MinIO 对象，幂等）。"""
     if not storage_path:
         return
     try:
-        if os.path.isfile(storage_path) and os.path.exists(storage_path):
-            os.remove(storage_path)
-    except OSError:
-        logger.warning("failed to remove local file: %s", storage_path)
+        from api.services.storage import delete as storage_delete
+
+        storage_delete(storage_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("failed to remove stored file %s: %s", storage_path, exc)
 
 
 # ---------------------------------------------------------------------------

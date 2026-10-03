@@ -275,15 +275,17 @@ async def upload_document(
             detail=f"文件超过大小限制 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB",
         )
 
-    # --- persist bytes ---
+    # --- persist bytes（本地磁盘 / MinIO，由 storage 层按配置决定）---
+    from api.services import storage as storage_svc
+
     doc_id = uuid.uuid4().hex
     ext = Path(file_name).suffix or ""
-    rel_dir = kb_id
-    rel_path = f"{rel_dir}/{doc_id}{ext}"
-    abs_dir = Path(settings.kb_storage_dir) / rel_dir
-    abs_dir.mkdir(parents=True, exist_ok=True)
-    abs_path = abs_dir / f"{doc_id}{ext}"
-    abs_path.write_bytes(content)
+    storage_path = storage_svc.resolve_new_path(f"kb_documents/{kb_id}/{doc_id}{ext}")
+    try:
+        storage_svc.put_bytes(storage_path, content)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("failed to persist uploaded bytes")
+        raise HTTPException(status_code=500, detail=f"文件存储失败: {exc}") from exc
 
     # --- kb_document row ---
     doc = create_document(
@@ -292,7 +294,7 @@ async def upload_document(
         file_name=file_name,
         file_ext=ext,
         file_size=len(content),
-        storage_path=str(abs_path),
+        storage_path=storage_path,
     )
 
     # --- enqueue Celery job (modo_job row + send_task) ---
