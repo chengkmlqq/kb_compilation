@@ -118,21 +118,30 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
     updateLogScrollPercent(logContainerRef.current);
   }, [updateLogScrollPercent]);
 
-  const fetchDetail = async (silent = false): Promise<JobItem | null> => {
-    if (!jobId) return null;
-    if (!silent) setLoading(true);
-    try {
-      const res = await apiGetJob(jobId);
-      if (res.success && res.data) {
-        setJob(res.data);
-        onStateChange?.(res.data);
-        return res.data;
+  // onStateChange 每次父级渲染都是新引用，用 ref 取最新值，使 fetchDetail
+  // 引用稳定 —— 否则 useEffect([fetchDetail]) 每渲染重跑 → SSE 流无限重建
+  // （finish → onStateChange → 父级 setState → 重渲染 → 新 EventSource 循环）
+  const onStateChangeRef = useRef(onStateChange);
+  onStateChangeRef.current = onStateChange;
+
+  const fetchDetail = useCallback(
+    async (silent = false): Promise<JobItem | null> => {
+      if (!jobId) return null;
+      if (!silent) setLoading(true);
+      try {
+        const res = await apiGetJob(jobId);
+        if (res.success && res.data) {
+          setJob(res.data);
+          onStateChangeRef.current?.(res.data);
+          return res.data;
+        }
+        return null;
+      } finally {
+        if (!silent) setLoading(false);
       }
-      return null;
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  };
+    },
+    [jobId],
+  );
 
   // 启动 SSE 实时日志流（数据源：error_message 增量 + log_path 文件）
   const startLogStream = useCallback(
