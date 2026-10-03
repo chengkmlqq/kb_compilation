@@ -74,7 +74,17 @@ def process_document(document_id: str, file_content: bytes, parser_engine: str |
                 }
 
         client = get_embedding_client(db)
-        return ingest_document(db, document, file_content, client, parser_engine=parser_engine)
+        # load the KB's chunking config so the worker honours per-KB settings
+        # (strategy / parent-child / engine rules). ingest_document resolves
+        # the parser engine from these rules when parser_engine is None.
+        from api.services.kb_chunking import load_chunk_config
+
+        chunk_cfg = load_chunk_config(db, document.kb_id)
+        return ingest_document(
+            db, document, file_content, client,
+            parser_engine=parser_engine,
+            chunk_cfg=chunk_cfg,
+        )
     finally:
         db.close()
 

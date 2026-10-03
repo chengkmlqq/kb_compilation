@@ -349,23 +349,33 @@ def fuse_rrf(
 
 
 def hydrate_metadata(db: Session, hits: list[ChunkHit]) -> list[ChunkHit]:
-    """Fill content/document_id/meta for vector-only hits from the business store."""
+    """Fill content/document_id/meta for vector-only hits from the business store.
+
+    Parent-child chunking: when a chunk carries `parent_content` in its meta
+    (child matched, parent returned for context — mirroring WeKnora), the hit's
+    content is promoted to the parent text.
+    """
     missing = [h for h in hits if not h.content]
-    if not missing:
-        return hits
-    ids = [h.chunk_id for h in missing]
-    rows = db.execute(
-        select(DocChunk.id, DocChunk.content, DocChunk.document_id, DocChunk.meta).where(
-            DocChunk.id.in_(ids)
-        )
-    ).all()
-    by_id = {r.id: r for r in rows}
-    for h in missing:
-        row = by_id.get(h.chunk_id)
-        if row is not None:
-            h.content = row.content
-            h.document_id = row.document_id
-            h.meta = row.meta or {}
+    rows_by_id = {}
+    if missing:
+        ids = [h.chunk_id for h in missing]
+        rows = db.execute(
+            select(DocChunk.id, DocChunk.content, DocChunk.document_id, DocChunk.meta).where(
+                DocChunk.id.in_(ids)
+            )
+        ).all()
+        rows_by_id = {r.id: r for r in rows}
+        for h in missing:
+            row = rows_by_id.get(h.chunk_id)
+            if row is not None:
+                h.content = row.content
+                h.document_id = row.document_id
+                h.meta = row.meta or {}
+    # promote parent content for parent-child hits (both arms)
+    for h in hits:
+        parent = (h.meta or {}).get("parent_content")
+        if parent:
+            h.content = str(parent)
     return hits
 
 
