@@ -40,6 +40,7 @@ API_ROUTE_MAP: tuple[tuple[str, str], ...] = (
     ("/api/v1/sessions", "/chat"),
     ("/api/v1/agents", "/agents"),
     ("/api/v1/jobs", "/jobs"),
+    ("/api/v1/cron", "/cron"),
     ("/api/v1/workers", "/workers"),
     ("/api/v1/files", "/files"),
     ("/api/v1/models", "/models"),

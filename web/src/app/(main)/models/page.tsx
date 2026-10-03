@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
   App,
   Button,
   Card,
@@ -220,14 +219,7 @@ export default function ModelRegistryPage() {
         ]}
       />
 
-      {filtered.length === 0 ? (
-        <Alert
-          type="warning"
-          showIcon
-          message="还没有模型配置"
-          description="点击右上角「新建模型」创建模型配置。"
-        />
-      ) : (
+      {filtered.length === 0 ? null : (
         <div
           style={{
             display: "grid",

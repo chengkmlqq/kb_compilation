@@ -41,7 +41,7 @@ SEED_TEAM = os.getenv("KB_SEED_TEAM", "默认团队")
 # 可用环境变量 KB_SEED_ROLE 覆盖。
 SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 
-# KB 菜单树（1 顶级 + 11 子菜单，sort_num 决定侧栏顺序）
+# KB 菜单树（1 顶级 + 12 子菜单，sort_num 决定侧栏顺序）
 # (menu_id, menu_name, menu_label, route, parent_id, menu_icon, sort_num)
 # menu_id 用固定值（workers/mcps/skills 用生产环境已验证的 UUID），
 # 保证多次初始化幂等、且与已部署环境完全一致。
@@ -53,12 +53,13 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("datasources", "datasources", "数据源", "/datasources", "root_kb", "DatabaseOutlined", 4),
     ("wiki", "wiki", "Wiki 总览", "/wiki", "root_kb", "BookOutlined", 5),
     ("jobs", "jobs", "任务监控", "/jobs", "root_kb", "DashboardOutlined", 6),
-    ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "root_kb", "CloudServerOutlined", 7),
-    ("models", "models", "模型配置", "/models", "root_kb", "CloudServerOutlined", 8),
-    ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "root_kb", "ApiOutlined", 9),
-    ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "root_kb", "ToolOutlined", 10),
-    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "root_kb", "FileOutlined", 11),
-    ("system", "system", "系统管理", "/system", "root_kb", "SettingOutlined", 12),
+    ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "root_kb", "ScheduleOutlined", 7),
+    ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "root_kb", "CloudServerOutlined", 8),
+    ("models", "models", "模型配置", "/models", "root_kb", "CloudServerOutlined", 9),
+    ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "root_kb", "ApiOutlined", 10),
+    ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "root_kb", "ToolOutlined", 11),
+    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "root_kb", "FileOutlined", 12),
+    ("system", "system", "系统管理", "/system", "root_kb", "SettingOutlined", 13),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，

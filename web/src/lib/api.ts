@@ -1319,6 +1319,86 @@ export function apiDeleteJob(jobId: string) {
   );
 }
 
+// ---- 任务管理（定时任务 modo_cron_task，对齐 data-synth cron） ----
+
+export interface CronTaskItem {
+  id: string;
+  name: string | null;
+  label: string | null;
+  cronExpression: string | null;
+  taskClass: string | null;
+  state: string | null;
+  fireParams: string | null;
+  queueName: string | null;
+  nextFireTime: string | null;
+}
+
+export interface CronTaskSavePayload {
+  name: string;
+  label: string;
+  cronExpression: string;
+  taskClass: string;
+  state: string;
+  fireParams?: string | null;
+  queueName?: string | null;
+}
+
+export function apiListCronTasks(params: {
+  pageNum?: number;
+  pageSize?: number;
+  keyWord?: string;
+} = {}) {
+  const q = new URLSearchParams();
+  if (params.pageNum) q.set("pageNum", String(params.pageNum));
+  if (params.pageSize) q.set("pageSize", String(params.pageSize));
+  if (params.keyWord) q.set("keyWord", params.keyWord);
+  return request<{
+    content: CronTaskItem[];
+    totalElements: number;
+    pageNum: number;
+    pageSize: number;
+  }>(`/api/v1/cron?${q.toString()}`);
+}
+
+export function apiCreateCronTask(payload: CronTaskSavePayload) {
+  return request<CronTaskItem>("/api/v1/cron", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateCronTask(id: string, payload: CronTaskSavePayload) {
+  return request<CronTaskItem>(`/api/v1/cron/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiDeleteCronTask(id: string) {
+  return request<null>(`/api/v1/cron/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export function apiToggleCronTask(id: string, state: "0" | "1") {
+  return request<CronTaskItem>(
+    `/api/v1/cron/${encodeURIComponent(id)}/toggle?state=${state}`,
+    { method: "POST" },
+  );
+}
+
+export function apiCronQueues() {
+  return request<Array<{ queueName: string; queueLabel: string | null }>>(
+    "/api/v1/cron/queues",
+  );
+}
+
+export function apiCronRegisteredTasks() {
+  return request<Array<{ taskClass: string; name: string }>>(
+    "/api/v1/cron/registered-tasks",
+  );
+}
+
 // ---- Worker 监控（Flower，对齐 data-synth system/workers） ----
 
 export interface FlowerWorkerOverview {
