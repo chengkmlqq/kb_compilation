@@ -2,7 +2,18 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-03
+最后更新：2026-10-03（改造）
+
+## 4. 当前状态（2026-10-03 wiki 构建迁入 worker 改造）
+
+- **wiki 构建从 agent-gateway 迁入 worker（改造完成，commit 待定）**：
+  - 背景：原链路 `KbDocumentProcessTask` 成功后自动 enqueue `KbAgentGatewayTask` → agent-gateway 内跑技能 `kb-wiki-builder`（build_wiki.py）。依赖 gateway 可用性/技能安装/agent 决策，且 gateway LLM 账户曾 403。
+  - 改造：新增 **`KbSkillWikiBuildTask`**（`worker/tasks/wiki_build.py`），worker 内直接：读文档 chunks（`_load_document_chunks` 直查 doc_chunk 表）→ 调 LLM（`WIKI_LLM_*` env，默认 Infer AI deepseek-v4-pro）→ `wiki_create_page/wiki_update_page` 幂等写 wiki 页（slug 冲突走 update）→ `wiki_rebuild_links` 重建互链；**进度实时写 modo_job.error_message**（`[step 1/4]...`，任务监控页 + SSE 日志流可见）
+  - 自动链：`doc_process.py` 的 `_enqueue_wiki_build_task`（替代 `_enqueue_wiki_skill_task`），任务名 `WIKI_BUILD_*`，task_class=`KbSkillWikiBuildTask`；`worker/celery_app.py` 导入注册（Tasks registered 现含 6 类）
+  - 实测：上传 md → `DOC_2003acd7` SUCCESS → `WIKI_BUILD_065679e729bf` SUCCESS（`[step 4/4] wiki pages written: 7, elapsed=14s`），wiki 页 12→14，**全程 worker 内、不经 gateway**
+  - 测试：`test_wiki_build_task.py`（4 例：写页/幂等/缺chunks/LLM错）+ `test_wiki_skill_chain.py` 重写为 KbSkillWikiBuildTask 触发断言，全量 275 passed
+  - 改动文件：`worker/tasks/wiki_build.py`（新）、`worker/tasks/doc_process.py`、`worker/celery_app.py`、`tests/test_wiki_build_task.py`（新）、`tests/test_wiki_skill_chain.py`
+  - 说明：kb_skill 表 + agent-gateway 的 `kb-wiki-builder` 技能**保留**（平台技能管理可见/可复用），但自动链不再走它；chunks HTTP 端点保留（其他消费方可能用）
 
 ## 3. 当前状态（2026-10-03 追加）
 
