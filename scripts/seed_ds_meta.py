@@ -14,6 +14,8 @@ img（类型图标 base64）不入种子：体积大且前端有默认图标兜�
 """
 from __future__ import annotations
 
+import re
+
 from api.db import get_sessionmaker
 from api.models.framework import Base, DsCategory, DsFormField, DsType
 
@@ -220,6 +222,18 @@ def seed(session) -> tuple[int, int, int]:
 
 
 def main() -> None:
+    # 打印实际连接目标，避免误连到其它平台的库（本仓库根 .env 历史上指向 data-synth 的库）
+    try:
+        from api.config import get_settings
+
+        _url = get_settings().DATABASE_URL or ""
+        m = re.search(r"//[^:]+:[^@]+@([^/:?]+)(?::(\d+))?/([^?]+)", _url)
+        if m:
+            print(f"[db] 目标库: {m.group(1)}:{m.group(2) or '3306'}/{m.group(3)}")
+            if not m.group(3).lower().startswith("kb"):
+                print("[db] ⚠️ 库名不是 kb* —— 请确认这是知识库平台自己的库")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[db] 无法解析连接目标: {exc}")
     Base.metadata.create_all(get_sessionmaker().kw["bind"])
     db = get_sessionmaker()()
     try:

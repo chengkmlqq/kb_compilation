@@ -35,20 +35,25 @@ interface MenuContextType {
 
 const MenuContext = createContext<MenuContextType | undefined>(undefined);
 
-/** 内置菜单（后端 my-menus 为空时的回退；8 项知识库顶级菜单） */
+/** 内置菜单（后端 my-menus 为空时的回退；三级骨架，对齐 seed 与 ds） */
 const FALLBACK_MENUS: SysMenuItem[] = [
-  { menu_id: "kbs", menu_name: "kbs", menu_label: "知识库管理", route: "/kbs", menu_icon: "AppstoreOutlined", sort_num: 1, state: "1" },
-  { menu_id: "chat", menu_name: "chat", menu_label: "智能问答", route: "/chat", menu_icon: "CommentOutlined", sort_num: 2, state: "1" },
-  { menu_id: "agents", menu_name: "agents", menu_label: "智能体配置", route: "/agents", menu_icon: "RobotOutlined", sort_num: 3, state: "1" },
-  { menu_id: "datasources", menu_name: "datasources", menu_label: "数据源", route: "/datasources", menu_icon: "DatabaseOutlined", sort_num: 4, state: "1" },
-  { menu_id: "wiki", menu_name: "wiki", menu_label: "Wiki 总览", route: "/wiki", menu_icon: "BookOutlined", sort_num: 5, state: "1" },
-  { menu_id: "jobs", menu_name: "jobs", menu_label: "任务监控", route: "/jobs", menu_icon: "DashboardOutlined", sort_num: 6, state: "1" },
-  { menu_id: "workers", menu_name: "workers", menu_label: "主机监控", route: "/workers", menu_icon: "CloudServerOutlined", sort_num: 7, state: "1" },
-  { menu_id: "models", menu_name: "models", menu_label: "模型配置", route: "/models", menu_icon: "CloudServerOutlined", sort_num: 8, state: "1" },
-  { menu_id: "mcps", menu_name: "mcps", menu_label: "MCP 管理", route: "/mcps", menu_icon: "ApiOutlined", sort_num: 9, state: "1" },
-  { menu_id: "skills", menu_name: "skills", menu_label: "技能管理", route: "/skills", menu_icon: "ToolOutlined", sort_num: 10, state: "1" },
-  { menu_id: "files", menu_name: "files", menu_label: "文件管理", route: "/files", menu_icon: "FileOutlined", sort_num: 11, state: "1" },
-  { menu_id: "system", menu_name: "system", menu_label: "系统管理", route: "/system", menu_icon: "SettingOutlined", sort_num: 12, state: "1" },
+  // 三级骨架（对齐 data-synth）：顶级 → 分组 → 页面；分组 route 留空=纯目录
+  { menu_id: "grp_knowledge", menu_name: "grp_knowledge", menu_label: "知识管理", route: null, parent_id: "root_kb", menu_icon: "FolderOutlined", sort_num: 1, state: "1" },
+  { menu_id: "kbs", menu_name: "kbs", menu_label: "知识库管理", route: "/kbs", parent_id: "grp_knowledge", menu_icon: "AppstoreOutlined", sort_num: 1, state: "1" },
+  { menu_id: "wiki", menu_name: "wiki", menu_label: "Wiki 总览", route: "/wiki", parent_id: "grp_knowledge", menu_icon: "BookOutlined", sort_num: 2, state: "1" },
+  { menu_id: "files", menu_name: "files", menu_label: "文件管理", route: "/files", parent_id: "grp_knowledge", menu_icon: "FileOutlined", sort_num: 3, state: "1" },
+  { menu_id: "grp_ai", menu_name: "grp_ai", menu_label: "智能应用", route: null, parent_id: "root_kb", menu_icon: "FolderOutlined", sort_num: 2, state: "1" },
+  { menu_id: "chat", menu_name: "chat", menu_label: "智能问答", route: "/chat", parent_id: "grp_ai", menu_icon: "CommentOutlined", sort_num: 1, state: "1" },
+  { menu_id: "agents", menu_name: "agents", menu_label: "智能体配置", route: "/agents", parent_id: "grp_ai", menu_icon: "RobotOutlined", sort_num: 2, state: "1" },
+  { menu_id: "grp_data", menu_name: "grp_data", menu_label: "数据与任务", route: null, parent_id: "root_kb", menu_icon: "FolderOutlined", sort_num: 3, state: "1" },
+  { menu_id: "datasources", menu_name: "datasources", menu_label: "数据源", route: "/datasources", parent_id: "grp_data", menu_icon: "DatabaseOutlined", sort_num: 1, state: "1" },
+  { menu_id: "jobs", menu_name: "jobs", menu_label: "任务监控", route: "/jobs", parent_id: "grp_data", menu_icon: "DashboardOutlined", sort_num: 2, state: "1" },
+  { menu_id: "cron", menu_name: "cron", menu_label: "任务管理", route: "/cron", parent_id: "grp_data", menu_icon: "ScheduleOutlined", sort_num: 3, state: "1" },
+  { menu_id: "workers", menu_name: "workers", menu_label: "主机监控", route: "/workers", parent_id: "grp_data", menu_icon: "CloudServerOutlined", sort_num: 4, state: "1" },
+  { menu_id: "system", menu_name: "system", menu_label: "系统管理", route: "/system", parent_id: "root_kb", menu_icon: "SettingOutlined", sort_num: 4, state: "1" },
+  { menu_id: "models", menu_name: "models", menu_label: "模型配置", route: "/models", parent_id: "system", menu_icon: "CloudServerOutlined", sort_num: 1, state: "1" },
+  { menu_id: "mcps", menu_name: "mcps", menu_label: "MCP 管理", route: "/mcps", parent_id: "system", menu_icon: "ApiOutlined", sort_num: 2, state: "1" },
+  { menu_id: "skills", menu_name: "skills", menu_label: "技能管理", route: "/skills", parent_id: "system", menu_icon: "ToolOutlined", sort_num: 3, state: "1" },
 ];
 
 /** 平铺列表 → 树（对齐 data-synth menu-actions buildTree 语义） */

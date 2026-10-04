@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 
 from sqlalchemy import select
@@ -41,25 +42,36 @@ SEED_TEAM = os.getenv("KB_SEED_TEAM", "默认团队")
 # 可用环境变量 KB_SEED_ROLE 覆盖。
 SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 
-# KB 菜单树（1 顶级 + 12 子菜单，sort_num 决定侧栏顺序）
+# KB 菜单树（1 顶级 + 4 分组 + 13 页面 = 18 项；sort_num 决定同级顺序）
 # (menu_id, menu_name, menu_label, route, parent_id, menu_icon, sort_num)
-# menu_id 用固定值（workers/mcps/skills 用生产环境已验证的 UUID），
+# menu_id 用固定值（workers/mcps/skills/cron 用生产环境已验证的 UUID），
 # 保证多次初始化幂等、且与已部署环境完全一致。
+#
+# 三级骨架（对齐 data-synth 墨斗平台菜单结构）：Header 顶级(nav) → Sider 分组 → 页面。
+#   - route 留空 = 纯目录分组（只展开不跳转，对齐 ds 的 dir 节点）
+#   - route 有值且带子级 = 分组兼页面（点击自身跳该路由，对齐 ds「系统管理 /system/users」模式）
 KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("root_kb", "kb", "知识库平台", None, None, "AppstoreOutlined", 0),
-    ("kbs", "kbs", "知识库管理", "/kbs", "root_kb", "AppstoreOutlined", 1),
-    ("chat", "chat", "智能问答", "/chat", "root_kb", "CommentOutlined", 2),
-    ("agents", "agents", "智能体配置", "/agents", "root_kb", "RobotOutlined", 3),
-    ("datasources", "datasources", "数据源", "/datasources", "root_kb", "DatabaseOutlined", 4),
-    ("wiki", "wiki", "Wiki 总览", "/wiki", "root_kb", "BookOutlined", 5),
-    ("jobs", "jobs", "任务监控", "/jobs", "root_kb", "DashboardOutlined", 6),
-    ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "root_kb", "ScheduleOutlined", 7),
-    ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "root_kb", "CloudServerOutlined", 8),
-    ("models", "models", "模型配置", "/models", "root_kb", "CloudServerOutlined", 9),
-    ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "root_kb", "ApiOutlined", 10),
-    ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "root_kb", "ToolOutlined", 11),
-    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "root_kb", "FileOutlined", 12),
-    ("system", "system", "系统管理", "/system", "root_kb", "SettingOutlined", 13),
+    # ---- 知识管理（纯目录） ----
+    ("grp_knowledge", "grp_knowledge", "知识管理", None, "root_kb", "FolderOutlined", 1),
+    ("kbs", "kbs", "知识库管理", "/kbs", "grp_knowledge", "AppstoreOutlined", 1),
+    ("wiki", "wiki", "Wiki 总览", "/wiki", "grp_knowledge", "BookOutlined", 2),
+    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_knowledge", "FileOutlined", 3),
+    # ---- 智能应用（纯目录） ----
+    ("grp_ai", "grp_ai", "智能应用", None, "root_kb", "FolderOutlined", 2),
+    ("chat", "chat", "智能问答", "/chat", "grp_ai", "CommentOutlined", 1),
+    ("agents", "agents", "智能体配置", "/agents", "grp_ai", "RobotOutlined", 2),
+    # ---- 数据与任务（纯目录） ----
+    ("grp_data", "grp_data", "数据与任务", None, "root_kb", "FolderOutlined", 3),
+    ("datasources", "datasources", "数据源", "/datasources", "grp_data", "DatabaseOutlined", 1),
+    ("jobs", "jobs", "任务监控", "/jobs", "grp_data", "DashboardOutlined", 2),
+    ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_data", "ScheduleOutlined", 3),
+    ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_data", "CloudServerOutlined", 4),
+    # ---- 系统管理（分组兼页面：点击自身跳 /system，子项为子系统页） ----
+    ("system", "system", "系统管理", "/system", "root_kb", "SettingOutlined", 4),
+    ("models", "models", "模型配置", "/models", "system", "CloudServerOutlined", 1),
+    ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "system", "ApiOutlined", 2),
+    ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "system", "ToolOutlined", 3),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，
@@ -68,9 +80,17 @@ SEED_GRANT_ROLES = (SEED_ROLE, "plat-mgr", "normal_user")
 
 
 def main() -> None:
-    url = os.environ.get("DATABASE_URL") or os.environ.get("KB_DATABASE_URL")
+    # KB_DATABASE_URL 优先（compose 注入），其次 DATABASE_URL；
+    # 打印实际目标库，避免误连到其它平台的库（本仓库根 .env 历史上指向 data-synth 的库）。
+    url = os.environ.get("KB_DATABASE_URL") or os.environ.get("DATABASE_URL")
     if not url:
-        raise SystemExit("Missing DATABASE_URL (run inside compose, or export first)")
+        raise SystemExit("Missing KB_DATABASE_URL/DATABASE_URL (run inside compose, or export first)")
+    m = re.search(r"//[^:]+:[^@]+@([^/:?]+)(?::(\d+))?/([^?]+)", url)
+    if m:
+        host, port, db_name = m.group(1), m.group(2) or "3306", m.group(3)
+        print(f"[db] 目标库: {host}:{port}/{db_name}")
+        if not db_name.lower().startswith("kb"):
+            print("[db] ⚠️ 库名不是 kb* —— 请确认这是知识库平台自己的库，勿误写其它平台数据")
     assert "mysql" in url or "postgres" in url, f"unexpected DATABASE_URL scheme: {url}"
 
     db = get_sessionmaker()()

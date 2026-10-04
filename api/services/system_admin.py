@@ -287,6 +287,38 @@ def save_role_users(db: Session, role_id: str, user_ids: list[str]) -> dict:
 _MENU_ROUTE_FIELDS = ("open_type", "link_type", "fetch_mode", "route", "route_param", "url")
 
 
+def _menu_subtree_ids(db: Session, root_id: str) -> set[str]:
+    """收集 root_id 自身 + 全部后代菜单 id（BFS，避免深递归）。"""
+    children: dict[str, list[str]] = {}
+    for mid, pid in db.execute(select(Menu.menu_id, Menu.parent_id)).all():
+        children.setdefault(pid or "", []).append(mid)
+    out: set[str] = {root_id}
+    queue = [root_id]
+    while queue:
+        cur = queue.pop()
+        for cid in children.get(cur, []):
+            if cid not in out:
+                out.add(cid)
+                queue.append(cid)
+    return out
+
+
+def _check_menu_parent(db: Session, menu_id: str | None, parent_id: str | None) -> str | None:
+    """校验父模块：非空时父级必须存在，且不得把菜单挂到自己的后代下（成环）。"""
+    if not parent_id:
+        return None
+    if menu_id and parent_id == menu_id:
+        return "父模块不能是自身"
+    exists = db.execute(
+        select(Menu.menu_id).where(Menu.menu_id == parent_id).limit(1)
+    ).scalars().first()
+    if not exists:
+        return f"父模块不存在: {parent_id}"
+    if menu_id and parent_id in _menu_subtree_ids(db, menu_id):
+        return "父模块不能是自己的子菜单（会形成环状菜单树）"
+    return None
+
+
 def save_menu(db: Session, payload: dict) -> dict:
     """Create or update a menu. `is_edit=true` updates menu_id.
 
@@ -325,6 +357,10 @@ def save_menu(db: Session, payload: dict) -> dict:
         menu = db.execute(select(Menu).where(Menu.menu_id == menu_id)).scalars().first()
         if not menu:
             return {"success": False, "message": f"菜单不存在: {menu_id}"}
+        # 防成环：父模块不得是自身或其后代（多层菜单骨架必需的保护）
+        cycle_err = _check_menu_parent(db, str(menu_id), parent_id)
+        if cycle_err:
+            return {"success": False, "message": cycle_err}
         menu.menu_name = menu_name
         menu.menu_label = menu_label
         menu.parent_id = parent_id
@@ -338,6 +374,10 @@ def save_menu(db: Session, payload: dict) -> dict:
             menu.menu_ext_conf = ext_conf
         db.commit()
         return {"success": True, "message": "更新成功"}
+    # 新建：父模块必须存在（创建时尚无自身 id，无需成环判断）
+    parent_err = _check_menu_parent(db, None, parent_id)
+    if parent_err:
+        return {"success": False, "message": parent_err}
     new_id = uuid.uuid4().hex
     db.add(
         Menu(
