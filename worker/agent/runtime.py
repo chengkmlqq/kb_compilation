@@ -90,6 +90,52 @@ def _build_task_model(cfg: dict):
     return model, model
 
 
+def _mcp_enabled() -> bool:
+    """MCP 注入开关（默认开，用户要求 agent worker 能访问个人/团队 MCP 工具）。"""
+    return os.environ.get("WORKER_AGENT_MCP_ENABLED", "1") != "0"
+
+
+def _mcp_max_servers() -> int:
+    try:
+        return max(0, int(os.environ.get("WORKER_AGENT_MCP_MAX", "8")))
+    except ValueError:
+        return 8
+
+
+async def _run_agent_loop(
+    agent_name: str,
+    instructions: str,
+    model,
+    user_input: str,
+    mcp_servers: list,
+    tools: list | None,
+    max_turns: int,
+) -> Any:
+    """带 MCP 生命周期跑一次 agent 循环（连接成功的 server 挂给 agent，失败跳过）。"""
+    if not mcp_servers:
+        a = Agent(
+            name=agent_name,
+            instructions=instructions,
+            model=model,
+            tools=tools or None,
+            mcp_servers=[],
+        )
+        return await Runner.run(a, input=user_input, max_turns=max_turns)
+    from agents.mcp import MCPServerManager
+
+    async with MCPServerManager(mcp_servers) as manager:
+        # SDK 0.23：连接成功的 server 在 active_servers（不存在 servers 属性）
+        connected = list(getattr(manager, "active_servers", []) or [])
+        a = Agent(
+            name=agent_name,
+            instructions=instructions,
+            model=model,
+            tools=tools or None,
+            mcp_servers=connected,
+        )
+        return await Runner.run(a, input=user_input, max_turns=max_turns)
+
+
 async def run_agent(payload: dict[str, Any], task_id: str = "") -> dict[str, Any]:
     """跑一次 agent 循环。payload = {input, instructions, agent_name, config{...}}。
 
@@ -124,21 +170,29 @@ async def run_agent(payload: dict[str, Any], task_id: str = "") -> dict[str, Any
         if tools:
             instructions += "\n\n你可使用以下技能工具（list_skills 查看可用技能）。"
         agent_model, _ = _build_task_model(cfg)
-        agent = Agent(
-            name=str(payload.get("agent_name") or cfg.get("agent_name") or "kb-agent-worker"),
-            instructions=instructions,
-            model=agent_model,
-            tools=tools if tools else None,
-            # 主 agent 循环不挂 MCP（与 gateway 2026-09-25 修复一致：MCP 工具会干扰
-            # LLM 选错工具；技能脚本内部自行连 mcp-gateway）。
-            mcp_servers=[],
-        )
         with trace_ctx("kb agent workflow") as active_trace:
             sdk_trace_id = getattr(active_trace, "trace_id", None)
-            result = await Runner.run(
-                agent,
-                input=str(payload.get("input") or ""),
-                max_turns=config.AGENT_MAX_TURNS,
+            # MCP（2026-10 权限对齐）：任务级 mcp_servers（kb_compilation 按知识库
+            # 创建者的个人/团队权限解析）构建成 SDK server，连接成功的挂给 agent
+            # 主循环。数量上限防工具集爆炸（LLM 误选是 gateway 曾踩的坑）。
+            mcp_servers: list = []
+            if _mcp_enabled():
+                raw_mcps = cfg.get("mcp_servers")
+                if isinstance(raw_mcps, list) and raw_mcps:
+                    from worker.agent.mcp_config import build_servers
+
+                    mcp_servers = build_servers(raw_mcps[:_mcp_max_servers()])
+                    logger.info(
+                        "agent_mcp_servers job=%s count=%s", task_id, len(mcp_servers)
+                    )
+            result = await _run_agent_loop(
+                str(payload.get("agent_name") or cfg.get("agent_name") or "kb-agent-worker"),
+                instructions,
+                agent_model,
+                str(payload.get("input") or ""),
+                mcp_servers,
+                tools if tools else None,
+                config.AGENT_MAX_TURNS,
             )
         runs_ms = int((time.monotonic() - t0) * 1000)
         logger.info("agent_run_end job=%s runs_ms=%s", task_id, runs_ms)

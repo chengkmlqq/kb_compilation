@@ -59,8 +59,8 @@ def test_handle_runs_agent_sync(job_env, monkeypatch) -> None:
         captured["task_id"] = task_id
         return {"success": True, "output": "wiki done", "runs_ms": 999, "sdk_trace_id": "tr-1"}
 
-    monkeypatch.setattr(aw, "_attach_skill_zip", lambda cfg: cfg.setdefault("skill_zip", b"ZIP"))
-    monkeypatch.setattr(aw, "_resolve_llm_config", lambda cfg: None)
+    monkeypatch.setattr(aw, "_attach_skill_zip", lambda cfg, kb_id="": cfg.setdefault("skill_zip", b"ZIP"))
+    monkeypatch.setattr(aw, "_resolve_llm_config", lambda cfg, kb_id="": None)
     # agent_worker 在函数体内 `from worker.agent.runtime import run_agent_sync`，
     # 调用时从 sys.modules 解析 → 塞 stub（SDK 不在 pyproject 依赖里）
     _stub_runtime(monkeypatch, fake_run_agent_sync)
@@ -98,8 +98,9 @@ def test_handle_missing_sdk_returns_clear_error(job_env, monkeypatch) -> None:
         return real_import(name, *a, **k)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    monkeypatch.setattr(aw, "_attach_skill_zip", lambda cfg: None)
-    monkeypatch.setattr(aw, "_resolve_llm_config", lambda cfg: None)
+    monkeypatch.setattr(aw, "_attach_skill_zip", lambda cfg, kb_id="": None)
+    monkeypatch.setattr(aw, "_attach_mcp_servers", lambda cfg, kb_id="": None)
+    monkeypatch.setattr(aw, "_resolve_llm_config", lambda cfg, kb_id="": None)
 
     result = aw._handle_agent_wiki_build("agent-job-1", json.dumps({"input": "x"}))
     assert result["success"] is False
@@ -114,8 +115,9 @@ def test_handle_crash_returned_as_failure(job_env, monkeypatch) -> None:
         raise RuntimeError("agent crashed")
 
     _stub_runtime(monkeypatch, boom)
-    monkeypatch.setattr(aw, "_attach_skill_zip", lambda cfg: None)
-    monkeypatch.setattr(aw, "_resolve_llm_config", lambda cfg: None)
+    monkeypatch.setattr(aw, "_attach_skill_zip", lambda cfg, kb_id="": None)
+    monkeypatch.setattr(aw, "_attach_mcp_servers", lambda cfg, kb_id="": None)
+    monkeypatch.setattr(aw, "_resolve_llm_config", lambda cfg, kb_id="": None)
 
     result = aw._handle_agent_wiki_build("agent-job-1", json.dumps({"input": "x"}))
     assert result["success"] is False

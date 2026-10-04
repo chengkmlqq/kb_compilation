@@ -60,8 +60,40 @@ def _write_progress(job_id: str, message: str) -> None:
         logger.debug("progress write failed job=%s", job_id, exc_info=True)
 
 
-def _attach_skill_zip(config: dict[str, Any]) -> None:
-    """1A：从 kb_skill 表取技能 ZIP（bytes）挂到 config.skill_zip（内联路径无需 base64）。"""
+def _kb_owner_context(db, kb_id: str) -> dict:
+    """知识库权限基准：创建者/拥有者的个人+团队上下文。
+
+    wiki 构建是后台任务（无登录用户），可用的权限基准 = 知识库的
+    owner_user_id / owner_team_name（创建时由 scope 校验写入）。worker 按
+    此解析 MCP 与技能：拥有者个人 OR 拥有者团队 OR (系统且拥有者是管理员)。
+    """
+    from sqlalchemy import select as _select
+
+    from api.models.knowledge import KbDatasource
+
+    kb = db.execute(_select(KbDatasource).where(KbDatasource.id == kb_id)).scalars().first()
+    if not kb:
+        return {"user_id": "", "team_name": "", "is_admin": False}
+    owner_uid = str(getattr(kb, "owner_user_id", "") or "")
+    owner_team = str(
+        getattr(kb, "owner_team_name", "") or getattr(kb, "team_name", "") or ""
+    )
+    try:
+        from api.services.scope import is_admin
+
+        admin = bool(owner_uid and is_admin(db, owner_uid))
+    except Exception:  # noqa: BLE001
+        admin = False
+    return {"user_id": owner_uid, "team_name": owner_team, "is_admin": admin}
+
+
+def _attach_skill_zip(config: dict[str, Any], kb_id: str = "") -> None:
+    """1A：从 kb_skill 表取知识库绑定技能的 ZIP（bytes）。
+
+    可见性按 **知识库创建者的个人/团队/系统权限** 过滤（owner_uid/owner_team
+    由 _kb_owner_context 提供）——不是空上下文+sys_admin（那只能拿到系统级
+    技能，个人/团队的技能会被漏掉）。
+    """
     skill_name = _first_str(config, "skill")
     if not skill_name:
         return
@@ -70,10 +102,18 @@ def _attach_skill_zip(config: dict[str, Any]) -> None:
 
         db = get_sessionmaker()()
         try:
+            ctx = _kb_owner_context(db, kb_id) if kb_id else {
+                "user_id": "", "team_name": "", "is_admin": False,
+            }
             item = next(
                 (
                     s
-                    for s in list_skills(db, caller_user_id="", caller_team_name="", is_sys_admin=True)
+                    for s in list_skills(
+                        db,
+                        caller_user_id=ctx["user_id"],
+                        caller_team_name=ctx["team_name"],
+                        is_sys_admin=ctx["is_admin"],
+                    )
                     if s["name"] == skill_name
                 ),
                 None,
@@ -83,10 +123,44 @@ def _attach_skill_zip(config: dict[str, Any]) -> None:
                 if row and row.package_zip:
                     config["skill_zip"] = bytes(row.package_zip)
                     config["skill"] = item["name"]
+            else:
+                logger.warning(
+                    "skill not visible to kb owner (kb=%s skill=%s owner=%s)",
+                    kb_id, skill_name, ctx["user_id"] or "(none)",
+                )
         finally:
             db.close()
     except Exception as exc:  # noqa: BLE001
         logger.warning("failed to load skill zip for %s: %s", skill_name, exc)
+
+
+def _attach_mcp_servers(config: dict[str, Any], kb_id: str = "") -> None:
+    """按知识库创建者的个人/团队权限解析启用 MCP，注入任务级配置。
+
+    现状缺口：此前内联 worker 完全没挂 MCP（runtime mcp_servers=[]），外部
+    gateway 路径也只传空上下文+sys_admin → 个人/团队的 MCP 永远不可见。
+    """
+    try:
+        from api.services.mcps import resolve_task_mcp_servers
+
+        db = get_sessionmaker()()
+        try:
+            ctx = _kb_owner_context(db, kb_id) if kb_id else {
+                "user_id": "", "team_name": "", "is_admin": False,
+            }
+            mcps = resolve_task_mcp_servers(
+                db,
+                caller_user_id=ctx["user_id"],
+                caller_team_name=ctx["team_name"],
+                is_sys_admin=ctx["is_admin"],
+            )
+        finally:
+            db.close()
+        if mcps:
+            config["mcp_servers"] = mcps
+            logger.info("agent_mcp_attached kb=%s count=%s", kb_id, len(mcps))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("failed to resolve mcp servers for kb=%s: %s", kb_id, exc)
 
 
 def _resolve_llm_config(config: dict[str, Any], kb_id: str = "") -> None:
@@ -175,7 +249,8 @@ def _handle_agent_wiki_build(job_id: str, task_params: str | None) -> dict[str, 
     config: dict[str, Any] = dict(params.get("config") or {})
     config["job_id"] = job_id
 
-    _attach_skill_zip(config)
+    _attach_skill_zip(config, kb_id=str(config.get("kb_id") or ""))
+    _attach_mcp_servers(config, kb_id=str(config.get("kb_id") or ""))
     _resolve_llm_config(config, kb_id=str(config.get("kb_id") or ""))
 
     payload = {

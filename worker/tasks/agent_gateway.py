@@ -167,20 +167,38 @@ def _handle_agent_gateway(job_id: str, task_params: str | None) -> dict:
     # 网关是无状态执行器——任务提交时把载荷随 config 下发：
     #   - skill_zip_base64: 技能 ZIP（base64），网关临时解压执行完即删
     #   - mcp_servers:      可见的启用 MCP 配置（解密密钥），网关任务级构建
-    # 无用户上下文的后台任务解析系统级默认（管理员配置）。
+    # 权限基准（2026-10-11 对齐）：wiki 构建任务的 config 带 kb_id，按**知识库
+    # 创建者**的 owner_user_id/owner_team_name 解析——个人 + 团队 + (系统且拥有者
+    # 是管理员)。此前一律"空上下文 + sys_admin"，个人/团队的技能与 MCP 永远不可见。
+    # 无 kb_id 的通用 agent 任务沿用调用方传入的 userId/teamName。
     try:
         from api.db import get_sessionmaker
         from api.services.mcps import resolve_task_mcp_servers
         from api.services.skills import get_skill_package, list_skills
 
+        from worker.tasks.agent_worker import _kb_owner_context
+
         with get_sessionmaker()() as db:
+            kb_id = str(config.get("kb_id") or "")
+            if kb_id:
+                ctx = _kb_owner_context(db, kb_id)
+            else:
+                ctx = {
+                    "user_id": str(params.get("userId") or ""),
+                    "team_name": str(params.get("teamName") or ""),
+                    "is_admin": False,
+                }
             skill_name = _first_str(config, "skill")
             if skill_name:
-                # 后台任务无用户上下文：技能/MCP 均解析系统级（管理员配置）
                 skill_item = next(
                     (
                         s
-                        for s in list_skills(db, caller_user_id="", caller_team_name="", is_sys_admin=True)
+                        for s in list_skills(
+                            db,
+                            caller_user_id=ctx["user_id"],
+                            caller_team_name=ctx["team_name"],
+                            is_sys_admin=ctx["is_admin"],
+                        )
                         if s["name"] == skill_name
                     ),
                     None,
@@ -196,9 +214,9 @@ def _handle_agent_gateway(job_id: str, task_params: str | None) -> dict:
                         config["skill"] = skill_item["name"]
             mcps = resolve_task_mcp_servers(
                 db,
-                caller_user_id=str(params.get("userId") or ""),
-                caller_team_name=str(params.get("teamName") or ""),
-                is_sys_admin=True,  # 后台任务：解析系统级启用 MCP（管理员配置）
+                caller_user_id=ctx["user_id"],
+                caller_team_name=ctx["team_name"],
+                is_sys_admin=ctx["is_admin"],
             )
             if mcps:
                 config["mcp_servers"] = mcps
