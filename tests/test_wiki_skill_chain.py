@@ -76,6 +76,31 @@ def test_enqueue_wiki_skill_task_broker_failure_returns_false(chain_env, monkeyp
     assert ok is False
 
 
+def test_enqueue_wiki_skill_task_commits_before_send(chain_env, monkeypatch) -> None:
+    """回归：Job 行必须在 send_task 之前已提交可见。
+
+    worker 空闲时会在消息进 broker 的瞬间就消费 execute_modo_job；若此时
+    Job 行还没 commit，执行侧报 'job not found' 任务直接失败。
+    """
+    Session, _ = chain_env
+    visible_at_send: dict = {}
+
+    import worker.celery_app as celery_mod
+
+    def checking_send(name, args, task_id, queue):
+        probe = Session()
+        try:
+            job = probe.execute(select(Job).where(Job.id == task_id)).scalars().first()
+            visible_at_send["found"] = job is not None
+        finally:
+            probe.close()
+
+    monkeypatch.setattr(celery_mod.celery_app, "send_task", checking_send)
+    ok = dp._enqueue_wiki_skill_task("kb-1", "doc-1")
+    assert ok is True
+    assert visible_at_send.get("found") is True
+
+
 def test_handle_process_document_chain_triggered_on_success(chain_env, monkeypatch) -> None:
     """process_document 成功（parse_state=READY）+ kb_id 存在 → wiki_skill_triggered=True。"""
     Session, sent = chain_env

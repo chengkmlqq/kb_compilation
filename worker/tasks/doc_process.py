@@ -244,17 +244,9 @@ def _enqueue_wiki_skill_task(kb_id: str, document_id: str) -> bool:
         ensure_ascii=False,
     )
     job_id = f"WIKI_SKILL_{uuid.uuid4().hex[:12]}"
-    try:
-        celery_app.send_task(
-            "worker.tasks.scheduler.execute_modo_job",
-            args=[job_id],
-            task_id=job_id,
-            queue="default",
-        )
-    except Exception as exc:  # noqa: BLE001 — broker 不可达时返回 False，不抛
-        logger.warning("failed to enqueue wiki skill task: %s", exc)
-        return False
-    # 写 modo_job 行（任务监控可见）——与 scheduler._enqueue_job 契约一致
+    # 顺序契约（对齐 scheduler.scan_cron_tasks Case 3 / _enqueue_job）：
+    # 必须先 commit Job 行、再投 broker。若 send_task 先于 commit，worker 空闲时
+    # 会在 Job 行可见前就消费 execute_modo_job，报 'job not found' 立即失败。
     from api.db import get_sessionmaker
     from api.models.framework import Job
 
@@ -272,12 +264,23 @@ def _enqueue_wiki_skill_task(kb_id: str, document_id: str) -> bool:
             )
         )
         db.commit()
-        return True
     except Exception:  # noqa: BLE001
         db.rollback()
         return False
     finally:
         db.close()
+
+    try:
+        celery_app.send_task(
+            "worker.tasks.scheduler.execute_modo_job",
+            args=[job_id],
+            task_id=job_id,
+            queue="default",
+        )
+    except Exception as exc:  # noqa: BLE001 — broker 不可达时返回 False，不抛
+        logger.warning("failed to enqueue wiki skill task: %s", exc)
+        return False
+    return True
 
 
 def _handle_embed_document(job_id: str, task_params: str | None) -> dict:
