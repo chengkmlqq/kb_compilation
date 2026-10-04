@@ -22,6 +22,7 @@ from api.services.skills import (
     delete_skill,
     get_skill,
     list_skills,
+    read_skill_zip,
     skill_to_dict,
     update_skill,
 )
@@ -113,12 +114,13 @@ def detail_skill_route(
     # SKILL.md 内容预览（从包内提取，供详情展示）+ 文件清单（文件树预览）
     markdown_preview = ""
     files: list[dict] = []
-    if m.package_zip:
+    pkg_data = read_skill_zip(m)
+    if pkg_data:
         import io
         import zipfile
 
         try:
-            with zipfile.ZipFile(io.BytesIO(bytes(m.package_zip))) as zf:
+            with zipfile.ZipFile(io.BytesIO(pkg_data)) as zf:
                 for info in zf.infolist():
                     if info.is_dir():
                         continue
@@ -159,7 +161,8 @@ def skill_file_route(
     返回 {path, size, content, truncated, binary}；文本超 512KB 只回元信息。
     """
     m = get_skill(db, skill_id)
-    if not m or not m.package_zip:
+    pkg_data = read_skill_zip(m) if m else None
+    if not pkg_data:
         raise HTTPException(status_code=404, detail="技能不存在或无包内容")
     from api.services.scope import ResourceRow, can_see
 
@@ -174,7 +177,7 @@ def skill_file_route(
     import zipfile
 
     try:
-        with zipfile.ZipFile(io.BytesIO(bytes(m.package_zip))) as zf:
+        with zipfile.ZipFile(io.BytesIO(pkg_data)) as zf:
             names = set(zf.namelist())
             target = file_path if file_path in names else None
             if target is None:
@@ -237,11 +240,11 @@ def export_skill_package_route(
         caller.is_admin,
     ):
         raise HTTPException(status_code=404, detail="技能不存在")
-    if not m.package_zip:
+    raw = read_skill_zip(m)
+    if not raw:
         raise HTTPException(status_code=404, detail="技能包为空")
     import base64
 
-    raw = bytes(m.package_zip)
     return {
         "success": True,
         "data": {

@@ -98,7 +98,7 @@ def _attach_skill_zip(config: dict[str, Any], kb_id: str = "") -> None:
     if not skill_name:
         return
     try:
-        from api.services.skills import get_skill_package, list_skills
+        from api.services.skills import get_skill_package, list_skills, read_skill_zip
 
         db = get_sessionmaker()()
         try:
@@ -120,8 +120,9 @@ def _attach_skill_zip(config: dict[str, Any], kb_id: str = "") -> None:
             )
             if item:
                 row = get_skill_package(db, item["id"])
-                if row and row.package_zip:
-                    config["skill_zip"] = bytes(row.package_zip)
+                pkg = read_skill_zip(row) if row else None
+                if pkg:
+                    config["skill_zip"] = pkg
                     config["skill"] = item["name"]
             else:
                 logger.warning(

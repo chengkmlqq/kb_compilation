@@ -14,6 +14,7 @@ frontmatter name is parsed at upload time for validation + description.
 from __future__ import annotations
 
 import io
+import logging
 import re
 import uuid
 import zipfile
@@ -22,7 +23,10 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from api.models.mcp_skill import KbSkill
+from api.services import storage
 from api.services.scope import ResourceRow, can_manage, validate_scope_request, visible_clauses
+
+logger = logging.getLogger(__name__)
 
 # ZIP 布局: 根级 SKILL.md 或 <skill>/SKILL.md（与网关 UploadSkill 解析一致）
 _SKILL_MD_RE = re.compile(r"(?:^|/)([^/]+)/SKILL\.md$", re.IGNORECASE)
@@ -98,15 +102,45 @@ def skill_to_dict(m: KbSkill, *, include_package: bool = False) -> dict:
         "description": m.description or "",
         "version": m.version or "",
         "package_size": m.package_size,
+        "storage_path": m.storage_path or "",
         "owner_user_id": m.owner_user_id or "",
         "owner_team_name": m.owner_team_name or "",
         "state": m.state,
         "created_at": m.created_at.isoformat() if m.created_at else None,
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
     }
-    if include_package and m.package_zip:
-        out["package_base64"] = m.package_zip.decode("latin1") if isinstance(m.package_zip, bytes) else m.package_zip
+    if include_package:
+        data = read_skill_zip(m)
+        if data:
+            out["package_base64"] = data.decode("latin1")
     return out
+
+
+def skill_zip_key(skill_id: str) -> str:
+    """技能包对象 key（覆盖写：更新技能=重写同一 key，对象始终是最新包）。"""
+    return f"skills/{skill_id}.zip"
+
+
+def read_skill_zip(m: KbSkill) -> bytes | None:
+    """读取技能 ZIP：storage_path（MinIO）优先，package_zip 兜底。
+
+    MinIO 读失败不抛错——回退历史 BLOB；两者都无则返回 None（调用方按无包处理）。
+    """
+    if m.storage_path:
+        try:
+            return storage.get_bytes(m.storage_path)
+        except Exception as exc:  # noqa: BLE001 — 降级到历史 BLOB
+            logger.warning("minio read skill failed (%s): %s", m.storage_path, exc)
+    if m.package_zip:
+        return bytes(m.package_zip)
+    return None
+
+
+def store_skill_zip(skill_id: str, data: bytes) -> str:
+    """把技能包写入存储后端，返回 storage_path（MinIO 或本地绝对路径）。"""
+    path = storage.resolve_new_path(skill_zip_key(skill_id))
+    storage.put_bytes(path, data, content_type="application/zip")
+    return path
 
 
 def list_skills(
@@ -157,14 +191,19 @@ def create_skill(
     if dup:
         raise ValueError(f"技能名已存在: {name}（同名重新安装=更新，请用编辑接口）")
 
+    skill_id = uuid.uuid4().hex[:36]
+    # 技能包先落存储后端（MinIO），DB 只存引用；package_zip 保持 NULL（不再双写）
+    storage_path = store_skill_zip(skill_id, package_zip)
+
     m = KbSkill(
-        id=uuid.uuid4().hex[:36],
+        id=skill_id,
         scope=parsed_scope,
         name=name,
         description=description,
         version=version,
-        package_zip=package_zip,
+        package_zip=None,
         package_size=len(package_zip),
+        storage_path=storage_path,
         owner_user_id=owner_user_id or None,
         owner_team_name=owner_team_name or None,
         state="1",
@@ -199,11 +238,17 @@ def update_skill(
         ).scalars().first()
         if dup:
             raise ValueError(f"技能名冲突: {name}")
+        # 先写新包成功再改元信息，避免写失败留下 name/version 与包不一致
+        new_path = store_skill_zip(skill_id, package_zip)
+        old_path = m.storage_path
         m.name = name
         m.description = new_desc
         m.version = version
-        m.package_zip = package_zip
+        m.package_zip = None
         m.package_size = len(package_zip)
+        m.storage_path = new_path
+        if old_path and old_path != new_path:  # 本地路径换目录场景，清理旧对象
+            storage.delete(old_path)
     if description is not None:
         m.description = description
     db.commit()
@@ -225,6 +270,12 @@ def delete_skill(
         raise PermissionError("无权删除该技能")
     m.state = "0"
     db.commit()
+    # 清理对象存储里的技能包（幂等；失败仅记日志，不阻塞软删）
+    if m.storage_path:
+        try:
+            storage.delete(m.storage_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("skill object delete failed (%s): %s", m.storage_path, exc)
 
 
 def get_skill_package(db: Session, skill_id: str) -> KbSkill | None:

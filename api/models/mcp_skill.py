@@ -67,10 +67,12 @@ class KbSkill(Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text)
     version: Mapped[str | None] = mapped_column(String(32))
-    # ZIP 安装包（原始上传字节，base 存储；上传/编辑时整包替换）
+    # ZIP 安装包（原始上传字节；MinIO 启用后存对象存储，本列仅作历史/降级兜底）
     # MEDIUMBLOB（16MB）：技能包含 scripts/templates 可达数 MB，BLOB(64KB) 放不下
     package_zip: Mapped[bytes | None] = mapped_column(LargeBinary(length=16 * 1024 * 1024))
     package_size: Mapped[int | None] = mapped_column(Integer)
+    # MinIO 对象路径（minio://bucket/skills/<skill_id>.zip）；有值时优先于 package_zip
+    storage_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # --- scope ownership ---
     owner_user_id: Mapped[str | None] = mapped_column(String(64), index=True)

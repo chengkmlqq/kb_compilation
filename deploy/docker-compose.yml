@@ -355,6 +355,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    networks:
+      - kb-net
   neo4j:
     # 知识图谱存储（实体/关系）。写入见 api/services/graph.py Neo4jGraphStore
     # （worker KbGraphBuildTask 调用），查询见 api/routers/graph.py。
