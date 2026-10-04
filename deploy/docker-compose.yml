@@ -122,6 +122,27 @@ services:
     networks:
       - kb-net
 
+  celery-agent-worker:
+    # 第二类 worker（2026-10 WeKnora 对齐）：wiki 构建的 agent 运行时（内联
+    # openai-agents SDK 完整能力），独立镜像（装 SDK）、独立队列 agent——
+    # 与解析 worker（celery-worker / default 队列）物理隔离、独立扩容、Flower 可见。
+    image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-agent-worker:${KB_IMAGE_TAG:-latest}
+    container_name: kb-celery-agent-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info", "--concurrency=1", "-Q", "agent"]
+    <<: *api-env
+    volumes:
+      - kb-docs:/data/kb_documents
+    depends_on:
+      redis:
+        condition: service_started
+      pg:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - kb-net
+
   celery-beat:
     image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-worker:${KB_IMAGE_TAG:-latest}
     container_name: kb-celery-beat

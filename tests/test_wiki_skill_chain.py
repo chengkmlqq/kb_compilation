@@ -1,7 +1,9 @@
-"""doc_process 自动触发 wiki 构建（AgentGateway 网关链路）测试。
+"""doc_process 自动触发 wiki 构建（worker 内联 agent 链路）测试。
 
-上传文档 → KbDocumentProcessTask 成功 → 自动 enqueue KbAgentGatewayTask
-（agent-gateway 内跑 kb-wiki-builder 技能脚本读 chunks → LLM → 写 wiki 页）。
+上传文档 → KbDocumentProcessTask 成功 → 自动 enqueue KbAgentWikiBuildTask
+（worker 内联 agent 运行时跑 kb-wiki-builder 技能，投 agent 队列；
+WIKI_AGENT_MODE=gateway 可回退外部 agent-gateway 的 KbAgentGatewayTask）。
+（agent 运行时内跑 kb-wiki-builder 技能脚本读 chunks → LLM → 写 wiki 页）。
 """
 from __future__ import annotations
 
@@ -46,7 +48,8 @@ def test_enqueue_wiki_skill_task_writes_job(chain_env) -> None:
     ok = dp._enqueue_wiki_skill_task("kb-1", "doc-1")
     assert ok is True
     assert sent["name"] == "worker.tasks.scheduler.execute_modo_job"
-    assert sent["queue"] == "default"
+    # 默认内联 agent：投 agent 队列（celery-agent-worker 消费）
+    assert sent["queue"] == "agent"
     # job_id 前缀 WIKI_SKILL_
     assert sent["task_id"].startswith("WIKI_SKILL_")
     # modo_job 行已写入（任务监控可见）
@@ -54,7 +57,8 @@ def test_enqueue_wiki_skill_task_writes_job(chain_env) -> None:
     jobs = db.execute(select(Job)).scalars().all()
     assert len(jobs) == 1
     job = jobs[0]
-    assert job.task_class == "KbAgentGatewayTask"
+    assert job.task_class == "KbAgentWikiBuildTask"
+    assert job.queue_name == "agent"
     assert job.state == "PENDING"
     params = json.loads(job.task_params)
     assert params["config"]["skill"] == "kb-wiki-builder"
@@ -74,6 +78,20 @@ def test_enqueue_wiki_skill_task_broker_failure_returns_false(chain_env, monkeyp
     monkeypatch.setattr(celery_mod.celery_app, "send_task", boom)
     ok = dp._enqueue_wiki_skill_task("kb-1", "doc-1")
     assert ok is False
+
+
+def test_enqueue_wiki_skill_task_gateway_mode_fallback(chain_env, monkeypatch) -> None:
+    """WIKI_AGENT_MODE=gateway → 回退外部 agent-gateway（KbAgentGatewayTask + default 队列）。"""
+    Session, sent = chain_env
+    monkeypatch.setenv("WIKI_AGENT_MODE", "gateway")
+    ok = dp._enqueue_wiki_skill_task("kb-1", "doc-1")
+    assert ok is True
+    assert sent["queue"] == "default"
+    db = Session()
+    job = db.execute(select(Job)).scalars().first()
+    assert job.task_class == "KbAgentGatewayTask"
+    assert job.queue_name == "default"
+    db.close()
 
 
 def test_enqueue_wiki_skill_task_commits_before_send(chain_env, monkeypatch) -> None:
@@ -156,7 +174,7 @@ def test_handle_process_document_graph_triggered_when_enabled(chain_env, monkeyp
     db = Session()
     classes = {j.task_class for j in db.execute(select(Job)).scalars().all()}
     assert "KbGraphBuildTask" in classes
-    assert "KbAgentGatewayTask" not in classes
+    assert "KbAgentWikiBuildTask" not in classes
     db.close()
 
 

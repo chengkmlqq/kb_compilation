@@ -43,7 +43,15 @@ celery_app.conf.update(
         "worker.tasks.doc_process",
         "worker.tasks.wiki_graph",
         "worker.tasks.agent_gateway",
-    ]
+        "worker.tasks.agent_worker",
+    ],
+    # 队列隔离（2026-10 WeKnora 对齐）：wiki 构建的 agent 任务投到独立 agent 队列，
+    # 由专用 celery-agent-worker（-Q agent）消费；文档解析留在 default 队列的
+    # celery-worker。两者物理隔离——分钟级~几十分钟的 agent 长任务不会堵住解析，
+    # 且两类 worker 在 Flower 均可见、可独立扩容。
+    # 注意：实际被投递的 Celery 任务名是 scheduler.execute_modo_job（task_class
+    # 只是它的参数），所以路由由 doc_process._enqueue_wiki_skill_task 显式传
+    # queue= 决定，task_routes 按任务名匹配在此不适用。
 )
 
 # Beat app: scans modo_cron_task and dispatches. Run via:

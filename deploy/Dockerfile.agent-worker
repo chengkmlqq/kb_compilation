@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1.7
+# KB agent worker（第二类 worker，2026-10 WeKnora 对齐）：
+# 内联 agent 运行时（worker/agent/，openai-agents SDK 完整能力）在 Celery worker
+# 进程内执行 wiki 构建，与解析 worker（deploy/Dockerfile.worker，default 队列）
+# 物理隔离：独立镜像 + 独立队列 agent + 独立容器。
+#
+#   celery -A worker.celery_app worker --loglevel=info --concurrency=1 -Q agent
+#
+# 与 kb-worker 的差异：额外安装 openai-agents SDK（agent 循环 + 技能执行工具）。
+# 刻意不改 pyproject/uv.lock——用 uv pip 单独安装，保持 kb-worker 镜像的
+# `uv sync --frozen` 不受影响（本机直接 PyPI 慢，故走清华源）。
+
+ARG PY_BASE_IMAGE=python:3.11-slim
+
+FROM ${PY_BASE_IMAGE} AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+
+WORKDIR /srv/kb
+
+# system deps（同 worker 镜像：docreader 的 PDF/HTML 引擎 + playwright）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        fonts-liberation \
+        libnss3 \
+        libnspr4 \
+        libatk1.0-0 \
+        libatk-bridge2.0-0 \
+        libcups2 \
+        libdrm2 \
+        libxkbcommon0 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxfixes3 \
+        libxrandr2 \
+        libgbm1 \
+        libpango-1.0-0 \
+        libcairo2 \
+        libasound2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv: faster + deterministic (matches the repo's uv.lock)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+# agent 运行时依赖：openai-agents SDK（agent 循环 + function_tool + tracing）。
+# 版本下限对齐 agent-gateway 的 requirements.txt（>=0.22.0）。
+RUN uv pip install --no-cache "openai-agents>=0.22.0"
+
+COPY api/ ./api/
+COPY worker/ ./worker/
+COPY docreader/ ./docreader/
+COPY scripts/ ./scripts/
+# 技能扫描/安装目录（任务级 ZIP 走临时目录，这里是可写安装目录）
+RUN mkdir -p /data/kb_documents /srv/kb/data/agent-skills /srv/kb/agent-skills
+
+ENV PATH="/srv/kb/.venv/bin:$PATH" \
+    WORKER_AGENT_SKILLS_DIR=/srv/kb/agent-skills \
+    WORKER_AGENT_SKILLS_INSTALL_DIR=/srv/kb/data/agent-skills
+
+# default: agent 队列 worker（wiki 构建）
+CMD ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info", "--concurrency=1", "-Q", "agent"]

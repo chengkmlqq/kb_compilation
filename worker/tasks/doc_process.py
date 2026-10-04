@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 
 from sqlalchemy import select
@@ -210,10 +211,26 @@ def _enqueue_wiki_build_task(kb_id: str, document_id: str) -> bool:
         db.close()
 
 
+def _agent_task_target() -> tuple[str, str]:
+    """wiki 构建任务的投递目标：(task_class, queue)。
+
+    默认 **inline**：worker 内联 agent 运行时（worker/agent/，openai-agents SDK
+    完整能力）执行，投 agent 队列由 celery-agent-worker 消费——解析 worker 与
+    agent worker 物理隔离、独立扩容、Flower 原生监控。
+
+    `WIKI_AGENT_MODE=gateway` 回退到外部 agent-gateway（KbAgentGatewayTask，
+    HTTP 提交独立部署的网关容器，default 队列）——新链路未稳定时的并行/回滚路径。
+    """
+    mode = (os.getenv("WIKI_AGENT_MODE") or "inline").strip().lower()
+    if mode == "gateway":
+        return "KbAgentGatewayTask", "default"
+    return "KbAgentWikiBuildTask", "agent"
+
+
 def _enqueue_wiki_skill_task(
     kb_id: str, document_id: str, skill_name: str | None = None
 ) -> bool:
-    """向 agent-gateway 提交技能构建任务（KbAgentGatewayTask）。
+    """enqueue wiki 构建的 agent 任务（默认内联 agent worker，见 _agent_task_target）。
 
     skill_name: 指定技能（KB 级 wiki_config.skill 绑定）；为空则用全局
     WIKI_SKILL_NAME（WeKnora WikiConfig.Skill 为空的回退语义）。
@@ -263,6 +280,7 @@ def _enqueue_wiki_skill_task(
         ensure_ascii=False,
     )
     job_id = f"WIKI_SKILL_{uuid.uuid4().hex[:12]}"
+    task_class, queue = _agent_task_target()
     # 顺序契约（对齐 scheduler.scan_cron_tasks Case 3 / _enqueue_job）：
     # 必须先 commit Job 行、再投 broker。若 send_task 先于 commit，worker 空闲时
     # 会在 Job 行可见前就消费 execute_modo_job，报 'job not found' 立即失败。
@@ -275,8 +293,8 @@ def _enqueue_wiki_skill_task(
             Job(
                 id=job_id,
                 task_id=job_id,
-                task_class="KbAgentGatewayTask",
-                queue_name="default",
+                task_class=task_class,
+                queue_name=queue,
                 task_params=task_params,
                 trigger_type="API",
                 state="PENDING",
@@ -294,7 +312,7 @@ def _enqueue_wiki_skill_task(
             "worker.tasks.scheduler.execute_modo_job",
             args=[job_id],
             task_id=job_id,
-            queue="default",
+            queue=queue,
         )
     except Exception as exc:  # noqa: BLE001 — broker 不可达时返回 False，不抛
         logger.warning("failed to enqueue wiki skill task: %s", exc)
