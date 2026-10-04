@@ -84,13 +84,31 @@ def test_delete_kb_ok_when_empty(kb_db) -> None:
     assert row.state == "0"
 
 
-def test_delete_kb_guard_when_documents_exist(kb_db) -> None:
+def test_delete_kb_cascade_when_documents_exist(kb_db) -> None:
     kb = create_kb(kb_db, "有文档库")
     create_document(kb_db, kb.id, "a.md")
+    kb_db.add(
+        WikiPage(
+            id="wp1",
+            kb_id=kb.id,
+            slug="s1",
+            title="页面1",
+            page_type="entity",
+            content="内容",
+            status="active",
+        )
+    )
+    kb_db.commit()
     result = delete_kb(kb_db, kb.id)
-    assert result["success"] is False
-    assert "文档" in result["message"]
-    assert get_kb(kb_db, kb.id) is not None  # still active
+    assert result["success"] is True
+    assert result["data"]["doc_count"] == 1  # 级联删除返回计数
+    assert result["data"]["wiki_count"] == 1
+    row = kb_db.get(KbDatasource, kb.id)
+    assert row is not None
+    assert row.state == "0"  # KB 软删
+    # 文档与 wiki 页一并清理（对齐 WeKnora 级联语义）
+    assert kb_db.query(KbDocument).filter(KbDocument.kb_id == kb.id).count() == 0
+    assert kb_db.query(WikiPage).filter(WikiPage.kb_id == kb.id).count() == 0
 
 
 def test_delete_kb_missing(kb_db) -> None:

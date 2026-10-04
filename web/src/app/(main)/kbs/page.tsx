@@ -116,9 +116,15 @@ export default function KbsPage() {
   };
 
   const onDelete = (kb: KbItem) => {
+    const docN = kb.doc_count ?? 0;
+    const wikiN = kb.page_count ?? 0;
+    const content =
+      docN > 0 || wikiN > 0
+        ? `将一并删除 ${docN} 个文档、${wikiN} 个 Wiki 页及图谱数据，删除后不可恢复。`
+        : "删除后不可恢复。";
     modal.confirm({
       title: `删除知识库「${kb.name}」？`,
-      content: "知识库内仍有文档时无法删除（需先删除文档）。",
+      content,
       okText: "删除",
       okButtonProps: { danger: true },
       onOk: async () => {

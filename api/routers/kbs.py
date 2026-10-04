@@ -257,7 +257,7 @@ def put_kb(kb_id: str, req: KBUpdateRequest, db: Session = Depends(get_db)) -> d
 def del_kb(kb_id: str, db: Session = Depends(get_db)) -> dict:
     result = delete_kb(db, kb_id)
     if not result["success"]:
-        raise HTTPException(status_code=409, detail=result["message"])
+        raise HTTPException(status_code=404, detail=result["message"])
     return result
 
 

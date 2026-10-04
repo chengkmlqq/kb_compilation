@@ -207,6 +207,27 @@ class Neo4jGraphStore:
         finally:
             driver.close()
 
+    def delete_kb_graph(self, kb_id: str) -> int:
+        """级联删除知识库时清理该库全部图谱节点/关系（DETACH DELETE）。
+
+        返回删除的节点数；调用方按 best-effort 处理异常（图谱清理失败
+        不应阻塞知识库本身的删除，对齐 WeKnora「KB 记录先删、重清理异步」）。
+        """
+        from neo4j import GraphDatabase
+
+        driver = GraphDatabase.driver(self._uri, auth=self._auth)
+        try:
+            with driver.session(database=self._database) as session:
+                recs = session.run(
+                    "MATCH (n) WHERE n.kb_id = $kb_id WITH collect(n) AS ns "
+                    "FOREACH (n IN ns | DETACH DELETE n) RETURN size(ns) AS cnt",
+                    kb_id=kb_id,
+                )
+                row = recs.single()
+                return int(row["cnt"]) if row else 0
+        finally:
+            driver.close()
+
     @staticmethod
     def _write_nodes(tx, kb_id: str, entities: list[Entity]) -> None:
         node_data = [

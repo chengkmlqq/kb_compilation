@@ -241,29 +241,87 @@ def update_kb(db: Session, kb_id: str, fields: dict) -> KbDatasource | None:
 
 
 def delete_kb(db: Session, kb_id: str) -> dict:
-    """Soft-delete a KB. Guard: rejects when documents still exist.
+    """级联删除知识库（对齐 WeKnora：KB 记录软删 + 内容一并清理，不再设守卫）。
 
-    Mirrors WeKnora's vectorstore delete guard — deleting a KB that has
-    documents would strand their chunks/pages, so the caller must delete
-    documents first.
+    WeKnora 的 DeleteKnowledgeBase 不校验文档数：先软删 KB 记录，再清理
+    共享/数据源，最后异步删 embeddings/chunks/files/图谱。本实现同步清理
+    （本库数据量小），语义一致：
+
+      1. KB 软删（state=0）
+      2. wiki 链接 → 页面 → 文件夹（先删依赖，避免孤儿链接）
+      3. 文档 chunks → 文档记录 → 该库 embedding 记录
+      4. wiki 操作日志 / 反馈
+      5. Neo4j 图谱节点（best-effort：失败不阻塞删除）
+
+    返回 data 含删除计数，供前端确认框展示。
     """
     kb = get_kb(db, kb_id)
     if not kb:
         return {"success": False, "message": f"知识库不存在: {kb_id}"}
+
+    # 快照计数（前端确认框「将一并删除 N 文档 / M Wiki 页」用）
     doc_count = (
         db.execute(
             select(func.count()).select_from(KbDocument).where(KbDocument.kb_id == kb_id)
         ).scalar()
         or 0
     )
-    if doc_count > 0:
-        return {
-            "success": False,
-            "message": f"知识库仍有 {doc_count} 个文档，请先删除文档后再删除知识库",
-        }
+    wiki_count = (
+        db.execute(
+            select(func.count()).select_from(WikiPage).where(WikiPage.kb_id == kb_id)
+        ).scalar()
+        or 0
+    )
+
+    # 1) KB 软删
     kb.state = "0"
+
+    # 2) wiki 层：链接 → 页面 → 文件夹
+    db.execute(delete(WikiLink).where(WikiLink.kb_id == kb_id))
+    db.execute(delete(WikiPage).where(WikiPage.kb_id == kb_id))
+    db.execute(delete(WikiFolder).where(WikiFolder.kb_id == kb_id))
+    # 3) 文档层：chunks → 文档
+    db.execute(delete(DocChunk).where(DocChunk.kb_id == kb_id))
+    db.execute(delete(KbDocument).where(KbDocument.kb_id == kb_id))
+    # 4) wiki 日志 / 反馈
+    db.execute(delete(WikiOperationLog).where(WikiOperationLog.kb_id == kb_id))
+    db.execute(delete(WikiFeedback).where(WikiFeedback.kb_id == kb_id))
     db.commit()
-    return {"success": True, "data": {"id": kb_id}}
+
+    # 4.5) 向量索引（kb_embedding 属知识引擎侧表，走 VectorStore；best-effort）
+    try:
+        from api.services.vector_store import get_vector_store
+
+        get_vector_store().delete_by_kb(kb_id)
+    except Exception as exc:  # pragma: no cover - 向量清理为尽力而为
+        logging.getLogger(__name__).warning("向量索引清理失败(kb=%s): %s", kb_id, exc)
+
+    # 5) Neo4j 图谱：best-effort，失败仅记录不阻塞（对齐 WeKnora 异步清理语义）
+    graph_nodes = 0
+    try:
+        settings = get_settings()
+
+        if settings.neo4j_enabled:
+            from api.services.graph import Neo4jGraphStore
+
+            graph_nodes = Neo4jGraphStore(
+                settings.NEO4J_URI,
+                settings.NEO4J_USERNAME,
+                settings.NEO4J_PASSWORD,
+                settings.NEO4J_DATABASE or None,
+            ).delete_kb_graph(kb_id)
+    except Exception as exc:  # pragma: no cover - 图谱清理为尽力而为
+        logging.getLogger(__name__).warning("Neo4j 图谱清理失败(kb=%s): %s", kb_id, exc)
+
+    return {
+        "success": True,
+        "data": {
+            "id": kb_id,
+            "doc_count": doc_count,
+            "wiki_count": wiki_count,
+            "graph_nodes": graph_nodes,
+        },
+    }
 
 
 def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0) -> dict:
