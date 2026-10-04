@@ -131,6 +131,21 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info", "--concurrency=1", "-Q", "agent"]
     <<: *api-env
+    environment:
+      # agent 的 LLM 凭证兜底（_resolve_llm_config 优先级：KB 绑定 > 注册表 > env）。
+      # .env 里已有 AI_CHAT_*，但 api-env 未透传 → agent worker 在这里显式注入，
+      # 否则注册表解析不到（后台任务无用户上下文，personal 模型不可见）时
+      # agent 会因缺凭证失败。
+      AI_CHAT_API_ENDPOINT: ${AI_CHAT_API_ENDPOINT:-}
+      AI_CHAT_API_KEY: ${AI_CHAT_API_KEY:-}
+      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-}
+      LLM_BASE_URL: ${AI_CHAT_API_ENDPOINT:-}
+      LLM_API_KEY: ${AI_CHAT_API_KEY:-}
+      LLM_MODEL: ${AI_CHAT_MODEL:-}
+      # inline=worker 内联 agent（默认）；gateway=回退外部 agent-gateway
+      WIKI_AGENT_MODE: ${WIKI_AGENT_MODE:-inline}
+      # 技能脚本超时（wiki 构建可能较久）
+      WORKER_AGENT_SKILL_SCRIPT_TIMEOUT_S: ${WORKER_AGENT_SKILL_SCRIPT_TIMEOUT_S:-1800}
     volumes:
       - kb-docs:/data/kb_documents
     depends_on:

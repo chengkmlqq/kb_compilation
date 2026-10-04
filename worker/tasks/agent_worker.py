@@ -89,11 +89,57 @@ def _attach_skill_zip(config: dict[str, Any]) -> None:
         logger.warning("failed to load skill zip for %s: %s", skill_name, exc)
 
 
-def _resolve_llm_config(config: dict[str, Any]) -> None:
-    """LLM 配置兜底：从 kb_model 注册表解析 chat 模型（对齐今天的教训——
-    不再依赖手工 env WIKI_LLM_API_KEY）。任务已带 model/base_url/api_key 时不覆盖。"""
+def _resolve_llm_config(config: dict[str, Any], kb_id: str = "") -> None:
+    """补齐 LLM 配置（model/base_url/api_key），优先级：
+
+    1. 任务已带（_enqueue_wiki_skill_task 从 WIKI_LLM_* 注入）→ 不动
+    2. **KB 级绑定**（WeKnora wiki_config.synthesis_model_id）
+    3. 模型注册表默认 chat 模型（resolve_model_config）
+    4. env 兜底：WIKI_LLM_* → AI_CHAT_* → LLM_*
+
+    第 4 步不可省：后台任务无用户上下文，personal scope 的模型不可见；而
+    system 默认模型常处于 state=0（禁用），此时注册表解析返回 None —— 没有 env
+    兜底就会重演 d9affbc 的 `WIKI_LLM_API_KEY 未配置`（agent 拿不到凭证直接失败）。
+    """
     if config.get("model") and config.get("base_url") and config.get("api_key"):
         return
+
+    def _set(base: str, model: str, key: str) -> bool:
+        if base and model and key:
+            config.setdefault("base_url", base)
+            config.setdefault("model", model)
+            config.setdefault("api_key", key)
+            return True
+        return False
+
+    # 2) KB 级绑定模型
+    if kb_id:
+        try:
+            from sqlalchemy import select as _select
+
+            from api.models.knowledge import KbDatasource
+
+            db = get_sessionmaker()()
+            try:
+                kb = db.execute(_select(KbDatasource).where(KbDatasource.id == kb_id)).scalars().first()
+            finally:
+                db.close()
+            bound = ((getattr(kb, "wiki_config", None) or {}).get("synthesis_model_id") or "") if kb else ""
+            if bound:
+                from api.services.models import resolve_model_config
+
+                db = get_sessionmaker()()
+                try:
+                    r = resolve_model_config(db, "chat", model_id=bound)
+                finally:
+                    db.close()
+                if r and _set(r.get("base_url", ""), r.get("model", ""), r.get("api_key", "")):
+                    logger.info("agent llm from kb binding kb=%s model=%s", kb_id, bound)
+                    return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("kb-level model binding failed kb=%s: %s", kb_id, exc)
+
+    # 3) 模型注册表默认（后台任务无用户上下文，可能解析不到 → 落到 env）
     try:
         from api.services.models import resolve_model_config
 
@@ -102,12 +148,25 @@ def _resolve_llm_config(config: dict[str, Any]) -> None:
             resolved = resolve_model_config(db, "chat", is_sys_admin=True)
         finally:
             db.close()
-        if resolved:
-            config.setdefault("base_url", resolved.get("base_url") or "")
-            config.setdefault("model", resolved.get("model") or "")
-            config.setdefault("api_key", resolved.get("api_key") or "")
+        if resolved and _set(
+            resolved.get("base_url") or "", resolved.get("model") or "", resolved.get("api_key") or ""
+        ):
+            return
     except Exception as exc:  # noqa: BLE001
         logger.warning("failed to resolve chat model for agent: %s", exc)
+
+    # 4) env 兜底
+    import os
+
+    base = (os.getenv("WIKI_LLM_BASE_URL") or os.getenv("AI_CHAT_API_ENDPOINT") or os.getenv("LLM_BASE_URL") or "").strip()
+    model = (os.getenv("WIKI_LLM_MODEL") or os.getenv("AI_CHAT_MODEL") or os.getenv("LLM_MODEL") or "").strip()
+    key = (os.getenv("WIKI_LLM_API_KEY") or os.getenv("AI_CHAT_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+    if _set(base, model, key):
+        logger.info("agent llm from env fallback model=%s", model)
+    else:
+        logger.error(
+            "agent LLM 未配置：注册表无 system 默认 chat 模型且 env(WIKI_LLM_*/AI_CHAT_*/LLM_*) 为空"
+        )
 
 
 def _handle_agent_wiki_build(job_id: str, task_params: str | None) -> dict[str, Any]:
@@ -117,7 +176,7 @@ def _handle_agent_wiki_build(job_id: str, task_params: str | None) -> dict[str, 
     config["job_id"] = job_id
 
     _attach_skill_zip(config)
-    _resolve_llm_config(config)
+    _resolve_llm_config(config, kb_id=str(config.get("kb_id") or ""))
 
     payload = {
         "input": str(params.get("input") or ""),
