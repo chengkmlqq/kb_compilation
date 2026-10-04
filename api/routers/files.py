@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
 import uuid
@@ -28,6 +29,9 @@ from sqlalchemy.orm import Session
 from api.config import get_settings
 from api.db import get_db
 from api.models.framework import SysFile
+logger = logging.getLogger(__name__)
+
+
 from api.services.identity import Identity, decode_identity_cookie
 
 router = APIRouter(prefix="/files", tags=["files"])
