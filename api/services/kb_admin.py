@@ -34,6 +34,17 @@ from api.models.knowledge import (
 )
 from api.services.retrieval import ChunkHit, hybrid_search
 from api.services.wiki import slugify
+from api.services.kb_config import (
+    KB_TYPES,
+    normalize_asr_config,
+    normalize_extract_config,
+    normalize_faq_config,
+    normalize_indexing_strategy,
+    normalize_question_generation_config,
+    normalize_storage_provider_config,
+    normalize_vlm_config,
+    normalize_wiki_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,21 +142,51 @@ def create_kb(
     created_by: str | None = None,
     scope: str = "system",
     owner_user_id: str | None = None,
+    type: str = "document",
+    custom_wiki_generation: bool = False,
+    embedding_model_id: str | None = None,
+    summary_model_id: str | None = None,
+    storage_backend_id: str | None = None,
+    vector_store_id: str | None = None,
+    configs: dict | None = None,
 ) -> KbDatasource:
     """Create a KB; name is required, id is generated if absent.
 
     scope: personal(owner_user_id) / team(team_name) / system(admin).
+    indexing_strategy 归一为 WeKnora 四路开关（缺失键用 WeKnora 默认）。
+    configs 为其余 JSON 配置（wiki_config/extract_config/faq_config 等）。
     """
+    from api.services.kb_config import normalize_indexing_strategy
+
+    cfg = dict(configs or {})
     kb = KbDatasource(
         id=_uuid(),
         name=name.strip(),
         label=label,
         description=description,
+        type=type if type in KB_TYPES else "document",
+        custom_wiki_generation=bool(custom_wiki_generation),
+        embedding_model_id=embedding_model_id,
+        summary_model_id=summary_model_id,
+        storage_backend_id=storage_backend_id,
+        vector_store_id=vector_store_id,
         scope=scope or "system",
         team_name=team_name,
         owner_user_id=owner_user_id,
         created_by=created_by,
-        indexing_strategy=indexing_strategy or {},
+        indexing_strategy=normalize_indexing_strategy(indexing_strategy),
+        wiki_config=normalize_wiki_config(cfg.get("wiki_config")),
+        extract_config=normalize_extract_config(cfg.get("extract_config")),
+        faq_config=normalize_faq_config(cfg.get("faq_config")),
+        question_generation_config=normalize_question_generation_config(
+            cfg.get("question_generation_config")
+        ),
+        vlm_config=normalize_vlm_config(cfg.get("vlm_config")),
+        asr_config=normalize_asr_config(cfg.get("asr_config")),
+        storage_provider_config=normalize_storage_provider_config(
+            cfg.get("storage_provider_config")
+        ),
+        image_processing_config=dict(cfg.get("image_processing_config") or {}),
         state="1",
     )
     db.add(kb)
@@ -164,8 +205,36 @@ def update_kb(db: Session, kb_id: str, fields: dict) -> KbDatasource | None:
         kb.label = str(fields.get("label") or "")
     if "description" in fields:
         kb.description = str(fields.get("description") or "")
+    if "type" in fields:
+        t = str(fields.get("type") or "document")
+        kb.type = t if t in KB_TYPES else kb.type
+    if "custom_wiki_generation" in fields:
+        kb.custom_wiki_generation = bool(fields["custom_wiki_generation"])
+    for f in ("embedding_model_id", "summary_model_id", "storage_backend_id", "vector_store_id"):
+        if f in fields:
+            setattr(kb, f, str(fields.get(f) or "") or None)
     if "indexing_strategy" in fields and isinstance(fields["indexing_strategy"], dict):
-        kb.indexing_strategy = fields["indexing_strategy"]
+        kb.indexing_strategy = normalize_indexing_strategy(fields["indexing_strategy"])
+    raw_cfg = fields.get("configs")
+    cfg: dict = raw_cfg if isinstance(raw_cfg, dict) else {}
+    normalizers = {
+        "wiki_config": normalize_wiki_config,
+        "extract_config": normalize_extract_config,
+        "faq_config": normalize_faq_config,
+        "question_generation_config": normalize_question_generation_config,
+        "vlm_config": normalize_vlm_config,
+        "asr_config": normalize_asr_config,
+        "storage_provider_config": normalize_storage_provider_config,
+    }
+    for key, fn in normalizers.items():
+        if key in cfg:
+            setattr(kb, key, fn(cfg.get(key)))
+        elif key in fields:  # 顶层平铺也接受
+            setattr(kb, key, fn(fields.get(key)))
+    if "image_processing_config" in cfg:
+        kb.image_processing_config = dict(cfg["image_processing_config"] or {})
+    elif "image_processing_config" in fields:
+        kb.image_processing_config = dict(fields["image_processing_config"] or {})
     db.commit()
     db.refresh(kb)
     return kb

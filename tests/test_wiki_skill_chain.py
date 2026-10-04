@@ -128,6 +128,65 @@ def test_handle_process_document_no_chain_on_failure(chain_env, monkeypatch) -> 
     db.close()
 
 
+def test_handle_process_document_graph_triggered_when_enabled(chain_env, monkeypatch) -> None:
+    """graph_enabled=true → 额外 enqueue KbGraphBuildTask。"""
+    Session, sent = chain_env
+    # 种子 KB：graph 开、wiki 关
+    from api.models.knowledge import KbDatasource
+
+    db = Session()
+    db.add(
+        KbDatasource(
+            id="kb-1",
+            name="kb",
+            indexing_strategy={"vector_enabled": True, "keyword_enabled": True, "wiki_enabled": False, "graph_enabled": True},
+            state="1",
+        )
+    )
+    db.commit()
+    db.close()
+    monkeypatch.setattr(
+        dp, "process_document",
+        lambda doc_id, content, parser_engine=None: {"success": True, "parse_state": "READY", "document_id": doc_id},
+    )
+    result = dp._handle_process_document("job-1", json.dumps({"documentId": "doc-1", "kbId": "kb-1"}))
+    assert result["graph_build_triggered"] is True
+    # wiki 关闭 → 不触发 wiki
+    assert result["wiki_skill_triggered"] is False
+    db = Session()
+    classes = {j.task_class for j in db.execute(select(Job)).scalars().all()}
+    assert "KbGraphBuildTask" in classes
+    assert "KbAgentGatewayTask" not in classes
+    db.close()
+
+
+def test_handle_process_document_no_wiki_when_disabled(chain_env, monkeypatch) -> None:
+    """wiki_enabled=false → 不触发 wiki 构建（WeKnora 默认语义）。"""
+    Session, sent = chain_env
+    from api.models.knowledge import KbDatasource
+
+    db = Session()
+    db.add(
+        KbDatasource(
+            id="kb-1",
+            name="kb",
+            indexing_strategy={"vector_enabled": True, "keyword_enabled": True, "wiki_enabled": False, "graph_enabled": False},
+            state="1",
+        )
+    )
+    db.commit()
+    db.close()
+    monkeypatch.setattr(
+        dp, "process_document",
+        lambda doc_id, content, parser_engine=None: {"success": True, "parse_state": "READY", "document_id": doc_id},
+    )
+    result = dp._handle_process_document("job-1", json.dumps({"documentId": "doc-1", "kbId": "kb-1"}))
+    assert result["wiki_skill_triggered"] is False
+    db = Session()
+    assert len(db.execute(select(Job)).scalars().all()) == 0
+    db.close()
+
+
 def test_handle_process_document_no_chain_without_kb_id(chain_env, monkeypatch) -> None:
     """process_document 成功（READY）但缺 kb_id → 不触发（避免任务无目标库）。"""
     Session, sent = chain_env

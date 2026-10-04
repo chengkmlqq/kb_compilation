@@ -67,6 +67,31 @@ class KbDatasource(Base):
     # {"vector_enabled": bool, "keyword_enabled": bool, "wiki_enabled": bool, "graph_enabled": bool}
     indexing_strategy: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # ── WeKnora 对齐配置（2026-10）────────────────────────────────────────
+    # 字段与 WeKnora internal/types/knowledgebase.go 的 KnowledgeBase 结构一一对应。
+    type: Mapped[str] = mapped_column(String(32), default="document")  # document / faq
+    # 自定义 Wiki 生成：开启后不自动构建，需手动触发（WeKnora custom_wiki_generation）
+    custom_wiki_generation: Mapped[bool] = mapped_column(Boolean, default=False)
+    # KB 级模型绑定（WeKnora embedding_model_id / summary_model_id）
+    embedding_model_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    summary_model_id: Mapped[str | None] = mapped_column(String(64))
+    # VLM（图片理解）/ ASR（语音转写）/ 图片处理：KB 级配置
+    vlm_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    asr_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    image_processing_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 知识图谱抽取配置（WeKnora extract_config / GraphSettings）
+    extract_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    # FAQ 知识库配置（type=faq 时生效）
+    faq_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 文档型 KB 的问题生成配置
+    question_generation_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Wiki 配置：合成模型/抽取粒度/内容指令/skill（KB 级绑定构建技能）
+    wiki_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 存储后端 / 向量存储绑定（provider 选择 + 具体实例）
+    storage_provider_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    storage_backend_id: Mapped[str | None] = mapped_column(String(36))
+    vector_store_id: Mapped[str | None] = mapped_column(String(36))
+
     state: Mapped[str] = mapped_column(String(16), default="1")  # 1=active 0=deleted
     created_by: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime | None] = mapped_column(

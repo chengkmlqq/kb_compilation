@@ -44,23 +44,41 @@ def load_embedding_config(
     user_id: str = "",
     team_name: str = "",
     is_sys_admin: bool = False,
+    kb_id: str = "",
 ) -> EmbeddingConfig:
     """Resolve embedding config with scoped model priority: scoped model
     registry default (personal > team > system), then legacy DB (SYSTEM_CONFIG)
     wins over env, like the source platform's runtime-config precedence.
-    Consumers with no user context resolve the system default first."""
+    Consumers with no user context resolve the system default first.
+
+    kb_id: when set and the KB has `embedding_model_id` bound, that specific
+    model wins (WeKnora KB-level embedding_model_id binding)."""
     settings = get_settings()
 
     if db is not None:
         try:
             from api.services.models import resolve_model_config
 
+            bound_model_id = ""
+            if kb_id:
+                try:
+                    from sqlalchemy import select as _select
+
+                    from api.models.knowledge import KbDatasource as _Kb
+
+                    kb = db.execute(
+                        _select(_Kb).where(_Kb.id == kb_id)
+                    ).scalars().first()
+                    bound_model_id = (getattr(kb, "embedding_model_id", "") or "") if kb else ""
+                except Exception:  # noqa: BLE001
+                    logger.warning("failed to read kb.embedding_model_id", exc_info=True)
             resolved = resolve_model_config(
                 db,
                 "embedding",
                 caller_user_id=user_id or "",
                 caller_team_name=team_name or "",
                 is_sys_admin=is_sys_admin,
+                model_id=bound_model_id or None,
             )
             if resolved and resolved.get("base_url"):
                 return EmbeddingConfig(
@@ -181,15 +199,17 @@ def get_embedding_client(
     user_id: str = "",
     team_name: str = "",
     is_sys_admin: bool = False,
+    kb_id: str = "",
 ) -> EmbeddingClient:
     """Process-wide client cache keyed by resolution context.
 
     Scoped model configs (personal/team/system) can resolve different
     endpoints per caller, so the cache key is (user_id, team_name,
-    is_sys_admin) instead of a single global client. Reset after config
-    changes via reset_embedding_client()."""
+    is_sys_admin, kb_id) instead of a single global client — kb_id is in
+    the key because KB-level embedding_model_id binding changes the model.
+    Reset after config changes via reset_embedding_client()."""
     global _clients
-    key = (user_id or "", team_name or "", bool(is_sys_admin))
+    key = (user_id or "", team_name or "", bool(is_sys_admin), kb_id or "")
     with _client_lock:
         client = _clients.get(key)
         if client is None:
@@ -198,6 +218,7 @@ def get_embedding_client(
                 user_id=user_id or "",
                 team_name=team_name or "",
                 is_sys_admin=is_sys_admin,
+                kb_id=kb_id or "",
             )
             client = EmbeddingClient(cfg)
             _clients = dict(_clients)

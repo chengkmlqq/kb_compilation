@@ -77,12 +77,19 @@ class RetrievalConfig:
 
 
 def config_from_kb(kb: KbDatasource, overrides: dict | None = None) -> RetrievalConfig:
-    """Build a RetrievalConfig from the KB's indexing_strategy + overrides."""
-    strategy = (kb.indexing_strategy or {}) if kb else {}
+    """Build a RetrievalConfig from the KB's indexing_strategy + overrides.
+
+    Defaults come from kb_config.normalize_indexing_strategy — the same
+    WeKnora defaults used on create (wiki_enabled=False), so a KB whose
+    strategy predates the key behaves identically everywhere.
+    """
+    from api.services.kb_config import normalize_indexing_strategy
+
+    strategy = normalize_indexing_strategy((kb.indexing_strategy or {}) if kb else {})
     cfg = RetrievalConfig(
         vector_enabled=bool(strategy.get("vector_enabled", True)),
         keyword_enabled=bool(strategy.get("keyword_enabled", True)),
-        wiki_enabled=bool(strategy.get("wiki_enabled", True)),
+        wiki_enabled=bool(strategy.get("wiki_enabled", False)),
     )
     for key, value in (overrides or {}).items():
         if hasattr(cfg, key):

@@ -74,6 +74,14 @@ class KBCreateRequest(BaseModel):
     indexing_strategy: dict | None = None
     scope: str = "system"
     team_name: str | None = None
+    # ── WeKnora 对齐配置 ──
+    type: str = "document"  # document / faq
+    custom_wiki_generation: bool = False
+    embedding_model_id: str | None = None
+    summary_model_id: str | None = None
+    storage_backend_id: str | None = None
+    vector_store_id: str | None = None
+    configs: dict | None = None  # wiki/extract/faq/vlm/asr/storage 等 JSON 配置
 
 
 class KBUpdateRequest(BaseModel):
@@ -81,6 +89,13 @@ class KBUpdateRequest(BaseModel):
     label: str | None = None
     description: str | None = None
     indexing_strategy: dict | None = None
+    type: str | None = None
+    custom_wiki_generation: bool | None = None
+    embedding_model_id: str | None = None
+    summary_model_id: str | None = None
+    storage_backend_id: str | None = None
+    vector_store_id: str | None = None
+    configs: dict | None = None
 
 
 class SearchRequest(BaseModel):
@@ -191,6 +206,13 @@ def post_kb(
         team_name=owner_team_name or None,
         owner_user_id=owner_user_id or None,
         created_by=caller_user_id or None,
+        type=req.type,
+        custom_wiki_generation=req.custom_wiki_generation,
+        embedding_model_id=req.embedding_model_id,
+        summary_model_id=req.summary_model_id,
+        storage_backend_id=req.storage_backend_id,
+        vector_store_id=req.vector_store_id,
+        configs=req.configs,
     )
     return {"success": True, "data": {"id": kb.id, "name": kb.name, "scope": kb.scope}}
 

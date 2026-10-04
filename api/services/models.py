@@ -554,17 +554,26 @@ def resolve_model_config(
     caller_user_id: str = "",
     caller_team_name: str = "",
     is_sys_admin: bool = False,
+    model_id: str | None = None,
 ) -> dict | None:
     """Return {base_url, api_key, model, dimension} for the resolved default,
     or None when no scoped default exists (callers then fall back to the
-    legacy modo_dim / env path)."""
-    m = resolve_default_model(
-        db,
-        model_type,
-        caller_user_id=caller_user_id,
-        caller_team_name=caller_team_name,
-        is_sys_admin=is_sys_admin,
-    )
+    legacy modo_dim / env path).
+
+    model_id: resolve THIS specific model instead of the default (used by
+    KB-level embedding_model_id / summary_model_id binding, WeKnora 对齐)."""
+    if model_id:
+        m = get_model(db, model_id)
+        if not m or m.type != model_type or m.state != "1":
+            return None
+    else:
+        m = resolve_default_model(
+            db,
+            model_type,
+            caller_user_id=caller_user_id,
+            caller_team_name=caller_team_name,
+            is_sys_admin=is_sys_admin,
+        )
     if not m:
         return None
     return {

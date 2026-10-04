@@ -74,7 +74,7 @@ def process_document(document_id: str, file_content: bytes, parser_engine: str |
                     "error": f"document bytes unavailable (storage_path={document.storage_path!r})",
                 }
 
-        client = get_embedding_client(db)
+        client = get_embedding_client(db, kb_id=document.kb_id)
         return ingest_document(db, document, file_content, client, parser_engine=parser_engine)
     finally:
         db.close()
@@ -99,7 +99,8 @@ def embed_document(document_id: str) -> dict:
         )
         if not chunks:
             return {"success": False, "error": "no chunks to embed"}
-        client = get_embedding_client(db)
+        # KB 级 embedding_model_id 绑定：重嵌入用 KB 绑定的模型
+        client = get_embedding_client(db, kb_id=chunks[0].kb_id)
         texts = [c.content for c in chunks]
         vectors = client.embed_texts(texts)
         store = get_vector_store()
@@ -131,18 +132,32 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
     result = process_document(document_id, file_content, parser_engine)
     result["job_id"] = job_id
 
-    # 自动触发 wiki 构建（AgentGateway 链路）：文档解析/向量化成功后，
-    # enqueue KbAgentGatewayTask → agent-gateway 内跑技能 kb-wiki-builder
-    # （build_wiki.py）读 chunks → LLM → 写 wiki 页。技能 ZIP 随任务下发
-    # （agent_gateway.py 1A/2A 从 kb_skill 表取 package_zip），网关侧无需预装。
+    # 自动触发下游构建（WeKnora 索引策略对齐）：文档解析/向量化成功后，
+    #   - wiki_enabled=true 且 custom_wiki_generation=false → enqueue KbAgentGatewayTask
+    #     用 KB 绑定的 wiki_config.skill（回退 WIKI_SKILL_NAME）跑 build_wiki.py
+    #   - graph_enabled=true → enqueue KbGraphBuildTask 抽 Neo4j 实体/关系
+    # 开关与技能绑定从 kb_datasource 读（_kb_pipeline_flags），读取失败回退历史默认。
     # 成功标志：ingest_document 返回 parse_state == "READY"（无 success 键）。
     if result.get("parse_state") == "READY" and kb_id:
-        try:
-            enqueued = _enqueue_wiki_skill_task(kb_id, document_id)
-            result["wiki_skill_triggered"] = enqueued
-        except Exception as exc:  # noqa: BLE001 — 触发失败不使文档处理任务失败
-            logger.warning("failed to trigger wiki skill task: %s", exc)
+        flags = _kb_pipeline_flags(kb_id)
+        if flags["wiki"]:
+            try:
+                enqueued = _enqueue_wiki_skill_task(
+                    kb_id, document_id, skill_name=flags["skill"] or None
+                )
+                result["wiki_skill_triggered"] = enqueued
+            except Exception as exc:  # noqa: BLE001 — 触发失败不使文档处理任务失败
+                logger.warning("failed to trigger wiki skill task: %s", exc)
+                result["wiki_skill_triggered"] = False
+        else:
             result["wiki_skill_triggered"] = False
+            result["wiki_skipped"] = "wiki_enabled=false 或 custom_wiki_generation=true"
+        if flags["graph"]:
+            try:
+                result["graph_build_triggered"] = _enqueue_graph_build_task(kb_id, document_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("failed to trigger graph build task: %s", exc)
+                result["graph_build_triggered"] = False
     return result
 
 
@@ -195,9 +210,13 @@ def _enqueue_wiki_build_task(kb_id: str, document_id: str) -> bool:
         db.close()
 
 
-def _enqueue_wiki_skill_task(kb_id: str, document_id: str) -> bool:
+def _enqueue_wiki_skill_task(
+    kb_id: str, document_id: str, skill_name: str | None = None
+) -> bool:
     """向 agent-gateway 提交技能构建任务（KbAgentGatewayTask）。
 
+    skill_name: 指定技能（KB 级 wiki_config.skill 绑定）；为空则用全局
+    WIKI_SKILL_NAME（WeKnora WikiConfig.Skill 为空的回退语义）。
     config 携带:
       - skill: 技能名（kb_skill 表 scope=system 的 wiki 构建技能）
       - kb_id / document_id: 技能脚本定位文档（读 chunks 后生成 wiki 页）
@@ -206,7 +225,7 @@ def _enqueue_wiki_skill_task(kb_id: str, document_id: str) -> bool:
     from api.config import get_settings
 
     settings = get_settings()
-    skill_name = (settings.WIKI_SKILL_NAME or "kb-wiki-builder").strip()
+    skill_name = (skill_name or settings.WIKI_SKILL_NAME or "kb-wiki-builder").strip()
     kb_base_url = (settings.KB_PUBLIC_BASE_URL or "http://10.1.215.50").strip()
     llm_base = (settings.WIKI_LLM_BASE_URL or "").strip()
     llm_model = (settings.WIKI_LLM_MODEL or "").strip()
@@ -281,6 +300,83 @@ def _enqueue_wiki_skill_task(kb_id: str, document_id: str) -> bool:
         logger.warning("failed to enqueue wiki skill task: %s", exc)
         return False
     return True
+
+
+def _enqueue_graph_build_task(kb_id: str, document_id: str) -> bool:
+    """enqueue KbGraphBuildTask（Neo4j 知识图谱抽取）。
+
+    遵循与 wiki 相同的顺序契约：先 commit Job 行、再投 broker。
+    """
+    from worker.celery_app import celery_app
+
+    task_params = json.dumps(
+        {"kbId": kb_id, "documentId": document_id, "language": "中文"},
+        ensure_ascii=False,
+    )
+    job_id = f"GRAPH_BUILD_{uuid.uuid4().hex[:12]}"
+    from api.db import get_sessionmaker
+    from api.models.framework import Job
+
+    db = get_sessionmaker()()
+    try:
+        db.add(
+            Job(
+                id=job_id,
+                task_id=job_id,
+                task_class="KbGraphBuildTask",
+                queue_name="default",
+                task_params=task_params,
+                trigger_type="API",
+                state="PENDING",
+            )
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+    try:
+        celery_app.send_task(
+            "worker.tasks.scheduler.execute_modo_job",
+            args=[job_id],
+            task_id=job_id,
+            queue="default",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("failed to enqueue graph build task: %s", exc)
+        return False
+    return True
+
+
+def _kb_pipeline_flags(kb_id: str) -> dict:
+    """读 KB 的 wiki_enabled/graph_enabled 开关与 wiki 技能绑定。
+
+    读取失败时返回兼容默认（wiki=True 自动建、graph=False），保证存量行为不回退。
+    """
+    fallback = {"wiki": True, "graph": False, "skill": ""}
+    try:
+        from api.db import get_sessionmaker as _gsm
+        from api.models.knowledge import KbDatasource
+
+        db = _gsm()()
+        try:
+            kb = db.execute(select(KbDatasource).where(KbDatasource.id == kb_id)).scalars().first()
+        finally:
+            db.close()
+        if not kb:
+            return fallback
+        from api.services.kb_config import custom_wiki_generation, pipeline_enabled, wiki_skill_name
+
+        return {
+            "wiki": pipeline_enabled(kb, "wiki_enabled") and not custom_wiki_generation(kb),
+            "graph": pipeline_enabled(kb, "graph_enabled"),
+            "skill": wiki_skill_name(kb),
+        }
+    except Exception:  # noqa: BLE001
+        logger.warning("failed to read kb pipeline flags for kb=%s", kb_id, exc_info=True)
+        return fallback
 
 
 def _handle_embed_document(job_id: str, task_params: str | None) -> dict:
