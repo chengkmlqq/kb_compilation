@@ -82,27 +82,13 @@ export interface KbItem {
   doc_count?: number;
   page_count?: number;
   created_at?: string | null;
-  // ── WeKnora 对齐配置 ──
-  type?: "document" | "faq";
-  custom_wiki_generation?: boolean;
-  embedding_model_id?: string;
-  summary_model_id?: string;
-  wiki_config?: {
-    skill?: string;
-    extraction_granularity?: "focused" | "standard" | "exhaustive";
-    content_instructions?: string;
-    extraction_instructions?: string;
-    max_pages_per_ingest?: number;
-    synthesis_model_id?: string;
-  };
-  extract_config?: { enabled?: boolean; text?: string; tags?: string[] };
-  faq_config?: { index_mode?: string; question_index_mode?: string };
-  question_generation_config?: { enabled?: boolean; question_count?: number };
-  vlm_config?: { enabled?: boolean; model_id?: string };
-  asr_config?: { enabled?: boolean; model_id?: string };
-  storage_provider_config?: { provider?: string };
-  storage_backend_id?: string;
-  vector_store_id?: string;
+}
+
+export interface PageList<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export interface KbUpdatePayload {
@@ -125,13 +111,6 @@ export function apiGetKb(kbId: string) {
   return request<KbItem>(`/api/v1/kbs/${encodeURIComponent(kbId)}`);
 }
 
-export interface PageList<T> {
-  items: T[];
-  total: number;
-  page: number;
-  pageSize: number;
-}
-
 export function apiListKbs(page = 1, pageSize = 20, keyword = "", scope?: string) {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (keyword) params.set("keyword", keyword);
@@ -139,31 +118,13 @@ export function apiListKbs(page = 1, pageSize = 20, keyword = "", scope?: string
   return request<PageList<KbItem>>(`/api/v1/kbs?${params.toString()}`);
 }
 
-// WeKnora 对齐：索引四路 pipeline 开关
-export interface IndexingStrategy {
-  vector_enabled?: boolean;
-  keyword_enabled?: boolean;
-  wiki_enabled?: boolean;
-  graph_enabled?: boolean;
-}
-
-export interface KbCreatePayload {
+export function apiCreateKb(payload: {
   name: string;
   label?: string;
   description?: string;
   scope?: string;
   team_name?: string;
-  /** 知识库类型：document（文档）/ faq（问答对）。WeKnora 对齐。 */
-  type?: "document" | "faq";
-  /** 四路索引 pipeline 开关（缺失键后端按 WeKnora 默认补齐）。 */
-  indexing_strategy?: IndexingStrategy;
-  /** 自定义 Wiki 生成：开启后上传文档不自动构建 wiki，需手动触发。 */
-  custom_wiki_generation?: boolean;
-  /** 其余对齐配置（wiki_config.skill=构建技能、extract_config 等）。 */
-  configs?: Record<string, unknown>;
-}
-
-export function apiCreateKb(payload: KbCreatePayload) {
+}) {
   return request<{ id: string; scope?: string }>("/api/v1/kbs", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -280,69 +241,6 @@ export function apiWikiGraph(
   if (params.types && params.types.length > 0) q.set("types", params.types.join(","));
   const qs = q.toString();
   return request<WikiGraphData>(`/api/v1/kbs/${kbId}/wiki/graph${qs ? `?${qs}` : ""}`);
-}
-
-// ---- Neo4j 知识图谱（实体/关系，与上面的 wiki 链接图不同源）----
-
-export interface GraphNode {
-  name: string;
-  entity_type: string;
-  description: string;
-  degree: number;
-  chunks: string[];
-}
-
-export interface GraphEdge {
-  source: string;
-  target: string;
-  type: string;
-  description: string;
-  strength: string | number;
-}
-
-export interface GraphData {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-}
-
-export interface GraphStats {
-  nodes: number;
-  edges: number;
-  entity_types: { type: string; count: number }[];
-}
-
-export interface GraphHealth {
-  enabled: boolean;
-  available: boolean;
-  ok?: boolean;
-  error?: string;
-}
-
-export function apiGraphHealth() {
-  return request<GraphHealth>("/api/v1/graph/health");
-}
-
-export function apiKbGraph(kbId: string, params: { limit?: number } = {}) {
-  const q = new URLSearchParams();
-  if (params.limit !== undefined) q.set("limit", String(params.limit));
-  const qs = q.toString();
-  return request<GraphData>(`/api/v1/kbs/${kbId}/graph${qs ? `?${qs}` : ""}`);
-}
-
-export function apiKbGraphEgo(kbId: string, center: string, depth = 1, limit = 200) {
-  const q = new URLSearchParams({ center, depth: String(depth), limit: String(limit) });
-  return request<GraphData>(`/api/v1/kbs/${kbId}/graph/ego?${q.toString()}`);
-}
-
-export function apiKbGraphSearch(kbId: string, q: string, limit = 100) {
-  return request<GraphData>(`/api/v1/kbs/${kbId}/graph/search`, {
-    method: "POST",
-    body: JSON.stringify({ q, limit }),
-  });
-}
-
-export function apiKbGraphStats(kbId: string) {
-  return request<GraphStats>(`/api/v1/kbs/${kbId}/graph/stats`);
 }
 
 // ---- wiki 管理（页面/目录 CRUD + 统计/检查/重建链接）----
@@ -718,6 +616,154 @@ export function apiTestDatasource(payload: Record<string, unknown>) {
   return request<{ success?: boolean; message?: string }>("/api/v1/open/datasources/test", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+// ---- Neo4j 知识图谱（后端 api/routers/graph.py） ----
+
+export interface GraphNode {
+  name: string;
+  entity_type?: string;
+  /** 度（邻接数），后端 ego/overview 可能返回 */
+  degree?: number;
+  /** 描述（部分实体带摘要） */
+  description?: string;
+  /** 关联 chunk（来源 chunk 列表） */
+  chunks?: string[];
+  properties?: Record<string, unknown>;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  /** 关系类型（后端 overview/ego 返回） */
+  type?: string;
+  relation?: string;
+  properties?: Record<string, unknown>;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export interface GraphHealth {
+  enabled: boolean;
+  available?: boolean;
+  [k: string]: unknown;
+}
+
+export interface GraphEntityTypeStat {
+  type: string;
+  count?: number;
+}
+
+export interface GraphStats {
+  nodes: number;
+  edges: number;
+  entity_types?: GraphEntityTypeStat[];
+  relation_types?: GraphEntityTypeStat[];
+  [k: string]: unknown;
+}
+
+export function apiGraphHealth() {
+  return request<GraphHealth>("/api/v1/graph/health");
+}
+
+export function apiKbGraph(kbId: string, params?: { limit?: number }) {
+  const qs = params?.limit ? `?limit=${params.limit}` : "";
+  return request<GraphData>(`/api/v1/kbs/${kbId}/graph${qs}`);
+}
+
+export function apiKbGraphStats(kbId: string) {
+  return request<GraphStats>(`/api/v1/kbs/${kbId}/graph/stats`);
+}
+
+export function apiKbGraphEgo(kbId: string, center: string, depth = 1, limit = 200) {
+  const qs = `?center=${encodeURIComponent(center)}&depth=${depth}&limit=${limit}`;
+  return request<GraphData>(`/api/v1/kbs/${kbId}/graph/ego${qs}`);
+}
+
+export function apiKbGraphSearch(kbId: string, q: string, limit = 100) {
+  return request<GraphData>(`/api/v1/kbs/${kbId}/graph/search`, {
+    method: "POST",
+    body: JSON.stringify({ q, limit }),
+  });
+}
+
+// ---- 数据查询（DataGrid，迁移 data-synth） ----
+
+export interface DatagridDsItem {
+  dsName: string;
+  dsLabel?: string;
+  dsType?: string;
+  dsId?: string;
+  schema?: string;
+}
+
+export interface DatagridColumn {
+  name?: string;
+  label?: string;
+  data_type?: string;
+  is_nullable?: string | number | boolean;
+  default_value?: string | null;
+  comment?: string | null;
+  type?: string;
+}
+
+export interface DatagridExecuteResult {
+  success: boolean;
+  msg?: string;
+  resultType?: "select" | "execute";
+  columns?: string[];
+  rows?: Array<Record<string, unknown>>;
+  rowcount?: number | null;
+  truncated?: boolean;
+}
+
+export function apiDatagridDatasources() {
+  return request<DatagridDsItem[]>("/api/v1/datagrid/datasources");
+}
+
+export function apiDatagridExecute(dsName: string, sql: string, schemaName?: string) {
+  return request<DatagridExecuteResult[]>("/api/v1/datagrid/execute", {
+    method: "POST",
+    body: JSON.stringify({ dsName, sql, schemaName }),
+  });
+}
+
+export function apiDatagridTables(dsName: string, schemaName?: string, searchName?: string) {
+  return request<{ success: boolean; msg?: string; rows?: Array<Record<string, unknown>>; total?: number }>(
+    "/api/v1/datagrid/tables",
+    { method: "POST", body: JSON.stringify({ dsName, schemaName, searchName }) },
+  );
+}
+
+export function apiDatagridColumns(dsName: string, tableName: string, schemaName?: string) {
+  return request<{ success: boolean; msg?: string; rows?: DatagridColumn[] }>(
+    "/api/v1/datagrid/columns",
+    { method: "POST", body: JSON.stringify({ dsName, tableName, schemaName }) },
+  );
+}
+
+export function apiDatagridDdl(dsName: string, tableName: string, schemaName?: string) {
+  return request<{ success: boolean; ddl?: string; msg?: string }>("/api/v1/datagrid/ddl", {
+    method: "POST",
+    body: JSON.stringify({ dsName, tableName, schemaName }),
+  });
+}
+
+export function apiDatagridTableInfo(dsName: string, tableName: string, schemaName?: string) {
+  return request<{ success: boolean; rows?: Array<Record<string, unknown>>; msg?: string }>(
+    "/api/v1/datagrid/table-info",
+    { method: "POST", body: JSON.stringify({ dsName, tableName, schemaName }) },
+  );
+}
+
+export function apiDatagridViews(dsName: string, schemaName?: string) {
+  return request<{ success: boolean; rows?: Array<Record<string, unknown>> }>("/api/v1/datagrid/views", {
+    method: "POST",
+    body: JSON.stringify({ dsName, schemaName }),
   });
 }
 

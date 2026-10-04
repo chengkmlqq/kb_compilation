@@ -17,6 +17,7 @@ import {
   RightOutlined,
   RobotOutlined,
   ToolOutlined,
+  TableOutlined,
   SettingOutlined,
   // 系统管理分组下的子项（用户/角色/团队/菜单/日志）
   UserOutlined,
@@ -46,6 +47,7 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   FolderOutlined: <FolderOutlined />,
   ApiOutlined: <ApiOutlined />,
   ToolOutlined: <ToolOutlined />,
+  TableOutlined: <TableOutlined />,
 };
 const DEFAULT_ICON = <AppstoreOutlined />;
 

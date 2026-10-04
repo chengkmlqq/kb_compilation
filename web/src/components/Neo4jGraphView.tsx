@@ -54,12 +54,12 @@ const ENTITY_LABELS: Record<string, string> = {
   Operation: "操作",
 };
 
-function entityColor(t: string): string {
-  return ENTITY_COLORS[t] || "#bfbfbf";
+function entityColor(type?: string): string {
+  return ENTITY_COLORS[type ?? ""] || "#bfbfbf";
 }
 
-function entityLabel(t: string): string {
-  return ENTITY_LABELS[t] || t || "实体";
+function entityLabel(type?: string): string {
+  return ENTITY_LABELS[type ?? ""] || type || "实体";
 }
 
 interface Pt {
@@ -135,7 +135,7 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
     void apiKbGraphStats(kbId).then((s) => {
       if (s.success && s.data) {
         setStats(s.data);
-        setFilterTypes(new Set(s.data.entity_types.map((t) => t.type)));
+        setFilterTypes(new Set((s.data.entity_types ?? []).map((t) => t.type)));
       }
     });
   }, [kbId]);
@@ -174,7 +174,7 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
   const visibleNodes = useCallback(
     (d: GraphData) => {
       if (filterTypes.size === 0) return d.nodes;
-      return d.nodes.filter((n) => filterTypes.has(n.entity_type));
+      return d.nodes.filter((n) => filterTypes.has(n.entity_type ?? ""));
     },
     [filterTypes],
   );
@@ -411,9 +411,9 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
       }
       extra={
         <Space wrap>
-          {stats && stats.entity_types.length > 0 ? (
+          {stats && (stats.entity_types?.length ?? 0) > 0 ? (
             <Space wrap size={4}>
-              {stats.entity_types.map((t) => (
+              {(stats.entity_types ?? []).map((t) => (
                 <Tag
                   key={t.type}
                   color={filterTypes.has(t.type) ? entityColor(t.type) : "default"}

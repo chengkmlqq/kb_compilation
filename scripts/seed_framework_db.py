@@ -67,6 +67,7 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("jobs", "jobs", "任务监控", "/jobs", "grp_data", "DashboardOutlined", 2),
     ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_data", "ScheduleOutlined", 3),
     ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_data", "CloudServerOutlined", 4),
+    ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_data", "TableOutlined", 5),
     # ---- 系统管理（分组兼页面：点击自身跳 /system，子项为子系统页）。
     # 用户/角色/团队/菜单/日志用 ?tab= 深链直进聚合页的对应 Tab（对齐 ds 各子项独立入口）。
     ("system", "system", "系统管理", "/system", "root_kb", "SettingOutlined", 4),
