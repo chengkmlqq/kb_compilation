@@ -131,18 +131,18 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
     result = process_document(document_id, file_content, parser_engine)
     result["job_id"] = job_id
 
-    # 自动触发 wiki 构建（2026-10-03 改造）：文档解析/向量化成功后，
-    # 直接在 worker 内执行 KbSkillWikiBuildTask（读 chunks → LLM → 写 wiki 页），
-    # 不再经 agent-gateway 技能任务（KbAgentGatewayTask）。进度写入
-    # modo_job.error_message，任务监控页实时可见。
+    # 自动触发 wiki 构建（AgentGateway 链路）：文档解析/向量化成功后，
+    # enqueue KbAgentGatewayTask → agent-gateway 内跑技能 kb-wiki-builder
+    # （build_wiki.py）读 chunks → LLM → 写 wiki 页。技能 ZIP 随任务下发
+    # （agent_gateway.py 1A/2A 从 kb_skill 表取 package_zip），网关侧无需预装。
     # 成功标志：ingest_document 返回 parse_state == "READY"（无 success 键）。
     if result.get("parse_state") == "READY" and kb_id:
         try:
-            enqueued = _enqueue_wiki_build_task(kb_id, document_id)
-            result["wiki_build_triggered"] = enqueued
+            enqueued = _enqueue_wiki_skill_task(kb_id, document_id)
+            result["wiki_skill_triggered"] = enqueued
         except Exception as exc:  # noqa: BLE001 — 触发失败不使文档处理任务失败
-            logger.warning("failed to trigger wiki build task: %s", exc)
-            result["wiki_build_triggered"] = False
+            logger.warning("failed to trigger wiki skill task: %s", exc)
+            result["wiki_skill_triggered"] = False
     return result
 
 
@@ -180,6 +180,91 @@ def _enqueue_wiki_build_task(kb_id: str, document_id: str) -> bool:
                 id=job_id,
                 task_id=job_id,
                 task_class="KbSkillWikiBuildTask",
+                queue_name="default",
+                task_params=task_params,
+                trigger_type="API",
+                state="PENDING",
+            )
+        )
+        db.commit()
+        return True
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+
+def _enqueue_wiki_skill_task(kb_id: str, document_id: str) -> bool:
+    """向 agent-gateway 提交技能构建任务（KbAgentGatewayTask）。
+
+    config 携带:
+      - skill: 技能名（kb_skill 表 scope=system 的 wiki 构建技能）
+      - kb_id / document_id: 技能脚本定位文档（读 chunks 后生成 wiki 页）
+      - kb_base_url: 技能脚本调 kb API 的入口（宿主 nginx）
+    """
+    from api.config import get_settings
+
+    settings = get_settings()
+    skill_name = (settings.WIKI_SKILL_NAME or "kb-wiki-builder").strip()
+    kb_base_url = (settings.KB_PUBLIC_BASE_URL or "http://10.1.215.50").strip()
+    llm_base = (settings.WIKI_LLM_BASE_URL or "").strip()
+    llm_model = (settings.WIKI_LLM_MODEL or "").strip()
+    llm_key = (settings.WIKI_LLM_API_KEY or "").strip()
+
+    from worker.celery_app import celery_app
+
+    # gateway runner 注入技能环境: kb_id→WEKNORA_KB_ID, doc_name→WEKNORA_DOC_NAME,
+    # model/base_url/api_key→WEKNORA_LLM_*（技能脚本 llm_config 优先读取）
+    llm_cfg = {}
+    if llm_base:
+        llm_cfg["base_url"] = llm_base
+    if llm_model:
+        llm_cfg["model"] = llm_model
+    if llm_key:
+        llm_cfg["api_key"] = llm_key
+    task_params = json.dumps(
+        {
+            "input": (
+                "请完成知识库 wiki 构建任务：使用技能工具 run_skill_script("
+                f"skill_name='{skill_name}', script='build_wiki.py') 执行技能脚本，"
+                f"把知识库 {kb_id} 中的文档 {document_id} 编译进 wiki。"
+                "不要使用 MCP 工具查询或写入知识库，不要调用 list_skills/load_skill 之外的工具；"
+                "脚本会从环境变量 WEKNORA_KB_ID / WEKNORA_DOC_NAME 读取目标并自动完成全部工作，"
+                "直接运行它即可。"
+            ),
+            "config": {
+                "skill": skill_name,
+                "kb_id": kb_id,
+                "doc_name": document_id,
+                "kb_base_url": kb_base_url,
+                **llm_cfg,
+            },
+        },
+        ensure_ascii=False,
+    )
+    job_id = f"WIKI_SKILL_{uuid.uuid4().hex[:12]}"
+    try:
+        celery_app.send_task(
+            "worker.tasks.scheduler.execute_modo_job",
+            args=[job_id],
+            task_id=job_id,
+            queue="default",
+        )
+    except Exception as exc:  # noqa: BLE001 — broker 不可达时返回 False，不抛
+        logger.warning("failed to enqueue wiki skill task: %s", exc)
+        return False
+    # 写 modo_job 行（任务监控可见）——与 scheduler._enqueue_job 契约一致
+    from api.db import get_sessionmaker
+    from api.models.framework import Job
+
+    db = get_sessionmaker()()
+    try:
+        db.add(
+            Job(
+                id=job_id,
+                task_id=job_id,
+                task_class="KbAgentGatewayTask",
                 queue_name="default",
                 task_params=task_params,
                 trigger_type="API",

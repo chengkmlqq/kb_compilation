@@ -1,7 +1,7 @@
-"""doc_process 自动触发 wiki 构建（worker 内 KbSkillWikiBuildTask）链路测试。
+"""doc_process 自动触发 wiki 构建（AgentGateway 网关链路）测试。
 
-上传文档 → KbDocumentProcessTask 成功 → 自动 enqueue KbSkillWikiBuildTask
-（worker 内直接执行 wiki 构建：读 chunks → LLM → 写 wiki 页）。
+上传文档 → KbDocumentProcessTask 成功 → 自动 enqueue KbAgentGatewayTask
+（agent-gateway 内跑 kb-wiki-builder 技能脚本读 chunks → LLM → 写 wiki 页）。
 """
 from __future__ import annotations
 
@@ -41,26 +41,29 @@ def chain_env(monkeypatch):
     yield Session, sent
 
 
-def test_enqueue_wiki_build_task_writes_job(chain_env) -> None:
+def test_enqueue_wiki_skill_task_writes_job(chain_env) -> None:
     Session, sent = chain_env
-    ok = dp._enqueue_wiki_build_task("kb-1", "doc-1")
+    ok = dp._enqueue_wiki_skill_task("kb-1", "doc-1")
     assert ok is True
     assert sent["name"] == "worker.tasks.scheduler.execute_modo_job"
     assert sent["queue"] == "default"
+    # job_id 前缀 WIKI_SKILL_
+    assert sent["task_id"].startswith("WIKI_SKILL_")
     # modo_job 行已写入（任务监控可见）
     db = Session()
     jobs = db.execute(select(Job)).scalars().all()
     assert len(jobs) == 1
     job = jobs[0]
-    assert job.task_class == "KbSkillWikiBuildTask"
+    assert job.task_class == "KbAgentGatewayTask"
     assert job.state == "PENDING"
     params = json.loads(job.task_params)
-    assert params["kbId"] == "kb-1"
-    assert params["documentId"] == "doc-1"
+    assert params["config"]["skill"] == "kb-wiki-builder"
+    assert params["config"]["kb_id"] == "kb-1"
+    assert params["config"]["doc_name"] == "doc-1"
     db.close()
 
 
-def test_enqueue_wiki_build_task_broker_failure_returns_false(chain_env, monkeypatch) -> None:
+def test_enqueue_wiki_skill_task_broker_failure_returns_false(chain_env, monkeypatch) -> None:
     Session, sent = chain_env
 
     def boom(*a, **k):
@@ -69,12 +72,12 @@ def test_enqueue_wiki_build_task_broker_failure_returns_false(chain_env, monkeyp
     import worker.celery_app as celery_mod
 
     monkeypatch.setattr(celery_mod.celery_app, "send_task", boom)
-    ok = dp._enqueue_wiki_build_task("kb-1", "doc-1")
+    ok = dp._enqueue_wiki_skill_task("kb-1", "doc-1")
     assert ok is False
 
 
 def test_handle_process_document_chain_triggered_on_success(chain_env, monkeypatch) -> None:
-    """process_document 成功（parse_state=READY）+ kb_id 存在 → wiki_build_triggered=True。"""
+    """process_document 成功（parse_state=READY）+ kb_id 存在 → wiki_skill_triggered=True。"""
     Session, sent = chain_env
     monkeypatch.setattr(
         dp, "process_document",
@@ -82,7 +85,7 @@ def test_handle_process_document_chain_triggered_on_success(chain_env, monkeypat
     )
     result = dp._handle_process_document("job-1", json.dumps({"documentId": "doc-1", "kbId": "kb-1"}))
     assert result["success"] is True
-    assert result["wiki_build_triggered"] is True
+    assert result["wiki_skill_triggered"] is True
 
 
 def test_handle_process_document_no_chain_on_failure(chain_env, monkeypatch) -> None:
@@ -94,7 +97,7 @@ def test_handle_process_document_no_chain_on_failure(chain_env, monkeypatch) -> 
     )
     result = dp._handle_process_document("job-1", json.dumps({"documentId": "doc-1", "kbId": "kb-1"}))
     assert result["success"] is False
-    assert result.get("wiki_build_triggered") is None
+    assert result.get("wiki_skill_triggered") is None
     db = Session()
     assert len(db.execute(select(Job)).scalars().all()) == 0
     db.close()
@@ -109,7 +112,7 @@ def test_handle_process_document_no_chain_without_kb_id(chain_env, monkeypatch) 
     )
     result = dp._handle_process_document("job-1", json.dumps({"documentId": "doc-1"}))
     assert result["success"] is True
-    assert result.get("wiki_build_triggered") is None
+    assert result.get("wiki_skill_triggered") is None
     db = Session()
     assert len(db.execute(select(Job)).scalars().all()) == 0
     db.close()
