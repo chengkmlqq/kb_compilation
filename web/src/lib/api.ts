@@ -98,13 +98,31 @@ export function apiListKbs(page = 1, pageSize = 20, keyword = "", scope?: string
   return request<PageList<KbItem>>(`/api/v1/kbs?${params.toString()}`);
 }
 
-export function apiCreateKb(payload: {
+// WeKnora 对齐：索引四路 pipeline 开关
+export interface IndexingStrategy {
+  vector_enabled?: boolean;
+  keyword_enabled?: boolean;
+  wiki_enabled?: boolean;
+  graph_enabled?: boolean;
+}
+
+export interface KbCreatePayload {
   name: string;
   label?: string;
   description?: string;
   scope?: string;
   team_name?: string;
-}) {
+  /** 知识库类型：document（文档）/ faq（问答对）。WeKnora 对齐。 */
+  type?: "document" | "faq";
+  /** 四路索引 pipeline 开关（缺失键后端按 WeKnora 默认补齐）。 */
+  indexing_strategy?: IndexingStrategy;
+  /** 自定义 Wiki 生成：开启后上传文档不自动构建 wiki，需手动触发。 */
+  custom_wiki_generation?: boolean;
+  /** 其余对齐配置（wiki_config.skill=构建技能、extract_config 等）。 */
+  configs?: Record<string, unknown>;
+}
+
+export function apiCreateKb(payload: KbCreatePayload) {
   return request<{ id: string; scope?: string }>("/api/v1/kbs", {
     method: "POST",
     body: JSON.stringify(payload),
