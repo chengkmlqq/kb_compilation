@@ -67,11 +67,17 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("jobs", "jobs", "任务监控", "/jobs", "grp_data", "DashboardOutlined", 2),
     ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_data", "ScheduleOutlined", 3),
     ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_data", "CloudServerOutlined", 4),
-    # ---- 系统管理（分组兼页面：点击自身跳 /system，子项为子系统页） ----
+    # ---- 系统管理（分组兼页面：点击自身跳 /system，子项为子系统页）。
+    # 用户/角色/团队/菜单/日志用 ?tab= 深链直进聚合页的对应 Tab（对齐 ds 各子项独立入口）。
     ("system", "system", "系统管理", "/system", "root_kb", "SettingOutlined", 4),
-    ("models", "models", "模型配置", "/models", "system", "CloudServerOutlined", 1),
-    ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "system", "ApiOutlined", 2),
-    ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "system", "ToolOutlined", 3),
+    ("sys_users", "sys_users", "用户管理", "/system?tab=users", "system", "TeamOutlined", 1),
+    ("sys_roles", "sys_roles", "角色管理", "/system?tab=roles", "system", "SafetyOutlined", 2),
+    ("sys_teams", "sys_teams", "团队管理", "/system?tab=teams", "system", "PartitionOutlined", 3),
+    ("sys_menus", "sys_menus", "菜单管理", "/system?tab=menus", "system", "MenuOutlined", 4),
+    ("sys_logs", "sys_logs", "操作日志", "/system?tab=logs", "system", "ProfileOutlined", 5),
+    ("models", "models", "模型配置", "/models", "system", "CloudServerOutlined", 6),
+    ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "system", "ApiOutlined", 7),
+    ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "system", "ToolOutlined", 8),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，

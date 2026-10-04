@@ -9,7 +9,7 @@ import React, {
   useRef,
   useMemo,
 } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { apiMyMenus, SysMenuItem } from "@/lib/api";
 
 const STORAGE_KEY = "modo_selected_top_menu";
@@ -80,13 +80,22 @@ function anyHasChildren(items: SysMenuItem[]): boolean {
   return items.some((m) => m.parent_id && m.parent_id !== "" && ids.has(m.parent_id));
 }
 
-/** 根据路径找到所属顶级菜单 ID（对齐 MenuContext.findTopMenuByPath） */
-function checkContainsPath(menu: MenuTreeNode, pathname: string): boolean {
+/**
+ * 判断菜单树中是否包含当前路径（用于决定当前应高亮/展开哪个顶级菜单）。
+ *
+ * 支持带 query 的路由（如 /system?tab=roles）：带 query 的菜单先做完整匹配，
+ * 未命中再回退 pathname 精确/前缀匹配（对齐 AppSider.findMenuIdByPath 的两轮策略）。
+ */
+function checkContainsPath(menu: MenuTreeNode, pathname: string, routeKey?: string): boolean {
   if (menu.route && menu.route.trim() !== "") {
     const route = menu.route;
-    if (pathname === route || pathname.startsWith(route + "/")) return true;
+    if (routeKey && route.includes("?") && routeKey === route) return true;
+    // 带 query 的菜单不能用 pathname 命中（/system?tab=roles 与 /system 不同 Tab）
+    if (!route.includes("?") && (pathname === route || pathname.startsWith(route + "/"))) {
+      return true;
+    }
   }
-  return (menu.children || []).some((c) => checkContainsPath(c, pathname));
+  return (menu.children || []).some((c) => checkContainsPath(c, pathname, routeKey));
 }
 
 export function useMenuContext() {
@@ -97,7 +106,13 @@ export function useMenuContext() {
 
 export function MenuProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
+  // 带 query 的当前路由（如 /system?tab=roles），菜单归属判定需要
+  const routeKey = useMemo(() => {
+    const qs = searchParams?.toString?.() || "";
+    return qs ? `${pathname}?${qs}` : pathname;
+  }, [pathname, searchParams]);
   const [menus, setMenus] = useState<SysMenuItem[]>(FALLBACK_MENUS);
   const [selectedTopMenuId, setSelectedTopMenuId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -154,7 +169,7 @@ export function MenuProvider({ children }: { children: React.ReactNode }) {
     })();
     if (stored && topMenus.some((m) => m.menu_id === stored)) matched = stored;
     if (!matched) {
-      const hit = topMenus.find((m) => checkContainsPath(m, pathname));
+      const hit = topMenus.find((m) => checkContainsPath(m, pathname, routeKey));
       if (hit) matched = hit.menu_id as string;
     }
     const id = matched || (topMenus[0]?.menu_id as string) || null;
@@ -175,8 +190,10 @@ export function MenuProvider({ children }: { children: React.ReactNode }) {
     if (loading || flatMode || manualRef.current) return;
     if (!selectedTopMenuId) return;
     const current = topMenus.find((m) => m.menu_id === selectedTopMenuId);
-    if (current && checkContainsPath(current, pathname)) return;
-    const hit = topMenus.find((m) => m.menu_id !== selectedTopMenuId && checkContainsPath(m, pathname));
+    if (current && checkContainsPath(current, pathname, routeKey)) return;
+    const hit = topMenus.find(
+      (m) => m.menu_id !== selectedTopMenuId && checkContainsPath(m, pathname, routeKey),
+    );
     if (hit) {
       setSelectedTopMenuId(hit.menu_id as string);
       try {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Alert,
   App,
@@ -1096,10 +1097,26 @@ function SkillsTab() {
   );
 }
 
+/**
+ * 系统管理聚合页（7 个 Tab）。
+ *
+ * 支持 URL 深链 `?tab=roles` 等（对齐 data-synth 系统管理下各子项均为独立入口），
+ * 侧栏子菜单直接跳到对应 Tab；无参数时默认用户 Tab。
+ */
 export default function SystemPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab") || "";
+  const TAB_KEYS = ["users", "roles", "teams", "menus", "mcps", "skills", "logs"] as const;
+  const activeTab = (TAB_KEYS as readonly string[]).includes(tabParam) ? tabParam : "users";
+
   return (
     <Tabs
-      defaultActiveKey="users"
+      activeKey={activeTab}
+      onChange={(key) => {
+        // 切Tab 时回写 URL，侧栏菜单高亮与刷新后停留位置保持一致
+        router.replace(key === "users" ? "/system" : `/system?tab=${key}`, { scroll: false });
+      }}
       items={[
         { key: "users", label: "用户", children: <UsersTab /> },
         { key: "roles", label: "角色", children: <RolesTab /> },

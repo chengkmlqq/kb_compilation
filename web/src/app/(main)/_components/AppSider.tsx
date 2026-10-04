@@ -18,8 +18,15 @@ import {
   RobotOutlined,
   ToolOutlined,
   SettingOutlined,
+  // 系统管理分组下的子项（用户/角色/团队/菜单/日志）
+  UserOutlined,
+  SafetyOutlined,
+  PartitionOutlined,
+  MenuOutlined,
+  ProfileOutlined,
+  TeamOutlined,
 } from "@ant-design/icons";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useMenuContext, MenuTreeNode } from "./MenuContext";
 import { SysMenuItem } from "@/lib/api";
 
@@ -73,15 +80,37 @@ function convertToMenuItems(menus: SysMenuItem[], level = 0): MenuProps["items"]
   });
 }
 
-function findMenuIdByPath(menus: SysMenuItem[], pathname: string): string | null {
+/**
+ * 按当前 URL 找菜单 id。
+ *
+ * 支持带 query 的菜单路由（如 /system?tab=roles 指向系统管理聚合页的某个 Tab）：
+ *   1. 带 query 的完整匹配（routeKey 精确相等）优先——保证 /system?tab=roles
+ *      不会误命中 /system 分组本身；
+ *   2. 其次 pathname 精确匹配；
+ *   3. 最后 pathname 前缀匹配（/kbs/xxx 命中 /kbs）。
+ */
+function findMenuIdByPath(menus: SysMenuItem[], pathname: string, routeKey?: string): string | null {
+  const key = routeKey ?? pathname;
+  // 第一轮：带 query 的完整匹配
+  for (const menu of menus) {
+    if (menu.route && menu.route.includes("?") && key === menu.route) {
+      return menu.menu_id as string;
+    }
+    const kids = (menu as MenuTreeNode).children;
+    if (kids) {
+      const hit = findMenuIdByPath(kids, pathname, key);
+      if (hit) return hit;
+    }
+  }
+  // 第二轮：pathname 精确 / 前缀
   for (const menu of menus) {
     if (menu.route && (pathname === menu.route || pathname.startsWith(menu.route + "/"))) {
       return menu.menu_id as string;
     }
     const kids = (menu as MenuTreeNode).children;
     if (kids) {
-      const childId = findMenuIdByPath(kids, pathname);
-      if (childId) return childId;
+      const hit = findMenuIdByPath(kids, pathname, key);
+      if (hit) return hit;
     }
   }
   return null;
@@ -114,12 +143,22 @@ function findRoute(menus: SysMenuItem[], menuId: string): string | null {
 export const AppSider: React.FC = () => {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { siderMenus } = useMenuContext();
   const [collapsed, setCollapsed] = useState(false);
   const [openKeys, setOpenKeys] = useState<string[]>([]);
 
+  // 带 query 的当前路由（如 /system?tab=roles），用于菜单高亮
+  const routeKey = useMemo(() => {
+    const qs = searchParams?.toString?.() || "";
+    return qs ? `${pathname}?${qs}` : pathname;
+  }, [pathname, searchParams]);
+
   const menuItems = useMemo(() => convertToMenuItems(siderMenus), [siderMenus]);
-  const activeKey = useMemo(() => findMenuIdByPath(siderMenus, pathname), [siderMenus, pathname]);
+  const activeKey = useMemo(
+    () => findMenuIdByPath(siderMenus, pathname, routeKey),
+    [siderMenus, pathname, routeKey],
+  );
 
   // 自动展开当前页面的父级菜单
   useEffect(() => {
