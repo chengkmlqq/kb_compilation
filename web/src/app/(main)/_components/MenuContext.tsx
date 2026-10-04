@@ -45,6 +45,7 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "grp_ai", menu_name: "grp_ai", menu_label: "智能应用", route: null, parent_id: "root_kb", menu_icon: "FolderOutlined", sort_num: 2, state: "1" },
   { menu_id: "chat", menu_name: "chat", menu_label: "智能问答", route: "/chat", parent_id: "grp_ai", menu_icon: "CommentOutlined", sort_num: 1, state: "1" },
   { menu_id: "agents", menu_name: "agents", menu_label: "智能体配置", route: "/agents", parent_id: "grp_ai", menu_icon: "RobotOutlined", sort_num: 2, state: "1" },
+  { menu_id: "websearch", menu_name: "websearch", menu_label: "联网搜索", route: "/websearch", parent_id: "grp_ai", menu_icon: "SearchOutlined", sort_num: 3, state: "1" },
   { menu_id: "grp_data", menu_name: "grp_data", menu_label: "数据与任务", route: null, parent_id: "root_kb", menu_icon: "FolderOutlined", sort_num: 3, state: "1" },
   { menu_id: "datasources", menu_name: "datasources", menu_label: "数据源", route: "/datasources", parent_id: "grp_data", menu_icon: "DatabaseOutlined", sort_num: 1, state: "1" },
   { menu_id: "jobs", menu_name: "jobs", menu_label: "任务监控", route: "/jobs", parent_id: "grp_data", menu_icon: "DashboardOutlined", sort_num: 2, state: "1" },

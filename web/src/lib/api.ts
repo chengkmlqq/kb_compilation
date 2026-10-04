@@ -1358,6 +1358,66 @@ export function apiDeleteMcp(id: string) {
   return request<{ deleted: boolean }>(`/api/v1/mcps/${id}`, { method: "DELETE" });
 }
 
+// -----------------------------------------------------------------------------
+// 联网搜索提供方注册表 (/websearch) —— personal / team / system 三级
+// -----------------------------------------------------------------------------
+
+export type WebSearchProviderType = "tavily" | "serper" | "bing" | "exa" | "generic";
+
+export interface WebSearchProviderItem {
+  id: string;
+  scope: ModelScope;
+  name: string;
+  description: string;
+  provider_type: WebSearchProviderType;
+  /** 读接口为脱敏值（****），保存时回传脱敏值表示保持原 Key */
+  api_key: string;
+  base_url: string;
+  extra_config: Record<string, unknown>;
+  owner_user_id: string;
+  owner_team_name: string;
+  enabled: boolean;
+  state: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+export function apiListWebsearchProviders(scope?: string) {
+  const qs = scope ? `?scope=${scope}` : "";
+  return request<{ items: WebSearchProviderItem[]; is_admin: boolean }>(`/api/v1/websearch${qs}`);
+}
+
+export function apiCreateWebsearchProvider(payload: Record<string, unknown>) {
+  return request<{ item: WebSearchProviderItem }>("/api/v1/websearch", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateWebsearchProvider(id: string, payload: Record<string, unknown>) {
+  return request<{ item: WebSearchProviderItem }>(`/api/v1/websearch/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiDeleteWebsearchProvider(id: string) {
+  return request<{ deleted: boolean }>(`/api/v1/websearch/${id}`, { method: "DELETE" });
+}
+
+export function apiWebsearchSearch(id: string, query: string, maxResults = 5) {
+  return request<{ results: WebSearchResult[] }>(`/api/v1/websearch/${id}/search`, {
+    method: "POST",
+    body: JSON.stringify({ query, max_results: maxResults }),
+  });
+}
+
 export function apiListSkillsRegistry(scope?: string) {
   const qs = scope ? `?scope=${scope}` : "";
   return request<{ items: SkillRegistryItem[]; is_admin: boolean }>(`/api/v1/skills${qs}`);

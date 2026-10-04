@@ -42,7 +42,7 @@ SEED_TEAM = os.getenv("KB_SEED_TEAM", "默认团队")
 # 可用环境变量 KB_SEED_ROLE 覆盖。
 SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 
-# KB 菜单树（1 顶级 + 3 纯目录分组 + 1 分组兼页面(系统管理) + 12 页面 = 17 项；sort_num 决定同级顺序）
+# KB 菜单树（1 顶级 + 3 纯目录分组 + 1 分组兼页面(系统管理) + 13 页面 = 18 项；sort_num 决定同级顺序）
 # (menu_id, menu_name, menu_label, route, parent_id, menu_icon, sort_num)
 # menu_id 用固定值（workers/mcps/skills/cron 用生产环境已验证的 UUID），
 # 保证多次初始化幂等、且与已部署环境完全一致。
@@ -61,6 +61,7 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("grp_ai", "grp_ai", "智能应用", None, "root_kb", "FolderOutlined", 2),
     ("chat", "chat", "智能问答", "/chat", "grp_ai", "CommentOutlined", 1),
     ("agents", "agents", "智能体配置", "/agents", "grp_ai", "RobotOutlined", 2),
+    ("d83aee0d1d8a4fce8a6bd121b6efc5fa", "websearch", "联网搜索", "/websearch", "grp_ai", "SearchOutlined", 3),
     # ---- 数据与任务（纯目录） ----
     ("grp_data", "grp_data", "数据与任务", None, "root_kb", "FolderOutlined", 3),
     ("datasources", "datasources", "数据源", "/datasources", "grp_data", "DatabaseOutlined", 1),

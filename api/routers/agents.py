@@ -23,6 +23,7 @@ from api.services.agents import (
     resolve_kb_scope,
     update_agent,
 )
+from api.services.agent_skills import agent_skill_tool_context, run_skill_tool_call
 from api.services.chat import SYSTEM_PROMPT, ChatConfig, ChatMessage, answer_question
 from api.services.embedding import get_embedding_client
 from api.services.identity import decode_identity_cookie
@@ -193,6 +194,24 @@ def agent_qa_stream(
         except Exception:  # noqa: BLE001
             agent_prompt = None
 
+        # 技能白名单消费：仅当 agent 配置 skills_enabled 时注入 run_skill_script 工具，
+        # 白名单语义 selected=仅 selected_skills / all=全部可见技能 / none=不注入。
+        # skills_enabled=False（默认）时 skill_tools 为 None，问答链路与旧行为完全一致。
+        try:
+            skill_rows, skill_tools, skill_max_rounds = agent_skill_tool_context(
+                db,
+                agent,
+                caller_user_id=ctx_user_id,
+                caller_team_name=ctx_team_name,
+                is_sys_admin=ctx_is_admin,
+            )
+        except Exception:  # noqa: BLE001 — 技能装配失败不阻断问答
+            logger.exception("agent skill whitelist resolution failed; skills disabled for this call")
+            skill_rows, skill_tools, skill_max_rounds = [], None, 1
+        skill_executor = (
+            (lambda tc: run_skill_tool_call(skill_rows, tc)) if skill_tools else None
+        )
+
         answer_parts: list[str] = []
         refs: list[dict] = []
         last_kb_id = ""
@@ -236,6 +255,9 @@ def agent_qa_stream(
                     user_id=ctx_user_id,
                     team_name=ctx_team_name,
                     is_sys_admin=ctx_is_admin,
+                    tools=skill_tools,
+                    tool_executor=skill_executor,
+                    max_tool_iterations=skill_max_rounds,
                 ):
                     event["kb_id"] = kb.id
                     if event.get("type") == "delta":

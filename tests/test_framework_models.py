@@ -92,8 +92,13 @@ MCP_SKILL_TABLES = {
     "kb_skill",
 }
 
+# Scoped WebSearch provider registry (kb_websearch_provider) — framework store.
+WEBSEARCH_TABLES = {
+    "kb_websearch_provider",
+}
+
 # Everything expected on the framework base.
-EXPECTED_TABLES = FRAMEWORK_TABLES | KNOWLEDGE_BUSINESS_TABLES | CHAT_TABLES | MODEL_TABLES | MCP_SKILL_TABLES
+EXPECTED_TABLES = FRAMEWORK_TABLES | KNOWLEDGE_BUSINESS_TABLES | CHAT_TABLES | MODEL_TABLES | MCP_SKILL_TABLES | WEBSEARCH_TABLES
 
 # Legacy business tables (data-synthesis domain) that MUST NOT be present
 # after extraction. Names are the REAL table names in the source DB — they

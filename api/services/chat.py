@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import httpx
 
@@ -37,9 +37,13 @@ class ChatConfig:
 
 @dataclass
 class ChatMessage:
-    role: str  # system / user / assistant
+    role: str  # system / user / assistant / tool
     content: str
     images: list[str] | None = None  # image data URLs (base64) for multimodal input
+    # 工具调用（assistant 回传 LLM 的工具调用，OpenAI 格式；无工具链路时保持 None）
+    tool_calls: list[dict] | None = None
+    # role=tool 时关联的 assistant tool_call id（工具结果回填）
+    tool_call_id: str | None = None
 
 
 def load_chat_config(
@@ -195,12 +199,16 @@ class ChatClient:
         max_tokens: int = 2048,
         top_p: float | None = None,
         thinking: bool | None = None,
+        tools: list[dict] | None = None,
     ) -> Iterator[dict]:
         """Yield structured events as they arrive (SSE-parsed).
 
         Events: {"type": "thinking", "text": ...} for reasoning_content,
         {"type": "delta", "text": ...} for the answer content, and
-        {"type": "done"} at the end.
+        {"type": "done"} at the end. tools (OpenAI function-calling payload) is
+        injected into the request when given; model-emitted tool calls are
+        accumulated from streaming fragments and yielded as
+        {"type": "tool_call", "id", "name", "arguments"} once complete.
 
         top_p/thinking are optional; when given they are added to the
         request payload (thinking maps to {"type": "enabled"|"disabled"}).
@@ -214,12 +222,19 @@ class ChatClient:
             endpoint += "/chat/completions"
 
         def _serialize(m: ChatMessage) -> dict:
-            if not m.images:
-                return {"role": m.role, "content": m.content}
-            parts: list[dict] = [{"type": "text", "text": m.content}]
-            for url in m.images:
-                parts.append({"type": "image_url", "image_url": {"url": url}})
-            return {"role": m.role, "content": parts}
+            if m.images:
+                parts: list[dict] = [{"type": "text", "text": m.content}]
+                for url in m.images:
+                    parts.append({"type": "image_url", "image_url": {"url": url}})
+                content: Any = parts
+            else:
+                content = m.content
+            out: dict = {"role": m.role, "content": content}
+            if m.tool_calls:
+                out["tool_calls"] = m.tool_calls
+            if m.tool_call_id:
+                out["tool_call_id"] = m.tool_call_id
+            return out
 
         payload = {
             "model": self.cfg.model,
@@ -228,6 +243,8 @@ class ChatClient:
             "max_tokens": max_tokens,
             "stream": True,
         }
+        if tools:
+            payload["tools"] = tools
         if top_p is not None:
             payload["top_p"] = top_p
         if thinking is not None:
@@ -239,6 +256,20 @@ class ChatClient:
             # model-scoped custom headers win over the defaults (custom auth
             # schemes like X-Api-Key are configured per model)
             headers.update(self.cfg.custom_headers)
+
+        # 流式工具调用片段按 index 累积（OpenAI 把 id/name/arguments 分片下发）
+        tool_acc: dict[int, dict] = {}
+
+        def _flush_tool_calls() -> Iterator[dict]:
+            for idx in sorted(tool_acc):
+                slot = tool_acc[idx]
+                yield {
+                    "type": "tool_call",
+                    "id": slot.get("id") or "",
+                    "name": slot.get("name") or "",
+                    "arguments": slot.get("arguments") or "",
+                }
+            tool_acc.clear()
 
         with httpx.Client(timeout=self.cfg.timeout) as client:
             with client.stream("POST", endpoint, json=payload, headers=headers) as resp:
@@ -261,13 +292,29 @@ class ChatClient:
                     choices = obj.get("choices") or []
                     if not choices:
                         continue
-                    delta = choices[0].get("delta") or {}
+                    choice = choices[0]
+                    delta = choice.get("delta") or {}
                     text = delta.get("content") or ""
                     reasoning = delta.get("reasoning_content") or ""
                     if reasoning:
                         yield {"type": "thinking", "text": reasoning}
                     if text:
                         yield {"type": "delta", "text": text}
+                    for tc in delta.get("tool_calls") or []:
+                        idx = int(tc.get("index", 0))
+                        slot = tool_acc.setdefault(idx, {})
+                        if tc.get("id"):
+                            slot["id"] = tc["id"]
+                        fn = tc.get("function") or {}
+                        if fn.get("name"):
+                            slot["name"] = fn["name"]
+                        if fn.get("arguments"):
+                            slot["arguments"] = (slot.get("arguments") or "") + fn["arguments"]
+                    # finish_reason=tool_calls：本响应只发工具调用，无正文
+                    if choice.get("finish_reason") == "tool_calls":
+                        yield from _flush_tool_calls()
+        # 流结束兜底：部分实现不发 finish_reason=tool_calls，已累积调用照常吐出
+        yield from _flush_tool_calls()
         yield {"type": "done"}
 
     def chat(
@@ -301,6 +348,9 @@ def answer_question(
     user_id: str = "",
     team_name: str = "",
     is_sys_admin: bool = False,
+    tools: list[dict] | None = None,
+    tool_executor: Callable[[dict], str] | None = None,
+    max_tool_iterations: int = 3,
 ) -> Iterator[dict]:
     """Full RAG QA stream: retrieve -> build messages -> stream deltas.
 
@@ -311,6 +361,15 @@ def answer_question(
     image_urls attaches session images to the user message (multimodal QA).
     user_id/team_name/is_sys_admin scope the resolved chat model
     (personal > team > system > legacy) when chat_cfg is not given.
+
+    tools + tool_executor turn on the OpenAI function-calling loop (agent
+    skills): the tool payload is attached to each LLM request, and when the
+    model calls a tool the executor runs it (api/services/agent_skills.py)
+    and its text result is fed back. tools=None keeps the plain
+    single-shot stream (default, no behaviour change). Intermediate rounds'
+    text is buffered (tool preamble must not leak into the answer) and only
+    the final round's deltas are yielded, plus one
+    {"type": "tool", "tool_calls", "results"} event per executed round.
     """
     from api.services.retrieval import config_from_kb, hybrid_search
 
@@ -335,8 +394,64 @@ def answer_question(
         extra_context=extra_context, agent_prompt=agent_prompt, image_urls=image_urls,
     )
     client = ChatClient(chat_cfg)
+    # 无工具：与接入前逐字一致的单轮流式
+    if not tools:
+        yield from _stream_once(client, messages)
+        return
+    max_rounds = max(1, int(max_tool_iterations or 1))
+    for round_idx in range(max_rounds):
+        tool_calls: list[dict] = []
+        buffered: list[dict] = []  # 本轮流式文本（非最终轮不回传，避免前言污染答案）
+        for ev in client.stream_events(messages, tools=tools):
+            etype = ev.get("type")
+            if etype == "tool_call":
+                tool_calls.append(ev)
+            elif etype in ("delta", "thinking"):
+                buffered.append(ev)
+        if not tool_calls or round_idx == max_rounds - 1:
+            for ev in buffered:
+                yield ev
+            break
+        # 回填工具结果：assistant 消息带 tool_calls，随后每个工具一条 role=tool
+        messages.append(
+            ChatMessage(
+                role="assistant",
+                content="".join(ev.get("text") or "" for ev in buffered),
+                tool_calls=[
+                    {
+                        "id": tc.get("id") or f"call_{i}",
+                        "type": "function",
+                        "function": {
+                            "name": tc.get("name") or "",
+                            "arguments": tc.get("arguments") or "",
+                        },
+                    }
+                    for i, tc in enumerate(tool_calls)
+                ],
+            )
+        )
+        results: list[dict] = []
+        for i, tc in enumerate(tool_calls):
+            result = (
+                tool_executor(tc)
+                if tool_executor
+                else f"工具不可用: 未配置执行器（{tc.get('name') or '?'}）"
+            )
+            results.append(
+                {"id": tc.get("id") or f"call_{i}", "name": tc.get("name") or "", "result": result}
+            )
+            messages.append(
+                ChatMessage(
+                    role="tool",
+                    content=result,
+                    tool_call_id=tc.get("id") or f"call_{i}",
+                )
+            )
+        yield {"type": "tool", "tool_calls": tool_calls, "results": results}
+
+
+def _stream_once(client: ChatClient, messages: list[ChatMessage]) -> Iterator[dict]:
+    """单轮流式：只透传 delta / thinking（done 由 answer_question 之前的循环收尾）。"""
     for ev in client.stream_events(messages):
-        if ev.get("type") == "delta":
-            yield {"type": "delta", "text": ev.get("text") or ""}
-        elif ev.get("type") == "thinking":
-            yield {"type": "thinking", "text": ev.get("text") or ""}
+        if ev.get("type") in ("delta", "thinking"):
+            yield ev
