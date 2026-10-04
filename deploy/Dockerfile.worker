@@ -51,7 +51,8 @@ COPY docreader/ ./docreader/
 COPY scripts/ ./scripts/
 RUN mkdir -p /data/kb_documents
 
-ENV PATH="/srv/kb/.venv/bin:$PATH"
+ENV PATH="/srv/kb/.venv/bin:$PATH" \
+    PYTHONPATH="/srv/kb"
 
 EXPOSE 5555
 # flower web UI（可选，通过 nginx 代理访问 /flower/）

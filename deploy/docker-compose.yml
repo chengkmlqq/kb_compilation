@@ -30,6 +30,7 @@ x-api-env: &api-env
     CELERY_RESULT_BACKEND: ${KB_CELERY_RESULT_BACKEND}
     KNOWLEDGE_DATABASE_URL: ${KB_KNOWLEDGE_DATABASE_URL}
     KB_STORAGE_DIR: /data/kb_documents
+    PYTHONPATH: /srv/kb
     # agent-gateway (host-bound :8080). The worker reaches it through
     # host.docker.internal (see celery-worker extra_hosts).
     AGENT_GATEWAY_BASE_URL: ${AGENT_GATEWAY_BASE_URL:-http://host.docker.internal:8080}

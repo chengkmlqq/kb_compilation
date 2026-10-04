@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -85,6 +85,14 @@ class AgentQARequest(BaseModel):
     question: str = Field(..., min_length=1)
     history: list[dict] = Field(default_factory=list)
     session_id: str | None = None  # 会话模式：持久化 + 加载历史 + 附件注入
+
+    @field_validator("question")
+    @classmethod
+    def _question_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("问题不能为空")
+        return v
 
 
 def _sse(event: dict) -> str:
