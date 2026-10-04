@@ -222,24 +222,27 @@ def get_kb_detail(kb_id: str, db: Session = Depends(get_db)) -> dict:
     kb = get_kb(db, kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
-    from api.services.kb_admin import list_kbs
+    from api.services.kb_admin import _kb_dict
+    from sqlalchemy import func, select
 
-    # reuse list_kbs counts by fetching with a filter-free page (cheap: single row)
-    data = list_kbs(db, page=1, page_size=1)
-    payload = None
-    for item in data["items"]:
-        if item["id"] == kb_id:
-            payload = item
-            break
-    if payload is None:  # pragma: no cover - defensive
-        payload = {
-            "id": kb.id,
-            "name": kb.name,
-            "label": kb.label,
-            "description": kb.description,
-            "indexing_strategy": kb.indexing_strategy or {},
-        }
-    return {"success": True, "data": payload}
+    from api.models.knowledge import KbDocument, WikiPage
+
+    # 直接用 _kb_dict 完整序列化（含 WeKnora 对齐配置字段）。
+    # 旧实现走 list_kbs(page_size=1) 只取第一页再匹配 id——查询非最新 KB 时
+    # items 不命中 → 兜底缺对齐字段（详情页配置弹窗读不到 wiki_config 等）。
+    doc_count = (
+        db.execute(
+            select(func.count()).select_from(KbDocument).where(KbDocument.kb_id == kb.id)
+        ).scalar()
+        or 0
+    )
+    page_count = (
+        db.execute(
+            select(func.count()).select_from(WikiPage).where(WikiPage.kb_id == kb.id)
+        ).scalar()
+        or 0
+    )
+    return {"success": True, "data": _kb_dict(kb, doc_count=doc_count, page_count=page_count)}
 
 
 @router.put("/{kb_id}")
