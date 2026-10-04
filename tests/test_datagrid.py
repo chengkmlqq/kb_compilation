@@ -228,3 +228,34 @@ def test_datagrid_all_meta_endpoints_register(dg):
     for ep in ("tables", "views", "functions", "procedures", "sequences"):
         r = client.post(f"/api/v1/datagrid/{ep}", json={"dsName": "demo-mysql"})
         assert r.status_code == 200, ep
+
+
+def test_datagrid_sanssec_envelope_rejected(dg):
+    """SANSSEC1 国密信封数据源：明确拒绝，不拿密文当密码撞库。
+
+    2026-10-04: HSM 不可达，移除 sansec 解密逻辑后，对 SANSSEC1 数据源
+    返回 success:false + 中文提示（不再报 Access denied）。
+    """
+    make, db = dg
+    client = make()
+    _seed_ds(db, name="envelope-ds", url="sqlite:///:memory:", acct="modo",
+             auth="SANSSEC1|8|GSbWl2AEMQCk6KeZPMo")
+    r = client.post("/api/v1/datagrid/execute", json={"dsName": "envelope-ds", "sql": "SELECT 1"})
+    assert r.status_code == 200
+    item = r.json()["data"][0]
+    assert item["success"] is False
+    assert "国密信封" in item["msg"]
+    assert "Access denied" not in item["msg"]
+
+
+def test_datagrid_sanssec_meta_rejected(dg):
+    """SANSSEC1 数据源的元数据查询同样被明确拒绝（不发起连接）。"""
+    make, db = dg
+    client = make()
+    _seed_ds(db, name="envelope-ds2", url="sqlite:///:memory:", acct="modo",
+             auth="SANSSEC1|8|GSbWl2AEMQCk6KeZPMo")
+    r = client.post("/api/v1/datagrid/tables", json={"dsName": "envelope-ds2"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is False
+    assert "国密信封" in body["msg"]

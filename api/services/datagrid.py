@@ -32,8 +32,14 @@ logger = logging.getLogger(__name__)
 
 
 def _reveal_datagrid_secret(value: str | None) -> str | None:
-    """数据查询口令解密：明文 / AES(enc:v1) 两种形态。"""
+    """数据查询口令解密：明文 / AES(enc:v1) 两种形态。
+
+    SANSSEC1 国密信封不再支持（HSM 不可达，解密逻辑已移除），返回 None
+    表示口令不可用 —— 调用方应给出明确提示，而不是拿信封原文当密码撞库。
+    """
     if not value:
+        return None
+    if value.startswith("SANSSEC1|"):
         return None
     return _reveal_secret(value)
 
@@ -110,6 +116,23 @@ def _find_entry(db: Session, ds_name: str, user_id: str = "", team_name: str = "
     ).scalars().first()
     if not ds:
         return None
+    # SANSSEC1 国密信封数据源：不再支持解密，哨兵标记由 _connect 拦截给出明确提示
+    # （不拿密文当密码撞库，也不在 _find_entry 抛异常以免 10 个调用点都要 try）
+    _SANSEC_UNSUPPORTED = "SANSSEC1|UNSUPPORTED|"
+    if (ds.ds_auth or "").startswith("SANSSEC1|"):
+        return DatasourceEntry(
+            id=ds.id,
+            name=ds.name or "",
+            label=ds.label or "",
+            ds_type=ds.ds_type or "",
+            ds_version=ds.ds_version or "",
+            ds_category=ds.ds_category or "",
+            url=ds.url or "",
+            state=ds.state or "",
+            ds_acct=ds.ds_acct,
+            ds_auth=_SANSEC_UNSUPPORTED,
+            ds_conf=ds.ds_conf,
+        )
     if user_id not in ("admin", "ROOT", "") and team_name not in ("ROOT", "", "默认团队"):
         mapped = db.execute(
             select(TeamDsMap.ds_name).where(
@@ -165,6 +188,12 @@ def _build_uri(entry: DatasourceEntry) -> str:
 
 
 def _connect(entry: DatasourceEntry) -> Engine:
+    # SANSSEC1 国密信封哨兵：明确拒绝，不发起连接
+    if (entry.ds_auth or "").startswith("SANSSEC1|"):
+        raise ValueError(
+            f"数据源 {entry.name or entry.id} 口令为国密信封(SANSSEC1)格式，"
+            "已不支持该口令类型，无法连接（请在数据源管理中改用明文或 AES 口令）"
+        )
     uri = _build_uri(entry)
     if uri.startswith("sqlite://"):
         # sqlite 驱动不认 connect_timeout（测试/轻量场景）
@@ -198,7 +227,10 @@ def execute_sql(db: Session, ds_name: str, sql: str, user_id: str = "", team_nam
         return {"success": False, "msg": f"数据源不存在或未授权: {ds_name}"}
     if not sql or not sql.strip():
         return {"success": False, "msg": "SQL 不能为空"}
-    engine = _connect(entry)
+    try:
+        engine = _connect(entry)
+    except Exception as e:  # noqa: BLE001
+        return {"success": False, "msg": f"执行失败: {e}"}
     try:
         with engine.connect() as conn:
             result = conn.exec_driver_sql(sql)
@@ -236,7 +268,10 @@ def _query_meta(db: Session, ds_name: str, query: str, user_id: str = "", params
     entry = _find_entry(db, ds_name, user_id, team_name)
     if entry is None:
         return {"success": False, "msg": f"数据源不存在或未授权: {ds_name}"}
-    engine = _connect(entry)
+    try:
+        engine = _connect(entry)
+    except Exception as e:  # noqa: BLE001
+        return {"success": False, "msg": f"查询失败: {e}"}
     try:
         with engine.connect() as conn:
             result = conn.execute(text(query), params or {})
@@ -313,7 +348,10 @@ def get_table_ddl(db: Session, ds_name: str, table: str, schema: str = "", user_
     if is_mysql:
         sql = f"SHOW CREATE TABLE `{schema or ''}`.`{table}`" if schema else f"SHOW CREATE TABLE `{table}`"
         # SHOW 语句不能参数化
-        engine = _connect(entry)
+        try:
+            engine = _connect(entry)
+        except Exception as e:  # noqa: BLE001
+            return {"success": False, "msg": f"获取DDL失败: {e}"}
         try:
             with engine.connect() as conn:
                 result = conn.exec_driver_sql(sql)
