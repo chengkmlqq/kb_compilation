@@ -47,6 +47,21 @@ x-api-env: &api-env
     NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
     NEO4J_PASSWORD: ${NEO4J_PASSWORD:-kb_neo4j_pass}
     NEO4J_DATABASE: ${NEO4J_DATABASE:-neo4j}
+    # ── agent worker（wiki 构建内联 agent）LLM 凭证兜底 ──
+    # agent_worker._resolve_llm_config 优先级：KB 绑定 > 注册表 > env。
+    # 注册表对后台任务常解析不到（personal 模型无用户上下文不可见、system 默认
+    # 多被禁用），env 兜底不可省。放共享锚点（对 api-server/解析 worker 无害），
+    # 避免 agent worker 用独立 environment 块覆盖掉 api-env 的 CELERY_*（merge 陷阱）。
+    AI_CHAT_API_ENDPOINT: ${AI_CHAT_API_ENDPOINT:-}
+    AI_CHAT_API_KEY: ${AI_CHAT_API_KEY:-}
+    AI_CHAT_MODEL: ${AI_CHAT_MODEL:-}
+    LLM_BASE_URL: ${AI_CHAT_API_ENDPOINT:-}
+    LLM_API_KEY: ${AI_CHAT_API_KEY:-}
+    LLM_MODEL: ${AI_CHAT_MODEL:-}
+    # inline=worker 内联 agent（默认）；gateway=回退外部 agent-gateway
+    WIKI_AGENT_MODE: ${WIKI_AGENT_MODE:-inline}
+    # 技能脚本超时（wiki 构建可能较久）
+    WORKER_AGENT_SKILL_SCRIPT_TIMEOUT_S: ${WORKER_AGENT_SKILL_SCRIPT_TIMEOUT_S:-1800}
     # 文档解析服务（MinerU 4.0.9 CPU 推理 / PaddleOCR-VL）：
     # parser_registry.mineru_endpoint() / paddle_endpoint() 直接读这两个 env，
     # 缺失时 PDF/OCR 解析会判定引擎不可用。缺省走 kb-net 服务名。
@@ -131,21 +146,10 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info", "--concurrency=1", "-Q", "agent"]
     <<: *api-env
-    environment:
-      # agent 的 LLM 凭证兜底（_resolve_llm_config 优先级：KB 绑定 > 注册表 > env）。
-      # .env 里已有 AI_CHAT_*，但 api-env 未透传 → agent worker 在这里显式注入，
-      # 否则注册表解析不到（后台任务无用户上下文，personal 模型不可见）时
-      # agent 会因缺凭证失败。
-      AI_CHAT_API_ENDPOINT: ${AI_CHAT_API_ENDPOINT:-}
-      AI_CHAT_API_KEY: ${AI_CHAT_API_KEY:-}
-      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-}
-      LLM_BASE_URL: ${AI_CHAT_API_ENDPOINT:-}
-      LLM_API_KEY: ${AI_CHAT_API_KEY:-}
-      LLM_MODEL: ${AI_CHAT_MODEL:-}
-      # inline=worker 内联 agent（默认）；gateway=回退外部 agent-gateway
-      WIKI_AGENT_MODE: ${WIKI_AGENT_MODE:-inline}
-      # 技能脚本超时（wiki 构建可能较久）
-      WORKER_AGENT_SKILL_SCRIPT_TIMEOUT_S: ${WORKER_AGENT_SKILL_SCRIPT_TIMEOUT_S:-1800}
+    # 注意：不要在本服务加独立 environment: 块——YAML `<<:` 是浅合并，同名
+    # environment 会被整体覆盖，导致 api-env 的 CELERY_BROKER_URL 等丢失
+    # （worker 会回退默认 amqp://localhost → Connection refused）。
+    # agent 特有变量已放进 x-api-env 锚点。
     volumes:
       - kb-docs:/data/kb_documents
     depends_on:
