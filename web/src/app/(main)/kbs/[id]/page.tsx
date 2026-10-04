@@ -24,6 +24,7 @@ import {
 } from "@ant-design/icons";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import WikiGraphView from "@/components/WikiGraphView";
+import Neo4jGraphView from "@/components/Neo4jGraphView";
 import WikiManagePanel from "@/components/WikiManagePanel";
 import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 import {
@@ -254,6 +255,9 @@ export default function KbDetailPage() {
           <WikiManagePanel kbId={kbId} />
         )}
       </Card>
+
+      {/* Neo4j 实体/关系知识图谱（与上方 wiki 链接图不同源：Neo4j vs pg） */}
+      <Neo4jGraphView kbId={kbId} />
 
       <ChunkingConfigModal
         open={chunkingOpen}

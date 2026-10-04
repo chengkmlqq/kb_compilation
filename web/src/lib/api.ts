@@ -223,6 +223,69 @@ export function apiWikiGraph(
   return request<WikiGraphData>(`/api/v1/kbs/${kbId}/wiki/graph${qs ? `?${qs}` : ""}`);
 }
 
+// ---- Neo4j 知识图谱（实体/关系，与上面的 wiki 链接图不同源）----
+
+export interface GraphNode {
+  name: string;
+  entity_type: string;
+  description: string;
+  degree: number;
+  chunks: string[];
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  type: string;
+  description: string;
+  strength: string | number;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export interface GraphStats {
+  nodes: number;
+  edges: number;
+  entity_types: { type: string; count: number }[];
+}
+
+export interface GraphHealth {
+  enabled: boolean;
+  available: boolean;
+  ok?: boolean;
+  error?: string;
+}
+
+export function apiGraphHealth() {
+  return request<GraphHealth>("/api/v1/graph/health");
+}
+
+export function apiKbGraph(kbId: string, params: { limit?: number } = {}) {
+  const q = new URLSearchParams();
+  if (params.limit !== undefined) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  return request<GraphData>(`/api/v1/kbs/${kbId}/graph${qs ? `?${qs}` : ""}`);
+}
+
+export function apiKbGraphEgo(kbId: string, center: string, depth = 1, limit = 200) {
+  const q = new URLSearchParams({ center, depth: String(depth), limit: String(limit) });
+  return request<GraphData>(`/api/v1/kbs/${kbId}/graph/ego?${q.toString()}`);
+}
+
+export function apiKbGraphSearch(kbId: string, q: string, limit = 100) {
+  return request<GraphData>(`/api/v1/kbs/${kbId}/graph/search`, {
+    method: "POST",
+    body: JSON.stringify({ q, limit }),
+  });
+}
+
+export function apiKbGraphStats(kbId: string) {
+  return request<GraphStats>(`/api/v1/kbs/${kbId}/graph/stats`);
+}
+
 // ---- wiki 管理（页面/目录 CRUD + 统计/检查/重建链接）----
 
 export interface WikiStatsData {

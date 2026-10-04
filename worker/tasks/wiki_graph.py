@@ -13,6 +13,7 @@ import logging
 from sqlalchemy import select
 
 from api.db import get_sessionmaker
+from api.config import get_settings
 from api.models.knowledge import DocChunk
 from api.services.chat import load_chat_config
 from api.services.graph import Neo4jGraphStore, build_graph
@@ -82,14 +83,7 @@ def _handle_graph_build(job_id: str, task_params: str | None) -> dict:
     db = get_sessionmaker()()
     try:
         chat_cfg = load_chat_config(db)
-        store = None
-        if params.get("neo4jUri") and params.get("neo4jUser") is not None:
-            store = Neo4jGraphStore(
-                uri=params["neo4jUri"],
-                user=str(params["neo4jUser"]),
-                password=str(params.get("neo4jPassword") or ""),
-                database=params.get("neo4jDatabase"),
-            )
+        store = _resolve_neo4j_store(params)
         result = build_graph(
             chat_cfg,
             kb_id,
@@ -98,9 +92,30 @@ def _handle_graph_build(job_id: str, task_params: str | None) -> dict:
             language=params.get("language", "中文"),
         )
         result["job_id"] = job_id
+        if store is None:
+            # 未配置 Neo4j：抽取仍会跑（实体/关系计数有意义），只是不落图
+            logger.warning("graph build for kb=%s: Neo4j 未配置，仅抽取未落图", kb_id)
         return result
     finally:
         db.close()
+
+
+def _resolve_neo4j_store(params: dict) -> Neo4jGraphStore | None:
+    """构造 Neo4j 写入目标：task_params 优先，其次容器 env（NEO4J_*）。
+
+    compose 通过 env 注入 NEO4J_URI/USERNAME/PASSWORD/DATABASE，正常部署下
+    无需在任务参数里重复传；task_params 保留用于测试/临时改指向。
+    """
+    settings = get_settings()
+    uri = params.get("neo4jUri") or settings.NEO4J_URI
+    user = params.get("neo4jUser")
+    user = str(user) if user is not None else settings.NEO4J_USERNAME
+    password = params.get("neo4jPassword")
+    password = str(password) if password is not None else settings.NEO4J_PASSWORD
+    database = params.get("neo4jDatabase") or settings.NEO4J_DATABASE or None
+    if not (uri and password):
+        return None
+    return Neo4jGraphStore(uri=uri, user=user, password=password, database=database)
 
 
 def register_task_handlers() -> None:

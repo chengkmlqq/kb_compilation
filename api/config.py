@@ -114,6 +114,20 @@ class Settings:
     # Polling interval for GET /tasks/{id} while the agent runs.
     AGENT_GATEWAY_POLL_INTERVAL_S: int = int(os.getenv("AGENT_GATEWAY_POLL_INTERVAL_S", "15"))
 
+    # --- Neo4j knowledge graph ---
+    # 实体/关系图存储。写入：worker KbGraphBuildTask -> api/services/graph.py
+    # Neo4jGraphStore；查询：api/routers/graph.py。独立实例 kb-neo4j（与
+    # WeKnora 隔离），docker-compose 内经服务名访问 bolt://neo4j:7687。
+    NEO4J_URI: str = os.getenv("NEO4J_URI", "")
+    NEO4J_USERNAME: str = os.getenv("NEO4J_USERNAME", "neo4j")
+    NEO4J_PASSWORD: str = os.getenv("NEO4J_PASSWORD", "")
+    NEO4J_DATABASE: str = os.getenv("NEO4J_DATABASE", "neo4j")
+
+    @property
+    def neo4j_enabled(self) -> bool:
+        """Neo4j 是否已配置（URI + 口令齐备才算可用）。"""
+        return bool(self.NEO4J_URI and self.NEO4J_PASSWORD)
+
     # --- Server ---
     APP_PORT: int = int(os.getenv("APP_PORT", "8000"))
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "info")

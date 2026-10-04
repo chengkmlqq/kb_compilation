@@ -238,10 +238,11 @@ class Neo4jGraphStore:
                 "target": r.target,
                 "kb_id": kb_id,
                 "type": r.relation_type or "RELATED_TO",
-                "attributes": {
-                    "description": r.description,
-                    "strength": r.strength,
-                },
+                # Neo4j 属性只接受标量/标量数组，不能存 Map —— description/strength
+                # 必须摊平成独立属性（此前写成 rel.attributes=<map> 会直接报
+                # Neo.ClientError.Statement.TypeError，建图 100% 失败）。
+                "description": r.description,
+                "strength": r.strength,
             }
             for r in relationships
         ]
@@ -251,7 +252,8 @@ class Neo4jGraphStore:
             MATCH (b:Entity {name: row.target, kb_id: row.kb_id})
             MERGE (a)-[rel:`RELATED_TO` {kb_id: row.kb_id}]->(b)
             SET rel.type = row.type
-            SET rel.attributes = row.attributes
+            SET rel.description = row.description
+            SET rel.strength = row.strength
             RETURN distinct 'done' AS result
         """
         tx.run(query, data=rel_data)

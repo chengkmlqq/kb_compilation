@@ -42,6 +42,11 @@ x-api-env: &api-env
     MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-}
     MINIO_SECURE: ${MINIO_SECURE:-false}
     MINIO_BUCKET: ${MINIO_BUCKET:-kb-compilation}
+    # Neo4j 知识图谱（worker KbGraphBuildTask 写入，api-server graph 查询路由读取）
+    NEO4J_URI: ${NEO4J_URI:-bolt://neo4j:7687}
+    NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
+    NEO4J_PASSWORD: ${NEO4J_PASSWORD:-kb_neo4j_pass}
+    NEO4J_DATABASE: ${NEO4J_DATABASE:-neo4j}
 
 services:
   nginx:
@@ -154,6 +159,85 @@ services:
     networks:
       - kb-net
 
+  # ── 文档解析服务（解析引擎规则 engine=mineru / paddleocr_vl 的落点）────
+  # 说明见 deploy/README-parsers.md
+  mineru:
+    # 官方 mineruorg/mineru 镜像被本网络 Docker Hub 白名单拦截，故自建：
+    # python:3.11-slim + 官方包 mineru==4.0.9，入口为官方 FastAPI 服务 mineru-api。
+    # CPU 推理路径（onnxruntime + llama.cpp），不装 torch。
+    build:
+      context: ./parsers/mineru_service
+    image: ${MINERU_IMAGE:-kb-mineru:local}
+    container_name: kb-mineru
+    restart: unless-stopped
+    command:
+      # 入口 = 官方 create_app + /file_parse 契约端点（server_shim.app）
+      - uvicorn
+      - server_shim:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    environment:
+      # HF 直连不可达，权重走 hf-mirror 镜像下载
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+      MINERU_ENDPOINT: ${MINERU_ENDPOINT:-http://mineru:8000}
+    volumes:
+      # 模型权重约 2.1GB（ONNX 小模型 + GGUF VLM），与镜像分离、可单独清理。
+      # 注意路径是 /root/.mineru（mineru 自建目录），不是 /root/.cache/huggingface
+      # —— 实测权重落在 /root/.mineru/models 下，挂错路径会导致每次重建容器重下 2GB。
+      - mineru-models:/root/.mineru
+    ports:
+      # 宿主端口 18000，避开 80/5432/6379/3306 等常用端口
+      - "${MINERU_HOST_PORT:-18000}:8000"
+    healthcheck:
+      # 官方 v1 API 的健康端点。--preload-models 下，200 即代表权重已就绪、
+      # 可真正解析。首次启动要下约 2.1GB 权重（本机实测约 400KB/s，约 70 分钟），
+      # 故 start_period 放宽到 1 小时，避免下载期间被判 unhealthy。
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/v1/health || exit 1"]
+      interval: 60s
+      timeout: 15s
+      retries: 10
+      start_period: 3600s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - kb-net
+
+  paddleocr:
+    # PaddleOCR-VL 解析服务。当前为 HTTP 占位实现（app.py）：接口契约与官方
+    # PaddleOCR-VL serving 一致，端点可配置/可探测，解析请求返回 503 + 安装指引。
+    # 真实模型在本机不可行（无 GPU + 权重 2.1GB + 磁盘紧张），装法见 README-parsers.md。
+    build:
+      context: ./parsers/paddle_service
+    image: ${PADDLEOCR_IMAGE:-kb-paddleocr:local}
+    container_name: kb-paddleocr
+    restart: unless-stopped
+    environment:
+      PADDLEOCR_ENDPOINT: ${PADDLEOCR_ENDPOINT:-http://paddleocr:8081}
+      # 设为 1 表示真实模型已就绪（当前未装，保持 0）
+      PADDLEOCR_VL_READY: ${PADDLEOCR_VL_READY:-0}
+    ports:
+      # 宿主端口 18081，避开常用端口
+      - "${PADDLEOCR_HOST_PORT:-18081}:8081"
+    healthcheck:
+      # /health 恒 200（服务存活）；模型可用性看响应体 model_available
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8081/health',timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - kb-net
+
   redis:
     image: redis:7-alpine
     container_name: kb-redis
@@ -224,6 +308,42 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+  neo4j:
+    # 知识图谱存储（实体/关系）。写入见 api/services/graph.py Neo4jGraphStore
+    # （worker KbGraphBuildTask 调用），查询见 api/routers/graph.py。
+    # 独立实例，与 WeKnora-neo4j 完全隔离（不同 compose 项目、数据卷、密码）。
+    image: neo4j:2025.10.1
+    container_name: kb-neo4j
+    restart: unless-stopped
+    environment:
+      - NEO4J_AUTH=${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-kb_neo4j_pass}
+      # apoc：与 WeKnora 一致开启（MERGE/检索插件）
+      - NEO4JLABS_PLUGINS=["apoc"]
+      - NEO4J_apoc_export_file_enabled=true
+      - NEO4J_apoc_import_file_enabled=true
+      - NEO4J_apoc_import_file_use__neo4j__config=true
+      # 内存：本机与 WeKnora-neo4j 共存且内存紧张，heap 1G / pagecache 512M（约 1.5G 实测占用）。
+      # 官方默认 512M 过小会导致启动慢/频繁 GC。
+      - NEO4J_server_memory_heap_initial__size=${NEO4J_HEAP:-1G}
+      - NEO4J_server_memory_heap_max__size=${NEO4J_HEAP:-1G}
+      - NEO4J_server_memory_pagecache_size=${NEO4J_PAGECACHE:-512M}
+    volumes:
+      - neo4j-data:/data
+    ports:
+      # Browser 17474 / Bolt 17687 —— 避开 WeKnora-neo4j 已占用的 7474/7687
+      - "${NEO4J_HTTP_PORT:-17474}:7474"
+      - "${NEO4J_BOLT_PORT:-17687}:7687"
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USERNAME:-neo4j} -p ${NEO4J_PASSWORD:-kb_neo4j_pass} 'RETURN 1' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - kb-net
 
@@ -233,6 +353,10 @@ volumes:
   redis-data:
   kb-docs:
   minio-data:
+  # MinerU 模型权重（ONNX 小模型 + GGUF VLM，约 2.1GB）
+  mineru-models:
+  # Neo4j 知识图谱数据
+  neo4j-data:
 
 networks:
   kb-net:
