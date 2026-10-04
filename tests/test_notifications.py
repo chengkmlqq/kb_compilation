@@ -124,3 +124,90 @@ def test_mark_all_read(client) -> None:
     assert r.json()["success"] is True
     cnt = client.get("/api/v1/system/notifications/unread-count", cookies=_cookie()).json()
     assert cnt["data"]["unread_count"] == 0
+
+
+# ============================================================================
+# 管理端（对齐 ds notification-actions: send / users / test-alert-api）
+# ============================================================================
+
+
+def test_send_message_to_specific_user(client):
+    """发送消息给指定用户（对齐 ds sendSystemMessageAction 指定 userIds）。"""
+    r = client.post(
+        "/api/v1/system/notifications/send",
+        json={
+            "userIds": ["zhang_san"],
+            "title": "系统公告",
+            "content": "今晚维护",
+            "type": "WARNING",
+            "priority": "HIGH",
+        },
+        cookies=_cookie(),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is True
+    assert body["data"]["sent"] == 1
+    lst = client.get(
+        "/api/v1/system/notifications", params={"tab": "all", "page": 1, "page_size": 50},
+        cookies=_cookie(),
+    ).json()
+    titles = [m["title"] for m in lst["data"]["items"]]
+    assert "系统公告" in titles
+
+
+def test_send_message_to_all_when_userids_empty(client):
+    """userIds 为空 → 发给全部启用用户（对齐 ds 全量语义）。"""
+    r = client.post(
+        "/api/v1/system/notifications/send",
+        json={"title": "全员通知", "content": "hello"},
+        cookies=_cookie(),
+    )
+    assert r.status_code == 200
+    assert r.json()["success"] is True
+    assert r.json()["data"]["sent"] >= 1
+
+
+def test_list_notification_users(client):
+    """通知目标用户列表：仅启用用户 + 关键词过滤（对齐 ds getUserListForNotificationAction）。"""
+    r = client.get("/api/v1/system/notifications/users", cookies=_cookie())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is True
+    uids = [u["user_id"] for u in body["data"]["items"]]
+    assert "zhang_san" in uids
+
+    r2 = client.get(
+        "/api/v1/system/notifications/users", params={"keyWord": "zhang"}, cookies=_cookie()
+    )
+    uids2 = [u["user_id"] for u in r2.json()["data"]["items"]]
+    assert "zhang_san" in uids2
+
+
+def test_test_alert_api_validates_endpoint(client):
+    """短信告警接口测试：非 http/https 地址与非法方法被拒（对齐 ds 校验）。"""
+    r = client.post(
+        "/api/v1/system/notifications/test-alert-api",
+        json={"endpoint": "ftp://bad", "method": "POST", "alertTitle": "x"},
+        cookies=_cookie(),
+    )
+    assert r.status_code == 200
+    assert r.json()["success"] is False
+    assert "http" in r.json()["message"]
+
+    r2 = client.post(
+        "/api/v1/system/notifications/test-alert-api",
+        json={"endpoint": "http://127.0.0.1:1/x", "method": "DELETE", "alertTitle": "x"},
+        cookies=_cookie(),
+    )
+    assert r2.json()["success"] is False
+    assert "POST" in r2.json()["message"]
+
+
+def test_send_message_unauthorized(client):
+    """未登录发消息 → 401（受控路径 fail-closed，与接收端未登录一致）。"""
+    r = client.post(
+        "/api/v1/system/notifications/send",
+        json={"title": "x", "content": "y"},
+    )
+    assert r.status_code == 401

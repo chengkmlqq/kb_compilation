@@ -490,3 +490,85 @@ def get_sequences(db: Session, ds_name: str, schema: str = "", user_id: str = ""
         ORDER BY sequence_name
     """
     return _query_meta(db, ds_name, sql, user_id, {"schema": schema or "public"})
+
+
+def export_result_rows(db, ds_name: str, sql: str, user_id: str = "", team_name: str = "") -> list[dict] | str:
+    """执行 SQL 并返回 rows（导出用，limit 10000 由调用方控制）。错误返回 str 消息。"""
+    entry = _find_entry(db, ds_name, user_id, team_name)
+    if entry is None:
+        return f"数据源不存在或未授权: {ds_name}"
+    if not sql or not sql.strip():
+        return "SQL 不能为空"
+    # SANSSEC1 哨兵：_connect 会抛 ValueError → 转字符串
+    engine = None
+    try:
+        engine = _connect(entry)
+        rows: list[dict] = []
+        with engine.connect() as conn:
+            result = conn.exec_driver_sql(sql)
+            cols = list(result.keys()) if hasattr(result, "keys") else []
+            for row in result:
+                vals = list(row)
+                rows.append(dict(zip(cols, vals)) if cols else {"_row": vals})
+                if len(rows) >= 10000:
+                    break
+        return rows
+    except Exception as e:  # noqa: BLE001
+        logger.warning("datagrid export failed: %s", e)
+        return f"导出失败: {e}"
+    finally:
+        if engine is not None:
+            engine.dispose()
+
+
+def export_excel(db, ds_name: str, sql: str, user_id: str = "", team_name: str = "") -> dict:
+    """导出查询结果为 xlsx（对齐 ds exportExcel：base64 + filename）。"""
+    rows = export_result_rows(db, ds_name, sql, user_id, team_name)
+    if isinstance(rows, str):
+        return {"success": False, "msg": rows}
+    if not rows:
+        return {"success": False, "msg": "查询结果为空，无可导出数据"}
+    import io
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Export"
+    cols = list(rows[0].keys())
+    ws.append(cols)
+    for r in rows:
+        ws.append([r.get(c) for c in cols])
+    buf = io.BytesIO()
+    wb.save(buf)
+    import base64
+    return {
+        "success": True,
+        "data": base64.b64encode(buf.getvalue()).decode("ascii"),
+        "filename": f"export_{_now_stamp()}.xlsx",
+    }
+
+
+def export_sql(db, ds_name: str, sql: str, table_name: str = "export_table", user_id: str = "", team_name: str = "") -> dict:
+    """导出查询结果为 INSERT 语句（对齐 ds exportSql）。"""
+    rows = export_result_rows(db, ds_name, sql, user_id, team_name)
+    if isinstance(rows, str):
+        return {"success": False, "msg": rows}
+    if not rows:
+        return {"success": False, "msg": "查询结果为空，无可导出数据"}
+    cols = list(rows[0].keys())
+
+    def esc(v):
+        if v is None:
+            return "NULL"
+        if isinstance(v, (int, float)):
+            return str(v)
+        return "'" + str(v).replace("\\", "\\\\").replace("'", "''") + "'"
+
+    out = []
+    for r in rows:
+        out.append(f"INSERT INTO `{table_name}` ({', '.join('`'+c+'`' for c in cols)}) VALUES ({', '.join(esc(r.get(c)) for c in cols)});")
+    return {"success": True, "data": "\n".join(out), "filename": f"export_{_now_stamp()}.sql", "rows": len(out)}
+
+
+def _now_stamp() -> str:
+    from datetime import datetime
+    return datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -57,9 +57,10 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "sys_teams", menu_name: "sys_teams", menu_label: "团队管理", route: "/system/teams", parent_id: "system", menu_icon: "PartitionOutlined", sort_num: 3, state: "1" },
   { menu_id: "sys_menus", menu_name: "sys_menus", menu_label: "菜单管理", route: "/system/menus", parent_id: "system", menu_icon: "MenuOutlined", sort_num: 4, state: "1" },
   { menu_id: "sys_logs", menu_name: "sys_logs", menu_label: "操作日志", route: "/system/logs", parent_id: "system", menu_icon: "ProfileOutlined", sort_num: 5, state: "1" },
-  { menu_id: "models", menu_name: "models", menu_label: "模型配置", route: "/models", parent_id: "system", menu_icon: "CloudServerOutlined", sort_num: 6, state: "1" },
-  { menu_id: "mcps", menu_name: "mcps", menu_label: "MCP 管理", route: "/mcps", parent_id: "system", menu_icon: "ApiOutlined", sort_num: 7, state: "1" },
-  { menu_id: "skills", menu_name: "skills", menu_label: "技能管理", route: "/skills", parent_id: "system", menu_icon: "ToolOutlined", sort_num: 8, state: "1" },
+  { menu_id: "notify", menu_name: "notify", menu_label: "通知管理", route: "/notification", parent_id: "system", menu_icon: "BellOutlined", sort_num: 6, state: "1" },
+  { menu_id: "models", menu_name: "models", menu_label: "模型配置", route: "/models", parent_id: "system", menu_icon: "CloudServerOutlined", sort_num: 7, state: "1" },
+  { menu_id: "mcps", menu_name: "mcps", menu_label: "MCP 管理", route: "/mcps", parent_id: "system", menu_icon: "ApiOutlined", sort_num: 8, state: "1" },
+  { menu_id: "skills", menu_name: "skills", menu_label: "技能管理", route: "/skills", parent_id: "system", menu_icon: "ToolOutlined", sort_num: 9, state: "1" },
 ];
 
 /** 平铺列表 → 树（对齐 data-synth menu-actions buildTree 语义） */

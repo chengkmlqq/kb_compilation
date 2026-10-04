@@ -26,6 +26,7 @@ import {
   MenuOutlined,
   ProfileOutlined,
   TeamOutlined,
+  BellOutlined,
 } from "@ant-design/icons";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useMenuContext, MenuTreeNode } from "./MenuContext";
@@ -54,6 +55,7 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   MenuOutlined: <MenuOutlined />,
   ProfileOutlined: <ProfileOutlined />,
   TeamOutlined: <TeamOutlined />,
+  BellOutlined: <BellOutlined />,
 };
 const DEFAULT_ICON = <AppstoreOutlined />;
 

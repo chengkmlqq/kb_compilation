@@ -2116,3 +2116,75 @@ export function apiGetDocumentChunks(kbId: string, docId: string) {
     `/api/v1/kbs/${kbId}/documents/${docId}/chunks`,
   );
 }
+
+// ---- datagrid 导出（对齐 ds exportExcel / exportSql） ----
+
+export interface DatagridExportResult {
+  success: boolean;
+  data?: string;   // base64(xlsx) 或 INSERT 语句文本
+  filename?: string;
+  rows?: number;
+  msg?: string;
+}
+
+export function apiDatagridExportExcel(dsName: string, sql: string): Promise<DatagridExportResult> {
+  // 后端返回裸业务体（success/data/filename 平级），不走 ApiEnvelope
+  return request<DatagridExportResult>("/api/v1/datagrid/export-excel", {
+    method: "POST",
+    body: JSON.stringify({ dsName, sql }),
+  }) as unknown as Promise<DatagridExportResult>;
+}
+
+export function apiDatagridExportSql(dsName: string, sql: string, tableName = "export_table"): Promise<DatagridExportResult> {
+  return request<DatagridExportResult>("/api/v1/datagrid/export-sql", {
+    method: "POST",
+    body: JSON.stringify({ dsName, sql, tableName }),
+  }) as unknown as Promise<DatagridExportResult>;
+}
+
+// ---- 通知管理端（对齐 ds sendSystemMessageAction 等） ----
+
+export interface NotifyUserItem {
+  user_id?: string;
+  user_name?: string;
+  email?: string | null;
+}
+
+export function apiListNotifyUsers(keyWord = "") {
+  return request<{ items: NotifyUserItem[]; total: number }>(
+    `/api/v1/system/notifications/users?keyWord=${encodeURIComponent(keyWord)}`,
+  );
+}
+
+export interface SendMessagePayload {
+  userIds?: string[];
+  title: string;
+  content: string;
+  type?: "INFO" | "WARNING" | "ERROR" | "SUCCESS";
+  priority?: "LOW" | "NORMAL" | "HIGH";
+  linkUrl?: string;
+}
+
+export function apiSendSystemMessage(payload: SendMessagePayload) {
+  return request<{ sent: number }>("/api/v1/system/notifications/send", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface TestAlertApiPayload {
+  endpoint: string;
+  method: "POST" | "PUT" | "PATCH";
+  id?: string;
+  alertLevel?: string;
+  alertTitle: string;
+  alertContent?: string;
+  alertTime?: string;
+}
+
+export function apiTestExternalAlertApi(payload: TestAlertApiPayload) {
+  return request<{ status_code: number; body: string }>(
+    "/api/v1/system/notifications/test-alert-api",
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}

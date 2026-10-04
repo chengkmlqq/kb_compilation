@@ -133,3 +133,23 @@ def procedures(req: MetaReq, db: Session = Depends(get_db), idn: Identity = Depe
 @router.post("/sequences")
 def sequences(req: MetaReq, db: Session = Depends(get_db), idn: Identity = Depends(_require_identity)) -> dict:
     return get_sequences(db, req.dsName, _schema(req), _uid(idn), _team(idn))
+
+
+class ExportReq(BaseModel):
+    dsName: str
+    sql: str
+    tableName: str = "export_table"
+
+
+@router.post("/export-excel")
+def export_excel(req: ExportReq, db: Session = Depends(get_db), idn: Identity = Depends(_require_identity)) -> dict:
+    """导出查询结果为 xlsx（base64）（对齐 ds exportExcel）。"""
+    from api.services.datagrid import export_excel as _export_excel
+    return _export_excel(db, req.dsName, req.sql, _uid(idn), _team(idn))
+
+
+@router.post("/export-sql")
+def export_sql(req: ExportReq, db: Session = Depends(get_db), idn: Identity = Depends(_require_identity)) -> dict:
+    """导出查询结果为 INSERT 语句（对齐 ds exportSql）。"""
+    from api.services.datagrid import export_sql as _export_sql
+    return _export_sql(db, req.dsName, req.sql, req.tableName, _uid(idn), _team(idn))

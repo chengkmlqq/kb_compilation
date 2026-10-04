@@ -29,6 +29,8 @@ import {
   CaretRightOutlined,
   ClearOutlined,
   DatabaseOutlined,
+  DownloadOutlined,
+  FileExcelOutlined,
   ReloadOutlined,
   TableOutlined,
 } from "@ant-design/icons";
@@ -37,6 +39,8 @@ import {
   apiDatagridDdl,
   apiDatagridDatasources,
   apiDatagridExecute,
+  apiDatagridExportExcel,
+  apiDatagridExportSql,
   apiDatagridTableInfo,
   apiDatagridTables,
   DatagridColumn,
@@ -71,6 +75,7 @@ export default function DataGridPage() {
   // ---- SQL ----
   const [sql, setSql] = useState("");
   const [executing, setExecuting] = useState(false);
+  const [exporting, setExporting] = useState<"excel" | "sql" | "">("");
   const [query, setQuery] = useState<QueryState | null>(null);
   const [history, setHistory] = useState<string[]>([]);
 
@@ -189,6 +194,56 @@ export default function DataGridPage() {
     },
     [dsName, message],
   );
+
+  // ---- 导出（对齐 ds db-console exportExcel / exportSql）----
+  const doExportExcel = useCallback(async () => {
+    if (!dsName) return message.warning("请先选择数据源");
+    if (!query || query.resultType !== "select" || query.rows.length === 0)
+      return message.warning("请先执行 SELECT 查询并有结果再导出");
+    setExporting("excel");
+    try {
+      const res = await apiDatagridExportExcel(dsName, sql);
+      if (res.success && res.data) {
+        const bin = atob(res.data);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = res.filename || "export.xlsx";
+        a.click();
+        URL.revokeObjectURL(url);
+        message.success("Excel 导出成功");
+      } else {
+        message.error(res.msg || "导出失败");
+      }
+    } finally {
+      setExporting("");
+    }
+  }, [dsName, query, sql, message]);
+
+  const doExportSql = useCallback(async () => {
+    if (!dsName) return message.warning("请先选择数据源");
+    if (!query || query.resultType !== "select" || query.rows.length === 0)
+      return message.warning("请先执行 SELECT 查询并有结果再导出");
+    setExporting("sql");
+    try {
+      const res = await apiDatagridExportSql(dsName, sql);
+      if (res.success && res.data) {
+        const url = URL.createObjectURL(new Blob([res.data], { type: "text/plain;charset=utf-8" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = res.filename || "export.sql";
+        a.click();
+        URL.revokeObjectURL(url);
+        message.success(`SQL 导出成功（${res.rows ?? 0} 条 INSERT）`);
+      } else {
+        message.error(res.msg || "导出失败");
+      }
+    } finally {
+      setExporting("");
+    }
+  }, [dsName, query, sql, message]);
 
   const filteredTables = useMemo(() => {
     const kw = tableSearch.trim().toLowerCase();
@@ -316,6 +371,22 @@ export default function DataGridPage() {
                     disabled={!dsName}
                   >
                     刷新表
+                  </Button>
+                  <Button
+                    icon={<FileExcelOutlined />}
+                    loading={exporting === "excel"}
+                    onClick={() => void doExportExcel()}
+                    disabled={!dsName}
+                  >
+                    导出 Excel
+                  </Button>
+                  <Button
+                    icon={<DownloadOutlined />}
+                    loading={exporting === "sql"}
+                    onClick={() => void doExportSql()}
+                    disabled={!dsName}
+                  >
+                    导出 SQL
                   </Button>
                   {history.length > 0 && (
                     <Select
