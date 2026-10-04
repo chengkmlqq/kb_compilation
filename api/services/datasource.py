@@ -13,19 +13,28 @@ api.lib.crypto.aes_decrypt (byte-compatible with the legacy / Java client).
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import re
 import ssl
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from api.lib.crypto import aes_decrypt
-from api.models.framework import Datasource, TeamDsMap
+from api.models.framework import (
+    Datasource,
+    DsCategory,
+    DsFormField,
+    DsType,
+    DsVersion,
+    TeamDsMap,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -317,3 +326,253 @@ def test_datasource_by_id(db: Session, ds_id: str, identity) -> dict:
     )
     result["dsId"] = entry.id
     return result
+
+
+# ---------------------------------------------------------------------------
+# 数据源 CRUD（对齐 ds saveDataSource / deleteDataSource）
+# ---------------------------------------------------------------------------
+
+
+def _now_text() -> str:
+    return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _protect_secret(value: str | None) -> str | None:
+    """口令落库保护：已有信封（enc:）原样保留，明文走 AES 加密。"""
+    from api.lib.crypto import aes_encrypt
+
+    text = _normalize_text(value)
+    if not text:
+        return None
+    if text.startswith("enc:"):
+        return text
+    return aes_encrypt(text) or text
+
+
+def save_datasource(db: Session, data: dict, user_id: str = "") -> dict:
+    """新建/更新数据源（data 带 id=更新，否则新建）。"""
+    name = _normalize_text(data.get("name") or data.get("dsName"))
+    if not name:
+        raise ValueError("英文名（name）不能为空")
+    ds_type = _normalize_text(data.get("dsType") or data.get("ds_type"))
+    if not ds_type:
+        raise ValueError("数据源类型（dsType）不能为空")
+
+    now = _now_text()
+    ds_id = _normalize_text(data.get("id"))
+    protected_auth = _protect_secret(data.get("dsAuth") or data.get("ds_auth"))
+
+    if ds_id:
+        row = db.execute(select(Datasource).where(Datasource.id == ds_id)).scalars().first()
+        if row is None:
+            raise ValueError(f"数据源不存在: {ds_id}")
+        row.name = name
+        row.label = _normalize_text(data.get("label") or data.get("dsLabel")) or None
+        row.ds_acct = _normalize_text(data.get("dsAcct") or data.get("ds_acct")) or None
+        row.ds_auth = protected_auth
+        row.ds_category = _normalize_text(data.get("dsCategory") or data.get("ds_category")) or None
+        row.ds_type = ds_type
+        row.ds_version = _normalize_text(data.get("dsVersion") or data.get("ds_version")) or None
+        row.url = _normalize_text(data.get("url")) or None
+        row.ds_conf = _normalize_text(data.get("dsConf") or data.get("ds_conf")) or None
+        row.state = _normalize_text(data.get("state")) or row.state or "1"
+        row.last_upd_date = now
+        row.update_user = user_id or None
+        db.commit()
+        return {"id": row.id, "updated": True}
+
+    new_id = ds_id or uuid.uuid4().hex
+    row = Datasource(
+        id=new_id,
+        name=name,
+        label=_normalize_text(data.get("label") or data.get("dsLabel")) or None,
+        ds_acct=_normalize_text(data.get("dsAcct") or data.get("ds_acct")) or None,
+        ds_auth=protected_auth,
+        ds_category=_normalize_text(data.get("dsCategory") or data.get("ds_category")) or None,
+        ds_type=ds_type,
+        ds_version=_normalize_text(data.get("dsVersion") or data.get("ds_version")) or None,
+        url=_normalize_text(data.get("url")) or None,
+        ds_conf=_normalize_text(data.get("dsConf") or data.get("ds_conf")) or None,
+        state=_normalize_text(data.get("state")) or "1",
+        create_user=user_id or None,
+        create_date=now,
+        last_upd_date=now,
+        update_user=user_id or None,
+    )
+    db.add(row)
+    db.commit()
+    return {"id": new_id, "created": True}
+
+
+def delete_datasource(db: Session, ds_id: str) -> dict:
+    """删除数据源（vector_es 类型保护，对齐 ds 语义）。"""
+    row = db.execute(select(Datasource).where(Datasource.id == ds_id)).scalars().first()
+    if row is None:
+        raise ValueError(f"数据源不存在: {ds_id}")
+    if (row.ds_type or "").lower() in ("vector_es", "elasticsearch"):
+        raise ValueError("向量库数据源（Elasticsearch）不可删除")
+    # 级联清理团队授权映射（modo_team_ds_map）
+    db.execute(delete(TeamDsMap).where(TeamDsMap.ds_name == row.name))
+    db.delete(row)
+    db.commit()
+    return {"deleted": True, "id": ds_id}
+
+
+# ---------------------------------------------------------------------------
+# 元数据：分类 / 类型 / 版本 / 表单字段（向导动态表单驱动）
+# ---------------------------------------------------------------------------
+
+
+def list_ds_categories(db: Session) -> list[dict]:
+    rows = db.execute(select(DsCategory).order_by(DsCategory.sorted)).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "categoryName": r.category_name,
+            "categoryLabel": r.category_label,
+            "sorted": r.sorted,
+        }
+        for r in rows
+    ]
+
+
+def list_ds_types(db: Session, ds_category: str | None = None, search: str | None = None) -> list[dict]:
+    stmt = select(DsType)
+    if ds_category:
+        stmt = stmt.where(DsType.ds_category == ds_category)
+    if search:
+        stmt = stmt.where(DsType.ds_type_label.like(f"%{search}%"))
+    rows = db.execute(stmt.order_by(DsType.sorted)).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "dsType": r.ds_type,
+            "dsTypeLabel": r.ds_type_label,
+            "dsCategory": r.ds_category,
+            "img": r.img,
+            "sorted": r.sorted,
+            "isSupport": r.is_support,
+        }
+        for r in rows
+    ]
+
+
+def get_ds_type_detail(db: Session, ds_type: str) -> dict | None:
+    row = db.execute(select(DsType).where(DsType.ds_type == ds_type)).scalars().first()
+    if row is None:
+        return None
+    return {
+        "id": row.id,
+        "dsType": row.ds_type,
+        "dsTypeLabel": row.ds_type_label,
+        "dsCategory": row.ds_category,
+        "img": row.img,
+        "sorted": row.sorted,
+        "isSupport": row.is_support,
+    }
+
+
+def list_ds_versions(db: Session, ds_type: str | None = None) -> list[dict]:
+    stmt = select(DsVersion)
+    if ds_type:
+        stmt = stmt.where(DsVersion.ds_type == ds_type)
+    rows = db.execute(stmt.order_by(DsVersion.sorted)).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "dsType": r.ds_type,
+            "versionName": r.version_name,
+            "versionValue": r.version_value,
+            "sorted": r.sorted,
+        }
+        for r in rows
+    ]
+
+
+def list_ds_form_fields(db: Session, ds_type: str, ds_version: str | None = None) -> list[dict]:
+    """表单字段配置（驱动新建/编辑向导的动态表单）。"""
+    stmt = select(DsFormField).where(DsFormField.ds_type == ds_type)
+    if ds_version:
+        stmt = stmt.where(DsFormField.ds_version == ds_version)
+    rows = db.execute(stmt.order_by(DsFormField.sorted)).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "dsType": r.ds_type,
+            "name": r.name,
+            "label": r.label,
+            "widget": r.widget,
+            "sorted": r.sorted,
+            "defaultValue": r.default_value,
+            "invisible": r.invisible,
+            "isConf": r.is_conf,
+            "options": r.options,
+            "placeHold": r.place_hold,
+            "regex": r.regex,
+            "dsVersion": r.ds_version,
+        }
+        for r in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# 团队 → 数据源授权（modo_team_ds_map）
+# ---------------------------------------------------------------------------
+
+
+def list_team_ds_maps(db: Session, team_name: str, ds_name: str | None = None) -> list[dict]:
+    stmt = select(TeamDsMap).where(TeamDsMap.team_name == team_name)
+    if ds_name:
+        stmt = stmt.where(TeamDsMap.ds_name == ds_name)
+    rows = db.execute(stmt).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "dsName": r.ds_name,
+            "schemaName": r.schema_name,
+            "teamName": r.team_name,
+            "isProd": r.is_prod,
+        }
+        for r in rows
+    ]
+
+
+def save_team_ds_maps(db: Session, team_name: str, items: list[dict]) -> dict:
+    """保存团队的数据源授权（全量覆盖该团队的映射）。"""
+    if not _normalize_text(team_name):
+        raise ValueError("团队名不能为空")
+    existing = db.execute(select(TeamDsMap).where(TeamDsMap.team_name == team_name)).scalars().all()
+    existing_keys = {
+        (r.ds_name or "", r.schema_name or "", r.is_prod or "0") for r in existing
+    }
+    kept: set[tuple[str, str, str]] = set()
+    added = 0
+    for item in items:
+        ds_name = _normalize_text(item.get("dsName"))
+        if not ds_name:
+            continue
+        schema_name = _normalize_text(item.get("schemaName")) or ""
+        is_prod = _normalize_text(item.get("isProd")) or "0"
+        key = (ds_name, schema_name, is_prod)
+        if key in existing_keys:
+            kept.add(key)
+            continue
+        db.add(
+            TeamDsMap(
+                id=uuid.uuid4().hex[:32],
+                ds_name=ds_name,
+                schema_name=schema_name or None,
+                team_name=team_name,
+                is_prod=is_prod,
+            )
+        )
+        added += 1
+    # 清理不再存在的映射
+    removed = 0
+    for row in existing:
+        key = (row.ds_name or "", row.schema_name or "", row.is_prod or "0")
+        if key not in kept:
+            db.delete(row)
+            removed += 1
+    db.commit()
+    return {"teamName": team_name, "added": added, "removed": removed, "total": len(existing) - removed + added}

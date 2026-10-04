@@ -524,6 +524,157 @@ export function apiListDatasources(page = 1, pageSize = 10, keyword = "") {
   );
 }
 
+// ---- 数据源管理（迁移 data-synth 完整功能） ----
+
+export interface DsCategoryItem {
+  id: string;
+  categoryName: string;
+  categoryLabel: string;
+  sorted: number;
+}
+
+export interface DsTypeItem {
+  id: string;
+  dsType: string;
+  dsTypeLabel: string;
+  dsCategory: string;
+  img?: string | null;
+  sorted: number;
+  isSupport?: string | null;
+}
+
+export interface DsVersionItem {
+  id: string;
+  dsType: string;
+  versionName: string;
+  versionValue: string;
+  sorted: number;
+}
+
+export interface DsFormFieldItem {
+  id: string;
+  dsType: string;
+  name: string;
+  label: string;
+  widget?: string | null;
+  sorted: number;
+  defaultValue?: string | null;
+  invisible?: number | null;
+  isConf?: number | null;
+  options?: string | null;
+  placeHold?: string | null;
+  regex?: string | null;
+  dsVersion?: string | null;
+}
+
+export interface DsSavePayload {
+  id?: string;
+  name: string;
+  label?: string | null;
+  dsType: string;
+  dsAcct?: string | null;
+  dsAuth?: string | null;
+  dsCategory?: string | null;
+  dsVersion?: string | null;
+  url?: string | null;
+  dsConf?: string | null;
+  state?: string | null;
+}
+
+export interface TeamDsMapItem {
+  id: string;
+  dsName: string;
+  schemaName?: string | null;
+  teamName: string;
+  isProd?: string | null;
+}
+
+export function apiListDsCategories() {
+  return request<DsCategoryItem[]>("/api/v1/open/datasources/categories");
+}
+
+export function apiListDsTypes(dsCategory?: string, search?: string) {
+  const params = new URLSearchParams();
+  if (dsCategory) params.set("dsCategory", dsCategory);
+  if (search) params.set("search", search);
+  const qs = params.toString();
+  return request<DsTypeItem[]>(`/api/v1/open/datasources/types${qs ? `?${qs}` : ""}`);
+}
+
+export function apiGetDsTypeDetail(dsType: string) {
+  return request<DsTypeItem>(`/api/v1/open/datasources/types/${encodeURIComponent(dsType)}`);
+}
+
+export function apiListDsVersions(dsType?: string) {
+  const qs = dsType ? `?dsType=${encodeURIComponent(dsType)}` : "";
+  return request<DsVersionItem[]>(`/api/v1/open/datasources/versions${qs}`);
+}
+
+export function apiListDsFormFields(dsType: string, dsVersion?: string) {
+  const params = new URLSearchParams({ dsType });
+  if (dsVersion) params.set("dsVersion", dsVersion);
+  return request<DsFormFieldItem[]>(`/api/v1/open/datasources/form-fields?${params.toString()}`);
+}
+
+export function apiCreateDatasource(payload: DsSavePayload) {
+  return request<{ id?: string; created?: boolean }>("/api/v1/open/datasources", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateDatasource(id: string, payload: DsSavePayload) {
+  return request<{ id?: string; updated?: boolean }>(
+    `/api/v1/open/datasources/${encodeURIComponent(id)}`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export function apiDeleteDatasource(id: string) {
+  return request<{ id?: string; deleted?: boolean }>(
+    `/api/v1/open/datasources/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
+}
+
+/** 数据源详情（编辑时载入已有配置；敏感字段由后端脱敏返回）。 */
+export function apiGetDatasource(id: string) {
+  return request<{
+    id: string;
+    name: string;
+    label?: string | null;
+    dsType?: string | null;
+    dsCategory?: string | null;
+    dsVersion?: string | null;
+    dsAcct?: string | null;
+    dsAuth?: string | null;
+    url?: string | null;
+    dsConf?: string | null;
+    state?: string | null;
+  }>(`/api/v1/open/datasources/${encodeURIComponent(id)}`);
+}
+
+/** 测试数据源连接（dsId 或原始参数）。 */
+export function apiTestDatasource(payload: Record<string, unknown>) {
+  return request<{ success?: boolean; message?: string }>("/api/v1/open/datasources/test", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiListTeamDsAuth(teamName: string) {
+  return request<TeamDsMapItem[]>(
+    `/api/v1/open/datasources/team-auth/${encodeURIComponent(teamName)}`,
+  );
+}
+
+export function apiSaveTeamDsAuth(teamName: string, items: TeamDsMapItem[]) {
+  return request<{ added?: number; removed?: number; total?: number }>(
+    `/api/v1/open/datasources/team-auth/${encodeURIComponent(teamName)}`,
+    { method: "PUT", body: JSON.stringify(items) },
+  );
+}
+
 // ---- system admin (read-only) ----
 
 export interface SysUserItem {
@@ -1633,8 +1784,6 @@ export function apiFileRmdir(path: string) {
 export function apiFileZipUrl(path: string) {
   return `/api/v1/files/zip?path=${encodeURIComponent(path)}`;
 }
-
-// ---- chunking config & parser engines ----
 
 export interface ParserEngineRule {
   file_types: string[];
