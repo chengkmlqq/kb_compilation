@@ -70,6 +70,25 @@ export async function apiMe(): Promise<ApiEnvelope<Identity>> {
 
 // ---- knowledge bases ----
 
+export interface IndexingStrategy {
+  vector_enabled?: boolean;
+  keyword_enabled?: boolean;
+  wiki_enabled?: boolean;
+  graph_enabled?: boolean;
+  [k: string]: unknown;
+}
+
+export interface FaqConfig {
+  index_mode?: string;
+  [k: string]: unknown;
+}
+
+export interface QuestionGenerationConfig {
+  enabled?: boolean;
+  question_count?: number;
+  [k: string]: unknown;
+}
+
 export interface KbItem {
   id: string;
   name: string;
@@ -78,10 +97,23 @@ export interface KbItem {
   scope?: string;
   team_name?: string;
   owner_user_id?: string;
-  indexing_strategy?: Record<string, boolean>;
+  indexing_strategy?: IndexingStrategy;
   doc_count?: number;
   page_count?: number;
   created_at?: string | null;
+  type?: "document" | "faq" | string;
+  faq_config?: FaqConfig;
+  question_generation_config?: QuestionGenerationConfig;
+  custom_wiki_generation?: boolean;
+  wiki_config?: {
+    skill?: string;
+    extraction_granularity?: string;
+    synthesis_model_id?: string;
+    [k: string]: unknown;
+  };
+  embedding_model_id?: string | null;
+  summary_model_id?: string | null;
+  extract_config?: { enabled?: boolean; [k: string]: unknown };
 }
 
 export interface PageList<T> {
@@ -118,13 +150,19 @@ export function apiListKbs(page = 1, pageSize = 20, keyword = "", scope?: string
   return request<PageList<KbItem>>(`/api/v1/kbs?${params.toString()}`);
 }
 
-export function apiCreateKb(payload: {
+export interface KbCreatePayload {
   name: string;
   label?: string;
   description?: string;
   scope?: string;
   team_name?: string;
-}) {
+  type?: "document" | "faq" | string;
+  indexing_strategy?: IndexingStrategy;
+  custom_wiki_generation?: boolean;
+  configs?: Record<string, unknown>;
+}
+
+export function apiCreateKb(payload: KbCreatePayload) {
   return request<{ id: string; scope?: string }>("/api/v1/kbs", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -732,39 +770,50 @@ export function apiDatagridExecute(dsName: string, sql: string, schemaName?: str
   });
 }
 
-export function apiDatagridTables(dsName: string, schemaName?: string, searchName?: string) {
-  return request<{ success: boolean; msg?: string; rows?: Array<Record<string, unknown>>; total?: number }>(
-    "/api/v1/datagrid/tables",
-    { method: "POST", body: JSON.stringify({ dsName, schemaName, searchName }) },
-  );
+export interface DatagridMetaResult {
+  success: boolean;
+  msg?: string;
+  columns?: string[];
+  rows?: Array<Record<string, unknown>>;
+  total?: number;
+  ddl?: string;
 }
 
-export function apiDatagridColumns(dsName: string, tableName: string, schemaName?: string) {
+// 注意：/tables /columns /ddl /table-info 返回裸业务体（顶层 rows/ddl，不包 data），
+// 与 /datasources、/execute（包 data）不同；返回类型按真实结构声明。
+export function apiDatagridTables(dsName: string, schemaName?: string, searchName?: string): Promise<DatagridMetaResult> {
+  return request<DatagridMetaResult>("/api/v1/datagrid/tables", {
+    method: "POST",
+    body: JSON.stringify({ dsName, schemaName, searchName }),
+  }) as unknown as Promise<DatagridMetaResult>;
+}
+
+export function apiDatagridColumns(dsName: string, tableName: string, schemaName?: string): Promise<DatagridMetaResult & { rows?: DatagridColumn[] }> {
   return request<{ success: boolean; msg?: string; rows?: DatagridColumn[] }>(
     "/api/v1/datagrid/columns",
     { method: "POST", body: JSON.stringify({ dsName, tableName, schemaName }) },
-  );
+  ) as unknown as Promise<DatagridMetaResult & { rows?: DatagridColumn[] }>;
 }
 
-export function apiDatagridDdl(dsName: string, tableName: string, schemaName?: string) {
+export function apiDatagridDdl(dsName: string, tableName: string, schemaName?: string): Promise<DatagridMetaResult> {
   return request<{ success: boolean; ddl?: string; msg?: string }>("/api/v1/datagrid/ddl", {
     method: "POST",
     body: JSON.stringify({ dsName, tableName, schemaName }),
-  });
+  }) as unknown as Promise<DatagridMetaResult>;
 }
 
-export function apiDatagridTableInfo(dsName: string, tableName: string, schemaName?: string) {
+export function apiDatagridTableInfo(dsName: string, tableName: string, schemaName?: string): Promise<DatagridMetaResult> {
   return request<{ success: boolean; rows?: Array<Record<string, unknown>>; msg?: string }>(
     "/api/v1/datagrid/table-info",
     { method: "POST", body: JSON.stringify({ dsName, tableName, schemaName }) },
-  );
+  ) as unknown as Promise<DatagridMetaResult>;
 }
 
-export function apiDatagridViews(dsName: string, schemaName?: string) {
+export function apiDatagridViews(dsName: string, schemaName?: string): Promise<DatagridMetaResult> {
   return request<{ success: boolean; rows?: Array<Record<string, unknown>> }>("/api/v1/datagrid/views", {
     method: "POST",
     body: JSON.stringify({ dsName, schemaName }),
-  });
+  }) as unknown as Promise<DatagridMetaResult>;
 }
 
 export function apiListTeamDsAuth(teamName: string) {

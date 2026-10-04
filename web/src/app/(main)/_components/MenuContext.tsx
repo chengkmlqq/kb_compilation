@@ -51,9 +51,14 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "cron", menu_name: "cron", menu_label: "任务管理", route: "/cron", parent_id: "grp_data", menu_icon: "ScheduleOutlined", sort_num: 3, state: "1" },
   { menu_id: "workers", menu_name: "workers", menu_label: "主机监控", route: "/workers", parent_id: "grp_data", menu_icon: "CloudServerOutlined", sort_num: 4, state: "1" },
   { menu_id: "system", menu_name: "system", menu_label: "系统管理", route: "/system", parent_id: "root_kb", menu_icon: "SettingOutlined", sort_num: 4, state: "1" },
-  { menu_id: "models", menu_name: "models", menu_label: "模型配置", route: "/models", parent_id: "system", menu_icon: "CloudServerOutlined", sort_num: 1, state: "1" },
-  { menu_id: "mcps", menu_name: "mcps", menu_label: "MCP 管理", route: "/mcps", parent_id: "system", menu_icon: "ApiOutlined", sort_num: 2, state: "1" },
-  { menu_id: "skills", menu_name: "skills", menu_label: "技能管理", route: "/skills", parent_id: "system", menu_icon: "ToolOutlined", sort_num: 3, state: "1" },
+  { menu_id: "sys_users", menu_name: "sys_users", menu_label: "用户管理", route: "/system/users", parent_id: "system", menu_icon: "TeamOutlined", sort_num: 1, state: "1" },
+  { menu_id: "sys_roles", menu_name: "sys_roles", menu_label: "角色管理", route: "/system/roles", parent_id: "system", menu_icon: "SafetyOutlined", sort_num: 2, state: "1" },
+  { menu_id: "sys_teams", menu_name: "sys_teams", menu_label: "团队管理", route: "/system/teams", parent_id: "system", menu_icon: "PartitionOutlined", sort_num: 3, state: "1" },
+  { menu_id: "sys_menus", menu_name: "sys_menus", menu_label: "菜单管理", route: "/system/menus", parent_id: "system", menu_icon: "MenuOutlined", sort_num: 4, state: "1" },
+  { menu_id: "sys_logs", menu_name: "sys_logs", menu_label: "操作日志", route: "/system/logs", parent_id: "system", menu_icon: "ProfileOutlined", sort_num: 5, state: "1" },
+  { menu_id: "models", menu_name: "models", menu_label: "模型配置", route: "/models", parent_id: "system", menu_icon: "CloudServerOutlined", sort_num: 6, state: "1" },
+  { menu_id: "mcps", menu_name: "mcps", menu_label: "MCP 管理", route: "/mcps", parent_id: "system", menu_icon: "ApiOutlined", sort_num: 7, state: "1" },
+  { menu_id: "skills", menu_name: "skills", menu_label: "技能管理", route: "/skills", parent_id: "system", menu_icon: "ToolOutlined", sort_num: 8, state: "1" },
 ];
 
 /** 平铺列表 → 树（对齐 data-synth menu-actions buildTree 语义） */
