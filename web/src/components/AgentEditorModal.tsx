@@ -67,6 +67,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
   const mcpMode = Form.useWatch("mcp_selection_mode", form) ?? "none";
   const skillsMode = Form.useWatch("skills_selection_mode", form) ?? "none";
   const webSearch = Form.useWatch("web_search_enabled", form) ?? false;
+  const skillsEnabled = Form.useWatch("skills_enabled", form) ?? false;
 
   // 数据源：模型 / 知识库 / MCP / 技能
   useEffect(() => {
@@ -502,7 +503,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
                 <Form.Item name="skills_enabled" label="启用技能" valuePropName="checked">
                   <Switch />
                 </Form.Item>
-                {Form.useWatch("skills_enabled", form) && (
+                {skillsEnabled && (
                   <>
                     <Form.Item name="skills_selection_mode" label="技能范围">
                       <Radio.Group optionType="button" buttonStyle="solid">
