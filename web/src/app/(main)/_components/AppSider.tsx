@@ -48,6 +48,12 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   ApiOutlined: <ApiOutlined />,
   ToolOutlined: <ToolOutlined />,
   TableOutlined: <TableOutlined />,
+  UserOutlined: <UserOutlined />,
+  SafetyOutlined: <SafetyOutlined />,
+  PartitionOutlined: <PartitionOutlined />,
+  MenuOutlined: <MenuOutlined />,
+  ProfileOutlined: <ProfileOutlined />,
+  TeamOutlined: <TeamOutlined />,
 };
 const DEFAULT_ICON = <AppstoreOutlined />;
 
