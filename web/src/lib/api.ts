@@ -82,6 +82,47 @@ export interface KbItem {
   doc_count?: number;
   page_count?: number;
   created_at?: string | null;
+  // ── WeKnora 对齐配置 ──
+  type?: "document" | "faq";
+  custom_wiki_generation?: boolean;
+  embedding_model_id?: string;
+  summary_model_id?: string;
+  wiki_config?: {
+    skill?: string;
+    extraction_granularity?: "focused" | "standard" | "exhaustive";
+    content_instructions?: string;
+    extraction_instructions?: string;
+    max_pages_per_ingest?: number;
+    synthesis_model_id?: string;
+  };
+  extract_config?: { enabled?: boolean; text?: string; tags?: string[] };
+  faq_config?: { index_mode?: string; question_index_mode?: string };
+  question_generation_config?: { enabled?: boolean; question_count?: number };
+  vlm_config?: { enabled?: boolean; model_id?: string };
+  asr_config?: { enabled?: boolean; model_id?: string };
+  storage_provider_config?: { provider?: string };
+  storage_backend_id?: string;
+  vector_store_id?: string;
+}
+
+export interface KbUpdatePayload {
+  type?: "document" | "faq";
+  indexing_strategy?: IndexingStrategy;
+  custom_wiki_generation?: boolean;
+  embedding_model_id?: string | null;
+  summary_model_id?: string | null;
+  configs?: Record<string, unknown>;
+}
+
+export function apiUpdateKb(kbId: string, payload: KbUpdatePayload) {
+  return request(`/api/v1/kbs/${encodeURIComponent(kbId)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiGetKb(kbId: string) {
+  return request<KbItem>(`/api/v1/kbs/${encodeURIComponent(kbId)}`);
 }
 
 export interface PageList<T> {

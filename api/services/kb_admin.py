@@ -281,6 +281,20 @@ def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0) -> dict:
         "page_count": page_count,
         "created_at": kb.created_at.isoformat() if kb.created_at else None,
         "updated_at": kb.updated_at.isoformat() if kb.updated_at else None,
+        # ── WeKnora 对齐配置（详情页配置弹窗读取）──
+        "type": kb.type or "document",
+        "custom_wiki_generation": bool(getattr(kb, "custom_wiki_generation", False)),
+        "embedding_model_id": getattr(kb, "embedding_model_id", None) or "",
+        "summary_model_id": getattr(kb, "summary_model_id", None) or "",
+        "wiki_config": getattr(kb, "wiki_config", None) or {},
+        "extract_config": getattr(kb, "extract_config", None) or {},
+        "faq_config": getattr(kb, "faq_config", None) or {},
+        "question_generation_config": getattr(kb, "question_generation_config", None) or {},
+        "vlm_config": getattr(kb, "vlm_config", None) or {},
+        "asr_config": getattr(kb, "asr_config", None) or {},
+        "storage_provider_config": getattr(kb, "storage_provider_config", None) or {},
+        "storage_backend_id": getattr(kb, "storage_backend_id", None) or "",
+        "vector_store_id": getattr(kb, "vector_store_id", None) or "",
     }
 
 

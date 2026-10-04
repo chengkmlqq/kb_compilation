@@ -19,6 +19,7 @@ import {
 import {
   InboxOutlined,
   ReloadOutlined,
+  SettingOutlined,
   ShareAltOutlined,
   SlidersOutlined,
 } from "@ant-design/icons";
@@ -27,14 +28,17 @@ import WikiGraphView from "@/components/WikiGraphView";
 import Neo4jGraphView from "@/components/Neo4jGraphView";
 import WikiManagePanel from "@/components/WikiManagePanel";
 import ChunkingConfigModal from "@/components/ChunkingConfigModal";
+import KBConfigModal from "@/components/KBConfigModal";
 import {
   apiDeleteDocument,
+  apiGetKb,
   apiListDocuments,
   apiSearch,
   apiUploadDocument,
   apiWikiPage,
   apiWikiTree,
   DocItem,
+  KbItem,
   SearchHit,
   WikiTree,
 } from "@/lib/api";
@@ -63,7 +67,19 @@ export default function KbDetailPage() {
   const [wikiView, setWikiView] = useState<"list" | "graph">("list");
   const [focusSlug, setFocusSlug] = useState<string | undefined>(undefined);
   const [chunkingOpen, setChunkingOpen] = useState(false);
+  const [kb, setKb] = useState<KbItem | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
   const searchParams = useSearchParams();
+
+  // 加载知识库详情（含 WeKnora 对齐配置：索引开关/技能绑定/模型绑定等）
+  const loadKb = useCallback(async () => {
+    const res = await apiGetKb(kbId).catch(() => null);
+    if (res?.success && res.data) setKb(res.data);
+  }, [kbId]);
+
+  useEffect(() => {
+    void loadKb();
+  }, [loadKb]);
 
   // 从 wiki 页「图谱中查看」跳入时：?wiki=graph&focus=<slug>
   useEffect(() => {
@@ -170,6 +186,9 @@ export default function KbDetailPage() {
             <Button icon={<SlidersOutlined />} onClick={() => setChunkingOpen(true)}>
               切片配置
             </Button>
+            <Button icon={<SettingOutlined />} onClick={() => setConfigOpen(true)}>
+              知识库配置
+            </Button>
             <Upload.Dragger {...uploadProps} style={{ width: 260, padding: "8px 12px" }}>
               点击或拖拽上传文档（md/pdf/docx/xlsx/pptx/epub 等）
             </Upload.Dragger>
@@ -263,6 +282,16 @@ export default function KbDetailPage() {
         open={chunkingOpen}
         kbId={kbId}
         onClose={() => setChunkingOpen(false)}
+      />
+
+      {/* 知识库配置（WeKnora 对齐：索引开关/类型/技能绑定/模型绑定/图谱/FAQ） */}
+      <KBConfigModal
+        kb={kb}
+        open={configOpen}
+        onClose={(changed) => {
+          setConfigOpen(false);
+          if (changed) void loadKb();
+        }}
       />
     </Space>
   );
