@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+import types
 from unittest import mock
 
 import pytest
@@ -12,6 +13,18 @@ from sqlalchemy.orm import sessionmaker
 from api.db import Base
 from api.models.framework import Job
 import worker.tasks.agent_worker as aw
+
+
+def _stub_runtime(monkeypatch, fn) -> None:
+    """把 worker.agent.runtime 替换为 stub 模块。
+
+    openai-agents SDK 只装在 kb-agent-worker 镜像里，不在 pyproject 依赖中
+    （刻意如此：解析 worker 不该背 SDK）。因此测试不能真 import runtime——
+    用 stub 让 `from worker.agent.runtime import run_agent_sync` 拿到假实现。
+    """
+    fake = types.ModuleType("worker.agent.runtime")
+    setattr(fake, "run_agent_sync", fn)
+    monkeypatch.setitem(sys.modules, "worker.agent.runtime", fake)
 
 
 @pytest.fixture()
@@ -49,8 +62,8 @@ def test_handle_runs_agent_sync(job_env, monkeypatch) -> None:
     monkeypatch.setattr(aw, "_attach_skill_zip", lambda cfg: cfg.setdefault("skill_zip", b"ZIP"))
     monkeypatch.setattr(aw, "_resolve_llm_config", lambda cfg: None)
     # agent_worker 在函数体内 `from worker.agent.runtime import run_agent_sync`，
-    # 调用时从源头模块解析 → patch worker.agent.runtime.run_agent_sync
-    monkeypatch.setattr("worker.agent.runtime.run_agent_sync", fake_run_agent_sync)
+    # 调用时从 sys.modules 解析 → 塞 stub（SDK 不在 pyproject 依赖里）
+    _stub_runtime(monkeypatch, fake_run_agent_sync)
 
     params = json.dumps({"input": "build wiki", "config": {"skill": "kb-wiki-builder", "kb_id": "kb-1"}})
     result = aw._handle_agent_wiki_build("agent-job-1", params)
@@ -100,7 +113,7 @@ def test_handle_crash_returned_as_failure(job_env, monkeypatch) -> None:
     def boom(payload, task_id=None):
         raise RuntimeError("agent crashed")
 
-    monkeypatch.setattr("worker.agent.runtime.run_agent_sync", boom)
+    _stub_runtime(monkeypatch, boom)
     monkeypatch.setattr(aw, "_attach_skill_zip", lambda cfg: None)
     monkeypatch.setattr(aw, "_resolve_llm_config", lambda cfg: None)
 

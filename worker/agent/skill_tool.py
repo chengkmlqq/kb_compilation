@@ -410,13 +410,15 @@ def install_task_skill_zip(data: bytes, task_id: str) -> list[SkillSpec]:
     import tempfile
 
     tmp_root = Path(tempfile.mkdtemp(prefix=f"gw-task-{task_id}-"))
+    tmp_root_resolved = str(tmp_root.resolve())
     specs: list[SkillSpec] = []
     try:
         z = zipfile.ZipFile(io.BytesIO(data))
         for member in z.namelist():
-            # 路径穿越防护：clean 后必须仍落在 tmp_root 内
+            # 路径穿越防护：clean 后必须仍落在 tmp_root 内（需带 os.sep 分隔符，
+            # 否则 /tmp/gw-task-x-foo 会前缀匹配到 /tmp/gw-task-x-foobar/…）
             target = (tmp_root / member).resolve()
-            if not str(target).startswith(str(tmp_root.resolve())):
+            if not str(target).startswith(tmp_root_resolved + os.sep):
                 raise ValueError(f"非法技能包路径: {member}")
             if member.endswith("/"):
                 target.mkdir(parents=True, exist_ok=True)
@@ -424,21 +426,23 @@ def install_task_skill_zip(data: bytes, task_id: str) -> list[SkillSpec]:
             target.parent.mkdir(parents=True, exist_ok=True)
             with z.open(member) as src, open(target, "wb") as dst:
                 shutil.copyfileobj(src, dst)
-        # 兼容根级 SKILL.md 或 <skill>/SKILL.md：扫描两层
-        for skill_dir in sorted(tmp_root.iterdir()):
-            if skill_dir.is_dir() and (skill_dir / "SKILL.md").is_file():
-                spec = _parse_skill_dir(skill_dir)
-                if spec:
-                    specs.append(spec)
-            elif (tmp_root / "SKILL.md").is_file():
-                spec = _parse_skill_dir(tmp_root)
-                if spec:
-                    specs.append(spec)
-                break
+        # 兼容根级 SKILL.md 或 <skill>/SKILL.md：先独立判断根级，再扫子目录
+        # （原先 elif 写在循环体内，只有首个迭代项不匹配时才查根级，行为依赖排序）
+        if (tmp_root / "SKILL.md").is_file():
+            spec = _parse_skill_dir(tmp_root)
+            if spec:
+                specs.append(spec)
+        else:
+            for skill_dir in sorted(tmp_root.iterdir()):
+                if skill_dir.is_dir() and (skill_dir / "SKILL.md").is_file():
+                    spec = _parse_skill_dir(skill_dir)
+                    if spec:
+                        specs.append(spec)
         if not specs:
             raise ValueError("ZIP 内未找到含 SKILL.md 的技能目录")
-        for spec in specs:
-            _task_tmp_dirs.setdefault(task_id, []).append(tmp_root if len(specs) == 1 else spec.path)
+        # 记录 tmp_root 整体（不是 spec.path）：多技能 ZIP 时记子目录会漏掉父
+        # tmp_root，导致每次任务泄漏一个临时目录（Celery 长跑会累积 /tmp）。
+        _task_tmp_dirs.setdefault(task_id, []).append(tmp_root)
         return specs
     except Exception:
         shutil.rmtree(tmp_root, ignore_errors=True)
