@@ -495,6 +495,13 @@ export function apiCreateAgent(payload: { name: string; description?: string; co
   });
 }
 
+export function apiUpdateAgent(agentId: string, payload: { name?: string; description?: string; config?: Record<string, unknown> }) {
+  return request(`/api/v1/agents/${encodeURIComponent(agentId)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function apiDeleteAgent(agentId: string) {
   return request(`/api/v1/agents/${agentId}`, { method: "DELETE" });
 }
