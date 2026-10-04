@@ -25,6 +25,10 @@ def _pick_results(payload: dict) -> tuple[str, dict[str, str]]:
 
     Mirrors WeKnora: prefer results.document, fall back to results.files,
     then to a single top-level markdown field.
+
+    Also accepts the kb self-hosted shim contract {status_code, result}:
+    ``result`` is the markdown string (images inlined base64), which is what
+    /file_parse on mineru 4.x returns.
     """
     results = payload.get("results") or {}
     for key in ("document", "files"):
@@ -34,6 +38,12 @@ def _pick_results(payload: dict) -> tuple[str, dict[str, str]]:
             images = node.get("images") or {}
             if md:
                 return str(md), dict(images or {})
+
+    # kb 自建服务 /file_parse（mineru 4.x shim）：{"status_code":200,"result":"<md>"}
+    shim_md = payload.get("result")
+    if isinstance(shim_md, str) and shim_md.strip():
+        images = payload.get("images") or {}
+        return shim_md, dict(images or {})
 
     # some builds return the fields at the top level
     md = payload.get("md_content") or payload.get("markdown") or ""
@@ -81,7 +91,10 @@ def parse_with_mineru(
     if vlm_server_url:
         data["server_url"] = vlm_server_url
 
-    files = {"files": (file_name or "document", content)}
+    # MinerU 4.x 的 /file_parse 只接受单个 **file** 字段（server_shim: file_parse(file=...)）。
+    # 历史实现发的是 "files"（复数），服务端会返回 400 "file: Field required"。
+    # 云端与自建保持一致：统一用 file；额外 form 字段对 4.x 端点是可选参数（缺省即 pipeline）。
+    files = {"file": (file_name or "document", content)}
     headers = {}
     if use_cloud:
         headers["Authorization"] = f"Bearer {mineru_cloud_key()}"

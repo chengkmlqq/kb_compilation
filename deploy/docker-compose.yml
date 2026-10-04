@@ -47,6 +47,13 @@ x-api-env: &api-env
     NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
     NEO4J_PASSWORD: ${NEO4J_PASSWORD:-kb_neo4j_pass}
     NEO4J_DATABASE: ${NEO4J_DATABASE:-neo4j}
+    # 文档解析服务（MinerU 4.0.9 CPU 推理 / PaddleOCR-VL）：
+    # parser_registry.mineru_endpoint() / paddle_endpoint() 直接读这两个 env，
+    # 缺失时 PDF/OCR 解析会判定引擎不可用。缺省走 kb-net 服务名。
+    MINERU_ENDPOINT: ${MINERU_ENDPOINT:-http://mineru:8000}
+    PADDLEOCR_ENDPOINT: ${PADDLEOCR_ENDPOINT:-http://paddleocr:8081}
+    # 置 1 表示 PaddleOCR-VL 真实模型已就绪（当前为占位服务，保持 0）
+    PADDLEOCR_VL_READY: ${PADDLEOCR_VL_READY:-0}
 
 services:
   nginx:
