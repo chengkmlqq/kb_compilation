@@ -212,6 +212,36 @@ def agent_qa_stream(
             (lambda tc: run_skill_tool_call(skill_rows, tc)) if skill_tools else None
         )
 
+        # 联网搜索工具：仅当 agent 配置 web_search_enabled 时注入 web_search，
+        # provider 按 agent.web_search_provider_id（或调用方可见的 system provider）
+        # 解析并做可见性校验；未启用/无可用 provider 时不注入。
+        ws_tools: list[dict] = []
+        ws_executor = None
+        try:
+            from api.services.websearch import agent_websearch_tool_context
+
+            ws_tools, ws_executor = agent_websearch_tool_context(
+                db,
+                agent,
+                caller_user_id=ctx_user_id,
+                caller_team_name=ctx_team_name,
+                is_sys_admin=ctx_is_admin,
+            )
+        except Exception:  # noqa: BLE001 — 联网搜索装配失败不阻断问答
+            logger.exception("agent websearch tool resolution failed; websearch disabled for this call")
+            ws_tools, ws_executor = [], None
+
+        # 合并工具集：技能 run_skill_script + 联网 web_search（按工具名分派 executor）
+        merged_tools = (skill_tools or []) + ws_tools
+        if ws_executor is not None and skill_executor is not None:
+            merged_executor = lambda tc: (  # noqa: E731
+                ws_executor(tc)
+                if str(tc.get("name") or "") == "web_search"
+                else skill_executor(tc)
+            )
+        else:
+            merged_executor = ws_executor or skill_executor
+
         answer_parts: list[str] = []
         refs: list[dict] = []
         last_kb_id = ""
@@ -255,8 +285,8 @@ def agent_qa_stream(
                     user_id=ctx_user_id,
                     team_name=ctx_team_name,
                     is_sys_admin=ctx_is_admin,
-                    tools=skill_tools,
-                    tool_executor=skill_executor,
+                    tools=merged_tools or None,
+                    tool_executor=merged_executor,
                     max_tool_iterations=skill_max_rounds,
                 ):
                     event["kb_id"] = kb.id

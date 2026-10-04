@@ -15,7 +15,9 @@ API Key 落库前 AES 加密（api.lib.crypto.aes_encrypt），读接口脱敏�
 
 from __future__ import annotations
 
+import json
 import uuid
+from typing import Callable
 
 import httpx
 from sqlalchemy import and_, select
@@ -412,6 +414,126 @@ def search(
     if not results:
         raise ValueError("搜索无结果")
     return results[:max_results]
+
+
+# ---------------------------------------------------------------------------
+# Agent 会话联网搜索工具注入（P1 消费点，模式对齐 P2 技能白名单注入：
+# tools + executor 传给 chat.answer_question 的有界工具循环）。
+# ---------------------------------------------------------------------------
+WEB_SEARCH_TOOL = "web_search"
+
+
+def build_websearch_tool(max_results: int) -> list[dict]:
+    """run_web_search function-calling 负载（OpenAI 兼容）。"""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": WEB_SEARCH_TOOL,
+                "description": (
+                    "联网搜索：给定 query 返回网页结果（标题/URL/摘要）。"
+                    "当问题需要实时信息、或知识库检索未覆盖时使用。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "搜索关键词"},
+                        "max_results": {
+                            "type": "integer",
+                            "description": f"返回条数（1-{20}，默认 {max_results}）",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+        }
+    ]
+
+
+def agent_websearch_tool_context(
+    db: Session,
+    agent,
+    *,
+    caller_user_id: str = "",
+    caller_team_name: str = "",
+    is_sys_admin: bool = False,
+) -> tuple[list[dict], "Callable[[dict], str] | None"]:
+    """按 AgentConfig.web_search_enabled 装配 web_search 工具上下文。
+
+    返回 (tools, executor)：未启用 / 无可见 provider 时返回 ([], None)，问答链路
+    不受影响。provider 解析：显式 web_search_provider_id（带可见性校验）；
+    未指定时取调用方可见的第一个 system 级 provider（无则跳过注入）。
+    """
+    from api.services.agents import config_from_dict
+
+    cfg = config_from_dict(agent.config or {})
+    if not cfg.web_search_enabled:
+        return [], None
+
+    provider_id = str(cfg.web_search_provider_id or "").strip()
+    provider = None
+    if provider_id:
+        provider = get_websearch_provider(db, provider_id)
+        if provider and (
+            provider.state != "1"
+            or not websearch_provider_visible(
+                provider,
+                caller_user_id=caller_user_id,
+                caller_team_name=caller_team_name,
+                is_sys_admin=is_sys_admin,
+            )
+        ):
+            provider = None
+    if provider is None:
+        visible = list_websearch_providers(
+            db,
+            caller_user_id=caller_user_id,
+            caller_team_name=caller_team_name,
+            is_sys_admin=is_sys_admin,
+        )
+        # list_* 返回 dict 项（websearch_to_dict 形状：id/scope/name/...）
+        pick = next((p for p in visible if p.get("scope") == "system"), visible[0] if visible else None)
+        if pick is None:
+            return [], None
+        provider_id = str(pick.get("id") or "")
+        if not provider_id:
+            return [], None
+
+    max_results = max(1, min(int(cfg.web_search_max_results or 5), 20))
+    tools = build_websearch_tool(max_results)
+
+    def executor(tool_call: dict) -> str:
+        name = str(tool_call.get("name") or "")
+        if name != WEB_SEARCH_TOOL:
+            return f"未授权的工具调用: {name!r}"
+        try:
+            args = json.loads(str(tool_call.get("arguments") or "{}"))
+        except (TypeError, json.JSONDecodeError):
+            return "工具参数解析失败：arguments 不是合法 JSON"
+        query = str(args.get("query") or "").strip()
+        if not query:
+            return "web_search 缺少 query 参数"
+        try:
+            results = search(
+                db,
+                provider_id,
+                query,
+                max_results=int(args.get("max_results") or max_results),
+                caller_user_id=caller_user_id,
+                caller_team_name=caller_team_name,
+                is_sys_admin=is_sys_admin,
+            )
+        except Exception as exc:  # noqa: BLE001 — 工具失败回传文本，不炸 SSE
+            return f"联网搜索失败: {exc}"
+        if not results:
+            return "（联网搜索无结果）"
+        lines = [
+            f"{i + 1}. {r['title']}\n   {r['url']}\n   {r['snippet']}"
+            for i, r in enumerate(results)
+        ]
+        return "\n".join(lines)
+
+    return tools, executor
 
 
 __all__ = [
