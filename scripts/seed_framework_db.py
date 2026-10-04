@@ -42,7 +42,7 @@ SEED_TEAM = os.getenv("KB_SEED_TEAM", "默认团队")
 # 可用环境变量 KB_SEED_ROLE 覆盖。
 SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 
-# KB 菜单树（1 顶级 + 4 分组 + 13 页面 = 18 项；sort_num 决定同级顺序）
+# KB 菜单树（1 顶级 + 3 纯目录分组 + 1 分组兼页面(系统管理) + 12 页面 = 17 项；sort_num 决定同级顺序）
 # (menu_id, menu_name, menu_label, route, parent_id, menu_icon, sort_num)
 # menu_id 用固定值（workers/mcps/skills/cron 用生产环境已验证的 UUID），
 # 保证多次初始化幂等、且与已部署环境完全一致。
