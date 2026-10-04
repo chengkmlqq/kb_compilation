@@ -13,10 +13,8 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
-import httpx
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
@@ -33,45 +31,10 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 
-def _sansec_decrypt(value: str) -> str | None:
-    """解密 SANSSEC1|<keyIndex>|<base64(cipherText)> 国密信封（对齐 ds sansec-log-guard）。
-
-    - 服务地址 env SAN_SEC_CRYPTO_BASE_URL（缺省 10.1.215.50:8100，kb-net 内的
-      api-server/worker 经宿主 IP 直达 synth 网络的 sansec-crypto 服务）。
-    - 解密失败/服务不可达一律返回 None（调用方回退原值），绝不抛异常阻断业务。
-    """
-    if not value.startswith("SANSSEC1|"):
-        return None
-    parts = value.split("|")
-    if len(parts) < 3:
-        return None
-    key_index, cipher_text = parts[1], parts[2]
-    base = os.getenv("SAN_SEC_CRYPTO_BASE_URL", "http://10.1.215.50:8100").rstrip("/")
-    try:
-        with httpx.Client(timeout=6.0) as client:
-            resp = client.post(
-                f"{base}/api/crypto/decrypt",
-                json={"cipherText": cipher_text, "keyIndex": key_index},
-            )
-            if resp.status_code != 200:
-                logger.warning("sansec decrypt http %s", resp.status_code)
-                return None
-            data = resp.json()
-            plain = data.get("plainText")
-            if data.get("error"):
-                logger.warning("sansec decrypt error: %s", data["error"])
-                return None
-            return str(plain) if plain else None
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("sansec decrypt unavailable: %s", exc)
-        return None
-
 def _reveal_datagrid_secret(value: str | None) -> str | None:
-    """数据查询专用口令解密：明文 / AES(enc:v1) / SANSSEC1 国密信封 三种形态。"""
+    """数据查询口令解密：明文 / AES(enc:v1) 两种形态。"""
     if not value:
         return None
-    if value.startswith("SANSSEC1|"):
-        return _sansec_decrypt(value) or value
     return _reveal_secret(value)
 
 
@@ -165,8 +128,8 @@ def _find_entry(db: Session, ds_name: str, user_id: str = "", team_name: str = "
             url=ds.url or "",
             state=ds.state or "",
             ds_acct=ds.ds_acct,
-            # 口令三种形态（对齐 ds revealStoredSecret）：
-            #   明文 / AES(enc:v1) → _reveal_secret；SANSSEC1 国密信封 → _sansec_decrypt
+            # 口令两种形态（对齐 ds revealStoredSecret）：
+            #   明文 / AES(enc:v1) → _reveal_secret
             ds_auth=_reveal_datagrid_secret(ds.ds_auth),
             ds_conf=ds.ds_conf,
         )

@@ -99,7 +99,7 @@ def _reveal_secret(value: str | None) -> str | None:
     if not value:
         return None
     if value.startswith("enc:"):
-        return value  # sansec envelope — not decryptable here
+        return value  # AES envelope — not decryptable here
     plain = aes_decrypt(value)
     return plain if plain else value
 
