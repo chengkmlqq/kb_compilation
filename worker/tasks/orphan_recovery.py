@@ -64,6 +64,9 @@ def recover_orphan_running_jobs() -> dict:
                     task_id=job.id,
                     queue=queue,
                 )
+                # send_task lpush 头部 + redis broker brpop 尾部(实测 2026-10-05):
+                # 不挪到尾部的重投消息会被数百排队任务压在最后, 恢复形同虚设。
+                _promote_to_queue_tail(job.id, queue)
                 recovered += 1
                 logger.warning(
                     "orphan re-queued job=%s task=%s -> queue=%s",
@@ -76,6 +79,41 @@ def recover_orphan_running_jobs() -> dict:
         return {"recovered": recovered, "skipped": len(jobs) - recovered}
     finally:
         db.close()
+
+
+def _promote_to_queue_tail(job_id: str, queue: str) -> None:
+    """把 redis 队列中 task_id==job_id 的消息挪到尾部(brpop 下一发)。
+
+    失败静默——消息留在头部最终也会被消费(只是慢), 不影响正确性。
+    """
+    try:
+        import base64
+        import json
+
+        import redis
+
+        from api.config import get_settings
+
+        broker = get_settings().effective_broker_url()
+        r = redis.Redis.from_url(broker)
+        n = r.llen(queue)
+        for i in range(n):
+            m = r.lindex(queue, i)
+            if not m:
+                continue
+            try:
+                d = json.loads(m)
+                body = json.loads(base64.b64decode(d["body"]))
+                tid = body[0][0] if isinstance(body, list) else None
+            except Exception:  # noqa: BLE001 - 非标准消息跳过
+                continue
+            if tid == job_id:
+                r.lrem(queue, 1, m)
+                r.rpush(queue, m)
+                logger.warning("promoted %s to tail of queue %s", job_id, queue)
+                return
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("promote-to-tail failed for %s: %s", job_id, exc)
 
 
 TASK_CLASS_ORPHAN_RECOVERY = "KbOrphanRecoveryTask"
