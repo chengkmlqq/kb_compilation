@@ -301,7 +301,7 @@ def list_agents(db: Session, team_name: str | None = None, page: int = 1, page_s
     if team_name:
         stmt = stmt.where(KbAgent.team_name == team_name)
     total = len(db.execute(stmt).scalars().all())
-    rows = db.execute(stmt.order_by(KbAgent.created_at.desc()).offset((page - 1) * page_size).limit(page_size)).scalars().all()
+    rows = db.execute(stmt.order_by(KbAgent.created_at.desc(), KbAgent.id.desc()).offset((page - 1) * page_size).limit(page_size)).scalars().all()
     items = [
         {
             "id": a.id,

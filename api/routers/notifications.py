@@ -91,7 +91,7 @@ def list_messages(
     rows = db.execute(
         select(SystemMessage)
         .where(and_(*conds))
-        .order_by(desc(SystemMessage.create_date))
+        .order_by(desc(SystemMessage.create_date), desc(SystemMessage.id))
         .offset((max(page, 1) - 1) * page_size)
         .limit(page_size)
     ).scalars().all()

@@ -275,7 +275,7 @@ def explore_files(
         rows = db.execute(
             select(SysFile)
             .where(and_(*base, SysFile.file_name.like(f"%{search_text}%")))
-            .order_by(desc(SysFile.create_date))
+            .order_by(desc(SysFile.create_date), desc(SysFile.id))
             .offset((page - 1) * page_size)
             .limit(page_size)
         ).scalars().all()
@@ -373,7 +373,7 @@ def explore_files(
     rows = db.execute(
         select(SysFile)
         .where(conds)
-        .order_by(desc(SysFile.create_date))
+        .order_by(desc(SysFile.create_date), desc(SysFile.id))
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).scalars().all()

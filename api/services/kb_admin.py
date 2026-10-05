@@ -101,7 +101,7 @@ def list_kbs(
     total = len(db.execute(stmt).scalars().all())
     rows = (
         db.execute(
-            stmt.order_by(KbDatasource.created_at.desc())
+            stmt.order_by(KbDatasource.created_at.desc(), KbDatasource.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
@@ -387,7 +387,7 @@ def list_documents(db: Session, kb_id: str, page: int = 1, page_size: int = 20) 
     total = len(db.execute(stmt).scalars().all())
     rows = (
         db.execute(
-            stmt.order_by(KbDocument.created_at.desc())
+            stmt.order_by(KbDocument.created_at.desc(), KbDocument.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
@@ -835,7 +835,7 @@ def wiki_list_logs(db: Session, kb_id: str, limit: int = 100) -> dict:
         db.execute(
             select(WikiOperationLog)
             .where(WikiOperationLog.kb_id == kb_id)
-            .order_by(WikiOperationLog.created_at.desc())
+            .order_by(WikiOperationLog.created_at.desc(), WikiOperationLog.id.desc())
             .limit(limit)
         )
         .scalars()
@@ -883,7 +883,7 @@ def wiki_list_feedback(db: Session, kb_id: str, slug: str = "", limit: int = 100
     if slug:
         stmt = stmt.where(WikiFeedback.slug == slug)
     rows = (
-        db.execute(stmt.order_by(WikiFeedback.created_at.desc()).limit(limit))
+        db.execute(stmt.order_by(WikiFeedback.created_at.desc(), WikiFeedback.id.desc()).limit(limit))
         .scalars()
         .all()
     )
@@ -929,7 +929,7 @@ def wiki_index(db: Session, kb_id: str) -> dict:
     pages = db.execute(
         select(WikiPage)
         .where(WikiPage.kb_id == kb_id, WikiPage.status == "active")
-        .order_by(WikiPage.created_at.desc())
+        .order_by(WikiPage.created_at.desc(), WikiPage.id.desc())
     ).scalars().all()
 
     by_type: dict[str, int] = {}

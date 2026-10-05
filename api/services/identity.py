@@ -139,7 +139,7 @@ def find_fallback_user_team_membership(db: Session, user_id: str) -> dict | None
             )
             .join(Team, Team.team_name == TeamMember.team_name)
             .where(TeamMember.user_id == user_id)
-            .order_by(desc(TeamMember.create_dt))
+            .order_by(desc(TeamMember.create_dt), desc(TeamMember.member_id))
             .limit(1)
         )
         .mappings()

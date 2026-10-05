@@ -563,7 +563,7 @@ def search_messages(db: Session, user_id: str, keyword: str, limit: int = 20) ->
                     ChatSession.title.ilike(f"%{kw}%"),
                 ),
             )
-            .order_by(ChatMessage.created_at.desc())
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .limit(limit)
         )
         .scalars()
