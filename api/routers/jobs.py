@@ -164,17 +164,76 @@ def stop_job(
     _user_id: str = Depends(_require_user_id),
     db: Session = Depends(get_db),
 ) -> dict:
-    """停止任务：仅运行中（RUNNING）可停，置为 STOPPED。"""
+    """停止任务：运行中（RUNNING）或排队中（PENDING）可停，置为 STOPPED。
+
+    置 STOPPED 后 worker 执行前检查（scheduler.execute_modo_job 的
+    "job not executable" 守卫）会拒执行；执行中停掉的任务，handler 跑完后
+    终态保护保证不再覆盖成 SUCCESS/FAILED（2026-10-05 修复「取消复活」）。
+    """
     job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
     if not job:
         raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
-    if job.state != "RUNNING":
+    if job.state not in ("PENDING", "RUNNING"):
         raise HTTPException(status_code=400, detail=f"任务当前状态 {job.state}，不可停止")
     job.state = "STOPPED"
     job.end_time = func.now()
     db.add(job)
     db.commit()
     return {"success": True, "data": {"id": job_id, "state": "STOPPED"}}
+
+
+_RETRYABLE_STATES = ("FAILED", "STOPPED")
+_AGENT_TASK_CLASSES = ("KbAgentWikiBuildTask", "KbAgentGatewayTask")
+
+
+@router.post("/{job_id}/retry")
+def retry_job(
+    job_id: str,
+    _user_id: str = Depends(_require_user_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """重试任务：FAILED/STOPPED 可重试，重置为 PENDING 并重新入队执行。
+
+    重新投递到任务原队列（job.queue_name，空则按 task_class 推断：
+    agent 类任务 → agent 队列，其余 → default），与上传自动链的投递
+    契约一致（send_task execute_modo_job + task_id=job_id）。
+    """
+    job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
+    if job.state not in _RETRYABLE_STATES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"任务当前状态 {job.state}，不可重试（仅 {_RETRYABLE_STATES} 可重试）",
+        )
+    original_state = job.state
+    queue = (job.queue_name or "").strip() or (
+        "agent" if (job.task_class or "") in _AGENT_TASK_CLASSES else "default"
+    )
+    # 先重置为 PENDING（清失败/取消痕迹），再投递；投递失败回滚状态，避免卡死 PENDING
+    job.state = "PENDING"
+    job.error_message = None
+    job.end_time = None
+    job.duration_ms = None
+    db.commit()
+    try:
+        from worker.celery_app import celery_app
+
+        celery_app.send_task(
+            "worker.tasks.scheduler.execute_modo_job",
+            args=[job_id],
+            task_id=job_id,
+            queue=queue,
+        )
+    except Exception as exc:  # noqa: BLE001 — broker 不可达时回滚，任务保持 FAILED/STOPPED 可再试
+        db.refresh(job)
+        job.state = original_state
+        db.commit()
+        raise HTTPException(
+            status_code=500,
+            detail=f"重试入队失败，状态已回滚为 {original_state}: {exc}",
+        ) from exc
+    return {"success": True, "data": {"id": job_id, "state": "PENDING", "queue": queue}}
 
 
 @router.delete("/{job_id}")

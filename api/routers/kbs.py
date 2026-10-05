@@ -190,12 +190,20 @@ def post_kb(
         is_sys_admin = is_admin(db, caller_user_id)
     from api.services.scope import validate_scope_request
 
-    scope, owner_user_id, owner_team_name = validate_scope_request(
-        req.scope,
-        caller_user_id=caller_user_id,
-        caller_team_name=caller_team_name,
-        is_sys_admin=is_sys_admin,
-    )
+    # 权限/参数异常转标准 HTTP 错误——裸抛 PermissionError 会变成 500
+    # （普通用户建库归属选「系统」时 validate_scope_request 抛 PermissionError，
+    #  2026-10-05 实测建库页默认归属=system 导致普通用户建库必 500）
+    try:
+        scope, owner_user_id, owner_team_name = validate_scope_request(
+            req.scope,
+            caller_user_id=caller_user_id,
+            caller_team_name=caller_team_name,
+            is_sys_admin=is_sys_admin,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     kb = create_kb(
         db,
         name=req.name,

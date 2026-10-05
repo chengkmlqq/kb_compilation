@@ -120,7 +120,7 @@ export default function KbsPage() {
       name: values.name,
       label: values.label,
       description: values.description,
-      scope: values.scope || "system",
+      scope: values.scope || "personal",
       type: values.type || "document",
       indexing_strategy: {
         vector_enabled: picked.includes("vector"),
@@ -267,8 +267,8 @@ export default function KbsPage() {
           <Form.Item
             name="scope"
             label="归属"
-            initialValue="system"
-            extra="个人知识库仅自己可见，团队知识库团队成员可见，系统知识库所有用户可见"
+            initialValue="personal"
+            extra="个人知识库仅自己可见，团队知识库团队成员可见，系统知识库所有用户可见（仅管理员可建）"
           >
             <Select
               options={[

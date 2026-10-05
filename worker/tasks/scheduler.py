@@ -321,7 +321,8 @@ def execute_modo_job(job_id: str) -> dict:
     if handler is None:
         with session_scope() as db:
             job = db.execute(select(Job).where(Job.id == normalized)).scalars().first()
-            if job:
+            # 终态保护:用户已 STOPPED 的任务保持取消态,不覆盖成 FAILED
+            if job and job.state != "STOPPED":
                 job.state = "FAILED"
                 job.error_message = f"no handler registered for {task_class}"
                 job.end_time = dt.datetime.now(dt.timezone.utc)
@@ -335,7 +336,8 @@ def execute_modo_job(job_id: str) -> dict:
         _append_job_log(normalized, f"任务失败: {e}")
         with session_scope() as db:
             job = db.execute(select(Job).where(Job.id == normalized)).scalars().first()
-            if job:
+            # 终态保护:用户已 STOPPED 的任务保持取消态,不覆盖成 FAILED
+            if job and job.state != "STOPPED":
                 job.state = "FAILED"
                 job.error_message = str(e)
                 job.end_time = dt.datetime.now(dt.timezone.utc)
@@ -344,12 +346,18 @@ def execute_modo_job(job_id: str) -> dict:
 
     with session_scope() as db:
         job = db.execute(select(Job).where(Job.id == normalized)).scalars().first()
-        if job:
+        # 终态保护:用户中途 STOPPED 的任务保持取消态,不得「复活」成 SUCCESS
+        if job and job.state != "STOPPED":
             job.state = "SUCCESS"
             job.end_time = dt.datetime.now(dt.timezone.utc)
             _update_duration(db, job)
-    summary = json.dumps(result, ensure_ascii=False)[:300]
-    _append_job_log(normalized, f"任务成功 耗时={result.get('duration_ms') if isinstance(result, dict) else ''} 结果={summary}")
+            summary = json.dumps(result, ensure_ascii=False)[:300]
+            _append_job_log(
+                normalized,
+                f"任务成功 耗时={result.get('duration_ms') if isinstance(result, dict) else ''} 结果={summary}",
+            )
+        elif job:
+            _append_job_log(normalized, "任务已被取消(STOPPED),结果丢弃")
     return {"success": True, "result": result}
 
 
