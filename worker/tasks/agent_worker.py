@@ -43,21 +43,10 @@ def _first_str(d: dict, *keys: str) -> str | None:
 
 
 def _write_progress(job_id: str, message: str) -> None:
-    """把 agent 运行进度写入 modo_job.error_message（任务监控页实时可见）。"""
-    try:
-        from api.models.framework import Job
-        from sqlalchemy import select
+    """把 agent 运行进度写入 MinIO logs/<job_id>.log + error_message（best-effort）。"""
+    from worker.tasks.log_sink import append_job_log
 
-        db = get_sessionmaker()()
-        try:
-            job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
-            if job and job.state in ("PENDING", "RUNNING"):
-                job.error_message = message[:2000]
-                db.commit()
-        finally:
-            db.close()
-    except Exception:  # noqa: BLE001 — 进度写入是 best-effort，绝不影响任务
-        logger.debug("progress write failed job=%s", job_id, exc_info=True)
+    append_job_log(job_id, message)
 
 
 def _kb_owner_context(db, kb_id: str) -> dict:

@@ -111,20 +111,11 @@ def wait_for_task(
             )
         if job_id:
             try:
-                from api.db import get_sessionmaker
-                from api.models.framework import Job
-                from sqlalchemy import select
+                from worker.tasks.log_sink import append_job_log
 
-                db = get_sessionmaker()()
-                try:
-                    job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
-                    if job and job.state not in ("SUCCESS", "FAILED"):
-                        elapsed = int(time.monotonic() - (deadline - timeout_s))
-                        status = str(last.get("status") or "unknown")
-                        job.error_message = f"[poll {polls}] gateway status={status}, elapsed={elapsed}s"
-                        db.commit()  # Session context manager does NOT commit — must persist explicitly
-                finally:
-                    db.close()
+                elapsed = int(time.monotonic() - (deadline - timeout_s))
+                status = str(last.get("status") or "unknown")
+                append_job_log(job_id, f"[poll {polls}] gateway status={status}, elapsed={elapsed}s")
             except Exception:  # noqa: BLE001
                 pass  # progress write is best-effort; never fail the poll
         if time.monotonic() >= deadline:

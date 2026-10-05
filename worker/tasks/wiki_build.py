@@ -47,20 +47,10 @@ entities 数量 3-8 个，提取文档中最重要的业务概念、制度条款
 
 
 def _write_progress(job_id: str, message: str) -> None:
-    """把进度写入 modo_job.error_message（任务监控实时可见，best-effort）。"""
-    try:
-        from api.models.framework import Job
+    """把进度写入 MinIO logs/<job_id>.log + modo_job.error_message（best-effort）。"""
+    from worker.tasks.log_sink import append_job_log
 
-        db = get_sessionmaker()()
-        try:
-            job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
-            if job is not None and job.state not in ("SUCCESS", "FAILED"):
-                job.error_message = message
-                db.commit()
-        finally:
-            db.close()
-    except Exception as exc:  # noqa: BLE001 — 进度写失败不使任务失败
-        logger.warning("wiki progress write failed: %s", exc)
+    append_job_log(job_id, message)
 
 
 def _llm_config() -> tuple[str, str, str]:

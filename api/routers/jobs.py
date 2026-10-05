@@ -209,8 +209,8 @@ def get_job(
 # 实时日志流（SSE）——对齐 data-synth job-monitor/log-stream
 # ---------------------------------------------------------------------------
 
-# 增量日志快照：error_message 槽位（agent-gateway 轮询进度实时写入）+
-# 可选 log_path 本地文件（未来 worker 写文件时自动生效）
+# 增量日志快照优先级：MinIO 日志对象（worker append_job_log 实时追加）>
+# error_message 槽位（兼容无 MinIO 环境）
 async def _read_incremental(
     db: Session,
     job: Job,
@@ -219,22 +219,26 @@ async def _read_incremental(
     content = ""
     source = "none"
 
-    # 1) 本地日志文件（若 log_path 有值且文件存在）
-    if job.log_path:
-        abs_path = job.log_path if os.path.isabs(job.log_path) else os.path.join(
-            get_settings().kb_storage_dir, job.log_path
-        )
-        if os.path.exists(abs_path):
-            try:
-                size = os.path.getsize(abs_path)
-                if size > offset_bytes:
-                    with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
-                        f.seek(offset_bytes)
-                        content = f.read()
-                    source = "local"
-                    offset_bytes = size
-            except OSError:
-                pass
+    # 1) MinIO 日志对象 logs/<job_id>.log（worker log_sink.append_job_log 追加写入）
+    try:
+        from api.services import storage as storage_svc
+
+        if storage_svc.remote_enabled():
+            log_path = (
+                f"minio://{storage_svc.get_settings().MINIO_BUCKET or kb-compilation}"
+                f"/logs/{job.id}.log"
+            )
+            size = storage_svc.stat_size(log_path)
+            if size is not None and size > offset_bytes:
+                data = storage_svc.get_bytes(log_path)
+                text = data.decode("utf-8", errors="replace")
+                content = text[offset_bytes:]
+                source = "minio"
+                offset_bytes = size
+            elif size is not None and size == offset_bytes:
+                source = "minio"
+    except Exception:  # noqa: BLE001 — 日志读取失败回退 error_message
+        pass
 
     # 2) error_message 槽位（实时进度：agent-gateway 每轮 poll 覆盖写入）
     if not content and job.error_message:
