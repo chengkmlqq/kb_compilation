@@ -81,10 +81,15 @@ def _build_task_model(cfg: dict):
         from openai import AsyncOpenAI
         from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 
+        import httpx
+
+        # 显式超时：connect 30s / read 120s —— 外部 LLM 偶发连接抖动时快速失败进入
+        # 重试（默认 600s 会让每次连接尝试拖满，5 次重试全撞同一窗口则任务超时）
         client = AsyncOpenAI(
             base_url=base_url,
             api_key=api_key,
             max_retries=config.LLM_MAX_RETRIES,
+            timeout=httpx.Timeout(connect=30.0, read=120.0, write=60.0, pool=30.0),
         )
         return OpenAIChatCompletionsModel(model=model, openai_client=client), model
     return model, model
