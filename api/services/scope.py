@@ -129,8 +129,9 @@ def visible_clauses(
         or_clauses.append(model.owner_user_id == caller_user_id)
     if caller_team_name:
         or_clauses.append(model.owner_team_name == caller_team_name)
-    if is_sys_admin:
-        or_clauses.append(model.scope == "system")
+    # system scope = 平台预置资源（预置技能/MCP/检索源），全平台读可见/可用；
+    # 管理操作（can_manage）仍限 admin。
+    or_clauses.append(model.scope == "system")
     if not or_clauses:
         return []
     return [or_(*or_clauses)]
@@ -166,7 +167,8 @@ def can_see(
     if row.scope == "team":
         return bool(row.owner_team_name) and row.owner_team_name == caller_team_name
     if row.scope == "system":
-        return is_sys_admin
+        # 平台预置资源对所有用户读可见（管理仍限 admin，见 can_manage）
+        return True
     return False
 
 

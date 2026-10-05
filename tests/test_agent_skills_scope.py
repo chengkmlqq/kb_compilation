@@ -149,15 +149,15 @@ def test_mode_all_exposes_all_visible_skills(db) -> None:
 
 
 def test_visibility_filters_other_team_and_system_skills(db) -> None:
-    """可见性口径：他人 personal / system 技能不暴露给本团队调用方。"""
+    """可见性口径：他人 personal 技能不暴露；system 预置技能全平台可见（2026-10-05 语义）。"""
     _add_skill(db, "mine", scope="personal", owner_user_id=None, owner_team_name="")
     _add_skill(db, "theirs", scope="personal", owner_user_id="u2", owner_team_name="")
     _add_skill(db, "syskill", scope="system", owner_user_id=None, owner_team_name="")
     _add_skill(db, "ours", scope="team", owner_team_name="T1")
     cfg = _cfg(skills_enabled=True, skills_selection_mode="all")
     names = [s.name for s in ag.resolve_skill_whitelist(db, cfg, caller_team_name="T1")]
-    assert names == ["ours"]
-    # 管理员可见 system 技能
+    assert names == ["ours", "syskill"]
+    # 管理员同样可见 system 技能
     names_admin = [s.name for s in ag.resolve_skill_whitelist(db, cfg, caller_team_name="T1", is_sys_admin=True)]
     assert set(names_admin) == {"ours", "syskill"}
 

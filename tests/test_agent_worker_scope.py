@@ -94,10 +94,10 @@ def test_attach_skill_zip_uses_owner_visibility(db_env, monkeypatch) -> None:
     aw._attach_skill_zip(cfg2, kb_id="kb-1")
     assert cfg2.get("skill_zip") == b"zip2"
 
-    # 系统技能：owner 非 admin 时不可见（scope=system 需 is_admin）
+    # 系统技能：平台预置资源，owner 非 admin 也可见（2026-10-05 语义）
     cfg3 = {"skill": "sys-skill", "kb_id": "kb-1"}
     aw._attach_skill_zip(cfg3, kb_id="kb-1")
-    assert cfg3.get("skill_zip") is None
+    assert cfg3.get("skill_zip") == b"zip3"
 
     # 他人个人技能 → 不可见
     cfg4 = {"skill": "other-personal", "kb_id": "kb-1"}
@@ -117,6 +117,6 @@ def test_attach_mcp_servers_uses_owner_visibility(db_env) -> None:
     names = [m["name"] for m in config.get("mcp_servers", [])]
     assert "my-mcp" in names, f"个人 MCP 应可见, got {names}"
     assert "team-mcp" in names, f"团队 MCP 应可见, got {names}"
-    assert "sys-mcp" not in names, f"系统 MCP(owner 非 admin) 不应可见, got {names}"
+    assert "sys-mcp" in names, f"系统 MCP(平台预置) 应可见, got {names}"
     assert "other-mcp" not in names, f"他人个人 MCP 不应可见, got {names}"
     db.close()

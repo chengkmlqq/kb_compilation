@@ -92,13 +92,13 @@ def test_scope_visibility(ws_db) -> None:
     )
     assert admin_item["scope"] == "system"
 
-    # u2（无团队）看不到 u1 的任何资源
+    # u2（无团队）：看不到 u1 的个人/团队资源；系统预置资源全平台可见（2026-10-05 语义）
     rows = list_websearch_providers(ws_db, caller_user_id="u2", caller_team_name="", is_sys_admin=False)
-    assert rows == []
-    # u3 同团队 T1：能看到团队级，看不到 u1 个人级
+    assert [r["name"] for r in rows] == ["系统的"]
+    # u3 同团队 T1：团队级 + 系统预置可见，看不到 u1 个人级
     rows = list_websearch_providers(ws_db, caller_user_id="u3", caller_team_name="T1", is_sys_admin=False)
-    assert [r["name"] for r in rows] == ["团队的"]
-    # 管理员：能看系统级；个人/团队级仍需 owner/team 归属匹配（与 mcps 语义一致）
+    assert sorted(r["name"] for r in rows) == ["团队的", "系统的"]
+    # 管理员：个人/团队级仍需 owner/team 归属匹配（与 mcps 语义一致），系统级可见
     rows = list_websearch_providers(ws_db, caller_user_id="admin", caller_team_name="", is_sys_admin=True)
     assert [r["name"] for r in rows] == ["系统的"]
 
