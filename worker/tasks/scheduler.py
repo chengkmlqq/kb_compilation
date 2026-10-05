@@ -291,6 +291,14 @@ def _append_job_log(job_id: str, line: str) -> None:
         pass
 
 
+@celery_app.task(name="worker.tasks.scheduler.recover_orphan_running_jobs", bind=False)
+def recover_orphan_running_jobs() -> dict:
+    """周期回收孤儿 RUNNING 任务（beat 每 5 分钟）。"""
+    from worker.tasks.orphan_recovery import recover_orphan_running_jobs as _recover
+
+    return _recover()
+
+
 @celery_app.task(name="worker.tasks.scheduler.execute_modo_job", bind=False, acks_late=True)
 def execute_modo_job(job_id: str) -> dict:
     """Execute a modo_job by dispatching to the registered task_class handler.
