@@ -145,11 +145,12 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
     [jobId],
   );
 
-  // Agent Trace：jobId 变化/打开时拉取 span 明细
+  // Agent Trace：jobId 变化/打开时拉取 span 明细；抽屉打开期间每 6s 轮询
+  // （运行中任务的 span 由 worker 每 3s 增量落盘，需轮询才能看到增长）
   useEffect(() => {
     if (!visible || !jobId) return;
     let cancelled = false;
-    void (async () => {
+    const load = async () => {
       try {
         const res = await apiGetJobTrace(jobId);
         if (!cancelled && res.success && res.data) setTrace(res.data);
@@ -157,9 +158,14 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
       } catch {
         if (!cancelled) setTrace({ spans: [], has_trace: false });
       }
-    })();
+    };
+    void load();
+    const timer = setInterval(() => {
+      void load();
+    }, 6000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
   }, [visible, jobId]);
 

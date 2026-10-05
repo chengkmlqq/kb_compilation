@@ -195,6 +195,8 @@ async def run_agent(payload: dict[str, Any], task_id: str = "") -> dict[str, Any
                     logger.info(
                         "agent_mcp_servers job=%s count=%s", task_id, len(mcp_servers)
                     )
+            # 主循环期间：后台每 3s 把已收集的 span 快照落盘（任务监控实时可见）
+            trace_task = _trace_snapshot_loop(task_id)
             result = await _run_agent_loop(
                 str(payload.get("agent_name") or cfg.get("agent_name") or "kb-agent-worker"),
                 instructions,
@@ -204,6 +206,11 @@ async def run_agent(payload: dict[str, Any], task_id: str = "") -> dict[str, Any
                 tools if tools else None,
                 config.AGENT_MAX_TURNS,
             )
+            trace_task.cancel()
+            try:
+                await trace_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
         runs_ms = int((time.monotonic() - t0) * 1000)
         logger.info("agent_run_end job=%s runs_ms=%s", task_id, runs_ms)
         return {
@@ -230,6 +237,33 @@ async def run_agent(payload: dict[str, Any], task_id: str = "") -> dict[str, Any
                 logger.info("task_skill_cleaned job=%s", task_id)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("task_skill_cleanup_failed job=%s: %s", task_id, exc)
+
+
+def _trace_snapshot_loop(task_id: str) -> "asyncio.Task":
+    """后台快照循环：每 3s 把已收集 span 写入 logs/traces/{job_id}.json。
+
+    用于任务运行期间的可视化；任务结束时 agent_worker 会写最终完整版。
+    """
+
+    async def _loop() -> None:
+        from worker.agent import trace_store
+
+        while True:
+            await asyncio.sleep(3)
+            try:
+                tid = trace_store.latest_trace_id()
+                if not tid:
+                    continue
+                from api.config import get_settings
+
+                path = f"{get_settings().kb_storage_dir}/logs/traces/{task_id}.json"
+                trace_store.flush_to_file(tid, path)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                logger.warning("trace snapshot failed job=%s", task_id, exc_info=True)
+
+    return asyncio.create_task(_loop())
 
 
 def run_agent_sync(payload: dict[str, Any], task_id: str = "") -> dict[str, Any]:
