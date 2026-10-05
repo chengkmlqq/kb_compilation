@@ -33,6 +33,7 @@ from api.models.knowledge import (
     WikiPage,
 )
 from api.services.retrieval import ChunkHit, hybrid_search
+from api.services import storage
 from api.services.wiki import slugify
 from api.services.kb_config import (
     KB_TYPES,
@@ -280,13 +281,29 @@ def delete_kb(db: Session, kb_id: str) -> dict:
     db.execute(delete(WikiLink).where(WikiLink.kb_id == kb_id))
     db.execute(delete(WikiPage).where(WikiPage.kb_id == kb_id))
     db.execute(delete(WikiFolder).where(WikiFolder.kb_id == kb_id))
-    # 3) 文档层：chunks → 文档
+    # 3) 文档层：chunks → 文档（先收集 storage_path，删除后清理对象存储）
+    doc_paths = [
+        str(p)
+        for p in db.execute(
+            select(KbDocument.storage_path).where(
+                KbDocument.kb_id == kb_id, KbDocument.storage_path.isnot(None)
+            )
+        ).scalars()
+        if p
+    ]
     db.execute(delete(DocChunk).where(DocChunk.kb_id == kb_id))
     db.execute(delete(KbDocument).where(KbDocument.kb_id == kb_id))
     # 4) wiki 日志 / 反馈
     db.execute(delete(WikiOperationLog).where(WikiOperationLog.kb_id == kb_id))
     db.execute(delete(WikiFeedback).where(WikiFeedback.kb_id == kb_id))
     db.commit()
+
+    # 4.2) 文档对象存储清理（minio:// 路径；本地路径文件一并删；best-effort）
+    for sp in doc_paths:
+        try:
+            storage.delete(sp)
+        except Exception as exc:  # noqa: BLE001 - 对象清理失败不阻塞
+            logging.getLogger(__name__).warning("文档对象清理失败(%s): %s", sp, exc)
 
     # 4.5) 向量索引（kb_embedding 属知识引擎侧表，走 VectorStore；best-effort）
     try:
