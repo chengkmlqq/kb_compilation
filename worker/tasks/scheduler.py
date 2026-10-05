@@ -18,6 +18,7 @@ retaining its key correctness properties:
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -270,6 +271,26 @@ def _update_duration(db: Session, job: Job) -> None:
         job.duration_ms = int(delta.total_seconds() * 1000)
 
 
+def _job_log_path(job_id: str) -> str:
+    """任务日志相对路径（jobs API 会拼 kb_storage_dir；相对方便移植）。"""
+    return f"logs/jobs/{job_id}.log"
+
+
+def _append_job_log(job_id: str, line: str) -> None:
+    """追加一行任务日志到 log_path（失败不抛——日志是尽力而为）。"""
+    try:
+        from pathlib import Path
+
+        settings = get_settings()
+        path = Path(settings.kb_storage_dir) / _job_log_path(job_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with path.open("a", encoding="utf-8") as f:
+            f.write(f"[{stamp}] {line}\n")
+    except Exception:  # noqa: BLE001 — 日志写入失败不影响任务本身
+        pass
+
+
 @celery_app.task(name="worker.tasks.scheduler.execute_modo_job", bind=False, acks_late=True)
 def execute_modo_job(job_id: str) -> dict:
     """Execute a modo_job by dispatching to the registered task_class handler.
@@ -292,6 +313,9 @@ def execute_modo_job(job_id: str) -> dict:
         job.state = "RUNNING"
         if job.start_time is None:
             job.start_time = dt.datetime.now(dt.timezone.utc)
+        # 记录日志文件路径（jobs 页日志抽屉读取）
+        job.log_path = _job_log_path(normalized)
+        _append_job_log(normalized, f"任务开始 task_class={task_class} params={str(task_params)[:160]}")
 
     handler = TASK_CLASS_REGISTRY.get(task_class)
     if handler is None:
@@ -308,6 +332,7 @@ def execute_modo_job(job_id: str) -> dict:
         result = handler(normalized, task_params)
     except Exception as e:  # noqa: BLE001
         logger.exception("execute_modo_job failed: job_id=%s", normalized)
+        _append_job_log(normalized, f"任务失败: {e}")
         with session_scope() as db:
             job = db.execute(select(Job).where(Job.id == normalized)).scalars().first()
             if job:
@@ -323,6 +348,8 @@ def execute_modo_job(job_id: str) -> dict:
             job.state = "SUCCESS"
             job.end_time = dt.datetime.now(dt.timezone.utc)
             _update_duration(db, job)
+    summary = json.dumps(result, ensure_ascii=False)[:300]
+    _append_job_log(normalized, f"任务成功 耗时={result.get('duration_ms') if isinstance(result, dict) else ''} 结果={summary}")
     return {"success": True, "result": result}
 
 

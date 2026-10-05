@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   App,
   Button,
@@ -31,9 +31,11 @@ import {
   apiCreateKb,
   apiDeleteKb,
   apiListKbs,
+  apiListModels,
   apiListSkillsRegistry,
   KbCreatePayload,
   KbItem,
+  ModelItem,
 } from "@/lib/api";
 import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 
@@ -52,6 +54,7 @@ export default function KbsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [chunkingKbId, setChunkingKbId] = useState<string | null>(null);
   const [skills, setSkills] = useState<{ name: string; description?: string }[]>([]);
+  const [models, setModels] = useState<ModelItem[]>([]);
   const [form] = Form.useForm();
 
   const customWiki = Form.useWatch("custom_wiki_generation", form) ?? false;
@@ -86,6 +89,30 @@ export default function KbsPage() {
     })();
   }, []);
 
+  // 模型下拉数据源：Embedding（向量化）+ chat（大语言模型/合成），对齐 WeKnora 创建表单模型配置
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await apiListModels();
+        if (res.success && res.data) setModels(res.data.items);
+      } catch {
+        // 模型列表加载失败不阻断创建（留空走系统默认模型）
+      }
+    })();
+  }, []);
+
+  const embeddingOptions = useMemo(
+    () =>
+      models
+        .filter((m) => m.type === "embedding")
+        .map((m) => ({ label: m.name, value: m.id })),
+    [models]
+  );
+  const chatOptions = useMemo(
+    () => models.filter((m) => m.type === "chat").map((m) => ({ label: m.name, value: m.id })),
+    [models]
+  );
+
   const onCreate = async () => {
     const values = await form.validateFields();
     const picked: string[] = values.pipelines || [];
@@ -102,6 +129,8 @@ export default function KbsPage() {
         graph_enabled: picked.includes("graph"),
       },
       custom_wiki_generation: values.custom_wiki_generation,
+      embedding_model_id: values.embedding_model_id || undefined,
+      summary_model_id: values.summary_model_id || undefined,
       configs: values.wiki_skill ? { wiki_config: { skill: values.wiki_skill } } : undefined,
     };
     const res = await apiCreateKb(payload);
@@ -256,6 +285,20 @@ export default function KbsPage() {
             extra="向量/关键词检索默认开启；Wiki 构建与知识图谱需显式开启（上传文档后才会自动构建）"
           >
             <Checkbox.Group options={PIPELINE_OPTIONS.map((o) => ({ label: o.label, value: o.value }))} />
+          </Form.Item>
+          <Form.Item
+            name="embedding_model_id"
+            label="向量模型（Embedding）"
+            extra="知识向量化用；留空 = 系统默认"
+          >
+            <Select allowClear options={embeddingOptions} placeholder="选择向量模型" />
+          </Form.Item>
+          <Form.Item
+            name="summary_model_id"
+            label="大语言模型（LLM）"
+            extra="Wiki 合成/文档理解用；留空 = 系统默认"
+          >
+            <Select allowClear options={chatOptions} placeholder="选择大语言模型" />
           </Form.Item>
           <Form.Item
             name="custom_wiki_generation"
