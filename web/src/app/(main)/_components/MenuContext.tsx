@@ -40,8 +40,7 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   // 三级骨架（对齐 data-synth）：顶级 → 分组 → 页面；分组 route 留空=纯目录
   { menu_id: "grp_knowledge", menu_name: "grp_knowledge", menu_label: "知识管理", route: null, parent_id: "root_kb", menu_icon: "FolderOutlined", sort_num: 1, state: "1" },
   { menu_id: "kbs", menu_name: "kbs", menu_label: "知识库管理", route: "/kbs", parent_id: "grp_knowledge", menu_icon: "AppstoreOutlined", sort_num: 1, state: "1" },
-  { menu_id: "wiki", menu_name: "wiki", menu_label: "Wiki 总览", route: "/wiki", parent_id: "grp_knowledge", menu_icon: "BookOutlined", sort_num: 2, state: "1" },
-  { menu_id: "files", menu_name: "files", menu_label: "文件管理", route: "/files", parent_id: "grp_knowledge", menu_icon: "FileOutlined", sort_num: 3, state: "1" },
+  { menu_id: "files", menu_name: "files", menu_label: "文件管理", route: "/files", parent_id: "grp_knowledge", menu_icon: "FileOutlined", sort_num: 2, state: "1" },
   { menu_id: "grp_ai", menu_name: "grp_ai", menu_label: "智能应用", route: null, parent_id: "root_kb", menu_icon: "FolderOutlined", sort_num: 2, state: "1" },
   { menu_id: "chat", menu_name: "chat", menu_label: "智能问答", route: "/chat", parent_id: "grp_ai", menu_icon: "CommentOutlined", sort_num: 1, state: "1" },
   { menu_id: "agents", menu_name: "agents", menu_label: "智能体配置", route: "/agents", parent_id: "grp_ai", menu_icon: "RobotOutlined", sort_num: 2, state: "1" },

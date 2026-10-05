@@ -59,6 +59,9 @@ export default function KbDetailPage() {
 
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
+  const [docPage, setDocPage] = useState(1);
+  const [docPageSize, setDocPageSize] = useState(20);
+  const [docTotal, setDocTotal] = useState(0);
   const [wiki, setWiki] = useState<WikiTree | null>(null);
   const [wikiLoading, setWikiLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -93,12 +96,15 @@ export default function KbDetailPage() {
   const load = useCallback(async () => {
     setDocsLoading(true);
     try {
-      const res = await apiListDocuments(kbId, 1, 100);
-      if (res.success) setDocs(res.data?.items || []);
+      const res = await apiListDocuments(kbId, docPage, docPageSize);
+      if (res.success) {
+        setDocs(res.data?.items || []);
+        setDocTotal(res.data?.total ?? 0);
+      }
     } finally {
       setDocsLoading(false);
     }
-  }, [kbId]);
+  }, [kbId, docPage, docPageSize]);
 
   const loadWiki = useCallback(async () => {
     setWikiLoading(true);
@@ -151,6 +157,7 @@ export default function KbDetailPage() {
           const res = await apiUploadDocument(kbId, file);
           if (res.success) {
             message.success(`「${file.name}」已上传，后台解析中`);
+            setDocPage(1); // 新文档按创建时间倒序排在第 1 页
             void load();
           } else {
             message.error(res.message || "上传失败");
@@ -168,7 +175,9 @@ export default function KbDetailPage() {
     const res = await apiDeleteDocument(kbId, doc.id);
     if (res.success) {
       message.success("文档已删除");
-      void load();
+      // 删除当前页最后一条且不在第 1 页时回退一页，避免空页
+      if (docs.length === 1 && docPage > 1) setDocPage(docPage - 1);
+      else void load();
     } else {
       message.error(res.message || "删除失败");
     }
@@ -200,7 +209,17 @@ export default function KbDetailPage() {
           size="small"
           loading={docsLoading}
           dataSource={docs}
-          pagination={false}
+          pagination={{
+            current: docPage,
+            pageSize: docPageSize,
+            total: docTotal,
+            showSizeChanger: true,
+            showTotal: (t) => `共 ${t} 个文档`,
+            onChange: (p, ps) => {
+              setDocPage(p);
+              setDocPageSize(ps);
+            },
+          }}
           locale={{ emptyText: <Empty description="暂无文档，拖拽文件到右上角上传" /> }}
           columns={[
             { title: "文件名", dataIndex: "file_name" },

@@ -55,8 +55,7 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     # ---- 知识管理（纯目录） ----
     ("grp_knowledge", "grp_knowledge", "知识管理", None, "root_kb", "FolderOutlined", 1),
     ("kbs", "kbs", "知识库管理", "/kbs", "grp_knowledge", "AppstoreOutlined", 1),
-    ("wiki", "wiki", "Wiki 总览", "/wiki", "grp_knowledge", "BookOutlined", 2),
-    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_knowledge", "FileOutlined", 3),
+    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_knowledge", "FileOutlined", 2),
     # ---- 智能应用（纯目录） ----
     ("grp_ai", "grp_ai", "智能应用", None, "root_kb", "FolderOutlined", 2),
     ("chat", "chat", "智能问答", "/chat", "grp_ai", "CommentOutlined", 1),

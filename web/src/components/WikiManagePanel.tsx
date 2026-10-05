@@ -422,7 +422,7 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
           size="small"
           loading={loading || searching}
           dataSource={tableData}
-          pagination={false}
+          pagination={{ pageSize: 20, showSizeChanger: false }}
           locale={{
             emptyText: searchItems
               ? <Text type="secondary">未找到匹配「{searchQ}」的页面</Text>
