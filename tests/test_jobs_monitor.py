@@ -443,6 +443,49 @@ def test_delete_document_cancels_related_wiki_tasks(monkeypatch) -> None:
     assert sorted(revoked) == ["WIKI_A", "WIKI_B"]
 
 
+def test_delete_kb_cancels_kb_tasks(monkeypatch) -> None:
+    """2026-10-05: 删库级联取消其 DOC/WIKI 未完成任务（删库后任务行残留修复）。"""
+    from api.services import kb_admin
+
+    db = _make_session()
+    db.query(Job).delete()
+    db.commit()
+    db.add(Job(id="DOC_K1", task_id="t", task_class="KbDocumentProcessTask",
+               queue_name="default", state="PENDING",
+               task_params=json.dumps({"kbId": "kb1", "documentId": "d1"})))
+    db.add(Job(id="WIKI_K1", task_id="t2", task_class="KbAgentWikiBuildTask",
+               queue_name="agent", state="RUNNING",
+               task_params=json.dumps({"kbId": "kb1", "documentId": "d1"})))
+    db.add(Job(id="WIKI_OK", task_id="t3", task_class="KbAgentWikiBuildTask",
+               queue_name="agent", state="SUCCESS",
+               task_params=json.dumps({"kbId": "kb1", "documentId": "d1"})))
+    db.add(Job(id="DOC_K2", task_id="t4", task_class="KbDocumentProcessTask",
+               queue_name="default", state="PENDING",
+               task_params=json.dumps({"kbId": "kb2", "documentId": "d2"})))
+    db.commit()
+
+    revoked: list[str] = []
+
+    class FakeControl:
+        def revoke(self, task_id=None, terminate=None, **kw):
+            revoked.append(task_id)
+
+    import worker.celery_app as wca
+
+    monkeypatch.setattr(wca.celery_app, "control", FakeControl())
+    try:
+        kb_admin._cancel_kb_tasks(db, "kb1")
+    finally:
+        app.dependency_overrides.clear()
+
+    by_id = {j.id: j.state for j in db.query(Job).all()}
+    assert by_id["DOC_K1"] == "STOPPED"
+    assert by_id["WIKI_K1"] == "STOPPED"
+    assert by_id["WIKI_OK"] == "SUCCESS"  # 终态不动
+    assert by_id["DOC_K2"] == "PENDING"  # 其他库不动
+    assert sorted(revoked) == ["DOC_K1", "WIKI_K1"]
+
+
 def test_post_kb_scope_permission_403(monkeypatch) -> None:
     """普通用户建库归属=system 应 403 而非 500（2026-10-05 实测 500 修复）。"""
     from api.services import scope as scope_mod

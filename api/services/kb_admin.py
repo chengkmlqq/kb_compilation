@@ -277,6 +277,10 @@ def delete_kb(db: Session, kb_id: str) -> dict:
     # 1) KB 软删
     kb.state = "0"
 
+    # 1.5) 级联取消该库未完成的转换/wiki 任务（2026-10-05 实测: 删库后
+    #      关联任务行残留 PENDING, celery 仍会消费 -> agent 为已删库建页）
+    _cancel_kb_tasks(db, kb_id)
+
     # 2) wiki 层：链接 → 页面 → 文件夹
     db.execute(delete(WikiLink).where(WikiLink.kb_id == kb_id))
     db.execute(delete(WikiPage).where(WikiPage.kb_id == kb_id))
@@ -479,6 +483,45 @@ def _cancel_related_wiki_tasks(db: Session, document_id: str) -> None:
                 celery_app.control.revoke(j.id, terminate=True)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("revoke wiki task %s failed: %s", j.id, exc)
+    db.commit()
+
+
+def _cancel_kb_tasks(db: Session, kb_id: str) -> None:
+    """删除知识库时级联取消其未完成的转换/wiki 任务。
+
+    2026-10-05 实测：删库后关联任务行残留 PENDING，celery 队列仍持有该
+    任务 -> worker 照常消费 -> agent 为已删库建页（孤儿页）。
+    仅置 STOPPED + revoke（保留任务行供审计）；限定 DOC_/WIKI_ 前缀防误伤。
+    """
+    from api.models.framework import Job
+
+    jobs = db.execute(
+        select(Job).where(
+            Job.id.like("DOC_%"),
+            Job.task_params.like(f"%{kb_id}%"),
+            Job.state.in_(["PENDING", "RUNNING"]),
+        )
+    ).scalars().all()
+    jobs += db.execute(
+        select(Job).where(
+            Job.id.like("WIKI_%"),
+            Job.task_params.like(f"%{kb_id}%"),
+            Job.state.in_(["PENDING", "RUNNING"]),
+        )
+    ).scalars().all()
+    if not jobs:
+        return
+    try:
+        from worker.celery_app import celery_app
+    except Exception:  # noqa: BLE001 — 环境无 celery 时仅置状态
+        celery_app = None
+    for j in jobs:
+        j.state = "STOPPED"
+        if celery_app is not None:
+            try:
+                celery_app.control.revoke(j.id, terminate=True)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("revoke kb task %s failed: %s", j.id, exc)
     db.commit()
 
 
