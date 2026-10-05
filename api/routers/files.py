@@ -143,6 +143,96 @@ def _parse_storage_date(storage_path: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _explore_minio_tree(
+    client: Any,
+    bucket: str,
+    current_path: str,
+    search: str | None,
+    page: int,
+    page_size: int,
+) -> dict:
+    """MinIO GUI 树：列 bucket 内对象（delimiter=/ 目录树）。
+
+    items 结构对齐 sys_file 树（name/isFolder/sourcePath/size/storage_path），
+    前端无需改动即可渲染。current_path 即 MinIO 前缀路径（/ 开头）。
+    """
+    prefix = "" if current_path in ("", "/") else current_path.strip("/") + "/"
+    search_text = (search or "").strip().lower()
+
+    if search_text:
+        # 搜索：递归全桶匹配对象名
+        matched = []
+        for obj in client.list_objects(bucket, prefix="", recursive=True):
+            name = obj.object_name
+            if not name or name.endswith("/"):
+                continue
+            if search_text not in name.lower():
+                continue
+            matched.append(
+                {
+                    "name": name.rsplit("/", 1)[-1],
+                    "isFolder": False,
+                    "size": obj.size,
+                    "sourcePath": "/" + name,
+                    "storage_path": f"minio://{bucket}/{name}",
+                    "modified": obj.last_modified.isoformat() if obj.last_modified else None,
+                }
+            )
+        matched.sort(key=lambda x: x["name"].lower())
+        total = len(matched)
+        return {
+            "success": True,
+            "data": {
+                "list": matched[(page - 1) * page_size : page * page_size],
+                "total": total,
+                "page": page,
+                "pageSize": page_size,
+            },
+        }
+
+    dirs: list[dict] = []
+    files: list[dict] = []
+    for obj in client.list_objects(bucket, prefix=prefix, recursive=False):
+        rel = obj.object_name[len(prefix) :]
+        if not rel:
+            continue
+        if obj.is_dir or rel.endswith("/"):
+            folder = rel.rstrip("/")
+            dirs.append(
+                {
+                    "name": folder,
+                    "isFolder": True,
+                    "size": 0,
+                    "sourcePath": "/" + prefix + folder,
+                    "storage_path": f"minio://{bucket}/{prefix}{folder}",
+                }
+            )
+            continue
+        files.append(
+            {
+                "name": rel,
+                "isFolder": False,
+                "size": obj.size,
+                "sourcePath": "/" + obj.object_name,
+                "storage_path": f"minio://{bucket}/{obj.object_name}",
+                "modified": obj.last_modified.isoformat() if obj.last_modified else None,
+            }
+        )
+    dirs.sort(key=lambda x: x["name"].lower())
+    files.sort(key=lambda x: x["name"].lower())
+    items = dirs + files
+    total = len(items)
+    return {
+        "success": True,
+        "data": {
+            "list": items[(page - 1) * page_size : page * page_size],
+            "total": total,
+            "page": page,
+            "pageSize": page_size,
+        },
+    }
+
+
 @router.get("/explore")
 def explore_files(
     identity: Identity = Depends(_require_identity),
@@ -152,9 +242,27 @@ def explore_files(
     page_size: int = Query(EXPLORER_PAGE_SIZE_DEFAULT, ge=1, le=EXPLORER_PAGE_SIZE_MAX),
     db: Session = Depends(get_db),
 ) -> dict:
-    """资源管理器式浏览 + 搜索（对齐 ds getSysFilesAction）。"""
+    """资源管理器式浏览 + 搜索。
+
+    MinIO 可用时列出桶内全部对象（相当于 MinIO GUI：目录树 + 对象），
+    否则回退 modo_sys_file 虚拟文件树（对齐 ds getSysFilesAction）。
+    """
     admin = _is_admin(identity)
     current_team = identity.team_id or ""
+
+    # MinIO 优先：展示桶内真实对象（全局存储，不需要团队过滤）
+    try:
+        from api.services import storage as storage_svc
+
+        client = storage_svc._get_client()
+        bucket = storage_svc.get_settings().MINIO_BUCKET or "kb-compilation"
+        if client.bucket_exists(bucket):
+            return _explore_minio_tree(
+                client, bucket, current_path, search, page, page_size
+            )
+    except Exception:  # noqa: BLE001 - MinIO 不可用时回退 sys_file
+        logger.warning("minio explore unavailable, fallback to sys_file", exc_info=True)
+
     if not admin and not current_team:
         return {"success": False, "message": "缺少团队信息，无法查询文件"}
 
