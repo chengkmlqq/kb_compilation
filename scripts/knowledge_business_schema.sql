@@ -188,3 +188,22 @@ CREATE INDEX idx_kb_skill_scope ON kb_skill (scope);
 CREATE INDEX idx_kb_skill_name ON kb_skill (name);
 CREATE INDEX idx_kb_skill_owner_user ON kb_skill (owner_user_id);
 CREATE INDEX idx_kb_skill_owner_team ON kb_skill (owner_team_name);
+
+-- ----------------------------------------------------------------- websearch (2026-10-06: 补建，接口曾因缺表 500)
+CREATE TABLE IF NOT EXISTS kb_websearch_provider (
+	id VARCHAR(36) NOT NULL,
+	scope VARCHAR(16) NOT NULL,
+	name VARCHAR(128) NOT NULL,
+	description TEXT,
+	provider_type VARCHAR(32) NOT NULL,
+	api_key VARCHAR(512),
+	base_url TEXT,
+	extra_config JSON,
+	owner_user_id VARCHAR(64),
+	owner_team_name VARCHAR(64),
+	enabled BOOL NOT NULL,
+	state VARCHAR(8) NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (id)
+);
