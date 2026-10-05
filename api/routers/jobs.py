@@ -219,28 +219,47 @@ async def _read_incremental(
     content = ""
     source = "none"
 
-    # 1) MinIO 日志对象 logs/<job_id>.log（worker log_sink.append_job_log 追加写入）
-    try:
-        from api.services import storage as storage_svc
+    # 1) 本地日志文件 logs/jobs/<job_id>.log（scheduler execute_modo_job 写入，
+    #    Job.log_path 落库；ff91de8 起支持）
+    if job.log_path:
+        abs_path = job.log_path if os.path.isabs(job.log_path) else os.path.join(
+            get_settings().kb_storage_dir, job.log_path
+        )
+        if os.path.exists(abs_path):
+            try:
+                size = os.path.getsize(abs_path)
+                if size > offset_bytes:
+                    with open(abs_path, "r", encoding="utf-8", errors="replace") as fh:
+                        fh.seek(offset_bytes)
+                        content = fh.read()
+                    source = "local"
+                    offset_bytes = size
+            except OSError:
+                pass
 
-        if storage_svc.remote_enabled():
-            log_path = (
-                f"minio://{storage_svc.get_settings().MINIO_BUCKET or kb-compilation}"
-                f"/logs/{job.id}.log"
-            )
-            size = storage_svc.stat_size(log_path)
-            if size is not None and size > offset_bytes:
-                data = storage_svc.get_bytes(log_path)
-                text = data.decode("utf-8", errors="replace")
-                content = text[offset_bytes:]
-                source = "minio"
-                offset_bytes = size
-            elif size is not None and size == offset_bytes:
-                source = "minio"
-    except Exception:  # noqa: BLE001 — 日志读取失败回退 error_message
-        pass
+    # 2) MinIO 日志对象 logs/<job_id>.log（worker log_sink.append_job_log 追加写入）
+    if not content:
+        try:
+            from api.services import storage as storage_svc
 
-    # 2) error_message 槽位（实时进度：agent-gateway 每轮 poll 覆盖写入）
+            if storage_svc.remote_enabled():
+                minio_log = (
+                    f"minio://{storage_svc.get_settings().MINIO_BUCKET or 'kb-compilation'}"
+                    f"/logs/{job.id}.log"
+                )
+                size = storage_svc.stat_size(minio_log)
+                if size is not None and size > offset_bytes:
+                    data = storage_svc.get_bytes(minio_log)
+                    text = data.decode("utf-8", errors="replace")
+                    content = text[offset_bytes:]
+                    source = "minio"
+                    offset_bytes = size
+                elif size is not None and size == offset_bytes:
+                    source = "minio"
+        except Exception:  # noqa: BLE001 — 日志读取失败回退 error_message
+            pass
+
+    # 3) error_message 槽位（实时进度：agent-gateway 每轮 poll 覆盖写入）
     if not content and job.error_message:
         err = str(job.error_message)
         if len(err) > offset_bytes:
