@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.db import get_db, get_sessionmaker
+from api.config import get_settings
 from api.models.framework import Job, JobQueue
 from api.services.identity import decode_identity_cookie
 
