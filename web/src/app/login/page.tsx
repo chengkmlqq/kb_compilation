@@ -72,7 +72,9 @@ export default function LoginPage() {
       }
       // Persist the identity cookie on the frontend host (same contract as
       // the source platform: x-next-identity holds the AES identity payload).
-      document.cookie = `x-next-identity=${encodeURIComponent(result.identity_cookie)}; path=/; max-age=172800`;
+      // 注意：不能 encodeURIComponent —— 后端 decode_identity_cookie 不做 URL
+      // 解码，编码后 AES 解密失败 → 登录守卫 apiMe 401 → 跳回登录页。
+      document.cookie = `x-next-identity=${result.identity_cookie}; path=/; max-age=172800`;
       message.success("登录成功");
       router.replace("/kbs");
       router.refresh();
