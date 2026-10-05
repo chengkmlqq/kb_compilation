@@ -216,12 +216,14 @@ def ingest_document(
         update_document_state(kb_db, document.id, "FAILED", error=f"parse: {e}")
         kb_db.commit()
         result["error"] = str(e)
+        result["success"] = False  # 2026-10-05: 显式失败标志(execute_modo_job 据此落 FAILED, 防假成功)
         return result
 
     if not markdown.strip():
         update_document_state(kb_db, document.id, "FAILED", error="empty parse result")
         kb_db.commit()
         result["error"] = "empty parse result"
+        result["success"] = False
         return result
 
     # 2. chunk (adaptive; parent-child when enabled)
@@ -241,6 +243,7 @@ def ingest_document(
         update_document_state(kb_db, document.id, "FAILED", error="no chunks produced")
         kb_db.commit()
         result["error"] = "no chunks produced"
+        result["success"] = False
         return result
 
     # 3. embed
