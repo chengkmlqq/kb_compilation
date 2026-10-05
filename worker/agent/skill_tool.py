@@ -349,7 +349,14 @@ def build_skill_tools() -> list[Any]:
             return f"技能不存在: {skill_name}。"
         script_path = spec.path / "scripts" / script
         if not script_path.is_file():
-            return f"脚本不存在: {skill_name}/scripts/{script}。可用脚本: {', '.join(spec.scripts) or '无'}。"
+            # 兜底：指定脚本缺失时回退到包内主入口脚本（监管版 build_full.py）
+            for candidate in ("build_full.py",):
+                fallback = spec.path / "scripts" / candidate
+                if fallback.is_file():
+                    script_path = fallback
+                    break
+            else:
+                return f"脚本不存在: {skill_name}/scripts/{script}。可用脚本: {', '.join(spec.scripts) or '无'}。"
         argv = [sys_executable(), str(script_path), *(args or [])]
         try:
             proc = subprocess.run(

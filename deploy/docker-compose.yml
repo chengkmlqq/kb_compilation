@@ -145,7 +145,7 @@ services:
     image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-agent-worker:${KB_IMAGE_TAG:-latest}
     container_name: kb-celery-agent-worker
     restart: unless-stopped
-    command: ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info", "--concurrency=1", "-Q", "agent"]
+    command: ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info", "--concurrency=2", "-Q", "agent"]
     <<: *api-env
     # 注意：不要在本服务加独立 environment: 块——YAML `<<:` 是浅合并，同名
     # environment 会被整体覆盖，导致 api-env 的 CELERY_BROKER_URL 等丢失

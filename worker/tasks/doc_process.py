@@ -243,6 +243,8 @@ def _enqueue_wiki_skill_task(
 
     settings = get_settings()
     skill_name = (skill_name or settings.WIKI_SKILL_NAME or "kb-wiki-builder").strip()
+    # 技能入口脚本：按技能名映射（监管版入口是 build_full.py，其余默认 build_wiki.py）
+    entry_script = "build_full.py" if "监督管理制度文档转wiki" in skill_name else "build_wiki.py"
     kb_base_url = (settings.KB_PUBLIC_BASE_URL or "http://10.1.215.50").strip()
     llm_base = (settings.WIKI_LLM_BASE_URL or "").strip()
     llm_model = (settings.WIKI_LLM_MODEL or "").strip()
@@ -263,7 +265,7 @@ def _enqueue_wiki_skill_task(
         {
             "input": (
                 "请完成知识库 wiki 构建任务：使用技能工具 run_skill_script("
-                f"skill_name='{skill_name}', script='build_wiki.py') 执行技能脚本，"
+                f"skill_name='{skill_name}', script='{entry_script}') 执行技能脚本，"
                 f"把知识库 {kb_id} 中的文档 {document_id} 编译进 wiki。"
                 "不要使用 MCP 工具查询或写入知识库，不要调用 list_skills/load_skill 之外的工具；"
                 "脚本会从环境变量 WEKNORA_KB_ID / WEKNORA_DOC_NAME 读取目标并自动完成全部工作，"
