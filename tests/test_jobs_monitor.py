@@ -363,6 +363,86 @@ def test_execute_modo_job_keeps_stopped(monkeypatch) -> None:
     assert job.error_message is None
 
 
+def test_delete_job_revokes_running(monkeypatch) -> None:
+    """2026-10-05:删除运行中/排队中任务先 revoke celery（避免孤儿页），终态直接删。"""
+    db = _make_session()
+    db.query(Job).delete()
+    db.commit()
+    db.add(Job(id="JOB_R", task_id="t", task_class="KbAgentWikiBuildTask",
+               queue_name="agent", state="RUNNING"))
+    db.add(Job(id="JOB_OK", task_id="t2", task_class="KbDocumentProcessTask",
+               queue_name="default", state="SUCCESS"))
+    db.commit()
+
+    revoked: list[str] = []
+
+    class FakeControl:
+        def revoke(self, task_id=None, terminate=None, **kw):
+            revoked.append(task_id)
+
+    import worker.celery_app as wca
+
+    monkeypatch.setattr(wca.celery_app, "control", FakeControl())
+    try:
+        client = _jobs_client(db, monkeypatch)
+        r = client.delete("/api/v1/jobs/JOB_R")
+        assert r.status_code == 200, r.text
+        assert r.json()["data"]["deleted"] is True
+        assert revoked == ["JOB_R"], f"期望 revoke 被调, 实际 {revoked}"
+        assert db.query(Job).filter(Job.id == "JOB_R").first() is None
+        # 终态任务不 revoke
+        r = client.delete("/api/v1/jobs/JOB_OK")
+        assert r.status_code == 200
+        assert revoked == ["JOB_R"]
+        r = client.delete("/api/v1/jobs/NOPE")
+        assert r.status_code == 404
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_delete_document_cancels_related_wiki_tasks(monkeypatch) -> None:
+    """2026-10-05:删文档级联取消其 PENDING/RUNNING wiki 任务（假成功修复）。"""
+    from api.services import kb_admin
+
+    db = _make_session()
+    db.query(Job).delete()
+    db.commit()
+    db.add(Job(id="WIKI_A", task_id="t", task_class="KbAgentWikiBuildTask",
+               queue_name="agent", state="RUNNING",
+               task_params=json.dumps({"kbId": "kb1", "documentId": "docX"})))
+    db.add(Job(id="WIKI_B", task_id="t2", task_class="KbAgentWikiBuildTask",
+               queue_name="agent", state="PENDING",
+               task_params=json.dumps({"kbId": "kb1", "documentId": "docX"})))
+    db.add(Job(id="WIKI_OK", task_id="t3", task_class="KbAgentWikiBuildTask",
+               queue_name="agent", state="SUCCESS",
+               task_params=json.dumps({"kbId": "kb1", "documentId": "docX"})))
+    db.add(Job(id="WIKI_OTHER", task_id="t4", task_class="KbAgentWikiBuildTask",
+               queue_name="agent", state="RUNNING",
+               task_params=json.dumps({"kbId": "kb1", "documentId": "docY"})))
+    db.commit()
+
+    revoked: list[str] = []
+
+    class FakeControl:
+        def revoke(self, task_id=None, terminate=None, **kw):
+            revoked.append(task_id)
+
+    import worker.celery_app as wca
+
+    monkeypatch.setattr(wca.celery_app, "control", FakeControl())
+    try:
+        kb_admin._cancel_related_wiki_tasks(db, "docX")
+    finally:
+        app.dependency_overrides.clear()
+
+    by_id = {j.id: j.state for j in db.query(Job).all()}
+    assert by_id["WIKI_A"] == "STOPPED"
+    assert by_id["WIKI_B"] == "STOPPED"
+    assert by_id["WIKI_OK"] == "SUCCESS"  # 终态不动
+    assert by_id["WIKI_OTHER"] == "RUNNING"  # 无关文档不动
+    assert sorted(revoked) == ["WIKI_A", "WIKI_B"]
+
+
 def test_post_kb_scope_permission_403(monkeypatch) -> None:
     """普通用户建库归属=system 应 403 而非 500（2026-10-05 实测 500 修复）。"""
     from api.services import scope as scope_mod

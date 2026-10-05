@@ -242,10 +242,21 @@ def delete_job(
     _user_id: str = Depends(_require_user_id),
     db: Session = Depends(get_db),
 ) -> dict:
-    """删除任务记录（modo_job 行）。"""
+    """删除任务记录（modo_job 行）。
+
+    2026-10-05 实测: 运行中/排队中任务直接删行，agent 仍会跑完（孤儿页）——
+    删除前先 revoke celery（terminate），真正取消执行。
+    """
     job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
     if not job:
         raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
+    if job.state in ("PENDING", "RUNNING"):
+        try:
+            from worker.celery_app import celery_app
+
+            celery_app.control.revoke(job_id, terminate=True)
+        except Exception as exc:  # noqa: BLE001 — revoke 失败不阻塞删除
+            logger.warning("revoke job %s failed: %s", job_id, exc)
     db.delete(job)
     db.commit()
     return {"success": True, "data": {"id": job_id, "deleted": True}}

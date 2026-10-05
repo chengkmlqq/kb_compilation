@@ -443,6 +443,9 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
     ).scalars().first()
     if not doc:
         return {"success": False, "message": f"文档不存在: {document_id}"}
+    # 2026-10-05 实测: 删文档后其 wiki 构建任务仍执行（假成功/白跑 LLM）——
+    # 删除时先级联取消关联的未完成 wiki 任务（PENDING/RUNNING → STOPPED + revoke）。
+    _cancel_related_wiki_tasks(db, document_id)
     # Cascade: drop chunks first, then the document row.
     db.execute(delete(DocChunk).where(DocChunk.document_id == document_id))
     db.delete(doc)
@@ -450,6 +453,33 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
     # Best-effort local file cleanup (never fatal).
     _remove_local_file(doc.storage_path)
     return {"success": True, "data": {"id": document_id}}
+
+
+def _cancel_related_wiki_tasks(db: Session, document_id: str) -> None:
+    """删除文档时级联取消其关联的未完成 wiki 构建任务（避免删后假成功/孤儿页）。"""
+    from api.models.framework import Job
+
+    jobs = db.execute(
+        select(Job).where(
+            Job.id.like("WIKI_%"),
+            Job.task_params.like(f"%{document_id}%"),
+            Job.state.in_(["PENDING", "RUNNING"]),
+        )
+    ).scalars().all()
+    if not jobs:
+        return
+    try:
+        from worker.celery_app import celery_app
+    except Exception:  # noqa: BLE001 — 环境无 celery 时仅置状态
+        celery_app = None
+    for j in jobs:
+        j.state = "STOPPED"
+        if celery_app is not None:
+            try:
+                celery_app.control.revoke(j.id, terminate=True)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("revoke wiki task %s failed: %s", j.id, exc)
+    db.commit()
 
 
 def _remove_local_file(storage_path: str | None) -> None:
