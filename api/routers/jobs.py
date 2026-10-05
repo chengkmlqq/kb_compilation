@@ -219,11 +219,57 @@ def get_job_trace(
             spans = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=500, detail=f"trace 读取失败: {exc}")
-    from worker.agent.trace_store import summarize_spans  # type: ignore[import-not-found]
 
+    # 摘要（与 worker/agent/trace_store.summarize_spans 同语义，api-server 无 worker 包）
+    def _span_name(sp: dict) -> str:
+        sd = sp.get("span_data") or {}
+        return str(sd.get("name") or ("LLM generation" if sd.get("type") == "generation" else sd.get("type") or "span"))
+
+    def _span_duration_ms(sp: dict) -> int:
+        try:
+            start = datetime.fromisoformat(str(sp.get("started_at")).replace("Z", "+00:00"))
+            end = datetime.fromisoformat(str(sp.get("ended_at")).replace("Z", "+00:00"))
+            return max(0, int((end - start).total_seconds() * 1000))
+        except Exception:  # noqa: BLE001
+            return 0
+
+    total_ms = 0.0
+    tools: list[str] = []
+    llm_calls = 0
+    enriched: list[dict] = []
+    for sp in spans:
+        dur = _span_duration_ms(sp)
+        total_ms += dur
+        sd = sp.get("span_data") or {}
+        stype = str(sd.get("type") or "")
+        if stype == "function":
+            fn = str(sd.get("name") or "")
+            if fn and fn not in tools:
+                tools.append(fn)
+        elif stype == "generation":
+            llm_calls += 1
+        # 顶层便捷字段（前端直接读）：name / type / duration_ms
+        enriched.append(
+            {
+                **sp,
+                "name": _span_name(sp),
+                "type": stype or "span",
+                "duration_ms": dur,
+            }
+        )
+    summary = {
+        "span_count": len(spans),
+        "duration_ms": round(total_ms),
+        "llm_calls": llm_calls,
+        "tools": tools,
+    }
     return {
         "success": True,
-        "data": {"spans": spans, "has_trace": True, "summary": summarize_spans(spans)},
+        "data": {
+            "spans": enriched,
+            "has_trace": True,
+            "summary": summary,
+        },
     }
 
 

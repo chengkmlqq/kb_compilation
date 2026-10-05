@@ -10,6 +10,7 @@ trace_id 就丢弃（span 数据随内存消失）。本模块注册一个内存
 """
 from __future__ import annotations
 
+import datetime
 import logging
 import threading
 
@@ -71,21 +72,25 @@ def pop_trace_spans(trace_id: str) -> list[dict]:
 
 
 def summarize_spans(spans: list[dict]) -> dict:
-    """生成可读摘要（写任务日志用）。"""
-    total_ms = 0
+    """生成可读摘要（写任务日志用）。span 为 SDK export 结构（span_data 内嵌）。"""
+    total_ms = 0.0
     tools: list[str] = []
     llm_calls = 0
     for sp in spans:
-        name = str(sp.get("name") or "")
-        dur = sp.get("duration_ms") or 0
-        total_ms += float(dur or 0)
-        sname = str(name).lower()
-        if "function" in sname or "tool" in sname:
-            fn = (sp.get("span_data") or {}).get("name") or name
+        sd = sp.get("span_data") or {}
+        stype = str(sd.get("type") or "")
+        if stype == "function":
+            fn = str(sd.get("name") or "")
             if fn and fn not in tools:
-                tools.append(str(fn))
-        elif "response" in sname or "llm" in sname or "agent" in sname:
+                tools.append(fn)
+        elif stype == "generation":
             llm_calls += 1
+        try:
+            start = datetime.datetime.fromisoformat(str(sp.get("started_at")).replace("Z", "+00:00"))
+            end = datetime.datetime.fromisoformat(str(sp.get("ended_at")).replace("Z", "+00:00"))
+            total_ms += max(0, (end - start).total_seconds() * 1000)
+        except Exception:  # noqa: BLE001
+            pass
     return {
         "span_count": len(spans),
         "duration_ms": round(total_ms),
