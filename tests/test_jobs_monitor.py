@@ -486,6 +486,78 @@ def test_delete_kb_cancels_kb_tasks(monkeypatch) -> None:
     assert sorted(revoked) == ["DOC_K1", "WIKI_K1"]
 
 
+def test_execute_modo_job_respects_business_failure(monkeypatch) -> None:
+    """2026-10-05: handler 返回 success=False(业务失败: 文档不存在/格式不支持)
+    不抛异常 → 任务必须 FAILED 而非无条件 SUCCESS(假成功 T1/T4 修复)。"""
+    import contextlib
+    from typing import Iterator
+
+    from worker.tasks import scheduler
+
+    db = _make_session()
+    db.query(Job).delete()
+    db.commit()
+    db.add(Job(id="JOB_F", task_id="t", task_class="FakeFailHandler",
+               queue_name="default", state="PENDING"))
+    db.commit()
+
+    def fake_handler(job_id, params):
+        return {"success": False, "error": "document not found"}
+
+    scheduler.TASK_CLASS_REGISTRY["FakeFailHandler"] = fake_handler
+
+    @contextlib.contextmanager
+    def fake_scope() -> Iterator[Session]:
+        yield db
+
+    orig_scope = scheduler.session_scope
+    scheduler.session_scope = fake_scope
+    try:
+        r = scheduler.execute_modo_job("JOB_F")
+    finally:
+        scheduler.session_scope = orig_scope
+        del scheduler.TASK_CLASS_REGISTRY["FakeFailHandler"]
+
+    job = db.execute(scheduler.select(Job).where(Job.id == "JOB_F")).scalars().first()
+    assert job.state == "FAILED", f"假成功: 期望 FAILED 实际 {job.state}"
+    assert "document not found" in (job.error_message or "")
+
+
+def test_execute_modo_job_success_key_not_forced(monkeypatch) -> None:
+    """handler 返回 success=True / 无 success 键 → SUCCESS(显式 False 才判失败, 不误伤)。"""
+    import contextlib
+    from typing import Iterator
+
+    from worker.tasks import scheduler
+
+    db = _make_session()
+    db.query(Job).delete()
+    db.commit()
+    db.add(Job(id="JOB_OK2", task_id="t", task_class="FakeOkHandler",
+               queue_name="default", state="PENDING"))
+    db.commit()
+
+    def fake_ok(job_id, params):
+        return {"success": True, "pages": 7}
+
+    scheduler.TASK_CLASS_REGISTRY["FakeOkHandler"] = fake_ok
+
+    @contextlib.contextmanager
+    def fake_scope() -> Iterator[Session]:
+        yield db
+
+    orig_scope = scheduler.session_scope
+    scheduler.session_scope = fake_scope
+    try:
+        r = scheduler.execute_modo_job("JOB_OK2")
+    finally:
+        scheduler.session_scope = orig_scope
+        del scheduler.TASK_CLASS_REGISTRY["FakeOkHandler"]
+
+    job = db.execute(scheduler.select(Job).where(Job.id == "JOB_OK2")).scalars().first()
+    assert job.state == "SUCCESS", f"误伤: 期望 SUCCESS 实际 {job.state}"
+
+
 def test_post_kb_scope_permission_403(monkeypatch) -> None:
     """普通用户建库归属=system 应 403 而非 500（2026-10-05 实测 500 修复）。"""
     from api.services import scope as scope_mod
