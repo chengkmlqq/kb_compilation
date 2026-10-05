@@ -1627,6 +1627,27 @@ export function apiGetJob(jobId: string) {
   return request<JobItem>(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
 }
 
+export interface AgentTraceSpan {
+  trace_id?: string;
+  span_id?: string;
+  name?: string;
+  type?: string;
+  started_at?: string;
+  ended_at?: string;
+  duration_ms?: number;
+  span_data?: Record<string, unknown>;
+}
+
+export interface AgentTraceData {
+  spans: AgentTraceSpan[];
+  has_trace: boolean;
+  summary?: { span_count: number; duration_ms: number; llm_calls: number; tools: string[] };
+}
+
+export function apiGetJobTrace(jobId: string) {
+  return request<AgentTraceData>(`/api/v1/jobs/${encodeURIComponent(jobId)}/trace`);
+}
+
 // ---- 我的团队 / 切换团队 / 默认团队（对齐 data-synth team-actions） ----
 
 export interface UserTeamItem {

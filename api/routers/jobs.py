@@ -205,6 +205,28 @@ def get_job(
     return {"success": True, "data": _job_to_dict(job)}
 
 
+@router.get("/{job_id}/trace")
+def get_job_trace(
+    job_id: str,
+    _user_id: str = Depends(_require_user_id),
+) -> dict:
+    """Agent 任务 span 明细：读 logs/traces/{job_id}.json（worker 落盘）。"""
+    path = os.path.join(get_settings().kb_storage_dir, f"logs/traces/{job_id}.json")
+    if not os.path.isfile(path):
+        return {"success": True, "data": {"spans": [], "has_trace": False}}
+    try:
+        with open(path, encoding="utf-8") as f:
+            spans = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail=f"trace 读取失败: {exc}")
+    from worker.agent.trace_store import summarize_spans  # type: ignore[import-not-found]
+
+    return {
+        "success": True,
+        "data": {"spans": spans, "has_trace": True, "summary": summarize_spans(spans)},
+    }
+
+
 # ---------------------------------------------------------------------------
 # 实时日志流（SSE）——对齐 data-synth job-monitor/log-stream
 # ---------------------------------------------------------------------------

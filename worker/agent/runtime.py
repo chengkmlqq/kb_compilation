@@ -150,6 +150,11 @@ async def run_agent(payload: dict[str, Any], task_id: str = "") -> dict[str, Any
     cfg = dict(payload.get("config") or {})
     task_id = task_id or str(cfg.get("job_id") or "task")
 
+    # trace 收集处理器（span 落盘用；幂等安装一次）
+    from worker.agent.trace_store import install as install_trace_processor
+
+    install_trace_processor()
+
     # 防御：显式清空上一次任务残留的任务级技能注册表。asyncio.run 每次复制
     # 上下文本已隔离，但 Celery prefork 复用进程，不应依赖隐式行为。
     set_task_skills(None)

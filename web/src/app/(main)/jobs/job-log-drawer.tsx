@@ -8,12 +8,13 @@ import {
   Empty,
   Space,
   Spin,
+  Table,
   Tag,
   Tooltip,
   Typography,
 } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
-import { apiGetJob, JobItem } from "@/lib/api";
+import { apiGetJob, apiGetJobTrace, AgentTraceData, AgentTraceSpan, JobItem } from "@/lib/api";
 import { resolveJobMonitorQueueLabel } from "./queue-label";
 
 interface JobLogDrawerProps {
@@ -86,6 +87,7 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
   const [streamError, setStreamError] = useState<string | null>(null);
   const [logContent, setLogContent] = useState("");
   const [logScrollPercent, setLogScrollPercent] = useState(0);
+  const [trace, setTrace] = useState<AgentTraceData | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   // finish 之后浏览器 EventSource 仍会触发一次 onerror，用 ref 记录终态以区分
   // 「正常收尾」与「真实中断」，并避免 finish 后无限自动重连
@@ -142,6 +144,24 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
     },
     [jobId],
   );
+
+  // Agent Trace：jobId 变化/打开时拉取 span 明细
+  useEffect(() => {
+    if (!visible || !jobId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiGetJobTrace(jobId);
+        if (!cancelled && res.success && res.data) setTrace(res.data);
+        else if (!cancelled) setTrace({ spans: [], has_trace: false });
+      } catch {
+        if (!cancelled) setTrace({ spans: [], has_trace: false });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, jobId]);
 
   // 启动 SSE 实时日志流（数据源：error_message 增量 + log_path 文件）
   const startLogStream = useCallback(
@@ -434,6 +454,53 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
               ) : (
                 <Text type="secondary" italic>
                   暂无日志内容（任务运行中实时进度将在此展示）
+                </Text>
+              )}
+            </div>
+
+            {/* Agent Trace（span 明细：仅 agent 构建任务有） */}
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 8 }}>
+                Agent Trace
+                {trace?.has_trace && trace.summary ? (
+                  <Space size={6} style={{ marginLeft: 8, fontWeight: 400, fontSize: 12 }}>
+                    <Tag color="blue">{trace.summary.span_count} spans</Tag>
+                    <Tag>{trace.summary.duration_ms}ms</Tag>
+                    <Tag color="cyan">LLM {trace.summary.llm_calls}</Tag>
+                    {trace.summary.tools.map((t) => (
+                      <Tag key={t} color="green">
+                        {t}
+                      </Tag>
+                    ))}
+                  </Space>
+                ) : null}
+              </div>
+              {trace?.has_trace && trace.spans.length > 0 ? (
+                <Table
+                  size="small"
+                  rowKey={(r: AgentTraceSpan) => r.span_id || r.name || String(Math.random())}
+                  pagination={false}
+                  dataSource={trace.spans}
+                  columns={[
+                    { title: "Span", dataIndex: "name", width: 260, ellipsis: true },
+                    { title: "类型", dataIndex: "type", width: 150 },
+                    {
+                      title: "耗时",
+                      dataIndex: "duration_ms",
+                      width: 90,
+                      render: (v?: number) => (v ? `${v}ms` : "-"),
+                    },
+                    {
+                      title: "开始",
+                      dataIndex: "started_at",
+                      width: 190,
+                      render: (v?: string) => (v ? new Date(v).toLocaleTimeString() : "-"),
+                    },
+                  ]}
+                />
+              ) : (
+                <Text type="secondary" italic>
+                  该任务无 Agent Trace（仅内联 agent 构建任务产生）
                 </Text>
               )}
             </div>

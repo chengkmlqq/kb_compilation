@@ -1,0 +1,94 @@
+"""SDK trace 收集与落盘（agent 任务 span）。
+
+agents SDK 默认不导出 trace（openai-tracing 需密钥）；此前 runtime 只拿到
+trace_id 就丢弃（span 数据随内存消失）。本模块注册一个内存收集 processor：
+- on_span_end 时把 span 序列化（Span.export()）按 trace_id 聚合
+- 任务结束时由 agent_worker 取走（pop）落盘 logs/traces/{job_id}.json，
+  并把摘要写进任务日志（任务监控可读）
+
+进程级单例收集，进程内并发任务按 trace_id 隔离。
+"""
+from __future__ import annotations
+
+import logging
+import threading
+
+logger = logging.getLogger(__name__)
+
+_lock = threading.Lock()
+_spans_by_trace: dict[str, list[dict]] = {}
+_installed = False
+
+
+class CollectingTraceProcessor:
+    """收集 span 的内存处理器（不导出外部 trace 服务）。"""
+
+    def on_span_start(self, span) -> None:  # noqa: D102 - 开始不处理
+        pass
+
+    def on_span_end(self, span) -> None:  # type: ignore[override]
+        try:
+            data = span.export()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("span export failed: %s", exc)
+            return
+        if not isinstance(data, dict):
+            return
+        tid = data.get("trace_id") or ""
+        if not tid:
+            return
+        with _lock:
+            _spans_by_trace.setdefault(tid, []).append(data)
+
+    def shutdown(self) -> None:  # noqa: D102
+        pass
+
+    def force_flush(self) -> None:  # noqa: D102
+        pass
+
+
+def install() -> None:
+    """注册收集处理器（幂等，进程内一次）。"""
+    global _installed
+    if _installed:
+        return
+    try:
+        from agents.tracing import set_trace_processors
+
+        set_trace_processors([CollectingTraceProcessor()])
+        _installed = True
+        logger.info("agent trace processor installed (in-memory collect)")
+    except Exception as exc:  # noqa: BLE001 - SDK 缺 tracer 不阻断任务
+        logger.warning("trace processor install failed: %s", exc)
+
+
+def pop_trace_spans(trace_id: str) -> list[dict]:
+    """取出并清空某 trace 的全部 span（任务结束调用）。"""
+    if not trace_id:
+        return []
+    with _lock:
+        return _spans_by_trace.pop(trace_id, [])
+
+
+def summarize_spans(spans: list[dict]) -> dict:
+    """生成可读摘要（写任务日志用）。"""
+    total_ms = 0
+    tools: list[str] = []
+    llm_calls = 0
+    for sp in spans:
+        name = str(sp.get("name") or "")
+        dur = sp.get("duration_ms") or 0
+        total_ms += float(dur or 0)
+        sname = str(name).lower()
+        if "function" in sname or "tool" in sname:
+            fn = (sp.get("span_data") or {}).get("name") or name
+            if fn and fn not in tools:
+                tools.append(str(fn))
+        elif "response" in sname or "llm" in sname or "agent" in sname:
+            llm_calls += 1
+    return {
+        "span_count": len(spans),
+        "duration_ms": round(total_ms),
+        "llm_calls": llm_calls,
+        "tools": tools,
+    }

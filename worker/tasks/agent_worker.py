@@ -278,6 +278,33 @@ def _handle_agent_wiki_build(job_id: str, task_params: str | None) -> dict[str, 
         _write_progress(job_id, f"[agent] 完成（{result.get('runs_ms')}ms）")
     else:
         _write_progress(job_id, f"[agent] 失败: {str(result.get('error'))[:300]}")
+
+    # ── agent span 落盘（trace 收集 → logs/traces/{job_id}.json + 任务日志摘要）──
+    try:
+        tid = str(result.get("sdk_trace_id") or "")
+        if tid:
+            from worker.agent.trace_store import summarize_spans, pop_trace_spans
+
+            spans = pop_trace_spans(tid)
+            if spans:
+                from api.config import get_settings
+                from pathlib import Path
+
+                settings = get_settings()
+
+                tf = Path(settings.kb_storage_dir) / f"logs/traces/{job_id}.json"
+                tf.parent.mkdir(parents=True, exist_ok=True)
+                tf.write_text(json.dumps(spans, ensure_ascii=False, default=str), encoding="utf-8")
+                summary = summarize_spans(spans)
+                line = (
+                    f"Agent Trace: trace_id={tid} spans={summary['span_count']} "
+                    f"耗时={summary['duration_ms']}ms LLM调用={summary['llm_calls']} "
+                    f"工具={','.join(summary['tools']) or '-'}"
+                )
+                logger.info("agent trace saved job=%s %s", job_id, line)
+                _write_progress(job_id, line)
+    except Exception as exc:  # noqa: BLE001 - trace 落盘失败不阻塞任务
+        logger.warning("agent trace persist failed job=%s: %s", job_id, exc)
     return result
 
 
