@@ -10,16 +10,22 @@ export default function SystemUsersPage() {
   const [rows, setRows] = useState<SysUserItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiListUsers(1, 100, keyword);
-      if (res.success) setRows(res.data?.items || []);
+      const res = await apiListUsers(page, pageSize, keyword);
+      if (res.success) {
+        setRows(res.data?.items || []);
+        setTotal(res.data?.total ?? 0);
+      }
     } finally {
       setLoading(false);
     }
-  }, [keyword]);
+  }, [keyword, page, pageSize]);
 
   useEffect(() => {
     void load();
@@ -33,7 +39,10 @@ export default function SystemUsersPage() {
           placeholder="按账号/姓名搜索"
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
-          onSearch={() => void load()}
+          onSearch={() => {
+            setPage(1);
+            void load();
+          }}
           style={{ width: 220 }}
         />
       }
@@ -43,7 +52,17 @@ export default function SystemUsersPage() {
         size="small"
         loading={loading}
         dataSource={rows}
-        pagination={false}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 个用户`,
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
+        }}
         locale={{ emptyText: <Empty description="暂无用户" /> }}
         columns={[
           { title: "账号", dataIndex: "user_id" },

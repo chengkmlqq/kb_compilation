@@ -15,6 +15,7 @@ import {
   Empty,
   Input,
   Modal,
+  Pagination,
   Space,
   Table,
   Tag,
@@ -420,6 +421,17 @@ export default function FilesPage() {
           <Text type="secondary" style={{ fontSize: 13 }}>
             共 {total} 项{search ? "（搜索结果）" : ""}
           </Text>
+          <Pagination
+            current={page}
+            pageSize={pageSize}
+            total={total}
+            showSizeChanger
+            showTotal={(t) => `共 ${t} 项`}
+            onChange={(p, ps) => {
+              setPage(p);
+              setPageSize(ps);
+            }}
+          />
         </div>
       </div>
     </div>

@@ -69,7 +69,7 @@ export default function SystemRolesPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiListRoles(1, 100);
+      const res = await apiListRoles(1, 500);
       if (res.success) setRows(res.data?.items || []);
     } finally {
       setLoading(false);

@@ -9,16 +9,22 @@ export default function SystemLogsPage() {
   const [rows, setRows] = useState<SysLogItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiListOperationLogs(1, 100, keyword);
-      if (res.success) setRows(res.data?.items || []);
+      const res = await apiListOperationLogs(page, pageSize, keyword);
+      if (res.success) {
+        setRows(res.data?.items || []);
+        setTotal(res.data?.total ?? 0);
+      }
     } finally {
       setLoading(false);
     }
-  }, [keyword]);
+  }, [keyword, page, pageSize]);
 
   useEffect(() => {
     void load();
@@ -32,7 +38,10 @@ export default function SystemLogsPage() {
           placeholder="按用户/类型/内容搜索"
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
-          onSearch={() => void load()}
+          onSearch={() => {
+            setPage(1);
+            void load();
+          }}
           style={{ width: 240 }}
         />
       }
@@ -42,7 +51,17 @@ export default function SystemLogsPage() {
         size="small"
         loading={loading}
         dataSource={rows}
-        pagination={false}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 条日志`,
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
+        }}
         locale={{ emptyText: <Empty description="暂无日志" /> }}
         columns={[
           { title: "用户", dataIndex: "user_name" },

@@ -11,6 +11,7 @@ import {
   Input,
   List,
   Modal,
+  Pagination,
   Radio,
   Select,
   Space,
@@ -55,6 +56,9 @@ export default function KbsPage() {
   const [chunkingKbId, setChunkingKbId] = useState<string | null>(null);
   const [skills, setSkills] = useState<{ name: string; description?: string }[]>([]);
   const [models, setModels] = useState<ModelItem[]>([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
   const [form] = Form.useForm();
 
   const customWiki = Form.useWatch("custom_wiki_generation", form) ?? false;
@@ -62,16 +66,17 @@ export default function KbsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiListKbs(1, 50);
+      const res = await apiListKbs(page, pageSize);
       if (res.success) {
         setKbs(res.data?.items || []);
+        setTotal(res.data?.total ?? 0);
       } else {
         message.error(res.message || "加载失败");
       }
     } finally {
       setLoading(false);
     }
-  }, [message]);
+  }, [message, page, pageSize]);
 
   useEffect(() => {
     void load();
@@ -138,6 +143,7 @@ export default function KbsPage() {
       message.success("知识库已创建");
       setCreateOpen(false);
       form.resetFields();
+      setPage(1); // 新库按创建时间倒序在第 1 页
       void load();
     } else {
       message.error(res.message || "创建失败");
@@ -160,7 +166,9 @@ export default function KbsPage() {
         const res = await apiDeleteKb(kb.id);
         if (res.success) {
           message.success("已删除");
-          void load();
+          // 删除当前页最后一条且不在第 1 页时回退一页，避免空页
+          if (kbs.length === 1 && page > 1) setPage(page - 1);
+          else void load();
         } else {
           message.error(res.message || "删除失败");
         }
@@ -235,6 +243,20 @@ export default function KbsPage() {
           </List.Item>
         )}
       />
+
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+        <Pagination
+          current={page}
+          pageSize={pageSize}
+          total={total}
+          showSizeChanger
+          showTotal={(t) => `共 ${t} 个知识库`}
+          onChange={(p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          }}
+        />
+      </div>
 
       <Modal
         title="新建知识库"

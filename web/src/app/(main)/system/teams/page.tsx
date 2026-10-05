@@ -9,16 +9,22 @@ import { StateTag } from "../_shared";
 export default function SystemTeamsPage() {
   const [rows, setRows] = useState<SysTeamItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiListTeams(1, 100);
-      if (res.success) setRows(res.data?.items || []);
+      const res = await apiListTeams(page, pageSize);
+      if (res.success) {
+        setRows(res.data?.items || []);
+        setTotal(res.data?.total ?? 0);
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, pageSize]);
 
   useEffect(() => {
     void load();
@@ -31,7 +37,17 @@ export default function SystemTeamsPage() {
         size="small"
         loading={loading}
         dataSource={rows}
-        pagination={false}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 个团队`,
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
+        }}
         locale={{ emptyText: <Empty description="暂无团队" /> }}
         columns={[
           { title: "团队编码", dataIndex: "team_name" },
