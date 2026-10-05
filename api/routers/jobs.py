@@ -59,6 +59,10 @@ def _job_to_dict(job: Job) -> dict:
     }
 
 
+# 系统自愈周期任务（默认从任务列表隐藏，避免每 5 分钟刷屏）
+SYSTEM_TASK_CLASSES: tuple[str, ...] = ("KbOrphanRecoveryTask",)
+
+
 @router.get("")
 def list_jobs(
     _user_id: str = Depends(_require_user_id),
@@ -68,11 +72,13 @@ def list_jobs(
     state: str | None = Query(None),
     keyword: str | None = Query(None, description="job id 或 task_id 模糊匹配"),
     queue_name: str | None = Query(None, description="队列名精确匹配"),
+    include_system: bool = Query(False, description="包含系统周期任务（默认隐藏，避免 OrphanRecovery 刷屏）"),
     db: Session = Depends(get_db),
 ) -> dict:
     """任务列表：时间倒序，支持 task_class / state / keyword 过滤 + 分页。
 
-    返回最近 N 条（默认 20），总数供前端分页。只读。
+    系统周期任务（如 KbOrphanRecoveryTask 每 5 分钟一条）默认隐藏，
+    include_system=true 或显式 task_class 时才展示。只读。
     """
     stmt = select(Job)
     count_stmt = select(func.count()).select_from(Job)
@@ -80,6 +86,10 @@ def list_jobs(
     if task_class:
         stmt = stmt.where(Job.task_class == task_class)
         count_stmt = count_stmt.where(Job.task_class == task_class)
+    elif not include_system:
+        # 隐藏系统自愈周期任务（孤儿回收等），避免刷屏淹没真实任务
+        stmt = stmt.where(Job.task_class.not_in(SYSTEM_TASK_CLASSES))
+        count_stmt = count_stmt.where(Job.task_class.not_in(SYSTEM_TASK_CLASSES))
     if state:
         stmt = stmt.where(Job.state == state)
         count_stmt = count_stmt.where(Job.state == state)
