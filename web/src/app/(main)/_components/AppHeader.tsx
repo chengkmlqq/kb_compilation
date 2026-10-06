@@ -294,17 +294,8 @@ export const AppHeader: React.FC = () => {
           中间留弹性空位，右侧为用户区 */}
       <div style={{ flex: 1 }} />
 
-      {/* Right: 搜索 + 通知铃 + 用户下拉 */}
+      {/* Right: 通知铃 + 用户下拉（2026-10-06 移除搜索/查询按钮） */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, height: 45 }}>
-        <div
-          style={{
-            width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center",
-            backgroundColor: "#EFF4F9", borderRadius: "50%", cursor: "pointer",
-          }}
-          onClick={() => router.push("/chat")}
-        >
-          <SearchOutlined style={{ fontSize: 14, color: "#4D5E7D" }} />
-        </div>
         <NotificationBell />
         <Dropdown
           open={dropdownOpen}
