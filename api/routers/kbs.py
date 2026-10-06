@@ -379,13 +379,50 @@ def get_documents(
     db: Session = Depends(get_db),
 ) -> dict:
     _kb_visible(kb_id, caller, db)
-    return {
-        "success": True,
-        "data": list_documents(
-            db, kb_id, page, page_size,
-            keyword=keyword, file_type=file_type, parse_status=parse_status,
-        ),
-    }
+    data = list_documents(
+        db, kb_id, page, page_size,
+        keyword=keyword, file_type=file_type, parse_status=parse_status,
+    )
+    _attach_wiki_build_status(db, kb_id, data.get("items") or [])
+    return {"success": True, "data": data}
+
+
+def _attach_wiki_build_status(db: Session, kb_id: str, items: list[dict]) -> None:
+    """给文档列表每行附 wiki 构建状态（最新 WIKI 任务：state/耗时/job_id）。
+
+    通过 task_params.config.knowledge_id 关联文档；任务量级 ~1k 行，直接
+    扫 modo_job 前缀匹配，不引入额外索引/轮询。
+    """
+    from api.models.framework import Job
+    from sqlalchemy import select
+
+    if not items:
+        return
+    jobs = db.execute(
+        select(Job.id, Job.task_params, Job.state, Job.duration_ms)
+        .where(Job.id.like("WIKI%"))
+        .order_by(Job.create_time.desc())
+    ).all()
+    by_doc: dict[str, dict] = {}
+    for jid, tp, state, dur in jobs:
+        try:
+            p = json.loads(tp or "{}")
+            cfg = p.get("config") or {}
+            if str(cfg.get("kb_id") or "") != kb_id:
+                continue
+            kid = str(cfg.get("knowledge_id") or cfg.get("kid") or cfg.get("doc_name") or "")
+            if kid and kid not in by_doc:
+                by_doc[kid] = {
+                    "state": state,
+                    "duration_ms": dur,
+                    "job_id": str(jid),
+                }
+        except Exception:  # noqa: BLE001
+            continue
+    for it in items:
+        b = by_doc.get(str(it.get("id") or ""))
+        if b:
+            it["wiki_build"] = b
 
 
 @router.post("/{kb_id}/documents/upload")

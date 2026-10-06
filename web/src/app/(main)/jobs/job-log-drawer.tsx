@@ -515,7 +515,92 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
             {trace?.events ? (
               <div>
                 <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 8 }}>
-                  LLM 构建明细
+                  构建步骤时间线
+                  {trace.events.steps?.length ? (
+                    <Space size={6} style={{ marginLeft: 8, fontWeight: 400, fontSize: 12 }}>
+                      <Tag color="blue">
+                        合计{" "}
+                        {Math.round(
+                          (trace.events.steps
+                            .filter((s) => s.status === "done" || s.status === "fail")
+                            .reduce((a, s) => a + s.ms, 0) ?? 0) / 1000,
+                        )}
+                        s
+                      </Tag>
+                      {(() => {
+                        const done = trace.events.steps?.filter((s) => s.status === "done" || s.status === "fail") ?? [];
+                        const slowest = done.reduce((a, s) => (s.ms > (a?.ms ?? 0) ? s : a), undefined as
+                          | { step: string; status: string; ms: number }
+                          | undefined);
+                        return slowest ? (
+                          <Tag color="orange">
+                            最慢 {slowest.step} {Math.round(slowest.ms / 1000)}s
+                          </Tag>
+                        ) : null;
+                      })()}
+                    </Space>
+                  ) : null}
+                </div>
+                {trace.events.steps?.length ? (
+                  <Table
+                    size="small"
+                    pagination={false}
+                    rowKey={(r) => `${r.step}-${r.ms}`}
+                    dataSource={trace.events.steps}
+                    columns={[
+                      { title: "步骤", dataIndex: "step", width: 220 },
+                      {
+                        title: "耗时",
+                        dataIndex: "ms",
+                        width: 110,
+                        render: (v: number) => `${(v / 1000).toFixed(1)}s`,
+                      },
+                      {
+                        title: "占比",
+                        dataIndex: "ms",
+                        render: (v: number) => {
+                          const done = (trace.events?.steps ?? []).filter(
+                            (s) => s.status === "done" || s.status === "fail",
+                          );
+                          const tot = done.reduce((a, s) => a + s.ms, 0) || 1;
+                          return (
+                            <div style={{ background: "#f0f0f0", borderRadius: 4, height: 10 }}>
+                              <div
+                                style={{
+                                  width: `${Math.round((v / tot) * 100)}%`,
+                                  height: 10,
+                                  borderRadius: 4,
+                                  background: v / tot > 0.4 ? "#fa8c16" : "#1677ff",
+                                }}
+                              />
+                            </div>
+                          );
+                        },
+                      },
+                      {
+                        title: "状态",
+                        dataIndex: "status",
+                        width: 90,
+                        render: (v: string) => (
+                          <Tag color={v === "done" ? "green" : v === "fail" ? "red" : "blue"}>
+                            {v === "done" ? "完成" : v === "fail" ? "失败" : v === "running" ? "进行中" : "中断"}
+                          </Tag>
+                        ),
+                      },
+                    ]}
+                  />
+                ) : (
+                  <Text type="secondary" italic>
+                    该任务无步骤埋点（旧版本技能包）
+                  </Text>
+                )}
+              </div>
+            ) : null}
+
+            {/* LLM 调用明细 */}
+            {trace?.events ? (
+              <div>
+                <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 8 }}>
                   <Space size={6} style={{ marginLeft: 8, fontWeight: 400, fontSize: 12 }}>
                     <Tag color="cyan">调用 {trace.events.ok}</Tag>
                     {trace.events.error > 0 ? (

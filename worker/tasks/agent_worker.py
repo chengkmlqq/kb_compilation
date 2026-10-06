@@ -332,6 +332,25 @@ def _handle_agent_wiki_build(job_id: str, task_params: str | None) -> dict[str, 
                         pass
             ok_evs = [e for e in evs if e.get("kind") == "ok"]
             err_evs = [e for e in evs if e.get("kind") == "error"]
+            step_evs = [e for e in evs if e.get("kind") == "step"]
+            # 步骤时间线：start→done/fail 配对，输出有序 [{step, status, ms}]
+            steps: list[dict] = []
+            step_open: dict[str, dict] = {}
+            for e in step_evs:
+                st = str(e.get("step") or "?")
+                status = str(e.get("status") or "")
+                if status == "start":
+                    step_open[st] = {"step": st, "status": "running", "ms": 0}
+                elif status in ("done", "fail") and st in step_open:
+                    prev = step_open.pop(st)
+                    prev["status"] = "done" if status == "done" else "fail"
+                    prev["ms"] = int(e.get("ms") or 0)
+                    steps.append(prev)
+                elif status in ("done", "fail"):
+                    steps.append({"step": st, "status": "done" if status == "done" else "fail",
+                                  "ms": int(e.get("ms") or 0)})
+            for st in step_open:
+                steps.append({**step_open[st], "status": "interrupted"})
             retries = sum(len(e.get("retry_events") or []) for e in evs)
             retry_reasons: dict[str, int] = {}
             backoff_total = 0
@@ -350,14 +369,23 @@ def _handle_agent_wiki_build(job_id: str, task_params: str | None) -> dict[str, 
                 "retries": retries, "retry_reasons": retry_reasons,
                 "backoff_total_s": backoff_total, "wait_total_s": round(wait_total, 1),
                 "llm_total_s": round(llm_total, 1), "phases": phases,
+                "steps": steps,
             }
             ev_out = _P(_gs().kb_storage_dir) / f"logs/events/{job_id}.summary.json"
             ev_out.write_text(json.dumps(ev_summary, ensure_ascii=False), encoding="utf-8")
+            slowest = max(steps, key=lambda s: s.get("ms") or 0) if steps else None
             ev_line = (
                 f"LLM 明细: 调用{len(ok_evs)} 失败{len(err_evs)} 重试{retries}次"
                 f"(429:{retry_reasons.get('http_429', 0)} 超时:{retry_reasons.get('network', 0)}) "
                 f"退避等待{backoff_total}s 节流等待{ev_summary['wait_total_s']}s LLM耗时{ev_summary['llm_total_s']}s"
             )
+            if steps:
+                done_steps = [s for s in steps if s.get("status") in ("done", "fail")]
+                step_ms = sum(s.get("ms") or 0 for s in done_steps) / 1000
+                ev_line += (
+                    f" | 步骤{len(done_steps)}步 合计{step_ms:.0f}s"
+                    + (f" 最慢={slowest['step']} {round((slowest['ms'] or 0) / 1000)}s" if slowest else "")
+                )
             _write_progress(job_id, ev_line)
     except Exception as exc:  # noqa: BLE001
         logger.warning("agent events aggregate failed job=%s: %s", job_id, exc)

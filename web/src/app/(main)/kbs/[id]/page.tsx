@@ -521,6 +521,39 @@ export default function KbDetailPage() {
                       ),
                     },
                     {
+                      title: "Wiki 构建",
+                      dataIndex: "wiki_build",
+                      width: 150,
+                      render: (v: DocItem["wiki_build"], doc: DocItem) => {
+                        if (!v) return <span style={{ color: "#bbb", fontSize: 12 }}>-</span>;
+                        const dur = v.duration_ms ? `${Math.round(v.duration_ms / 60000)}min` : "";
+                        const colorMap: Record<string, string> = {
+                          SUCCESS: "green",
+                          FAILED: "red",
+                          RUNNING: "blue",
+                          PENDING: "default",
+                        };
+                        const labelMap: Record<string, string> = {
+                          SUCCESS: "成功",
+                          FAILED: "失败",
+                          RUNNING: "构建中",
+                          PENDING: "排队中",
+                        };
+                        return (
+                          <Space size={4}>
+                            {v.state === "RUNNING" && <Spin size="small" />}
+                            <Tag color={colorMap[v.state] || "default"}>{labelMap[v.state] || v.state}</Tag>
+                            {dur && <span style={{ fontSize: 12, color: "#888" }}>{dur}</span>}
+                            {(v.state === "FAILED" || v.state === "SUCCESS") && (
+                              <a style={{ fontSize: 12 }} onClick={() => onViewTrace(doc)}>
+                                详情
+                              </a>
+                            )}
+                          </Space>
+                        );
+                      },
+                    },
+                    {
                       title: "分块数",
                       dataIndex: "chunk_count",
                       width: 90,

@@ -197,6 +197,7 @@ export interface DocItem {
   summary_status?: string | null;
   summary_error?: string | null;
   created_at?: string | null;
+  wiki_build?: { state: string; duration_ms: number | null; job_id: string } | null;
 }
 
 export function apiListDocuments(
@@ -1881,6 +1882,7 @@ export interface AgentTraceData {
     wait_total_s: number;
     llm_total_s: number;
     phases: Record<string, number>;
+    steps?: { step: string; status: string; ms: number }[];
   } | null;
 }
 
