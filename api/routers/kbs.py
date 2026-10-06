@@ -238,17 +238,75 @@ def post_kb(
             vector_store_id=req.vector_store_id,
             configs=req.configs,
             ontology_schema_name=req.ontology_schema_name,
+            caller_user_id=caller_user_id or None,
+            caller_team_name=caller_team_name or None,
+            is_sys_admin=is_sys_admin,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"success": True, "data": {"id": kb.id, "name": kb.name, "scope": kb.scope}}
 
 
-@router.get("/{kb_id}")
-def get_kb_detail(kb_id: str, db: Session = Depends(get_db)) -> dict:
+# ---------------------------------------------------------------------------
+# 知识库级权限 helper（对齐 scope.py 三级模型：personal/team/system）
+# ---------------------------------------------------------------------------
+
+
+def _require_kb_caller(
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+    db: Session = Depends(get_db),
+) -> dict:
+    identity = decode_identity_cookie(x_next_identity or "")
+    if not identity or not identity.user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+    from api.services.scope import is_admin
+
+    return {
+        "user_id": identity.user_id,
+        "team_name": identity.team_name or "",
+        "is_admin": is_admin(db, identity.user_id),
+    }
+
+
+def _kb_visible(kb_id: str, caller: dict, db: Session):
+    """读可见性：personal=属主 / team=同队 / system=全员（对齐 can_see）。"""
     kb = get_kb(db, kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    from api.services.scope import ResourceRow, can_see
+
+    if not can_see(
+        ResourceRow.from_obj(kb),
+        caller["user_id"],
+        caller["team_name"],
+        caller["is_admin"],
+    ):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    return kb
+
+
+def _kb_manage(kb_id: str, caller: dict, db: Session):
+    """写权限：personal=属主 / team=同队 / system=admin（对齐 can_manage）。"""
+    kb = _kb_visible(kb_id, caller, db)
+    from api.services.scope import ResourceRow, can_manage
+
+    if not can_manage(
+        ResourceRow.from_obj(kb),
+        caller["user_id"],
+        caller["team_name"],
+        caller["is_admin"],
+    ):
+        raise HTTPException(status_code=403, detail="无权操作该知识库")
+    return kb
+
+
+@router.get("/{kb_id}")
+def get_kb_detail(
+    kb_id: str,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    kb = _kb_visible(kb_id, caller, db)
     from api.services.kb_admin import _kb_dict
     from sqlalchemy import func, select
 
@@ -273,9 +331,22 @@ def get_kb_detail(kb_id: str, db: Session = Depends(get_db)) -> dict:
 
 
 @router.put("/{kb_id}")
-def put_kb(kb_id: str, req: KBUpdateRequest, db: Session = Depends(get_db)) -> dict:
+def put_kb(
+    kb_id: str,
+    req: KBUpdateRequest,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    _kb_manage(kb_id, caller, db)
     try:
-        kb = update_kb(db, kb_id, req.model_dump(exclude_none=True))
+        kb = update_kb(
+            db,
+            kb_id,
+            req.model_dump(exclude_none=True),
+            caller_user_id=caller["user_id"],
+            caller_team_name=caller["team_name"],
+            is_sys_admin=caller["is_admin"],
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not kb:
@@ -284,7 +355,12 @@ def put_kb(kb_id: str, req: KBUpdateRequest, db: Session = Depends(get_db)) -> d
 
 
 @router.delete("/{kb_id}")
-def del_kb(kb_id: str, db: Session = Depends(get_db)) -> dict:
+def del_kb(
+    kb_id: str,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    _kb_manage(kb_id, caller, db)
     result = delete_kb(db, kb_id)
     if not result["success"]:
         raise HTTPException(status_code=404, detail=result["message"])
@@ -294,6 +370,7 @@ def del_kb(kb_id: str, db: Session = Depends(get_db)) -> dict:
 @router.get("/{kb_id}/documents")
 def get_documents(
     kb_id: str,
+    caller: dict = Depends(_require_kb_caller),
     page: int = 1,
     page_size: int = 20,
     keyword: str = "",
@@ -301,8 +378,7 @@ def get_documents(
     parse_status: str = "",
     db: Session = Depends(get_db),
 ) -> dict:
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_visible(kb_id, caller, db)
     return {
         "success": True,
         "data": list_documents(
@@ -318,6 +394,7 @@ async def upload_document(
     file: UploadFile | None = None,
     url: str = Query(default="", max_length=2000),
     file_name: str = Query(default="", max_length=255),
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
     """Accept a document upload (multipart file OR remote URL), persist bytes
@@ -327,8 +404,7 @@ async def upload_document(
     URL mode fetches the remote document with a 20s timeout and the same size
     cap as file uploads.
     """
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_manage(kb_id, caller, db)
 
     if url.strip():
         # URL 导入模式
@@ -447,8 +523,11 @@ def _enqueue_document_process(kb_id: str, document_id: str) -> None:
 
 
 @router.delete("/{kb_id}/documents/{document_id}")
-def del_document(kb_id: str, document_id: str, db: Session = Depends(get_db)) -> dict:
+def del_document(kb_id: str, document_id: str, caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db)) -> dict:
+    _kb_manage(kb_id, caller, db)
     result = delete_document(db, kb_id, document_id)
+
     if not result["success"]:
         raise HTTPException(status_code=404, detail=result["message"])
     return result
@@ -458,6 +537,7 @@ def del_document(kb_id: str, document_id: str, db: Session = Depends(get_db)) ->
 def get_document_chunks(
     kb_id: str,
     document_id: str,
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
     """读取文档解析后的 chunks（技能/wiki 构建用）。
@@ -465,8 +545,7 @@ def get_document_chunks(
     返回该文档的所有文本块（content/seq/embedding 状态），供外部技能
     脚本拉取文档内容后生成 wiki 页面。
     """
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_visible(kb_id, caller, db)
     from api.models.knowledge import DocChunk
     from sqlalchemy import select
 
@@ -502,9 +581,9 @@ def get_document_chunks(
 
 
 @router.get("/{kb_id}/wiki")
-def get_wiki(kb_id: str, db: Session = Depends(get_db)) -> dict:
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+def get_wiki(kb_id: str, caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db)) -> dict:
+    _kb_visible(kb_id, caller, db)
     return {"success": True, "data": wiki_tree(db, kb_id)}
 
 
@@ -516,6 +595,7 @@ def get_wiki_graph_route(
     depth: int = 1,
     limit: int = 200,
     types: str = "",
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
     """Wiki 知识图谱（wiki_page + wiki_link，不依赖 Neo4j）。
@@ -523,8 +603,7 @@ def get_wiki_graph_route(
     mode=overview 全库图；mode=ego 以 center slug 为中心 depth 跳邻域。
     types 逗号分隔过滤 page_type（entity/concept/summary）。
     """
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_visible(kb_id, caller, db)
     type_list = [t for t in types.split(",") if t.strip()] if types else []
     data = wiki_graph(
         db, kb_id, mode=mode, center=center, depth=depth, limit=limit, types=type_list
@@ -538,27 +617,30 @@ def get_wiki_branch(
     folder_id: str = "",
     page: int = 1,
     page_size: int = 50,
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
     """懒加载目录分支（对齐 WeKnora 侧栏）：folder_id='' 返回根级直接子项，展开时按 folder 取。"""
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_visible(kb_id, caller, db)
     page_size = min(max(page_size, 1), 200)
     data = wiki_branch(db, kb_id, folder_id or "", max(page, 1), page_size)
     return {"success": True, "data": data}
 
 
 @router.get("/{kb_id}/wiki/folders")
-def get_wiki_folders(kb_id: str, db: Session = Depends(get_db)) -> dict:
+def get_wiki_folders(kb_id: str, caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db)) -> dict:
     """全量目录元数据（轻量；懒加载树的深链定位父链 / 管理面板用）。"""
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_visible(kb_id, caller, db)
     return {"success": True, "data": wiki_folders(db, kb_id)}
 
 
 @router.get("/{kb_id}/wiki/pages/{slug}")
-def get_wiki_page_route(kb_id: str, slug: str, db: Session = Depends(get_db)) -> dict:
+def get_wiki_page_route(kb_id: str, slug: str, caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db)) -> dict:
+    _kb_visible(kb_id, caller, db)
     page = get_wiki_page(db, kb_id, slug)
+
     if not page:
         raise HTTPException(status_code=404, detail=f"wiki 页不存在: {slug}")
     return {"success": True, "data": page}
@@ -576,9 +658,9 @@ def _require_wiki_user(
 
 
 @router.get("/{kb_id}/wiki/stats")
-def get_wiki_stats(kb_id: str, db: Session = Depends(get_db)) -> dict:
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+def get_wiki_stats(kb_id: str, caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db)) -> dict:
+    _kb_visible(kb_id, caller, db)
     return {"success": True, "data": wiki_stats(db, kb_id)}
 
 
@@ -587,14 +669,14 @@ def create_wiki_pages_batch(
     kb_id: str,
     req: list[WikiPageCreate],
     user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
     """批量创建 wiki 页面（一次事务；技能构建批量写，替代逐页 POST）。
 
     单页失败不阻塞其余；返回 created/errors 供调用方定位。
     """
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_manage(kb_id, caller, db)
     created = 0
     errors: list[dict] = []
     for i, item in enumerate(req):
@@ -625,10 +707,10 @@ def create_wiki_page(
     kb_id: str,
     req: WikiPageCreate,
     user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_manage(kb_id, caller, db)
     try:
         data = wiki_create_page(db, kb_id, req.model_dump(exclude_none=True), user_id)
     except ValueError as e:
@@ -642,10 +724,13 @@ def update_wiki_page(
     slug: str,
     req: WikiPageUpdate,
     user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
+    _kb_manage(kb_id, caller, db)
     try:
         data = wiki_update_page(db, kb_id, slug, req.model_dump(exclude_none=True))
+
     except ValueError as e:
         raise HTTPException(status_code=404 if "不存在" in str(e) else 400, detail=str(e))
     return {"success": True, "data": data}
@@ -656,10 +741,13 @@ def delete_wiki_page(
     kb_id: str,
     slug: str,
     user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
+    _kb_manage(kb_id, caller, db)
     try:
         data = wiki_delete_page(db, kb_id, slug)
+
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"success": True, "data": data}
@@ -670,10 +758,13 @@ def create_wiki_folder(
     kb_id: str,
     req: WikiFolderCreate,
     user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
+    _kb_manage(kb_id, caller, db)
     try:
         data = wiki_create_folder(db, kb_id, req.model_dump(exclude_none=True), user_id)
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"success": True, "data": data}
@@ -685,10 +776,13 @@ def update_wiki_folder(
     folder_id: str,
     req: WikiFolderUpdate,
     user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
+    _kb_manage(kb_id, caller, db)
     try:
         data = wiki_update_folder(db, kb_id, folder_id, req.model_dump(exclude_none=True))
+
     except ValueError as e:
         raise HTTPException(status_code=404 if "不存在" in str(e) else 400, detail=str(e))
     return {"success": True, "data": data}
@@ -699,10 +793,13 @@ def delete_wiki_folder(
     kb_id: str,
     folder_id: str,
     user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
+    _kb_manage(kb_id, caller, db)
     try:
         data = wiki_delete_folder(db, kb_id, folder_id)
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"success": True, "data": data}
@@ -712,17 +809,17 @@ def delete_wiki_folder(
 def rebuild_wiki_links(
     kb_id: str,
     user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_manage(kb_id, caller, db)
     return {"success": True, "data": wiki_rebuild_links(db, kb_id)}
 
 
 @router.get("/{kb_id}/wiki/lint")
-def lint_wiki(kb_id: str, db: Session = Depends(get_db)) -> dict:
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+def lint_wiki(kb_id: str, caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db)) -> dict:
+    _kb_visible(kb_id, caller, db)
     return {"success": True, "data": wiki_lint(db, kb_id)}
 
 
@@ -731,27 +828,27 @@ def search_wiki(
     kb_id: str,
     q: str = Query("", max_length=500),
     limit: int = Query(20, ge=1, le=100),
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
     """Wiki 页面内搜索：按标题/内容 ilike 匹配页面（区别于 /search 的混合检索）。"""
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_visible(kb_id, caller, db)
     return {"success": True, "data": wiki_search(db, kb_id, q, limit)}
 
 
 @router.get("/{kb_id}/wiki/logs")
-def get_wiki_logs(kb_id: str, db: Session = Depends(get_db)) -> dict:
+def get_wiki_logs(kb_id: str, caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db)) -> dict:
     """Wiki 操作日志（倒序）。"""
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_visible(kb_id, caller, db)
     return {"success": True, "data": wiki_list_logs(db, kb_id)}
 
 
 @router.get("/{kb_id}/wiki/index")
-def get_wiki_index(kb_id: str, db: Session = Depends(get_db)) -> dict:
+def get_wiki_index(kb_id: str, caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db)) -> dict:
     """Wiki 索引：目录树 + 类型统计 + 最近更新。"""
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_visible(kb_id, caller, db)
     return {"success": True, "data": wiki_index(db, kb_id)}
 
 
@@ -759,11 +856,11 @@ def get_wiki_index(kb_id: str, db: Session = Depends(get_db)) -> dict:
 def list_all_wiki_feedback(
     kb_id: str,
     status: str | None = None,
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
     """全库反馈列表（可按状态过滤，倒序）。"""
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_visible(kb_id, caller, db)
     data = wiki_list_feedback(db, kb_id, slug="")
     if status:
         data["items"] = [it for it in data["items"] if it["status"] == status]
@@ -777,11 +874,11 @@ def submit_wiki_feedback(
     slug: str,
     req: WikiFeedbackCreate,
     user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
     """提交页面反馈（helpful=有帮助 / issue=问题上报）。"""
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_manage(kb_id, caller, db)
     data = wiki_submit_feedback(
         db, kb_id, slug, user_id, req.feedback_type, req.content
     )
@@ -792,11 +889,11 @@ def submit_wiki_feedback(
 def list_wiki_feedback(
     kb_id: str,
     slug: str,
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
     """某页面的反馈列表（倒序）。"""
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_visible(kb_id, caller, db)
     return {"success": True, "data": wiki_list_feedback(db, kb_id, slug=slug)}
 
 
@@ -806,11 +903,14 @@ def update_wiki_feedback_status(
     feedback_id: str,
     req: WikiFeedbackStatusUpdate,
     user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
     """更新反馈状态（open/resolved/ignored）。"""
+    _kb_manage(kb_id, caller, db)
     try:
         data = wiki_update_feedback_status(db, kb_id, feedback_id, req.status)
+
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"success": True, "data": data}
@@ -820,10 +920,10 @@ def update_wiki_feedback_status(
 def search_route(
     kb_id: str,
     req: SearchRequest,
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_visible(kb_id, caller, db)
     query_embedding = None
     if req.embed_query:
         try:
@@ -845,11 +945,11 @@ def search_route(
 def download_document(
     kb_id: str,
     document_id: str,
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ):
     """按文档下载原文件（对齐 WeKnora 文档下载；本地优先，MinIO 流式回退）。"""
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_visible(kb_id, caller, db)
     from api.models.knowledge import KbDocument
 
     doc = db.execute(
@@ -897,11 +997,11 @@ def download_document(
 def reparse_document(
     kb_id: str,
     document_id: str,
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
     """重新解析文档：清旧 chunks + 重置状态 + 重新入队（对齐 WeKnora 重新解析）。"""
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_manage(kb_id, caller, db)
     from api.models.knowledge import DocChunk, KbDocument
 
     doc = db.execute(
@@ -924,11 +1024,11 @@ def reparse_document(
 def generate_doc_summary(
     kb_id: str,
     document_id: str,
+    caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
     """为文档生成 AI 摘要（用知识库配置的大语言模型 summary_model_id，对齐 WeKnora）。"""
-    if not get_kb(db, kb_id):
-        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    _kb_manage(kb_id, caller, db)
     try:
         data = generate_document_summary(db, kb_id, document_id)
     except ValueError as e:

@@ -133,6 +133,33 @@ def get_kb(db: Session, kb_id: str) -> KbDatasource | None:
     ).scalars().first()
 
 
+def _validate_bound_model(
+    db: Session,
+    model_id: str | None,
+    label: str,
+    caller_user_id: str | None,
+    caller_team_name: str | None,
+    is_sys_admin: bool,
+) -> None:
+    """KB 绑定的模型必须对调用方可见（personal=属主 / team=同队 / system=管理员），
+    否则拒绝——防止跨用户/跨团队盗用他人模型凭据。"""
+    if not model_id:
+        return
+    from api.services.models import get_model as get_mdl
+    from api.services.scope import ResourceRow, can_see
+
+    m = get_mdl(db, model_id)
+    if m is None:
+        raise ValueError(f"{label} 模型不存在: {model_id}")
+    if not can_see(
+        ResourceRow.from_obj(m),
+        caller_user_id or "",
+        caller_team_name or "",
+        bool(is_sys_admin),
+    ):
+        raise ValueError(f"{label} 模型不可见，请选择自己有权限的模型")
+
+
 def create_kb(
     db: Session,
     name: str,
@@ -151,6 +178,9 @@ def create_kb(
     vector_store_id: str | None = None,
     configs: dict | None = None,
     ontology_schema_name: str | None = None,
+    caller_user_id: str | None = None,
+    caller_team_name: str | None = None,
+    is_sys_admin: bool = False,
 ) -> KbDatasource:
     """Create a KB; name is required, id is generated if absent.
 
@@ -163,6 +193,12 @@ def create_kb(
     cfg = dict(configs or {})
     if vector_store_id:
         _validate_vector_store_ref(db, vector_store_id)
+    _validate_bound_model(
+        db, embedding_model_id, "向量化", caller_user_id, caller_team_name, is_sys_admin
+    )
+    _validate_bound_model(
+        db, summary_model_id, "摘要", caller_user_id, caller_team_name, is_sys_admin
+    )
     kb = KbDatasource(
         id=_uuid(),
         name=name.strip(),
@@ -226,10 +262,33 @@ def _validate_vector_store_ref(db: Session, ds_id: str) -> None:
         )
 
 
-def update_kb(db: Session, kb_id: str, fields: dict) -> KbDatasource | None:
+def update_kb(
+    db: Session,
+    kb_id: str,
+    fields: dict,
+    caller_user_id: str | None = None,
+    caller_team_name: str | None = None,
+    is_sys_admin: bool = False,
+) -> KbDatasource | None:
     kb = get_kb(db, kb_id)
     if not kb:
         return None
+    _validate_bound_model(
+        db,
+        fields.get("embedding_model_id"),
+        "向量化",
+        caller_user_id,
+        caller_team_name,
+        is_sys_admin,
+    )
+    _validate_bound_model(
+        db,
+        fields.get("summary_model_id"),
+        "摘要",
+        caller_user_id,
+        caller_team_name,
+        is_sys_admin,
+    )
     if "name" in fields:
         kb.name = str(fields["name"]).strip() or kb.name
     if "label" in fields:
