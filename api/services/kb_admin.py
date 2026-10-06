@@ -463,6 +463,9 @@ def list_documents(
             "parse_state": d.parse_state,
             "parse_error": d.parse_error,
             "chunk_count": d.chunk_count,
+            "summary": d.summary,
+            "summary_status": d.summary_status,
+            "summary_error": d.summary_error,
             "created_at": d.created_at.isoformat() if d.created_at else None,
         }
         for d in rows
@@ -496,6 +499,87 @@ def create_document(
     db.commit()
     db.refresh(doc)
     return doc
+
+
+SUMMARY_SYSTEM_PROMPT = (
+    "你是专业的文档摘要助手。请阅读用户提供的文档内容，生成一段简洁、准确的中文摘要："
+    "先一句话概括文档主题，再用分点列出核心要点与关键结论。"
+    "控制在 150~250 字，只输出摘要正文，不要输出多余解释。"
+)
+# 送入摘要 LLM 的文档正文字符上限（约 3000+ tokens）
+SUMMARY_CONTENT_LIMIT = 12000
+
+
+def generate_document_summary(db: Session, kb_id: str, document_id: str) -> dict:
+    """用知识库配置的大语言模型（summary_model_id）为文档生成 AI 摘要（对齐 WeKnora）。
+
+    正文取自 doc_chunk 已解析文本（按 seq 拼接，截断到字符上限）；
+    结果落 kb_document.summary / summary_status / summary_error。
+    """
+    from api.services.chat import ChatClient, ChatConfig, ChatMessage
+    from api.services.models import decrypt_secret, get_model as get_llm_model
+
+    doc = db.execute(
+        select(KbDocument).where(
+            KbDocument.id == document_id, KbDocument.kb_id == kb_id
+        )
+    ).scalars().first()
+    if not doc:
+        raise ValueError(f"文档不存在: {document_id}")
+
+    kb = get_kb(db, kb_id)
+    if not kb:
+        raise ValueError(f"知识库不存在: {kb_id}")
+
+    model_id = getattr(kb, "summary_model_id", None) or ""
+    if not model_id:
+        raise ValueError("知识库未配置大语言模型（LLM），请在知识库配置中选择摘要模型")
+
+    model = get_llm_model(db, model_id)
+    if not model:
+        raise ValueError("摘要模型不存在或已停用，请在知识库配置中重新选择")
+
+    base_url = (model.base_url or "").rstrip("/")
+    if not base_url:
+        raise ValueError("摘要模型缺少服务地址（base_url），请检查模型配置")
+
+    # 拼接文档正文（解析后的文本分块）
+    chunk_texts = db.execute(
+        select(DocChunk.content)
+        .where(DocChunk.document_id == document_id)
+        .order_by(DocChunk.seq)
+    ).scalars().all()
+    body = "\n".join(c for c in chunk_texts if c)
+    if not body.strip():
+        raise ValueError("文档尚未解析出可用文本，无法生成摘要（请先重新解析）")
+
+    cfg = ChatConfig(
+        base_url=base_url,
+        api_key=decrypt_secret(model.api_key),
+        model=model.name,
+        timeout=120.0,
+    )
+    messages = [
+        ChatMessage(role="system", content=SUMMARY_SYSTEM_PROMPT),
+        ChatMessage(
+            role="user",
+            content=f"文档《{doc.file_name}》内容如下：\n\n{body[:SUMMARY_CONTENT_LIMIT]}",
+        ),
+    ]
+    try:
+        summary = ChatClient(cfg).chat(messages, temperature=0.3, max_tokens=1024)
+    except Exception as exc:  # noqa: BLE001 — 模型超时/网络错误统一转失败态
+        logger.exception("doc summary generation failed doc=%s", document_id)
+        doc.summary_status = "FAILED"
+        doc.summary_error = str(exc)[:500]
+        db.commit()
+        raise ValueError(f"摘要生成失败: {exc}") from exc
+
+    doc.summary = (summary or "").strip()
+    doc.summary_status = "READY"
+    doc.summary_error = None
+    db.commit()
+    return {"document_id": document_id, "summary": doc.summary, "summary_status": "READY"}
 
 
 def delete_document(db: Session, kb_id: str, document_id: str) -> dict:

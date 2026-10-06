@@ -122,6 +122,11 @@ class KbDocument(Base):
     parse_state: Mapped[str] = mapped_column(String(32), default="PENDING")  # PENDING/PARSING/EMBEDDING/READY/FAILED
     parse_error: Mapped[str | None] = mapped_column(Text)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    # LLM 生成的文档摘要（对齐 WeKnora：知识库配置 summary_model_id 后上传文档自动/手动生成）
+    summary: Mapped[str | None] = mapped_column(Text)
+    # ""（未生成）/READY/FAILED
+    summary_status: Mapped[str] = mapped_column(String(16), default="")
+    summary_error: Mapped[str | None] = mapped_column(Text)
 
     created_by: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime | None] = mapped_column(

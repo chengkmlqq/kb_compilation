@@ -139,6 +139,7 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
         <div>分块：{d.chunk_count != null ? `${d.chunk_count} 个` : "—"}</div>
         <div>状态：{STATE_LABEL[d.parse_state] || d.parse_state}</div>
         <div>上传时间：{formatTime(d.created_at)}</div>
+        {d.summary ? <div>摘要：{d.summary.slice(0, 160)}</div> : null}
         {d.parse_state === "FAILED" && d.parse_error ? (
           <div style={{ color: "#cf1322" }}>错误：{d.parse_error.slice(0, 120)}</div>
         ) : null}
@@ -175,6 +176,23 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
             onClick={() => onOpen(d)}
           >
             {statusOf(d)}
+            {d.summary ? (
+              <div
+                style={{
+                  marginTop: 6,
+                  color: "#595959",
+                  fontSize: 12,
+                  lineHeight: "19px",
+                  maxHeight: 38,
+                  overflow: "hidden",
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                }}
+              >
+                {d.summary}
+              </div>
+            ) : null}
             <div style={{ marginTop: 6, color: "#8c8c8c", fontSize: 12, lineHeight: "20px" }}>
               <div>
                 {d.chunk_count != null ? `${d.chunk_count} 个分块` : "—"} · {formatSize(d.file_size)}

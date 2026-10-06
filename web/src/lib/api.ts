@@ -193,6 +193,9 @@ export interface DocItem {
   parse_state: string;
   parse_error?: string | null;
   chunk_count: number;
+  summary?: string | null;
+  summary_status?: string | null;
+  summary_error?: string | null;
   created_at?: string | null;
 }
 
@@ -235,6 +238,13 @@ export function apiDeleteDocument(kbId: string, docId: string) {
 
 export function apiReparseDocument(kbId: string, docId: string) {
   return request(`/api/v1/kbs/${kbId}/documents/${docId}/reparse`, { method: "POST" });
+}
+
+export function apiGenerateDocSummary(kbId: string, docId: string) {
+  return request<{ document_id: string; summary: string; summary_status: string }>(
+    `/api/v1/kbs/${kbId}/documents/${docId}/summary`,
+    { method: "POST" }
+  );
 }
 
 export async function apiDownloadDocument(kbId: string, docId: string, fileName: string) {

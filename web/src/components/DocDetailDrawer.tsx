@@ -1,29 +1,32 @@
 "use client";
 /**
- * 文档详情抽屉（对齐 WeKnora DocContent 抽屉）：元数据 + 分块列表预览 + 操作。
- * 打开时拉取 chunks 分页；下载/重新解析/删除 操作回调给父级。
+ * 文档详情抽屉（对齐 WeKnora DocContent 抽屉）：元数据 + AI 摘要 + 分块列表预览 + 操作。
+ * 打开时拉取 chunks 分页；下载/重新解析/删除/生成摘要 操作回调给父级。
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { App, Button, Descriptions, Drawer, Empty, List, Pagination, Space, Spin, Tag, Typography } from "antd";
-import { DeleteOutlined, DownloadOutlined, RedoOutlined } from "@ant-design/icons";
-import { apiGetDocumentChunks, DocChunkItem, DocItem } from "@/lib/api";
+import { DeleteOutlined, DownloadOutlined, RedoOutlined, RobotOutlined } from "@ant-design/icons";
+import { apiGenerateDocSummary, apiGetDocumentChunks, DocChunkItem, DocItem } from "@/lib/api";
 import { PARSE_STATE_COLOR, fileTypeIcon, formatSize } from "./DocCardView";
 
 interface Props {
   kbId: string;
   doc: DocItem | null;
+  hasSummaryModel: boolean;
   onClose: () => void;
   onDownload: (doc: DocItem) => void;
   onReparse: (doc: DocItem) => void;
   onDelete: (doc: DocItem) => void;
+  onSummaryUpdated?: (docId: string, summary: string, status: string) => void;
 }
 
-export default function DocDetailDrawer({ kbId, doc, onClose, onDownload, onReparse, onDelete }: Props) {
+export default function DocDetailDrawer({ kbId, doc, hasSummaryModel, onClose, onDownload, onReparse, onDelete, onSummaryUpdated }: Props) {
   const { message } = App.useApp();
   const [chunks, setChunks] = useState<DocChunkItem[]>([]);
   const [chunkTotal, setChunkTotal] = useState(0);
   const [chunkPage, setChunkPage] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
 
   useEffect(() => {
     if (!doc) return;
@@ -50,6 +53,27 @@ export default function DocDetailDrawer({ kbId, doc, onClose, onDownload, onRepa
       setLoading(false);
     }
   };
+
+  const generateSummary = useCallback(async () => {
+    if (!doc) return;
+    setSummarizing(true);
+    try {
+      const res = await apiGenerateDocSummary(kbId, doc.id);
+      if (res.success && res.data) {
+        message.success("摘要生成完成");
+        onSummaryUpdated?.(doc.id, res.data.summary, res.data.summary_status);
+      } else {
+        message.error(res.message || "摘要生成失败");
+      }
+    } catch {
+      message.error("摘要生成失败");
+    } finally {
+      setSummarizing(false);
+    }
+  }, [doc, kbId, message, onSummaryUpdated]);
+
+  const summaryReady = doc?.summary_status === "READY" && doc.summary;
+  const summaryFailed = doc?.summary_status === "FAILED";
 
   return (
     <Drawer
@@ -95,6 +119,51 @@ export default function DocDetailDrawer({ kbId, doc, onClose, onDownload, onRepa
               </Descriptions.Item>
             ) : null}
           </Descriptions>
+
+          {/* AI 摘要（对齐 WeKnora：知识库配了 LLM 后可生成/重新生成） */}
+          {doc.parse_state === "READY" ? (
+            <div
+              style={{
+                border: "1px solid #f0f0f0",
+                borderRadius: 8,
+                padding: "12px 16px",
+                background: "#fafafa",
+              }}
+            >
+              <Space style={{ justifyContent: "space-between", width: "100%", marginBottom: summaryReady || summaryFailed ? 8 : 0 }}>
+                <Space>
+                  <RobotOutlined style={{ color: "#1677ff" }} />
+                  <Typography.Text strong>AI 摘要</Typography.Text>
+                </Space>
+                <Button
+                  size="small"
+                  loading={summarizing}
+                  disabled={!hasSummaryModel}
+                  title={hasSummaryModel ? "" : "知识库未配置大语言模型（LLM），请在知识库配置中选择"}
+                  onClick={() => void generateSummary()}
+                >
+                  {summaryFailed ? "重试" : summaryReady ? "重新生成" : "生成摘要"}
+                </Button>
+              </Space>
+              {summarizing ? (
+                <div style={{ textAlign: "center", padding: 16 }}>
+                  <Spin size="small" /> <Typography.Text type="secondary">正在生成摘要…</Typography.Text>
+                </div>
+              ) : summaryReady ? (
+                <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  {doc.summary}
+                </Typography.Paragraph>
+              ) : summaryFailed ? (
+                <Typography.Text type="danger" style={{ wordBreak: "break-word" }}>
+                  {doc.summary_error || "摘要生成失败，请重试"}
+                </Typography.Text>
+              ) : (
+                <Typography.Text type="secondary">
+                  {hasSummaryModel ? "解析完成后点击「生成摘要」，用知识库配置的 LLM 自动生成文档摘要。" : "知识库未配置大语言模型（LLM），创建/编辑知识库时选择后可生成摘要。"}
+                </Typography.Text>
+              )}
+            </div>
+          ) : null}
 
           <div>
             <Space style={{ justifyContent: "space-between", width: "100%" }}>

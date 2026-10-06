@@ -42,6 +42,7 @@ from api.services.kb_admin import (
     create_kb,
     delete_document,
     delete_kb,
+    generate_document_summary,
     get_kb,
     get_wiki_page,
     json_search,
@@ -917,6 +918,22 @@ def reparse_document(
     db.commit()
     _enqueue_document_process(kb_id, document_id)
     return {"success": True, "data": {"id": document_id, "parse_state": "PENDING"}}
+
+
+@router.post("/{kb_id}/documents/{document_id}/summary")
+def generate_doc_summary(
+    kb_id: str,
+    document_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    """为文档生成 AI 摘要（用知识库配置的大语言模型 summary_model_id，对齐 WeKnora）。"""
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    try:
+        data = generate_document_summary(db, kb_id, document_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"success": True, "data": data}
 
 
 __all__ = ["router"]

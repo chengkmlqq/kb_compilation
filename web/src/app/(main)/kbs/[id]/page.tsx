@@ -47,6 +47,7 @@ import KBConfigModal from "@/components/KBConfigModal";
 import {
   apiDeleteDocument,
   apiDownloadDocument,
+  apiGenerateDocSummary,
   apiGetKb,
   apiListDocuments,
   apiReparseDocument,
@@ -151,6 +152,41 @@ export default function KbDetailPage() {
     }, 3000);
     return () => clearInterval(timer);
   }, [hasInFlight, load]);
+
+  // 自动生成 AI 摘要（对齐 WeKnora）：KB 配了 LLM 时，解析完成的文档逐个自动补摘要。
+  const autoSummaryRunning = useRef(false);
+  const autoSummarySeen = useRef<Set<string>>(new Set());
+  const [autoTick, setAutoTick] = useState(0);
+
+  useEffect(() => {
+    if (!kb?.summary_model_id) return;
+    if (autoSummaryRunning.current) return;
+    const target = docs.find(
+      (d) => d.parse_state === "READY" && !d.summary_status && !autoSummarySeen.current.has(d.id),
+    );
+    if (!target) return;
+    autoSummarySeen.current.add(target.id);
+    autoSummaryRunning.current = true;
+    apiGenerateDocSummary(kbId, target.id)
+      .then((res) => {
+        if (res.success && res.data) {
+          setDocs((prev) =>
+            prev.map((d) =>
+              d.id === target.id
+                ? { ...d, summary: res.data?.summary ?? null, summary_status: res.data?.summary_status ?? "READY" }
+                : d,
+            ),
+          );
+        }
+      })
+      .catch(() => {
+        // 后端已置 summary_status=FAILED；不再自动重试（手动可重试）
+      })
+      .finally(() => {
+        autoSummaryRunning.current = false;
+        setAutoTick((t) => t + 1);
+      });
+  }, [docs, kbId, kb?.summary_model_id, autoTick]);
 
   const doSearch = async () => {
     if (!query.trim()) return;
@@ -490,6 +526,21 @@ export default function KbDetailPage() {
                       width: 90,
                     },
                     {
+                      title: "AI 摘要",
+                      dataIndex: "summary",
+                      ellipsis: true,
+                      render: (v: string | null | undefined, doc: DocItem) =>
+                        v ? v : doc.summary_status === "FAILED" ? (
+                          <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                            生成失败
+                          </Typography.Text>
+                        ) : doc.parse_state === "READY" ? (
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            —
+                          </Typography.Text>
+                        ) : null,
+                    },
+                    {
                       title: "大小",
                       dataIndex: "file_size",
                       width: 110,
@@ -582,14 +633,23 @@ export default function KbDetailPage() {
         ]}
       />
 
-      {/* 文档详情抽屉（对齐 WeKnora DocContent：元数据 + 分块预览 + 下载/重解析/删除） */}
+      {/* 文档详情抽屉（对齐 WeKnora DocContent：元数据 + AI 摘要 + 分块预览 + 下载/重解析/删除） */}
       <DocDetailDrawer
         kbId={kbId}
         doc={detailDoc}
+        hasSummaryModel={!!kb?.summary_model_id}
         onClose={() => setDetailDoc(null)}
         onDownload={onDownloadDoc}
         onReparse={onReparseDoc}
         onDelete={onDeleteDoc}
+        onSummaryUpdated={(docId, summary, status) => {
+          setDetailDoc((prev) =>
+            prev && prev.id === docId ? { ...prev, summary, summary_status: status, summary_error: null } : prev,
+          );
+          setDocs((prev) =>
+            prev.map((d) => (d.id === docId ? { ...d, summary, summary_status: status, summary_error: null } : d)),
+          );
+        }}
       />
 
       <ChunkingConfigModal
