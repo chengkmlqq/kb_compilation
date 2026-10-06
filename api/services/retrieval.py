@@ -106,16 +106,19 @@ def vector_search(
     kb_id: str,
     query_embedding: list[float],
     cfg: RetrievalConfig,
+    vector_store_id: str | None = None,
 ) -> list[ChunkHit]:
     """Vector recall through the vector store; returns [] on any backend error.
 
     Metadata (content, document_id, meta) is filled in by the caller-facing
     hybrid_search from the business store — the vector store only knows ids.
+    `vector_store_id` optionally routes recall to a resource-configured vector
+    backend (data-source management); None uses the platform default.
     """
     from api.services.vector_store import get_vector_store
 
     try:
-        hits = get_vector_store().search(
+        hits = get_vector_store(vector_store_id).search(
             kb_id,
             query_embedding,
             top_k=cfg.top_k,
@@ -402,7 +405,15 @@ def hybrid_search(
     keyword_hits: list[ChunkHit] = []
 
     if cfg.vector_enabled and query_embedding:
-        vector_hits = vector_search(kb_id, query_embedding, cfg)
+        from api.models.knowledge import KbDatasource
+
+        kb_row = db.get(KbDatasource, kb_id)
+        vector_hits = vector_search(
+            kb_id,
+            query_embedding,
+            cfg,
+            vector_store_id=kb_row.vector_store_id if kb_row else None,
+        )
     if cfg.keyword_enabled and query:
         keyword_hits = keyword_search(db, kb_id, query, cfg)
 

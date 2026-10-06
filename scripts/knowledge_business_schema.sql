@@ -48,7 +48,23 @@ CREATE TABLE IF NOT EXISTS kb_datasource (
     state             VARCHAR(16) NOT NULL DEFAULT '1',
     created_by        VARCHAR(64),
     created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    scope             VARCHAR(16) DEFAULT 'system',
+    owner_team_name   VARCHAR(64),
+    type              VARCHAR(32) NOT NULL DEFAULT 'document',
+    custom_wiki_generation TINYINT(1) NOT NULL DEFAULT 0,
+    embedding_model_id VARCHAR(64),
+    summary_model_id  VARCHAR(64),
+    vlm_config        JSON,
+    asr_config        JSON,
+    image_processing_config JSON,
+    extract_config    JSON,
+    faq_config        JSON,
+    question_generation_config JSON,
+    wiki_config       JSON,
+    storage_provider_config JSON,
+    storage_backend_id VARCHAR(36),
+    vector_store_id   VARCHAR(36)
 );
 CREATE INDEX idx_kb_datasource_team ON kb_datasource (team_name);
 

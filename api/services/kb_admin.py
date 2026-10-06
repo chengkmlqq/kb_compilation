@@ -160,6 +160,8 @@ def create_kb(
     from api.services.kb_config import normalize_indexing_strategy
 
     cfg = dict(configs or {})
+    if vector_store_id:
+        _validate_vector_store_ref(db, vector_store_id)
     kb = KbDatasource(
         id=_uuid(),
         name=name.strip(),
@@ -196,6 +198,24 @@ def create_kb(
     return kb
 
 
+def _validate_vector_store_ref(db: Session, ds_id: str) -> None:
+    """Check a datasource id is a usable vector backend (ES / PostgreSQL)."""
+    from api.models.framework import Datasource
+    from sqlalchemy import select
+
+    row = db.execute(select(Datasource).where(Datasource.id == ds_id)).scalars().first()
+    if row is None:
+        raise ValueError(f"向量库资源不存在: {ds_id}")
+    ds_type = (row.ds_type or "").strip().lower()
+    if ds_type not in (
+        "elasticsearch", "vector_es", "es",
+        "postgresql", "pg", "postgres",
+    ):
+        raise ValueError(
+            f"资源 {row.label or row.name or row.id} 的类型不支持作为向量库: {row.ds_type}"
+        )
+
+
 def update_kb(db: Session, kb_id: str, fields: dict) -> KbDatasource | None:
     kb = get_kb(db, kb_id)
     if not kb:
@@ -211,9 +231,24 @@ def update_kb(db: Session, kb_id: str, fields: dict) -> KbDatasource | None:
         kb.type = t if t in KB_TYPES else kb.type
     if "custom_wiki_generation" in fields:
         kb.custom_wiki_generation = bool(fields["custom_wiki_generation"])
-    for f in ("embedding_model_id", "summary_model_id", "storage_backend_id", "vector_store_id"):
+    for f in ("embedding_model_id", "summary_model_id", "storage_backend_id"):
         if f in fields:
             setattr(kb, f, str(fields.get(f) or "") or None)
+    if "vector_store_id" in fields:
+        new_store = str(fields.get("vector_store_id") or "") or None
+        if new_store != kb.vector_store_id:
+            # 向量库来源在创建时确定；非空库禁止切换（避免存量向量悬空）
+            has_docs = (
+                db.execute(
+                    select(func.count()).select_from(KbDocument).where(KbDocument.kb_id == kb_id)
+                ).scalar()
+                or 0
+            )
+            if has_docs > 0:
+                raise ValueError("非空知识库不允许切换向量库，请在创建时确定向量库来源")
+            if new_store:
+                _validate_vector_store_ref(db, new_store)
+            kb.vector_store_id = new_store
     if "indexing_strategy" in fields and isinstance(fields["indexing_strategy"], dict):
         kb.indexing_strategy = normalize_indexing_strategy(fields["indexing_strategy"])
     raw_cfg = fields.get("configs")
@@ -313,7 +348,7 @@ def delete_kb(db: Session, kb_id: str) -> dict:
     try:
         from api.services.vector_store import get_vector_store
 
-        get_vector_store().delete_by_kb(kb_id)
+        get_vector_store(kb.vector_store_id).delete_by_kb(kb_id)
     except Exception as exc:  # pragma: no cover - 向量清理为尽力而为
         logging.getLogger(__name__).warning("向量索引清理失败(kb=%s): %s", kb_id, exc)
 

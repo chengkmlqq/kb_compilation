@@ -286,6 +286,39 @@ def test_trino(url: str, acct: str | None, auth: str | None, ds_conf: dict | Non
         return {"success": False, "message": f"连接失败: {e}"}
 
 
+def test_es(
+    url: str = "",
+    ds_acct: str | None = None,
+    ds_auth: str | None = None,
+    ds_conf: dict | None = None,
+) -> dict:
+    """Probe an Elasticsearch datasource (host/port from ds_conf or url)."""
+    try:
+        from elasticsearch import Elasticsearch
+    except ImportError:  # pragma: no cover - env check
+        return {"success": False, "message": "elasticsearch 驱动未安装"}
+    conf = ds_conf or {}
+    protocol = str(conf.get("protocol") or "http").strip()
+    host = str(conf.get("host") or "").strip()
+    port = str(conf.get("port") or "").strip()
+    if host:
+        base = f"{protocol}://{host}:{port}" if port else f"{protocol}://{host}"
+    elif url:
+        base = url if url.startswith(("http://", "https://")) else f"http://{url}"
+    else:
+        return {"success": False, "message": "缺少主机地址（host/url）"}
+    kwargs: dict = {}
+    if ds_acct:
+        kwargs["basic_auth"] = (ds_acct, _reveal_secret(ds_auth) or "")
+    try:
+        client = Elasticsearch([base], timeout=10, max_retries=1, retry_on_timeout=False, **kwargs)
+        info = client.info()
+        version = (info.get("version") or {}).get("number", "?")
+        return {"success": True, "message": f"Elasticsearch {version} 连接成功"}
+    except Exception as exc:  # noqa: BLE001 - probe must return, not raise
+        return {"success": False, "message": f"连接失败: {exc}"}
+
+
 def test_datasource_connection(
     ds_type: str,
     url: str = "",
@@ -307,6 +340,8 @@ def test_datasource_connection(
         return test_trino(url, ds_acct, ds_auth, conf, ds_schema)
     if normalized in STORAGE_DS_TYPES:
         return test_storage(url, ds_acct, ds_auth, conf)
+    if normalized in ("elasticsearch", "vector_es", "es"):
+        return test_es(url, ds_acct, ds_auth, conf)
     if normalized == "hive":
         return {"success": False, "message": "Hive 测试需 Python 侧 Hive 驱动（迁移中）"}
     return {"success": False, "message": f"不支持的数据源类型: {ds_type}"}
@@ -411,6 +446,21 @@ def delete_datasource(db: Session, ds_id: str) -> dict:
         raise ValueError(f"数据源不存在: {ds_id}")
     if (row.ds_type or "").lower() in ("vector_es", "elasticsearch"):
         raise ValueError("向量库数据源（Elasticsearch）不可删除")
+    # 被知识库引用为向量库的资源不可删除
+    try:
+        from api.models.knowledge import KbDatasource
+
+        ref = (
+            db.execute(select(KbDatasource).where(KbDatasource.vector_store_id == ds_id))
+            .scalars()
+            .first()
+        )
+        if ref is not None:
+            raise ValueError(f"数据源正被知识库「{ref.name or ref.id}」用作向量库，不能删除")
+    except ValueError:
+        raise
+    except Exception:  # noqa: BLE001 - 引用检查失败不阻塞删除
+        pass
     # 级联清理团队授权映射（modo_team_ds_map）
     db.execute(delete(TeamDsMap).where(TeamDsMap.ds_name == row.name))
     db.delete(row)

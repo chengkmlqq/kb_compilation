@@ -23,7 +23,7 @@ from typing import Any
 from sqlalchemy import delete, select
 
 from api.config import get_settings
-from api.db import get_knowledge_sessionmaker
+from api.db import get_knowledge_sessionmaker, get_sessionmaker
 from api.models.knowledge import KbEmbedding
 
 logger = logging.getLogger(__name__)
@@ -72,10 +72,18 @@ class VectorStore(ABC):
 
 
 class PgVectorStore(VectorStore):
-    """PostgreSQL + pgvector implementation (kb_embedding table)."""
+    """PostgreSQL + pgvector implementation (kb_embedding table).
 
-    def __init__(self) -> None:
-        self._sessionmaker = get_knowledge_sessionmaker()
+    `url=None` binds to the platform-wide knowledge engine
+    (KNOWLEDGE_DATABASE_URL); a custom URL is used when the store backs a
+    resource-configured knowledge base (data-source management → PostgreSQL).
+    """
+
+    def __init__(self, url: str | None = None) -> None:
+        if url:
+            self._sessionmaker = _pg_sessionmaker_for(url)
+        else:
+            self._sessionmaker = get_knowledge_sessionmaker()
 
     def upsert(self, kb_id: str, chunk_id: str, vector: list[float]) -> None:
         db = self._sessionmaker()
@@ -163,12 +171,18 @@ class EsVectorStore(VectorStore):
       matches PgVectorStore (score > threshold, sorted desc).
     """
 
-    def __init__(self, hosts: list[str] | None = None, index: str | None = None) -> None:
+    def __init__(
+        self,
+        hosts: list[str] | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        index: str | None = None,
+    ) -> None:
         settings = get_settings()
         self.hosts = hosts or _parse_es_hosts(settings.ES_URL)
         self.index = index or settings.ES_INDEX_NAME or "kb_chunks"
-        self.username = settings.ES_USERNAME or ""
-        self.password = settings.ES_PASSWORD or ""
+        self.username = username or settings.ES_USERNAME or ""
+        self.password = password or settings.ES_PASSWORD or ""
         self._client: Any | None = None
         self._dims: int | None = None
 
@@ -286,11 +300,135 @@ class EsVectorStore(VectorStore):
 
 
 _store: VectorStore | None = None
+_stores: dict[str, VectorStore] = {}
 
 
-def get_vector_store() -> VectorStore:
-    """Process-wide vector-store singleton (type from VECTOR_STORE_TYPE)."""
+def _pg_sessionmaker_for(url: str):
+    """Build a pgvector sessionmaker for a resource-configured PG URL."""
+    import sqlalchemy
+    from sqlalchemy.orm import sessionmaker
+
+    settings = get_settings()
+    connect_args: dict = {}
+    if settings.SCHEMA_NAME and settings.SCHEMA_NAME != "public":
+        connect_args["options"] = f"-csearch_path={settings.SCHEMA_NAME},public"
+    engine = sqlalchemy.create_engine(
+        url,
+        pool_pre_ping=settings.DB_POOL_PRE_PING,
+        pool_size=settings.DB_MAX_CONNECTIONS,
+        max_overflow=0,
+        connect_args=connect_args,
+        future=True,
+    )
+    return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+def _normalize_pg_url(url: str, acct: str | None, auth: str | None) -> str:
+    """Convert a resource's PG URL (jdbc: or postgresql:) to a SQLAlchemy URL
+    with credentials embedded."""
+    from urllib.parse import quote_plus
+
+    raw = (url or "").strip()
+    if raw.startswith("jdbc:postgresql://"):
+        raw = "postgresql://" + raw[len("jdbc:postgresql://"):]
+    base = raw or ""
+    acct = (acct or "").strip()
+    auth = (auth or "").strip()
+    if (
+        base.startswith("postgresql://")
+        and acct
+        and "@" not in base.split("://", 1)[1].split("/", 1)[0]
+    ):
+        if auth:
+            base = f"postgresql://{quote_plus(acct)}:{quote_plus(auth)}@{base.split('://', 1)[1]}"
+        else:
+            base = f"postgresql://{quote_plus(acct)}@{base.split('://', 1)[1]}"
+    if base.startswith("postgresql://") and not base.startswith("postgresql+psycopg2://"):
+        base = "postgresql+psycopg2://" + base[len("postgresql://"):]
+    return base
+
+
+def _es_hosts_from_ds(ds_url: str | None, ds_conf: dict) -> list[str]:
+    """Build ES host list from a datasource row: ds_conf protocol/host/port win,
+    else the row's url."""
+    protocol = str(ds_conf.get("protocol") or "http").strip()
+    host = str(ds_conf.get("host") or "").strip()
+    port = str(ds_conf.get("port") or "").strip()
+    if host:
+        return [f"{protocol}://{host}:{port}" if port else f"{protocol}://{host}"]
+    url = (ds_url or "").strip()
+    if url and not url.startswith(("http://", "https://")):
+        url = f"http://{url}"
+    return [url] if url else _parse_es_hosts(get_settings().ES_URL)
+
+
+def _store_from_datasource(ds_id: str) -> VectorStore | None:
+    """Instantiate the vector store bound to a data-source resource.
+
+    Returns None when the resource is missing/unsupported so callers can fall
+    back to the global store instead of failing writes/reads.
+    """
+    try:
+        from api.services.datasource import _parse_ds_conf, _reveal_secret
+        from api.models.framework import Datasource
+        from sqlalchemy import select
+
+        db = get_sessionmaker()()
+        try:
+            row = (
+                db.execute(select(Datasource).where(Datasource.id == ds_id))
+                .scalars()
+                .first()
+            )
+        finally:
+            db.close()
+        if row is None:
+            logger.warning("vector datasource %s not found; falling back to global store", ds_id)
+            return None
+        ds_type = (row.ds_type or "").strip().lower()
+        conf = _parse_ds_conf(row.ds_conf)
+        acct = (row.ds_acct or "").strip() or None
+        auth = _reveal_secret(row.ds_auth)
+        if ds_type in ("elasticsearch", "vector_es", "es"):
+            hosts = _es_hosts_from_ds(row.url, conf)
+            index = str(conf.get("index") or get_settings().ES_INDEX_NAME or "kb_chunks")
+            return EsVectorStore(hosts=hosts, username=acct, password=auth, index=index)
+        if ds_type in ("postgresql", "pg", "postgres"):
+            pg_url = _normalize_pg_url(row.url, acct, auth)
+            if not pg_url:
+                logger.warning("vector datasource %s has no url; falling back to global store", ds_id)
+                return None
+            return PgVectorStore(url=pg_url)
+        logger.warning(
+            "vector datasource %s has unsupported type %s; falling back to global store",
+            ds_id, row.ds_type,
+        )
+        return None
+    except Exception:  # noqa: BLE001 - resource errors must never break ingest/recall
+        logger.exception("failed to build vector store from datasource %s; falling back", ds_id)
+        return None
+
+
+def get_vector_store(vector_store_id: str | None = None) -> VectorStore:
+    """Process-wide vector-store singleton (type from VECTOR_STORE_TYPE).
+
+    When `vector_store_id` names a data-source resource (data-source
+    management → Elasticsearch/PostgreSQL), returns a per-resource cached
+    instance so different knowledge bases can target different vector
+    backends. Falls back to the global store if the resource is missing,
+    unsupported, or fails to build — writes/recall never break.
+    """
     global _store
+    if vector_store_id:
+        cached = _stores.get(vector_store_id)
+        if cached is not None:
+            return cached
+        built = _store_from_datasource(vector_store_id)
+        if built is not None:
+            _stores[vector_store_id] = built
+            logger.info("vector store for datasource %s: %s", vector_store_id, type(built).__name__)
+            return built
+        logger.warning("vector store datasource %s unavailable; using global store", vector_store_id)
     if _store is None:
         settings = get_settings()
         kind = (settings.VECTOR_STORE_TYPE or VECTOR_STORE_PG).strip().lower()

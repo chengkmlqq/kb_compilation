@@ -107,8 +107,9 @@ def replace_document_chunks(
     # Remove stale chunks first (idempotent re-ingest / retry safety), and
     # their embeddings from the vector store (new chunks get new ids).
     from api.services.vector_store import get_vector_store
-
-    store = get_vector_store()
+    from api.models.knowledge import KbDatasource
+    kb_row = db.get(KbDatasource, kb_id)
+    store = get_vector_store(kb_row.vector_store_id if kb_row else None)
     stale_ids = [
         row[0]
         for row in db.execute(

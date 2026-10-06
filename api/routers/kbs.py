@@ -215,24 +215,27 @@ def post_kb(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    kb = create_kb(
-        db,
-        name=req.name,
-        label=req.label,
-        description=req.description,
-        indexing_strategy=req.indexing_strategy,
-        scope=scope,
-        team_name=owner_team_name or None,
-        owner_user_id=owner_user_id or None,
-        created_by=caller_user_id or None,
-        type=req.type,
-        custom_wiki_generation=req.custom_wiki_generation,
-        embedding_model_id=req.embedding_model_id,
-        summary_model_id=req.summary_model_id,
-        storage_backend_id=req.storage_backend_id,
-        vector_store_id=req.vector_store_id,
-        configs=req.configs,
-    )
+    try:
+        kb = create_kb(
+            db,
+            name=req.name,
+            label=req.label,
+            description=req.description,
+            indexing_strategy=req.indexing_strategy,
+            scope=scope,
+            team_name=owner_team_name or None,
+            owner_user_id=owner_user_id or None,
+            created_by=caller_user_id or None,
+            type=req.type,
+            custom_wiki_generation=req.custom_wiki_generation,
+            embedding_model_id=req.embedding_model_id,
+            summary_model_id=req.summary_model_id,
+            storage_backend_id=req.storage_backend_id,
+            vector_store_id=req.vector_store_id,
+            configs=req.configs,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"success": True, "data": {"id": kb.id, "name": kb.name, "scope": kb.scope}}
 
 
@@ -266,7 +269,10 @@ def get_kb_detail(kb_id: str, db: Session = Depends(get_db)) -> dict:
 
 @router.put("/{kb_id}")
 def put_kb(kb_id: str, req: KBUpdateRequest, db: Session = Depends(get_db)) -> dict:
-    kb = update_kb(db, kb_id, req.model_dump(exclude_none=True))
+    try:
+        kb = update_kb(db, kb_id, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not kb:
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
     return {"success": True, "data": {"id": kb.id, "name": kb.name}}

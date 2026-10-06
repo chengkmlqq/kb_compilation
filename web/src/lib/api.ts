@@ -161,6 +161,7 @@ export interface KbCreatePayload {
   custom_wiki_generation?: boolean;
   embedding_model_id?: string | null;
   summary_model_id?: string | null;
+  vector_store_id?: string | null;
   configs?: Record<string, unknown>;
 }
 
