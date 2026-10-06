@@ -112,6 +112,7 @@ class WikiPageCreate(BaseModel):
     content: str = Field(default="", max_length=200000)
     summary: str | None = Field(default=None)
     folder_id: str | None = Field(default=None)
+    source_refs: list | None = Field(default=None)
 
 
 class WikiPageUpdate(BaseModel):
@@ -497,6 +498,44 @@ def get_wiki_stats(kb_id: str, db: Session = Depends(get_db)) -> dict:
     if not get_kb(db, kb_id):
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
     return {"success": True, "data": wiki_stats(db, kb_id)}
+
+
+@router.post("/{kb_id}/wiki/pages/batch")
+def create_wiki_pages_batch(
+    kb_id: str,
+    req: list[WikiPageCreate],
+    user_id: str = Depends(_require_wiki_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """批量创建 wiki 页面（一次事务；技能构建批量写，替代逐页 POST）。
+
+    单页失败不阻塞其余；返回 created/errors 供调用方定位。
+    """
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    created = 0
+    errors: list[dict] = []
+    for i, item in enumerate(req):
+        try:
+            wiki_create_page(
+                db,
+                kb_id,
+                {
+                    "slug": item.slug,
+                    "title": item.title,
+                    "content": item.content,
+                    "page_type": item.page_type,
+                    "folder_id": item.folder_id,
+                    "summary": item.summary,
+                    "source_refs": item.source_refs or [],
+                },
+                user_id=user_id,
+            )
+            created += 1
+        except Exception as exc:  # noqa: BLE001 - 单页失败不阻塞批量
+            errors.append({"index": i, "slug": item.slug, "error": str(exc)[:120]})
+    db.commit()
+    return {"success": True, "data": {"created": created, "errors": errors}}
 
 
 @router.post("/{kb_id}/wiki/pages")
