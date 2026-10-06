@@ -213,9 +213,9 @@ export function MenuProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname, loading, flatMode]);
 
-  const siderMenus: SysMenuItem[] = flatMode
-    ? flatList
-    : (topMenus.find((m) => m.menu_id === selectedTopMenuId)?.children as SysMenuItem[]) || [];
+  // 2026-10-06 用户要求：一/二/三级菜单全部放左侧 Sider（顶部导航已移除）。
+  // siderMenus 直接给完整树——顶级分组作为左侧一级目录（可展开到页面）。
+  const siderMenus: SysMenuItem[] = tree as unknown as SysMenuItem[];
 
   const setSelectedTopMenu = useCallback(
     (menuId: string) => {

@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect } from "react";
 import { App, Avatar, Dropdown, Input, Layout, Menu, Modal, Form, Select, Tag, Typography } from "antd";
-import type { MenuProps } from "antd";
 import {
   CaretDownOutlined,
   LogoutOutlined,
@@ -10,7 +9,6 @@ import {
   UserOutlined,
 } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
-import { useMenuContext } from "./MenuContext";
 import { NotificationBell } from "./NotificationBell";
 import {
   apiGetDefaultTeam,
@@ -34,7 +32,6 @@ interface HeaderUser {
 
 export const AppHeader: React.FC = () => {
   const router = useRouter();
-  const { topMenus, selectedTopMenuId, setSelectedTopMenu, loading, flatMode } = useMenuContext();
   const { message } = App.useApp();
   const [form] = Form.useForm();
 
@@ -65,16 +62,7 @@ export const AppHeader: React.FC = () => {
     })();
   }, []);
 
-  // 顶级菜单转 antd items（一级无图标，纯文字，对齐 data-synth headerMenuItems）
-  const headerMenuItems: MenuProps["items"] = topMenus.map((menu) => ({
-    key: menu.menu_id as string,
-    label: menu.menu_label || menu.menu_name || "",
-  }));
-
-  const handleMenuClick: MenuProps["onClick"] = (e) => {
-    setSelectedTopMenu(e.key);
-  };
-
+  // 2026-10-06 顶部横向导航已移除（菜单全部在左侧 Sider），headerMenuItems/handleMenuClick 不再需要。
   const handleLogout = () => {
     document.cookie = "x-next-identity=; path=/; max-age=0";
     router.replace("/login");
@@ -302,26 +290,9 @@ export const AppHeader: React.FC = () => {
       </div>
 
       {/* Middle: Top Nav（两级模式显示顶级菜单；单级模式留空） */}
-      {!flatMode && topMenus.length > 0 && (
-        <div style={{ flex: 1, display: "flex", justifyContent: "flex-start" }}>
-          <Menu
-            mode="horizontal"
-            selectedKeys={selectedTopMenuId ? [selectedTopMenuId] : []}
-            onClick={handleMenuClick}
-            style={{
-              lineHeight: "44px",
-              borderBottom: "none",
-              background: "transparent",
-              width: "100%",
-              fontSize: 14,
-              fontWeight: 600,
-            }}
-            items={headerMenuItems}
-          />
-        </div>
-      )}
-      {/* 单级模式：中间留弹性空位 */}
-      {flatMode && <div style={{ flex: 1 }} />}
+      {/* 2026-10-06 用户要求：取消顶部横向导航（一/二/三级菜单全部在左侧 Sider），
+          中间留弹性空位，右侧为用户区 */}
+      <div style={{ flex: 1 }} />
 
       {/* Right: 搜索 + 通知铃 + 用户下拉 */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, height: 45 }}>
