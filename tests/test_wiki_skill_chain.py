@@ -57,7 +57,8 @@ def test_enqueue_wiki_skill_task_writes_job(chain_env) -> None:
     jobs = db.execute(select(Job)).scalars().all()
     assert len(jobs) == 1
     job = jobs[0]
-    assert job.task_class == "KbAgentWikiBuildTask"
+    # 2026-10-07: WIKI_AGENT_MODE 默认 direct——技能直跑替代 agent 编排
+    assert job.task_class == "KbSkillDirectBuildTask"
     assert job.queue_name == "agent"
     assert job.state == "PENDING"
     params = json.loads(job.task_params)

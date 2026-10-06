@@ -81,6 +81,9 @@ CREATE TABLE IF NOT EXISTS kb_document (
     parse_state  VARCHAR(32) NOT NULL DEFAULT 'PENDING',
     parse_error  TEXT,
     chunk_count  INTEGER NOT NULL DEFAULT 0,
+    summary      TEXT,           -- 2026-10-07: LLM 文档摘要(summary_model_id 绑定)
+    summary_status VARCHAR(16) NOT NULL DEFAULT '',
+    summary_error  TEXT,
     created_by   VARCHAR(64),
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
