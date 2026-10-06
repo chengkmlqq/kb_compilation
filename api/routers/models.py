@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from api.db import get_db
 from api.services.identity import decode_identity_cookie
+from api.models.model import KbModel
 from api.services.models import (
     DEFAULT_PROVIDER_URLS,
     MODEL_SCOPES,
@@ -39,6 +40,7 @@ from api.services.models import (
     create_model,
     copy_model,
     delete_model,
+    decrypt_secret,
     get_model,
     is_admin,
     list_visible_models,
@@ -129,6 +131,114 @@ def providers() -> dict:
             }
         )
     return {"success": True, "data": {"items": items}}
+
+
+@router.get("/export")
+def export_models(
+    caller: Caller = Depends(_require_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """导出当前用户可见的全部模型配置（含 api_key 明文，供导入迁移）。"""
+    from sqlalchemy import and_, or_, select
+
+    clauses = [KbModel.state == "1"]
+    if caller.user_id:
+        clauses.append(
+            or_(
+                KbModel.owner_user_id == caller.user_id,
+                KbModel.owner_team_name == caller.team_name,
+                and_(KbModel.scope == "system", caller.is_admin),
+            )
+        )
+    rows = db.execute(select(KbModel).where(and_(*clauses))).scalars().all()
+    items = []
+    for m in rows:
+        items.append(
+            {
+                "scope": m.scope,
+                "name": m.name,
+                "display_name": m.display_name or "",
+                "type": m.type,
+                "source": m.source or "remote",
+                "provider": m.provider or "",
+                "description": m.description or "",
+                "base_url": m.base_url or "",
+                "api_key": decrypt_secret(m.api_key) if m.api_key else "",
+                "interface_type": m.interface_type or "openai",
+                "dimension": m.dimension,
+                "supports_vision": bool(m.supports_vision),
+                "custom_headers": m.custom_headers or {},
+                "is_default": bool(m.is_default),
+                "max_concurrency": m.max_concurrency,
+                "thinking_control": m.thinking_control or "",
+            }
+        )
+    return {"success": True, "data": {"models": items, "count": len(items)}}
+
+
+class ModelImportPayload(BaseModel):
+    models: list[ModelPayload] = []
+    mode: str = "upsert"  # upsert（按 name+type 更新/创建）| create（仅新建，重名报错）
+
+
+@router.post("/import")
+def import_models(
+    req: ModelImportPayload,
+    caller: Caller = Depends(_require_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """批量导入模型配置（幂等 upsert：同 name+type 更新，否则创建）。"""
+    from sqlalchemy import select
+
+    created = 0
+    updated = 0
+    errors: list[dict] = []
+    for i, p in enumerate(req.models):
+        try:
+            if not (p.name or "").strip() or not (p.type or "").strip():
+                raise ValueError("name/type 不能为空")
+            existing = (
+                db.execute(
+                    select(KbModel).where(
+                        KbModel.name == p.name.strip(),
+                        KbModel.type == p.type.strip(),
+                        KbModel.state == "1",
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if existing:
+                if req.mode == "create":
+                    raise ValueError(f"已存在: {p.name}({p.type})")
+                update_model(
+                    db,
+                    existing.id,
+                    caller_user_id=caller.user_id,
+                    caller_team_name=caller.team_name,
+                    is_sys_admin=caller.is_admin,
+                    payload=p.model_dump(),
+                )
+                updated += 1
+            else:
+                create_model(
+                    db,
+                    caller_user_id=caller.user_id,
+                    caller_team_name=caller.team_name,
+                    is_sys_admin=caller.is_admin,
+                    payload=p.model_dump(),
+                )
+                created += 1
+        except Exception as exc:  # noqa: BLE001 - 单条失败不阻塞批量
+            errors.append({"index": i, "name": p.name, "error": str(exc)[:120]})
+    db.commit()
+    return {
+        "success": True,
+        "data": {"created": created, "updated": updated, "errors": errors},
+    }
+
+
+
 
 
 @router.get("")
