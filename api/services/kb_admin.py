@@ -875,6 +875,15 @@ PAGE_TYPE_LABELS = {
     "entity": "实体",
     "concept": "概念",
     "summary": "摘要",
+    "synthesis": "综合",
+    "comparison": "对比",
+    "business_ontology": "业务本体",
+    "rule_ontology": "规则本体",
+    "original_sentence": "原句",
+    "frequent_keyword": "高频关键词",
+    "topic_cluster": "主题簇",
+    "knowledge_graph_summary": "图谱摘要",
+    "cross_document_insight": "跨文档洞察",
 }
 
 GRAPH_PAGE_TYPES = list(PAGE_TYPE_LABELS.keys())

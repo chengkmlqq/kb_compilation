@@ -3,31 +3,90 @@
 /**
  * Wiki 知识图谱视图 —— SVG 力导向图（零第三方依赖，与 WeKnora 同方案）。
  *
- * 交互：
- * - 拖拽节点（固定位置）、缩放（滚轮）、平移（拖空白）
- * - 悬停节点高亮邻域、点击节点打开详情抽屉
- * - 类型过滤图例（entity/concept/summary）
- * - 搜索定位（下拉选择节点）→ ego 下钻邻域
+ * 对齐 WeKnora（2026-10）：
+ * - 12 类图例动态渲染（仅显示实际存在的类型，服务端过滤）
+ * - 有向边 + 箭头显示开关
+ * - 适应屏幕（fit to view）
+ * - ego frontier 批量生长（并发 6，merge + LRU 淘汰）
+ * - bloom 开花邻域（逐代 LRU，上限 BLOOM_MAX_NODES）
+ * - 远程搜索（防抖 + 序号防乱序，空关键词回退 overview 快照）
+ * - 状态卡（节点/边/全库总数/截断提示）
+ * - 操作帮助弹窗 · 节点拖拽固定（修复拖拽后误开详情）
  */
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Card, Drawer, Empty, Select, Space, Spin, Tag, Typography } from "antd";
-import { AppstoreOutlined, ExportOutlined, ReloadOutlined } from "@ant-design/icons";
-import { apiWikiGraph, apiWikiPage, WikiGraphData, WikiGraphNode } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Button,
+  Card,
+  Drawer,
+  Empty,
+  Popover,
+  Select,
+  Space,
+  Spin,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
+import {
+  AppstoreOutlined,
+  ExpandOutlined,
+  ExportOutlined,
+  FullscreenOutlined,
+  QuestionCircleOutlined,
+  ReloadOutlined,
+} from "@ant-design/icons";
+import {
+  apiWikiGraph,
+  apiWikiPage,
+  apiWikiSearch,
+  WikiGraphData,
+  WikiGraphEdge,
+  WikiGraphNode,
+  WikiSearchItem,
+} from "@/lib/api";
 import { useRouter } from "next/navigation";
 
 const { Text } = Typography;
 
+// 12 类对齐 WeKnora
 const PAGE_TYPE_COLORS: Record<string, string> = {
-  entity: "#1677ff",
-  concept: "#52c41a",
-  summary: "#faad14",
+  summary: "#0052d9",
+  entity: "#2ba471",
+  concept: "#e37318",
+  synthesis: "#0594fa",
+  comparison: "#d54941",
+  business_ontology: "#7c3aed",
+  rule_ontology: "#a855f7",
+  original_sentence: "#f59e0b",
+  frequent_keyword: "#10b981",
+  topic_cluster: "#6366f1",
+  knowledge_graph_summary: "#8b5cf6",
+  cross_document_insight: "#ec4899",
 };
 
 const PAGE_TYPE_LABELS: Record<string, string> = {
+  summary: "摘要",
   entity: "实体",
   concept: "概念",
-  summary: "摘要",
+  synthesis: "综合",
+  comparison: "对比",
+  business_ontology: "业务本体",
+  rule_ontology: "规则本体",
+  original_sentence: "原句",
+  frequent_keyword: "高频关键词",
+  topic_cluster: "主题簇",
+  knowledge_graph_summary: "图谱摘要",
+  cross_document_insight: "跨文档洞察",
 };
+
+const TYPE_ORDER = Object.keys(PAGE_TYPE_COLORS);
+
+const GRAPH_OVERVIEW_LIMIT = 500;
+const GRAPH_EGO_LIMIT = 500;
+const BLOOM_MAX_NODES = 1500;
+const GROW_FRONTIER_CONCURRENCY = 6;
+// 全库索引类页面（index/log）：连线指向全库，参与单点扩展但不参与 frontier 批量生长
+const GRAPH_SYSTEM_PAGE_TYPES = new Set(["index", "log"]);
 
 interface Pt {
   x: number;
@@ -45,32 +104,43 @@ interface Props {
 export default function WikiGraphView({ kbId, focusSlug }: Props) {
   const router = useRouter();
   const svgRef = useRef<SVGSVGElement | null>(null);
+
   const [data, setData] = useState<WikiGraphData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [filterTypes, setFilterTypes] = useState<Set<string>>(new Set(["entity", "concept", "summary"]));
+  // 空 Set = 全选（后端 types 空数组 = 全集）
+  const [filterTypes, setFilterTypes] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<"overview" | "ego">("overview");
   const [center, setCenter] = useState<string>("");
   const [selected, setSelected] = useState<WikiGraphNode | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailHtml, setDetailHtml] = useState("");
+  const [arrowsVisible, setArrowsVisible] = useState(true);
   const [searchOptions, setSearchOptions] = useState<{ value: string; label: string }[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+
+  const dataRef = useRef<WikiGraphData | null>(null);
+  dataRef.current = data;
+  const searchSeq = useRef(0);
+  const searchTimer = useRef<number | null>(null);
+  const bloomGen = useRef<Map<string, number>>(new Map());
+  const bloomCurrentGen = useRef(0);
 
   // 图数据内部状态（节点坐标等）
   const stateRef = useRef<{
     nodes: Map<string, Pt>;
     hover: string;
+    dragged: boolean;
     viewX: number;
     viewY: number;
     scale: number;
-    dragging: string | null;
     raf: number;
   }>({
     nodes: new Map(),
     hover: "",
+    dragged: false,
     viewX: 0,
     viewY: 0,
     scale: 1,
-    dragging: null,
     raf: 0,
   });
 
@@ -82,12 +152,21 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
           mode: m,
           center: c || undefined,
           depth: 1,
-          limit: 200,
+          limit: m === "overview" ? GRAPH_OVERVIEW_LIMIT : GRAPH_EGO_LIMIT,
           types: Array.from(filterTypes),
         });
         if (res.success && res.data) {
           setData(res.data);
-          setSearchOptions(res.data.nodes.slice(0, 100).map((n) => ({ value: n.slug, label: n.title })));
+          bloomGen.current.clear();
+          bloomCurrentGen.current = 0;
+          for (const n of res.data.nodes) bloomGen.current.set(n.slug, 0);
+          if (m === "overview") {
+            // 空关键词下拉回退：overview 快照 top-100（按链接数）
+            const top = [...res.data.nodes]
+              .sort((a, b) => (b.link_count || 0) - (a.link_count || 0))
+              .slice(0, 100);
+            setSearchOptions(top.map((n) => ({ value: n.slug, label: n.title })));
+          }
         }
       } finally {
         setLoading(false);
@@ -123,44 +202,279 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     setCenter("");
   };
 
-  const selectNode = async (slug: string) => {
-    const node = data?.nodes.find((n) => n.slug === slug);
-    if (!node) return;
-    // 打开详情
-    const res = await apiWikiPage(kbId, slug);
-    if (res.success && res.data) {
-      setSelected(node);
-      setDetailHtml(res.data.content || "");
-      setDetailOpen(true);
-    }
-  };
+  const selectNode = useCallback(
+    async (slug: string) => {
+      const node = dataRef.current?.nodes.find((n) => n.slug === slug);
+      if (!node) return;
+      const res = await apiWikiPage(kbId, slug);
+      if (res.success && res.data) {
+        setSelected(node);
+        setDetailHtml(res.data.content || "");
+        setDetailOpen(true);
+      }
+    },
+    [kbId],
+  );
 
-  const focusEgo = (slug: string) => {
+  const focusEgo = useCallback((slug: string) => {
     setCenter(slug);
     setMode("ego");
     setDetailOpen(false);
+    setSelected(null);
+  }, []);
+
+  const goWikiPage = useCallback(
+    (slug: string) => {
+      router.push(`/kbs/${kbId}/wiki/${slug}`);
+    },
+    [kbId, router],
+  );
+
+  // ── 远程搜索（防抖 + 序号防乱序，对齐 WeKnora）──
+  const handleGraphRemoteSearch = (keyword: string) => {
+    const q = (keyword || "").trim();
+    if (searchTimer.current) {
+      clearTimeout(searchTimer.current);
+      searchTimer.current = null;
+    }
+    if (!q) {
+      searchSeq.current += 1;
+      setSearchOptions([]); // 空关键词回退到 overview 快照（computed 层）
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    const seq = ++searchSeq.current;
+    searchTimer.current = window.setTimeout(async () => {
+      try {
+        const res = await apiWikiSearch(kbId, q, 20);
+        if (!res.success) return;
+        if (seq !== searchSeq.current) return;
+        const pages: WikiSearchItem[] = res.data?.items || [];
+        setSearchOptions(pages.map((p) => ({ value: p.slug, label: p.title })));
+      } catch (e) {
+        console.error("wiki search failed:", e);
+        if (seq === searchSeq.current) setSearchOptions([]);
+      } finally {
+        if (seq === searchSeq.current) setSearchLoading(false);
+      }
+    }, 250);
   };
 
-  const goWikiPage = (slug: string) => {
-    router.push(`/kbs/${kbId}/wiki/${slug}`);
+  const handleGraphSearchSelect = (slug: string) => {
+    const cur = dataRef.current;
+    if (cur && cur.nodes.some((n) => n.slug === slug)) {
+      void selectNode(slug); // 已在图中 → 打开详情
+    } else {
+      setCenter(slug); // 不在图中 → ego 下钻定位
+      setMode("ego");
+      setDetailOpen(false);
+      setSelected(null);
+    }
   };
+
+  // ── bloom / frontier 数据合并与 LRU 淘汰（对齐 WeKnora）──
+  const mergeData = (base: WikiGraphData, incoming: WikiGraphData, gen: number): WikiGraphData => {
+    const nodeBySlug = new Map<string, WikiGraphNode>();
+    for (const n of base.nodes) nodeBySlug.set(n.slug, n);
+    for (const n of incoming.nodes) {
+      if (!nodeBySlug.has(n.slug)) {
+        nodeBySlug.set(n.slug, n);
+        bloomGen.current.set(n.slug, gen);
+      }
+    }
+    const edgeKey = (e: WikiGraphEdge) => `${e.source}\u2192${e.target}`;
+    const seen = new Set<string>();
+    const edges: WikiGraphEdge[] = [];
+    for (const e of base.edges) {
+      const k = edgeKey(e);
+      if (!seen.has(k)) {
+        seen.add(k);
+        edges.push(e);
+      }
+    }
+    for (const e of incoming.edges) {
+      const k = edgeKey(e);
+      if (!seen.has(k)) {
+        seen.add(k);
+        edges.push(e);
+      }
+    }
+    return {
+      nodes: Array.from(nodeBySlug.values()),
+      edges,
+      meta: { ...incoming.meta, returned: nodeBySlug.size },
+    };
+  };
+
+  const evictOverflow = (d: WikiGraphData, protect: Set<string>) => {
+    if (d.nodes.length <= BLOOM_MAX_NODES) return;
+    const byGen = new Map<number, string[]>();
+    for (const n of d.nodes) {
+      const g = bloomGen.current.get(n.slug) ?? 0;
+      if (g === 0 || protect.has(n.slug)) continue;
+      if (!byGen.has(g)) byGen.set(g, []);
+      byGen.get(g)!.push(n.slug);
+    }
+    const gens = Array.from(byGen.keys()).sort((a, b) => a - b);
+    const toRemove = new Set<string>();
+    let remaining = d.nodes.length;
+    for (const g of gens) {
+      if (remaining <= BLOOM_MAX_NODES) break;
+      for (const slug of byGen.get(g)!) {
+        if (remaining <= BLOOM_MAX_NODES) break;
+        toRemove.add(slug);
+        remaining -= 1;
+      }
+    }
+    if (toRemove.size === 0) return;
+    d.nodes = d.nodes.filter((n) => !toRemove.has(n.slug));
+    d.edges = d.edges.filter((e) => !toRemove.has(e.source) && !toRemove.has(e.target));
+    for (const slug of toRemove) bloomGen.current.delete(slug);
+  };
+
+  const loadBloomNeighbors = useCallback(
+    async (anchor: string) => {
+      const cur = dataRef.current;
+      if (!cur) return;
+      if (mode !== "ego") {
+        await focusEgo(anchor); // 非 ego → 先整体切到该节点邻域
+        return;
+      }
+      setLoading(true);
+      try {
+        const res = await apiWikiGraph(kbId, {
+          mode: "ego",
+          center: anchor,
+          depth: 1,
+          limit: GRAPH_EGO_LIMIT,
+          types: Array.from(filterTypes),
+        });
+        if (!res.success || !res.data) return;
+        bloomCurrentGen.current += 1;
+        const gen = bloomCurrentGen.current;
+        const merged = mergeData(cur, res.data, gen);
+        const protect = new Set<string>(
+          [center, anchor, selected?.slug || ""].filter(Boolean),
+        );
+        evictOverflow(merged, protect);
+        setData(merged);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [kbId, mode, center, filterTypes, selected?.slug, focusEgo],
+  );
+
+  const growFrontier = useCallback(async () => {
+    const cur = dataRef.current;
+    if (!cur || mode !== "ego") return; // frontier 生长只在 ego 布局有效
+    // 收集前沿节点：可见度 < 全库链接数，且非 ego 中心、非 Index/Log 超节点
+    const visibleDegree = new Map<string, number>();
+    for (const e of cur.edges) {
+      visibleDegree.set(e.source, (visibleDegree.get(e.source) || 0) + 1);
+      visibleDegree.set(e.target, (visibleDegree.get(e.target) || 0) + 1);
+    }
+    const frontier: string[] = [];
+    for (const n of cur.nodes) {
+      if (n.slug === center) continue;
+      if (GRAPH_SYSTEM_PAGE_TYPES.has(n.page_type)) continue;
+      if ((n.link_count || 0) > (visibleDegree.get(n.slug) || 0)) frontier.push(n.slug);
+    }
+    if (frontier.length === 0) return;
+    setLoading(true);
+    try {
+      const responses: WikiGraphData[] = [];
+      let cursor = 0;
+      async function worker() {
+        while (cursor < frontier.length) {
+          const idx = cursor++;
+          try {
+            const res = await apiWikiGraph(kbId, {
+              mode: "ego",
+              center: frontier[idx],
+              depth: 1,
+              limit: GRAPH_EGO_LIMIT,
+              types: Array.from(filterTypes),
+            });
+            if (res.success && res.data) responses.push(res.data);
+          } catch (e) {
+            console.error("growFrontier failed:", e);
+          }
+        }
+      }
+      const workers: Promise<void>[] = [];
+      const count = Math.min(GROW_FRONTIER_CONCURRENCY, frontier.length);
+      for (let i = 0; i < count; i++) workers.push(worker());
+      await Promise.all(workers);
+      if (responses.length === 0) return;
+      bloomCurrentGen.current += 1;
+      const gen = bloomCurrentGen.current;
+      let merged = dataRef.current!;
+      for (const incoming of responses) merged = mergeData(merged, incoming, gen);
+      const protect = new Set<string>([center, selected?.slug || ""].filter(Boolean));
+      evictOverflow(merged, protect);
+      setData(merged);
+    } finally {
+      setLoading(false);
+    }
+  }, [kbId, mode, center, filterTypes, selected?.slug]);
+
+  // ── 适应屏幕 ──
+  const fitToView = useCallback(() => {
+    const svg = svgRef.current;
+    const st = stateRef.current;
+    if (!svg || st.nodes.size === 0) return;
+    const W = svg.clientWidth || 800;
+    const H = svg.clientHeight || 600;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of st.nodes.values()) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const pad = 80;
+    const bw = Math.max(maxX - minX, 120) + pad * 2;
+    const bh = Math.max(maxY - minY, 120) + pad * 2;
+    const s = Math.min(W / bw, H / bh, 1.5);
+    st.scale = Math.max(0.3, s);
+    st.viewX = W / 2 - cx * st.scale;
+    st.viewY = H / 2 - cy * st.scale;
+  }, []);
+
+  // ── 图例动态渲染：仅显示实际存在的类型 ──
+  const presentTypes = useMemo(() => {
+    const set = new Set<string>();
+    for (const n of data?.nodes || []) set.add(n.page_type);
+    return TYPE_ORDER.filter((t) => set.has(t));
+  }, [data]);
+
+  const isTypeOn = (t: string) => (filterTypes.size === 0 ? true : filterTypes.has(t));
 
   // ---- SVG 渲染（力导向模拟）----
   useEffect(() => {
     const svg = svgRef.current;
-    if (!svg || !data) return;
+    const st = stateRef.current;
+    if (!svg) return;
     svg.innerHTML = "";
     const W = svg.clientWidth || 800;
     const H = svg.clientHeight || 600;
-
-    const ns = "http://www.w3.org/2000/svg";
-    const st = stateRef.current;
-
-    // 初始化节点位置（环形 + 力导向迭代）
+    if (!data) return;
     const nodeList = data.nodes;
-    if (nodeList.length === 0) return;
-    if (st.nodes.size !== nodeList.length) {
-      st.nodes.clear();
+    const ns = "http://www.w3.org/2000/svg";
+
+    // 布点：数据收缩删除多余；全新 → 环形；增量（bloom/frontier merge）→ 只给新节点布点
+    const inData = new Set(nodeList.map((n) => n.slug));
+    for (const slug of Array.from(st.nodes.keys())) {
+      if (!inData.has(slug)) st.nodes.delete(slug);
+    }
+    if (st.nodes.size === 0) {
       nodeList.forEach((n, i) => {
         const ang = (2 * Math.PI * i) / nodeList.length;
         st.nodes.set(n.slug, {
@@ -171,7 +485,23 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
           pinned: false,
         });
       });
+    } else if (st.nodes.size < nodeList.length) {
+      const fresh = nodeList.filter((n) => !st.nodes.has(n.slug));
+      const r = Math.min(W, H) / 2.4;
+      fresh.forEach((n, i) => {
+        const ang = (2 * Math.PI * i) / Math.max(fresh.length, 1) + 0.7;
+        st.nodes.set(n.slug, {
+          x: W / 2 + Math.cos(ang) * r,
+          y: H / 2 + Math.sin(ang) * r,
+          vx: 0,
+          vy: 0,
+          pinned: false,
+        });
+      });
     }
+    const radiusOf = new Map<string, number>(
+      nodeList.map((n) => [n.slug, 14 + Math.min(10, n.link_count || 0) * 1.2]),
+    );
 
     // 力导向模拟：斥力 + 弹簧
     const repulsion = 900;
@@ -194,7 +524,6 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
           a.vx += (dx / Math.sqrt(d2)) * f * 0.1;
           a.vy += (dy / Math.sqrt(d2)) * f * 0.1;
         }
-        // 弹簧（edges）
         for (const e of data.edges) {
           const ta = nodes.get(e.source);
           const tb = nodes.get(e.target);
@@ -208,50 +537,79 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         }
         a.x += a.vx;
         a.y += a.vy;
-        a.x = Math.max(20, Math.min(W - 20, a.x));
-        a.y = Math.max(20, Math.min(H - 20, a.y));
+        a.x = Math.max(20, Math.min(2000, a.x));
+        a.y = Math.max(20, Math.min(2000, a.y));
       }
       render();
       st.raf = requestAnimationFrame(simulate);
     };
 
-    // 渲染帧
     const render = () => {
       const container = svg;
       container.innerHTML = "";
       const g = document.createElementNS(ns, "g");
-      const scale = st.scale;
-      const tx = st.viewX;
-      const ty = st.viewY;
-      g.setAttribute("transform", `translate(${tx},${ty}) scale(${scale})`);
+      g.setAttribute("transform", `translate(${st.viewX},${st.viewY}) scale(${st.scale})`);
       container.appendChild(g);
 
-      // edges
+      // edges（line + 方向箭头）
+      const drawArrow = arrowsVisible && st.scale > 0.55;
       for (const e of data.edges) {
         const a = st.nodes.get(e.source);
         const b = st.nodes.get(e.target);
         if (!a || !b) continue;
+        const hovered = st.hover && (e.source === st.hover || e.target === st.hover);
         const line = document.createElementNS(ns, "line");
         line.setAttribute("x1", String(a.x));
         line.setAttribute("y1", String(a.y));
         line.setAttribute("x2", String(b.x));
         line.setAttribute("y2", String(b.y));
-        const hovered = st.hover && (e.source === st.hover || e.target === st.hover);
         line.setAttribute("stroke", hovered ? "#1677ff" : "#d9d9d9");
         line.setAttribute("stroke-width", hovered ? "2.5" : "1.2");
         line.setAttribute("opacity", hovered ? "0.95" : "0.5");
+        if (drawArrow) {
+          line.setAttribute(
+            "marker-end",
+            `url(#wiki-arrow-head${hovered ? "-hot" : ""})`,
+          );
+        }
         g.appendChild(line);
       }
+
+      // marker 定义（每帧重建，指向 <defs>）
+      const defs = document.createElementNS(ns, "defs");
+      const mk = (id: string, color: string) => {
+        const m = document.createElementNS(ns, "marker");
+        m.setAttribute("id", id);
+        m.setAttribute("viewBox", "0 -4 8 8");
+        m.setAttribute("refX", "6");
+        m.setAttribute("refY", "0");
+        m.setAttribute("markerWidth", "7");
+        m.setAttribute("markerHeight", "7");
+        m.setAttribute("orient", "auto");
+        const path = document.createElementNS(ns, "path");
+        path.setAttribute("d", "M0,-4L8,0L0,4Z");
+        path.setAttribute("fill", color);
+        m.appendChild(path);
+        defs.appendChild(m);
+      };
+      if (drawArrow) {
+        mk("wiki-arrow-head", "#bfbfbf");
+        mk("wiki-arrow-head-hot", "#1677ff");
+      }
+      g.appendChild(defs);
 
       // nodes
       for (const n of nodeList) {
         const p = st.nodes.get(n.slug);
         if (!p) continue;
         const isHover = st.hover === n.slug;
-        const radius = 14 + Math.min(10, n.link_count || 0) * 1.2;
+        const radius = radiusOf.get(n.slug) || 14;
         const group = document.createElementNS(ns, "g");
         group.setAttribute("transform", `translate(${p.x},${p.y})`);
+        group.setAttribute("data-slug", n.slug);
         group.style.cursor = "pointer";
+
+        let clickTimer: number | null = null;
         group.addEventListener("mouseenter", () => {
           st.hover = n.slug;
           render();
@@ -260,12 +618,24 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
           st.hover = "";
           render();
         });
+        group.addEventListener("mousedown", (ev) => {
+          ev.stopPropagation(); // 不触发画布 pan
+        });
         group.addEventListener("click", (ev) => {
+          if (st.dragged) {
+            st.dragged = false;
+            return;
+          }
           ev.stopPropagation();
-          void selectNode(n.slug);
+          if (clickTimer) clearTimeout(clickTimer);
+          clickTimer = window.setTimeout(() => void selectNode(n.slug), 220);
         });
         group.addEventListener("dblclick", (ev) => {
           ev.stopPropagation();
+          if (clickTimer) {
+            clearTimeout(clickTimer);
+            clickTimer = null;
+          }
           focusEgo(n.slug);
         });
 
@@ -289,21 +659,42 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
       }
     };
 
-    // 拖拽
-    const svgEvt = (ev: MouseEvent) => {
-      const rect = svg.getBoundingClientRect();
-      const mx = (ev.clientX - rect.left - st.viewX) / st.scale;
-      const my = (ev.clientY - rect.top - st.viewY) / st.scale;
-      return { mx, my };
-    };
-
+    // 画布交互：pan / wheel / dblclick 重置 / 节点拖拽固定
     let downPos: { x: number; y: number } | null = null;
     let panning = false;
-    svg.addEventListener("mousedown", (ev) => {
+    let dragNode: string | null = null;
+    let dragOfs = { x: 0, y: 0 };
+
+    const onMouseDown = (ev: MouseEvent) => {
+      const t = ev.target as Element;
+      const nodeEl = t.closest("[data-slug]");
+      if (nodeEl && svg.contains(nodeEl)) {
+        const slug = nodeEl.getAttribute("data-slug")!;
+        const p = st.nodes.get(slug);
+        if (!p) return;
+        dragNode = slug;
+        const rect = svg.getBoundingClientRect();
+        dragOfs = {
+          x: (ev.clientX - rect.left - st.viewX) / st.scale - p.x,
+          y: (ev.clientY - rect.top - st.viewY) / st.scale - p.y,
+        };
+        return;
+      }
       downPos = { x: ev.clientX, y: ev.clientY };
       panning = true;
-    });
-    svg.addEventListener("mousemove", (ev) => {
+    };
+    const onMouseMove = (ev: MouseEvent) => {
+      if (dragNode) {
+        st.dragged = true;
+        const p = st.nodes.get(dragNode);
+        if (p) {
+          const rect = svg.getBoundingClientRect();
+          p.x = (ev.clientX - rect.left - st.viewX) / st.scale - dragOfs.x;
+          p.y = (ev.clientY - rect.top - st.viewY) / st.scale - dragOfs.y;
+          p.pinned = true;
+        }
+        return;
+      }
       if (!downPos) return;
       const dx = ev.clientX - downPos.x;
       const dy = ev.clientY - downPos.y;
@@ -312,24 +703,29 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         st.viewY += dy;
         downPos = { x: ev.clientX, y: ev.clientY };
       }
-    });
-    svg.addEventListener("mouseup", () => {
+    };
+    const onMouseUp = () => {
+      dragNode = null;
       downPos = null;
       panning = false;
-    });
-    svg.addEventListener("wheel", (ev) => {
+    };
+    const onWheel = (ev: WheelEvent) => {
       ev.preventDefault();
       const delta = ev.deltaY > 0 ? 0.9 : 1.1;
       st.scale = Math.max(0.3, Math.min(3, st.scale * delta));
-    });
-    svg.addEventListener("dblclick", () => {
+    };
+    const onDblClick = () => {
       st.viewX = 0;
       st.viewY = 0;
       st.scale = 1;
-    });
-    void svgEvt;
+    };
 
-    // 开始
+    svg.addEventListener("mousedown", onMouseDown);
+    svg.addEventListener("mousemove", onMouseMove);
+    svg.addEventListener("mouseup", onMouseUp);
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    svg.addEventListener("dblclick", onDblClick);
+
     const start = () => {
       if (st.raf) cancelAnimationFrame(st.raf);
       render();
@@ -340,8 +736,26 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     return () => {
       if (st.raf) cancelAnimationFrame(st.raf);
       st.raf = 0;
+      svg.removeEventListener("mousedown", onMouseDown);
+      svg.removeEventListener("mousemove", onMouseMove);
+      svg.removeEventListener("mouseup", onMouseUp);
+      svg.removeEventListener("wheel", onWheel);
+      svg.removeEventListener("dblclick", onDblClick);
     };
-  }, [data, kbId, filterTypes]);
+  }, [data, kbId, arrowsVisible, selectNode, focusEgo]);
+
+  const helpContent = (
+    <div style={{ fontSize: 12, lineHeight: "20px", maxWidth: 260 }}>
+      <div><Text strong>拖拽节点</Text>：固定 / 取消固定位置（拖动后位置锁定）</div>
+      <div><Text strong>滚轮</Text>：缩放 · <Text strong>拖动空白</Text>：平移</div>
+      <div><Text strong>单击节点</Text>：查看页面详情</div>
+      <div><Text strong>双击节点</Text>：下钻该节点邻域（ego）</div>
+      <div><Text strong>开花邻域</Text>（详情抽屉）：以该节点为中心再展开一层</div>
+      <div><Text strong>扩展前沿</Text>：批量展开所有可扩展节点（并发 6）</div>
+      <div><Text strong>图例</Text>：点击切换类型过滤（服务端过滤）</div>
+      <div><Text strong>适应屏幕</Text>：缩放回全部可见节点</div>
+    </div>
+  );
 
   return (
     <Card
@@ -353,25 +767,31 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
       }
       extra={
         <Space>
-          {(["entity", "concept", "summary"] as const).map((t) => (
-            <Tag
-              key={t}
-              color={filterTypes.has(t) ? PAGE_TYPE_COLORS[t] : "default"}
-              style={{ cursor: "pointer" }}
-              onClick={() => toggleType(t)}
-            >
-              {PAGE_TYPE_LABELS[t]}
-            </Tag>
-          ))}
           <Select
-            style={{ width: 200 }}
-            placeholder="搜索节点"
+            style={{ width: 220 }}
+            placeholder="搜索节点（远程）"
             showSearch
-            filterOption={(input, opt) => (opt?.label || "").includes(input)}
+            allowClear
+            filterOption={false}
+            onSearch={handleGraphRemoteSearch}
+            loading={searchLoading}
             options={searchOptions}
             value={undefined}
-            onChange={(v: string) => void selectNode(v)}
+            onChange={(v: string) => handleGraphSearchSelect(v)}
           />
+          <Tooltip title="操作帮助">
+            <Popover content={helpContent} trigger="click" placement="bottomRight">
+              <Button icon={<QuestionCircleOutlined />} />
+            </Popover>
+          </Tooltip>
+          <Button icon={<FullscreenOutlined />} onClick={fitToView}>
+            适应屏幕
+          </Button>
+          {mode === "ego" && (
+            <Button icon={<ExpandOutlined />} loading={loading} onClick={() => void growFrontier()}>
+              扩展前沿
+            </Button>
+          )}
           <Button icon={<ReloadOutlined />} onClick={() => void load(mode, center)}>
             刷新
           </Button>
@@ -381,6 +801,24 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         </Space>
       }
     >
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
+        {presentTypes.map((t) => (
+          <Tag
+            key={t}
+            color={isTypeOn(t) ? PAGE_TYPE_COLORS[t] : "default"}
+            style={{ cursor: "pointer" }}
+            onClick={() => toggleType(t)}
+          >
+            {PAGE_TYPE_LABELS[t] || t}
+          </Tag>
+        ))}
+        <span style={{ marginLeft: "auto", fontSize: 12, color: "#999" }}>
+          节点 {data?.meta.returned ?? 0} · 边 {data?.edges.length ?? 0} · 全库页面{" "}
+          {data?.meta.total ?? 0}
+          {data?.meta.truncated ? " · 已截断（显示链接最多的节点）" : ""}
+        </span>
+      </div>
+
       <div style={{ position: "relative", height: 560 }}>
         {loading ? (
           <div style={{ textAlign: "center", padding: 60 }}>
@@ -397,7 +835,7 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
           />
         )}
         <div style={{ position: "absolute", bottom: 8, left: 12, fontSize: 12, color: "#999" }}>
-          拖拽节点固定 · 滚轮缩放 · 拖动空白平移 · 单击看详情 · 双击下钻邻域
+          拖拽节点固定 · 滚轮缩放 · 拖动空白平移 · 单击详情 · 双击下钻 · 图例/箭头/适配见上方工具栏
         </div>
       </div>
 
@@ -410,6 +848,9 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         extra={
           selected && (
             <Space>
+              <Button size="small" onClick={() => void loadBloomNeighbors(selected.slug)}>
+                开花邻域
+              </Button>
               <Button size="small" onClick={() => focusEgo(selected.slug)}>
                 邻域下钻
               </Button>
@@ -426,7 +867,9 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
               {PAGE_TYPE_LABELS[selected.page_type] || selected.page_type}
             </Tag>
             <Tag>关联 {selected.link_count}</Tag>
-            {selected.summary && <div style={{ marginTop: 4, color: "#888" }}>{selected.summary}</div>}
+            {selected.summary && (
+              <div style={{ marginTop: 4, color: "#888" }}>{selected.summary}</div>
+            )}
           </div>
         )}
         <div
