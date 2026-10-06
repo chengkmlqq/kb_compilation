@@ -207,6 +207,24 @@ export function apiDeleteDocument(kbId: string, docId: string) {
   return request(`/api/v1/kbs/${kbId}/documents/${docId}`, { method: "DELETE" });
 }
 
+export function apiReparseDocument(kbId: string, docId: string) {
+  return request(`/api/v1/kbs/${kbId}/documents/${docId}/reparse`, { method: "POST" });
+}
+
+export async function apiDownloadDocument(kbId: string, docId: string, fileName: string) {
+  const res = await fetch(`/api/v1/kbs/${kbId}/documents/${docId}/download`);
+  if (!res.ok) throw new Error(`下载失败 (${res.status})`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName || "document.bin";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ---- wiki ----
 
 export interface WikiFolderItem {

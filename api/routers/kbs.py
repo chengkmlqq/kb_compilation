@@ -13,20 +13,30 @@ Backend surface for the frontend KB pages:
 
 from __future__ import annotations
 
+import io
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from api.config import get_settings
 from api.db import get_db
-from api.models.framework import Job
+from api.models.framework import Job, SysFile
 from api.services.embedding import get_embedding_client
 from api.services.identity import decode_identity_cookie
+from api.routers.files import (
+    _content_disposition,  # noqa: PLC2701 (same-package helpers, 文档下载复用)
+    _is_s3_row,  # noqa: PLC2701
+    _local_fallback_path,  # noqa: PLC2701
+    _read_stored_bytes,  # noqa: PLC2701
+)
 from api.services.kb_admin import (
     create_document,
     create_kb,
@@ -757,6 +767,85 @@ def search_route(
         threshold=req.threshold,
     )
     return {"success": True, "data": {"items": hits, "total": len(hits), "query": req.query}}
+
+
+@router.get("/{kb_id}/documents/{document_id}/download")
+def download_document(
+    kb_id: str,
+    document_id: str,
+    db: Session = Depends(get_db),
+):
+    """按文档下载原文件（对齐 WeKnora 文档下载；本地优先，MinIO 流式回退）。"""
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    from api.models.knowledge import KbDocument
+
+    doc = db.execute(
+        select(KbDocument).where(
+            KbDocument.id == document_id, KbDocument.kb_id == kb_id
+        )
+    ).scalars().first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    # 优先走 SysFile 关联行（复用 files 模块的本地/s3 读取）
+    if doc.sys_file_id:
+        f = db.execute(
+            select(SysFile).where(SysFile.id == doc.sys_file_id)
+        ).scalars().first()
+        if f:
+            local_path = _local_fallback_path(f.storage_path)
+            if os.path.exists(local_path):
+                return FileResponse(
+                    local_path,
+                    media_type=f.mime_type or "application/octet-stream",
+                    filename=f.file_name,
+                )
+            if not _is_s3_row(f):
+                raise HTTPException(status_code=404, detail="物理文件缺失")
+            try:
+                data = _read_stored_bytes(f)
+            except Exception:  # noqa: BLE001
+                raise HTTPException(status_code=404, detail="物理文件缺失") from None
+            return StreamingResponse(
+                io.BytesIO(data),
+                media_type=f.mime_type or "application/octet-stream",
+                headers={"Content-Disposition": _content_disposition(f.file_name)},
+            )
+    # 兜底：直接按文档 storage_path 本地回退
+    if doc.storage_path and os.path.exists(_local_fallback_path(doc.storage_path)):
+        return FileResponse(
+            _local_fallback_path(doc.storage_path),
+            media_type="application/octet-stream",
+            filename=doc.file_name or "document.bin",
+        )
+    raise HTTPException(status_code=404, detail="物理文件缺失")
+
+
+@router.post("/{kb_id}/documents/{document_id}/reparse")
+def reparse_document(
+    kb_id: str,
+    document_id: str,
+    db: Session = Depends(get_db),
+) -> dict:
+    """重新解析文档：清旧 chunks + 重置状态 + 重新入队（对齐 WeKnora 重新解析）。"""
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    from api.models.knowledge import DocChunk, KbDocument
+
+    doc = db.execute(
+        select(KbDocument).where(
+            KbDocument.id == document_id, KbDocument.kb_id == kb_id
+        )
+    ).scalars().first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    db.execute(delete(DocChunk).where(DocChunk.document_id == document_id))
+    doc.parse_state = "PENDING"
+    doc.parse_error = None
+    doc.chunk_count = 0
+    db.commit()
+    _enqueue_document_process(kb_id, document_id)
+    return {"success": True, "data": {"id": document_id, "parse_state": "PENDING"}}
 
 
 __all__ = ["router"]

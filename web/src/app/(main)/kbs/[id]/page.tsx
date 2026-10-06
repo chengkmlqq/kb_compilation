@@ -19,7 +19,9 @@ import {
   Upload,
 } from "antd";
 import {
+  DownloadOutlined,
   InboxOutlined,
+  RedoOutlined,
   ReloadOutlined,
   SettingOutlined,
   ShareAltOutlined,
@@ -30,12 +32,16 @@ import WikiGraphView from "@/components/WikiGraphView";
 import Neo4jGraphView from "@/components/Neo4jGraphView";
 import WikiBrowseView from "@/components/WikiBrowseView";
 import WikiManagePanel from "@/components/WikiManagePanel";
+import DocCardView, { fileTypeIcon, formatSize } from "@/components/DocCardView";
+import DocDetailDrawer from "@/components/DocDetailDrawer";
 import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 import KBConfigModal from "@/components/KBConfigModal";
 import {
   apiDeleteDocument,
+  apiDownloadDocument,
   apiGetKb,
   apiListDocuments,
+  apiReparseDocument,
   apiSearch,
   apiUploadDocument,
   apiWikiPage,
@@ -65,6 +71,10 @@ export default function KbDetailPage() {
   const [docPage, setDocPage] = useState(1);
   const [docPageSize, setDocPageSize] = useState(20);
   const [docTotal, setDocTotal] = useState(0);
+  const [docView, setDocView] = useState<"card" | "list">(
+    () => (localStorage.getItem("kb.docs.viewMode") as "card" | "list") || "card",
+  );
+  const [detailDoc, setDetailDoc] = useState<DocItem | null>(null);
   const [wiki, setWiki] = useState<WikiTree | null>(null);
   const [wikiLoading, setWikiLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -180,12 +190,37 @@ export default function KbDetailPage() {
     const res = await apiDeleteDocument(kbId, doc.id);
     if (res.success) {
       message.success("文档已删除");
+      if (detailDoc?.id === doc.id) setDetailDoc(null);
       // 删除当前页最后一条且不在第 1 页时回退一页，避免空页
       if (docs.length === 1 && docPage > 1) setDocPage(docPage - 1);
       else void load();
     } else {
       message.error(res.message || "删除失败");
     }
+  };
+
+  const onDownloadDoc = async (doc: DocItem) => {
+    try {
+      await apiDownloadDocument(kbId, doc.id, doc.file_name);
+      message.success("开始下载");
+    } catch (e) {
+      message.error((e as Error).message || "下载失败");
+    }
+  };
+
+  const onReparseDoc = async (doc: DocItem) => {
+    const res = await apiReparseDocument(kbId, doc.id);
+    if (res.success) {
+      message.success("已重新入队解析");
+      setDetailDoc(null);
+      void load();
+    } else {
+      message.error(res.message || "重新解析失败");
+    }
+  };
+
+  const onViewTrace = (doc: DocItem) => {
+    router.push(`/jobs?keyword=DOC_${doc.id}`);
   };
 
   return (
@@ -201,7 +236,23 @@ export default function KbDetailPage() {
               <Card
                 title="知识库文档"
                 extra={
-                  <Space>
+                  <Space wrap>
+                    <Segmented
+                      value={docView}
+                      onChange={(v) => {
+                        const mode = v as "card" | "list";
+                        setDocView(mode);
+                        try {
+                          localStorage.setItem("kb.docs.viewMode", mode);
+                        } catch {
+                          /* ignore */
+                        }
+                      }}
+                      options={[
+                        { value: "card", label: "卡片" },
+                        { value: "list", label: "列表" },
+                      ]}
+                    />
                     <Button icon={<ReloadOutlined />} onClick={() => void load()}>
                       刷新
                     </Button>
@@ -217,11 +268,22 @@ export default function KbDetailPage() {
                   </Space>
                 }
               >
+                {docView === "card" ? (
+                  <DocCardView
+                    items={docs}
+                    onOpen={setDetailDoc}
+                    onDownload={onDownloadDoc}
+                    onReparse={onReparseDoc}
+                    onDelete={onDeleteDoc}
+                    onTrace={onViewTrace}
+                  />
+                ) : (
                 <Table<DocItem>
                   rowKey="id"
                   size="small"
                   loading={docsLoading}
                   dataSource={docs}
+                  onRow={(doc) => ({ onClick: () => setDetailDoc(doc) })}
                   pagination={{
                     current: docPage,
                     pageSize: docPageSize,
@@ -235,14 +297,26 @@ export default function KbDetailPage() {
                   }}
                   locale={{ emptyText: <Empty description="暂无文档，拖拽文件到右上角上传" /> }}
                   columns={[
-                    { title: "文件名", dataIndex: "file_name" },
+                    {
+                      title: "文件名",
+                      dataIndex: "file_name",
+                      render: (v: string, doc: DocItem) => (
+                        <Space>
+                          <span style={{ fontSize: 16 }}>{fileTypeIcon(doc.file_ext)}</span>
+                          <a onClick={() => setDetailDoc(doc)}>{v}</a>
+                        </Space>
+                      ),
+                    },
                     {
                       title: "状态",
                       dataIndex: "parse_state",
-                      render: (v: string) => (
+                      render: (v: string, doc: DocItem) => (
                         <Space size={4}>
                           {["PENDING", "PARSING", "EMBEDDING"].includes(v) && <Spin size="small" />}
                           <Tag color={PARSE_STATE_COLOR[v] || "default"}>{v}</Tag>
+                          {v === "FAILED" && (
+                            <a onClick={() => onViewTrace(doc)}>查看原因</a>
+                          )}
                         </Space>
                       ),
                     },
@@ -252,16 +326,31 @@ export default function KbDetailPage() {
                       width: 90,
                     },
                     {
+                      title: "大小",
+                      dataIndex: "file_size",
+                      width: 110,
+                      render: (v: number | null) => formatSize(v),
+                    },
+                    {
                       title: "操作",
-                      width: 90,
+                      width: 150,
                       render: (_: unknown, doc: DocItem) => (
-                        <Button type="link" danger size="small" onClick={() => onDeleteDoc(doc)}>
-                          删除
-                        </Button>
+                        <Space size={4}>
+                          <Button type="link" size="small" icon={<DownloadOutlined />} onClick={(e) => { e.stopPropagation(); void onDownloadDoc(doc); }}>
+                            下载
+                          </Button>
+                          <Button type="link" size="small" icon={<RedoOutlined />} onClick={(e) => { e.stopPropagation(); void onReparseDoc(doc); }}>
+                            重解析
+                          </Button>
+                          <Button type="link" danger size="small" onClick={(e) => { e.stopPropagation(); void onDeleteDoc(doc); }}>
+                            删除
+                          </Button>
+                        </Space>
                       ),
                     },
                   ]}
                 />
+                )}
               </Card>
             ),
           },
@@ -329,6 +418,16 @@ export default function KbDetailPage() {
             children: <Neo4jGraphView kbId={kbId} />,
           },
         ]}
+      />
+
+      {/* 文档详情抽屉（对齐 WeKnora DocContent：元数据 + 分块预览 + 下载/重解析/删除） */}
+      <DocDetailDrawer
+        kbId={kbId}
+        doc={detailDoc}
+        onClose={() => setDetailDoc(null)}
+        onDownload={onDownloadDoc}
+        onReparse={onReparseDoc}
+        onDelete={onDeleteDoc}
       />
 
       <ChunkingConfigModal
