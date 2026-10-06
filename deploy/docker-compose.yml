@@ -63,13 +63,9 @@ x-api-env: &api-env
     WIKI_AGENT_MODE: ${WIKI_AGENT_MODE:-inline}
     # 技能脚本超时（wiki 构建可能较久）
     WORKER_AGENT_SKILL_SCRIPT_TIMEOUT_S: ${WORKER_AGENT_SKILL_SCRIPT_TIMEOUT_S:-1800}
-    # 文档解析服务（MinerU 4.0.9 CPU 推理 / PaddleOCR-VL）：
-    # parser_registry.mineru_endpoint() / paddle_endpoint() 直接读这两个 env，
-    # 缺失时 PDF/OCR 解析会判定引擎不可用。缺省走 kb-net 服务名。
+    # 文档解析服务（MinerU 4.0.9 CPU 推理；2026-10-07 PaddleOCR-VL 已移除）：
+    # parser_registry.mineru_endpoint() 直接读该 env，缺失时 PDF/OCR 解析判定引擎不可用。
     MINERU_ENDPOINT: ${MINERU_ENDPOINT:-http://mineru:8000}
-    PADDLEOCR_ENDPOINT: ${PADDLEOCR_ENDPOINT:-http://paddleocr:8081}
-    # 置 1 表示 PaddleOCR-VL 真实模型已就绪（当前为占位服务，保持 0）
-    PADDLEOCR_VL_READY: ${PADDLEOCR_VL_READY:-0}
 
 services:
   nginx:
@@ -207,7 +203,7 @@ services:
     networks:
       - kb-net
 
-  # ── 文档解析服务（解析引擎规则 engine=mineru / paddleocr_vl 的落点）────
+  # ── 文档解析服务（解析引擎规则 engine=mineru 的落点）────────────────────
   # 说明见 deploy/README-parsers.md
   mineru:
     # 官方 mineruorg/mineru 镜像被本网络 Docker Hub 白名单拦截，故自建：
@@ -247,37 +243,6 @@ services:
       timeout: 15s
       retries: 10
       start_period: 3600s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - kb-net
-
-  paddleocr:
-    # PaddleOCR-VL 解析服务。当前为 HTTP 占位实现（app.py）：接口契约与官方
-    # PaddleOCR-VL serving 一致，端点可配置/可探测，解析请求返回 503 + 安装指引。
-    # 真实模型在本机不可行（无 GPU + 权重 2.1GB + 磁盘紧张），装法见 README-parsers.md。
-    build:
-      context: ./parsers/paddle_service
-    image: ${PADDLEOCR_IMAGE:-kb-paddleocr:local}
-    container_name: kb-paddleocr
-    restart: unless-stopped
-    environment:
-      PADDLEOCR_ENDPOINT: ${PADDLEOCR_ENDPOINT:-http://paddleocr:8081}
-      # 设为 1 表示真实模型已就绪（当前未装，保持 0）
-      PADDLEOCR_VL_READY: ${PADDLEOCR_VL_READY:-0}
-    ports:
-      # 宿主端口 18081，避开常用端口
-      - "${PADDLEOCR_HOST_PORT:-18081}:8081"
-    healthcheck:
-      # /health 恒 200（服务存活）；模型可用性看响应体 model_available
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8081/health',timeout=5).status==200 else 1)\""]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
     logging:
       driver: json-file
       options:

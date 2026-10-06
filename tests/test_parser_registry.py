@@ -5,7 +5,6 @@ from __future__ import annotations
 from api.services.parser_registry import (
     ENGINE_DOCREADER,
     ENGINE_MINERU,
-    ENGINE_PADDLEOCR_VL,
     engine_available_map,
     list_engines,
     normalize_engine,
@@ -26,7 +25,8 @@ def test_list_engines_shape():
     names = {e["name"] for e in engines}
     assert ENGINE_DOCREADER in names
     assert ENGINE_MINERU in names
-    assert ENGINE_PADDLEOCR_VL in names
+    # 2026-10-07: PaddleOCR-VL 已移除
+    assert "paddleocr_vl" not in names
     for e in engines:
         assert {"name", "display_name", "available", "reason", "file_types"} <= set(e)
         assert isinstance(e["available"], bool)
@@ -39,15 +39,12 @@ def test_docreader_always_available():
 
 def test_unconfigured_cloud_engines_unavailable(monkeypatch):
     for var in ("MINERU_CLOUD_API_KEY", "MINERU_API_KEY",
-                "PADDLEOCR_CLOUD_API_KEY", "PADDLEOCR_API_KEY",
-                "MINERU_ENDPOINT", "MINERU_URL",
-                "PADDLEOCR_ENDPOINT", "PADDLEOCR_URL", "PADDLE_OCR_ENDPOINT"):
+                "MINERU_ENDPOINT", "MINERU_URL"):
         monkeypatch.delenv(var, raising=False)
     avail = engine_available_map()
     # with nothing configured, only docreader is available
     assert avail[ENGINE_DOCREADER] is True
     assert avail[ENGINE_MINERU] is False
-    assert avail[ENGINE_PADDLEOCR_VL] is False
 
 
 def test_configured_mineru_endpoint_becomes_available(monkeypatch):

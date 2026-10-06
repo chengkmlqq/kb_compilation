@@ -14,8 +14,6 @@ from api.services.parser_registry import (
     ENGINE_DOCREADER,
     ENGINE_MINERU,
     ENGINE_MINERU_CLOUD,
-    ENGINE_PADDLEOCR_VL,
-    ENGINE_PADDLEOCR_VL_CLOUD,
     engine_available_map,
     normalize_engine,
     resolve_engine,
@@ -62,14 +60,6 @@ def parse_document_by_engine(
             from worker.tasks.parsers.mineru_parser import parse_with_mineru
 
             md, images = parse_with_mineru(file_name, file_ext, content, use_cloud=True, vlm_server_url=vlm_server_url)
-        elif engine == ENGINE_PADDLEOCR_VL:
-            from worker.tasks.parsers.paddle_parser import parse_with_paddle
-
-            md, images = parse_with_paddle(file_name, file_ext, content)
-        elif engine == ENGINE_PADDLEOCR_VL_CLOUD:
-            from worker.tasks.parsers.paddle_parser import parse_with_paddle
-
-            md, images = parse_with_paddle(file_name, file_ext, content, use_cloud=True)
         else:
             engine = ENGINE_DOCREADER
             md, images = _docreader()

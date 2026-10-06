@@ -2,10 +2,13 @@
 
 Mirrors WeKnora's docparser engine_registry: a table of engines, each with a
 name, description, the file types it handles, and a live availability probe
-(MinerU/Paddle need an endpoint; builtin docreader is always available).
+(MinerU needs an endpoint; builtin docreader is always available).
 
 Shared by the API layer (`GET /parsers/engines`) and the worker tasks
 (`worker/tasks/parsers/`) so the UI dropdown and the actual routing agree.
+
+2026-10-07: PaddleOCR-VL 已移除（占位服务/需 GPU/无真实模型）——仅保留
+docreader（内置）+ mineru（自建/云端）。
 """
 
 from __future__ import annotations
@@ -17,8 +20,6 @@ from typing import Any
 ENGINE_DOCREADER = "docreader"
 ENGINE_MINERU = "mineru"
 ENGINE_MINERU_CLOUD = "mineru_cloud"
-ENGINE_PADDLEOCR_VL = "paddleocr_vl"
-ENGINE_PADDLEOCR_VL_CLOUD = "paddleocr_vl_cloud"
 
 ENGINE_ALIASES = {
     "builtin": ENGINE_DOCREADER,
@@ -27,10 +28,12 @@ ENGINE_ALIASES = {
     "": ENGINE_DOCREADER,
     "mineru-cloud": ENGINE_MINERU_CLOUD,
     "mineru_cloud_api": ENGINE_MINERU_CLOUD,
-    "paddleocr": ENGINE_PADDLEOCR_VL,
-    "paddleocr-vl": ENGINE_PADDLEOCR_VL,
-    "paddleocr_vl_cloud_api": ENGINE_PADDLEOCR_VL_CLOUD,
-    "paddleocr-vl-cloud": ENGINE_PADDLEOCR_VL_CLOUD,
+    # 2026-10-07: PaddleOCR-VL 已移除——旧规则/别名（paddleocr*）保留别名降级：
+    # normalize 走不到引擎的 key 会被 normalize 透传；registry 的 else 分支兜底 docreader
+    "paddleocr": ENGINE_DOCREADER,
+    "paddleocr-vl": ENGINE_DOCREADER,
+    "paddleocr_vl_cloud_api": ENGINE_DOCREADER,
+    "paddleocr-vl-cloud": ENGINE_DOCREADER,
 }
 
 
@@ -58,14 +61,6 @@ def mineru_cloud_key() -> str:
     return _env("MINERU_CLOUD_API_KEY", "MINERU_API_KEY")
 
 
-def paddle_endpoint() -> str:
-    return _env("PADDLEOCR_ENDPOINT", "PADDLEOCR_URL", "PADDLE_OCR_ENDPOINT")
-
-
-def paddle_cloud_key() -> str:
-    return _env("PADDLEOCR_CLOUD_API_KEY", "PADDLEOCR_API_KEY")
-
-
 # --------------------------------------------------------------------------- #
 # file type routing (which engine suits which extension)
 # --------------------------------------------------------------------------- #
@@ -77,15 +72,14 @@ ENGINE_DEFAULT_TYPES: dict[str, list[str]] = {
     ],
     ENGINE_MINERU: ["pdf", "doc", "ppt", "pps"],
     ENGINE_MINERU_CLOUD: ["pdf", "doc", "ppt", "pps"],
-    ENGINE_PADDLEOCR_VL: ["pdf", "png", "jpg", "jpeg", "bmp", "tiff", "webp"],
-    ENGINE_PADDLEOCR_VL_CLOUD: ["pdf", "png", "jpg", "jpeg", "bmp", "tiff", "webp"],
 }
 
 #: WeKnora default rules (types -> engine) used when a KB has no explicit rules
 DEFAULT_ENGINE_RULES: list[dict[str, Any]] = [
     {"file_types": ["pdf"], "engine": ENGINE_MINERU},
     {"file_types": ["doc", "ppt", "pps"], "engine": ENGINE_MINERU},
-    {"file_types": ["png", "jpg", "jpeg", "bmp", "tiff", "webp"], "engine": ENGINE_PADDLEOCR_VL},
+    # 2026-10-07: PaddleOCR-VL 移除——图片类型默认路由 mineru（OCR 擅长图内文字）
+    {"file_types": ["png", "jpg", "jpeg", "bmp", "tiff", "webp"], "engine": ENGINE_MINERU},
     {"file_types": ["txt", "md", "docx", "xlsx", "csv", "html", "htm"], "engine": ENGINE_DOCREADER},
 ]
 
@@ -118,22 +112,12 @@ def _probe_mineru(endpoint: str, api_key: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _probe_paddle(endpoint: str, api_key: str) -> tuple[bool, str]:
-    if not endpoint and not api_key:
-        return False, "PaddleOCR-VL endpoint/API key 未配置"
-    return True, ""
-
-
 def _engines() -> list[EngineInfo]:
     m_ep = mineru_endpoint()
     m_key = mineru_cloud_key()
-    p_ep = paddle_endpoint()
-    p_key = paddle_cloud_key()
 
     m_ok, m_reason = _probe_mineru(m_ep, "")
     mc_ok, mc_reason = _probe_mineru("", m_key)
-    p_ok, p_reason = _probe_paddle(p_ep, "")
-    pc_ok, pc_reason = _probe_paddle("", p_key)
 
     return [
         EngineInfo(
@@ -160,23 +144,6 @@ def _engines() -> list[EngineInfo]:
             available=mc_ok,
             reason=mc_reason,
         ),
-        EngineInfo(
-            name=ENGINE_PADDLEOCR_VL,
-            display_name="PaddleOCR-VL(自建)",
-            description="自建 PaddleOCR-VL,擅长扫描件与图片 OCR",
-            file_types=ENGINE_DEFAULT_TYPES[ENGINE_PADDLEOCR_VL],
-            available=p_ok,
-            reason=p_reason,
-            endpoint=p_ep,
-        ),
-        EngineInfo(
-            name=ENGINE_PADDLEOCR_VL_CLOUD,
-            display_name="PaddleOCR-VL(云端)",
-            description="PaddleOCR-VL 云 API",
-            file_types=ENGINE_DEFAULT_TYPES[ENGINE_PADDLEOCR_VL_CLOUD],
-            available=pc_ok,
-            reason=pc_reason,
-        ),
     ]
 
 
@@ -192,11 +159,7 @@ def engine_endpoint(engine: str) -> str:
     e = normalize_engine(engine)
     if e in (ENGINE_MINERU,):
         return mineru_endpoint()
-    if e in (ENGINE_PADDLEOCR_VL,):
-        return paddle_endpoint()
     if e == ENGINE_MINERU_CLOUD:
-        return "cloud"
-    if e == ENGINE_PADDLEOCR_VL_CLOUD:
         return "cloud"
     return ""
 

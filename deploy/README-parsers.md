@@ -1,28 +1,29 @@
-# kb_compilation 文档解析服务（mineru / paddleocr）
+# kb_compilation 文档解析服务（mineru）
 
-两个解析引擎作为独立容器加入 `deploy/docker-compose.yml`，供 celery-worker 的
+文档解析引擎作为独立容器加入 `deploy/docker-compose.yml`，供 celery-worker 的
 解析引擎规则（`parser_engine_rules`，见 `docs/chunking-parsing-contract.md`）
 按 `engine` 名调用：
 
-| 服务      | 容器名        | engine 值           | 镜像                     | 内部端口 |
-|-----------|---------------|---------------------|--------------------------|----------|
-| MinerU    | kb-mineru     | `mineru`            | kb-mineru:local (自建)   | 8000     |
-| PaddleOCR | kb-paddleocr  | `paddleocr_vl`      | kb-paddleocr:local (自建)| 8081     |
+| 服务   | 容器名     | engine 值           | 镜像                   | 内部端口 |
+|--------|------------|---------------------|------------------------|----------|
+| MinerU | kb-mineru  | `mineru`            | kb-mineru:local (自建) | 8000     |
+
+> 2026-10-07：PaddleOCR-VL 已从系统移除（占位服务/需 GPU/无真实模型，
+> 旧 `paddleocr*` 别名降级到 docreader）。仅保留 docreader（内置）+ mineru（自建/云端）。
 
 端点（后端通过以下环境变量读取，已在 `deploy/.env` 写入）：
 
 ```dotenv
 MINERU_ENDPOINT=http://mineru:8000
-PADDLEOCR_ENDPOINT=http://paddleocr:8081
 ```
 
 ## 启动 / 停止
 
 ```bash
 cd deploy
-docker compose up -d mineru paddleocr     # 只起解析服务
-docker compose ps                          # 查看状态
-docker compose logs -f mineru             # MinerU 日志（首次会下载模型权重）
+docker compose up -d mineru                  # 只起解析服务
+docker compose ps                            # 查看状态
+docker compose logs -f mineru                # MinerU 日志（首次会下载模型权重）
 ```
 
 ## MinerU（真服务）
@@ -51,39 +52,13 @@ docker compose logs -f mineru             # MinerU 日志（首次会下载模�
   1 小时，下载期间不会被误判 unhealthy。
 - 端到端验证：`curl -F "file=@doc.pdf" http://127.0.0.1:18000/file_parse`
   返回真实解析出的 markdown。
-
-## PaddleOCR-VL（占位实现，明确状态）
-
-- 镜像：`kb-paddleocr:local`，自建 FastAPI 服务（源码在
-  `deploy/parsers/paddle_service/app.py`）。
-- API：
-  - `GET /health` — 健康检查，恒 200（服务本身存活；`model_available` 字段表明真模型状态）
-  - `GET /layout-parsing/models` — 模型可用性
-  - `POST /layout-parsing` — 官方同路径（multipart: file / fileBase64 / fileType）
-  - `POST /file_parse` — 与 MinerU 对齐的同步入口
-- 当前状态：解析请求返回 `503 model_not_available`。这是**故意的**——本机
-  无法运行真实 PaddleOCR-VL，原因实测如下：
-  1. Docker Hub 被 DaoCloud 白名单拦截，`paddlepaddle/paddle` 官方镜像不可拉取；
-  2. `paddleocr-vl` 未发布到 PyPI（pypi.org / 清华镜像 404），只能源码安装；
-  3. 权重 2144MB（`model.safetensors` 1917MB），官方推理依赖 vLLM/Paddle-LLM
-     加速，本机无 GPU、磁盘仅约 17G 可用、内存可用约 8G —— 完整部署不可行。
-
-### 安装真模型（后续在有 GPU / 足够磁盘的机器上）
-
-1. 安装 PaddleOCR-VL（`pip install paddleocr-vl` 或源码 `PaddleOCR` 仓库的
-   `paddleocr_vl` 目录）；
-2. 下载权重 `paddlepaddle/PaddleOCR-VL`（约 2.1GB）到容器内；
-3. 在 `app.py` 中把 `_real_backend` 替换为真实 pipeline 调用，并确保
-   `_backend_available()` 返回 True（或设环境变量 `PADDLEOCR_VL_READY=1`）；
-4. 重新构建 `kb-paddleocr:local` 镜像并 `docker compose up -d paddleocr`。
-
-路由层（端点、契约）无需改动，前端配置与探测在替换前后完全一致。
+- VLM（图表语义理解，可选）：KB 级 `vlm_config.server_url` 配置后透传
+  mineru 的 `server_url` 参数（`mineru_parser.py`）。
 
 ## 与契约的对应关系
 
-- `docs/chunking-parsing-contract.md` 中 `engine ∈ docreader | mineru | mineru_cloud |
-  paddleocr_vl | paddleocr_vl_cloud`；
+- `docs/chunking-parsing-contract.md` 中 `engine ∈ docreader | mineru | mineru_cloud`；
 - worker 侧 `mineru_parser.py` 指向 `MINERU_ENDPOINT`（`/file_parse` 同步或
-  `/v1/parse/jobs` 异步均可），`paddle_parser.py` 指向 `PADDLEOCR_ENDPOINT`；
-- `GET /api/v1/parsers/engines` 的 `available` 状态由后端探测这两个端点得到：
-  mineru 探 `/v1/health`，paddleocr 探 `/health`。
+  `/v1/parse/jobs` 异步均可）；
+- `GET /api/v1/parsers/engines` 的 `available` 状态由后端探测该端点得到：
+  mineru 探 `/v1/health`。
