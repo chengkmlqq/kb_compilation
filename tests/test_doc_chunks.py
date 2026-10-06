@@ -74,7 +74,7 @@ def test_get_document_chunks_ok(kb_db) -> None:
     from api.routers.kbs import get_document_chunks
 
     kb_id, doc_id = _make_fixture(kb_db)
-    resp = get_document_chunks(kb_id, doc_id, db=kb_db)
+    resp = get_document_chunks(kb_id, doc_id, caller={"user_id": "u1", "team_name": "", "is_admin": False}, db=kb_db)
     assert resp["success"] is True
     items = resp["data"]["items"]
     assert len(items) == 3
@@ -86,7 +86,7 @@ def test_get_document_chunks_missing_doc(kb_db) -> None:
     from api.routers.kbs import get_document_chunks
 
     kb_id, _doc_id = _make_fixture(kb_db)
-    resp = get_document_chunks(kb_id, "NOPE", db=kb_db)
+    resp = get_document_chunks(kb_id, "NOPE", caller={"user_id": "u1", "team_name": "", "is_admin": False}, db=kb_db)
     assert resp["success"] is True
     assert resp["data"]["items"] == []
 
@@ -97,5 +97,5 @@ def test_get_document_chunks_missing_kb(kb_db) -> None:
     from api.routers.kbs import get_document_chunks
 
     with pytest.raises(fastapi.HTTPException) as exc:
-        get_document_chunks("NOPE_KB", "NOPE", db=kb_db)
+        get_document_chunks("NOPE_KB", "NOPE", caller={"user_id": "u1", "team_name": "", "is_admin": False}, db=kb_db)
     assert exc.value.status_code == 404
