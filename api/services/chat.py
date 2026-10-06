@@ -337,6 +337,37 @@ class ChatClient:
 # ---------------------------------------------------------------------------
 
 
+def _chunk_document_images(hits: list, limit: int = 4) -> list[str]:
+    """从检索命中 chunk 提取文档图片引用（kb-image://doc_id/name）并读回 data URL。
+
+    2026-10-07 文档图片可理解改造：ingest 阶段把解析出的图片存对象存储、
+    md 中留 kb-image:// 引用；问答命中带引用的 chunk 时按引用读回图片，
+    随 user 消息注入视觉模型。存储不可用/引用失效时静默跳过。
+    """
+    import base64
+    import re
+
+    refs: list[str] = []
+    for h in hits:
+        content = getattr(h, "content", "") or (h.get("content") if isinstance(h, dict) else "")
+        for m in re.finditer(r"kb-image://([0-9a-zA-Z_-]+)/([^\s)\"']+)", content or ""):
+            refs.append(m.group(0))
+        if len(refs) >= limit:
+            break
+    out: list[str] = []
+    for ref in refs[:limit]:
+        rel = ref[len("kb-image://") :]
+        try:
+            from api.services.storage import get_bytes, resolve_new_path
+
+            raw = get_bytes(resolve_new_path(f"kb_documents/{rel}"))
+            if raw:
+                out.append("data:image/png;base64," + base64.b64encode(raw).decode("ascii"))
+        except Exception:  # noqa: BLE001 - 图片读回失败不阻断问答
+            continue
+    return out
+
+
 def answer_question(
     kb_db: Session,
     kb: Any,
@@ -392,9 +423,13 @@ def answer_question(
         ]
     else:
         normalized = []
+    # 2026-10-07: 文档图片注入——命中 chunk 里的 kb-image:// 引用读回 data URL，
+    # 与附件图片合并后随 user 消息走视觉模型（文档图片可理解/问答）
+    doc_images = _chunk_document_images(hits)
+    images = list(image_urls or []) + doc_images
     messages = build_messages(
         question, hits, normalized,
-        extra_context=extra_context, agent_prompt=agent_prompt, image_urls=image_urls,
+        extra_context=extra_context, agent_prompt=agent_prompt, image_urls=images,
     )
     client = ChatClient(chat_cfg)
     # 无工具：与接入前逐字一致的单轮流式

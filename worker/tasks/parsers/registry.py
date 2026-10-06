@@ -30,6 +30,7 @@ def parse_document_by_engine(
     content: bytes,
     engine_rules: list[dict] | None = None,
     forced_engine: str | None = None,
+    vlm_server_url: str = "",
 ) -> tuple[str, dict[str, str], str]:
     """Parse bytes into (markdown, images, engine_used).
 
@@ -56,11 +57,11 @@ def parse_document_by_engine(
         if engine == ENGINE_MINERU:
             from worker.tasks.parsers.mineru_parser import parse_with_mineru
 
-            md, images = parse_with_mineru(file_name, file_ext, content)
+            md, images = parse_with_mineru(file_name, file_ext, content, vlm_server_url=vlm_server_url)
         elif engine == ENGINE_MINERU_CLOUD:
             from worker.tasks.parsers.mineru_parser import parse_with_mineru
 
-            md, images = parse_with_mineru(file_name, file_ext, content, use_cloud=True)
+            md, images = parse_with_mineru(file_name, file_ext, content, use_cloud=True, vlm_server_url=vlm_server_url)
         elif engine == ENGINE_PADDLEOCR_VL:
             from worker.tasks.parsers.paddle_parser import parse_with_paddle
 

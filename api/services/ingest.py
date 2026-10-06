@@ -164,6 +164,49 @@ def update_document_state(
         doc.parse_error = error
 
 
+def _persist_document_images(
+    markdown: str,
+    document_id: str,
+    images: dict[str, str],
+) -> str:
+    """文档解析图片持久化（2026-10-07 文档图片可理解改造）：
+    images {name: data_url} → 存对象存储 kb_documents/<doc_id>/images/<name>，
+    md 中内联 data URL 替换为 ``![name](kb-image://<doc_id>/<name>)`` 引用
+    （问答时按引用读回注入视觉模型）。解析引擎不产出 images 时原样返回。
+    """
+    if not images:
+        return markdown
+    try:
+        from api.services.storage import put_bytes, resolve_new_path
+        from worker.tasks.parsers.mineru_parser import decode_image
+    except Exception:  # noqa: BLE001 - 存储不可用不阻断 ingest
+        return markdown
+
+    new_md = markdown
+    for name, data_url in images.items():
+        try:
+            raw = decode_image(data_url)
+            if not raw:
+                continue
+            rel = f"kb_documents/{document_id}/images/{name}"
+            storage_path = put_bytes(resolve_new_path(rel), raw, content_type="image/png")
+            if not storage_path:
+                continue
+            # md 中该 data URL 内联替换为可解析引用（路径含 images/，与存储一致）
+            ref = f"![{name}](kb-image://{document_id}/images/{name})"
+            if data_url in new_md:
+                new_md = new_md.replace(data_url, ref)
+            else:
+                # images value 可能是裸 base64——按常见内联形式兜底替换
+                import re
+
+                pattern = re.escape(data_url)
+                new_md = re.sub(rf"!\[[^\]]*\]\({pattern}\)", ref, new_md)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("persist doc image %s failed: %s", name, exc)
+    return new_md
+
+
 def ingest_document(
     kb_db: Session,
     document: KbDocument,
@@ -193,10 +236,19 @@ def ingest_document(
     # load the KB's engine rules (type -> engine); resolution happens in the
     # dispatcher, which also applies the availability fallback
     engine_rules: list[dict] | None = None
+    vlm_server_url = ""
     try:
         from api.services.kb_chunking import load_engine_rules
 
         engine_rules = load_engine_rules(kb_db, document.kb_id)
+        # 2026-10-07: VLM（图表语义理解）——KB 级 vlm_config.server_url 注入解析
+        from api.models.knowledge import KbDatasource
+
+        kb_row = kb_db.execute(
+            select(KbDatasource).where(KbDatasource.id == document.kb_id)
+        ).scalars().first()
+        if kb_row and kb_row.vlm_config:
+            vlm_server_url = (kb_row.vlm_config or {}).get("server_url", "") or ""
     except Exception:  # noqa: BLE001 - config lookup must not block ingest
         engine_rules = None
 
@@ -205,12 +257,13 @@ def ingest_document(
     kb_db.commit()
     used_engine = parser_engine
     try:
-        markdown, _images, used_engine = parse_document_by_engine(
+        markdown, images, used_engine = parse_document_by_engine(
             document.file_name,
             document.file_ext or "",
             file_content,
             engine_rules=engine_rules,
             forced_engine=parser_engine,
+            vlm_server_url=vlm_server_url,
         )
     except Exception as e:  # noqa: BLE001
         logger.exception("parse failed for document %s", document.id)
@@ -226,6 +279,9 @@ def ingest_document(
         result["error"] = "empty parse result"
         result["success"] = False
         return result
+
+    # 2026-10-07: 文档图片持久化——md 内联 data URL → kb-image:// 引用 + 存对象存储
+    markdown = _persist_document_images(markdown, document.id, images)
 
     # 2. chunk (adaptive; parent-child when enabled)
     parent_seq_by_child: dict[int, int] = {}
