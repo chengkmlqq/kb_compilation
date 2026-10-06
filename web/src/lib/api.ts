@@ -1189,6 +1189,39 @@ export function apiUpdateModel(id: string, payload: Partial<ModelPayload>) {
   });
 }
 
+export interface ModelExportItem {
+  scope: string;
+  name: string;
+  display_name?: string;
+  type: string;
+  source?: string;
+  provider?: string;
+  description?: string;
+  base_url?: string;
+  api_key?: string;
+  interface_type?: string;
+  dimension?: number;
+  supports_vision?: boolean;
+  custom_headers?: Record<string, string>;
+  is_default?: boolean;
+  max_concurrency?: number;
+  thinking_control?: string;
+}
+
+export function apiModelExport() {
+  return request<{ models: ModelExportItem[]; count: number }>("/api/v1/models/export");
+}
+
+export function apiModelImport(models: ModelExportItem[], mode = "upsert") {
+  return request<{ created: number; updated: number; errors: Array<{ index: number; name: string; error: string }> }>(
+    "/api/v1/models/import",
+    {
+      method: "POST",
+      body: JSON.stringify({ mode, models }),
+    },
+  );
+}
+
 export function apiDeleteModel(id: string) {
   return request<{ deleted: boolean }>(`/api/v1/models/${id}`, { method: "DELETE" });
 }

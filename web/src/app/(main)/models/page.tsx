@@ -21,12 +21,14 @@ import {
   Tag,
   Tooltip,
   Typography,
+  Upload,
 } from "antd";
 import {
   AudioOutlined,
   CopyOutlined,
   DatabaseOutlined,
   DeleteOutlined,
+  DownloadOutlined,
   EditOutlined,
   EllipsisOutlined,
   ExperimentOutlined,
@@ -46,11 +48,14 @@ import {
   apiDeleteModel,
   apiListModelProviders,
   apiListModels,
+  apiModelExport,
+  apiModelImport,
   apiSetModelDefault,
   apiTestModel,
   apiUpdateModel,
   ModelDebugPayload,
   ModelDebugResult,
+  ModelExportItem,
   ModelItem,
   ModelProvider,
   ModelScope,
@@ -185,6 +190,62 @@ export default function ModelRegistryPage() {
     setModalOpen(true);
   };
 
+  // 导出：下载 JSON（含 api_key 明文，管理员迁移用途）
+  const handleExport = async () => {
+    try {
+      const res = await apiModelExport();
+      if (!res.success || !res.data) {
+        message.error((res as { message?: string }).message || "导出失败");
+        return;
+      }
+      const blob = new Blob([JSON.stringify(res.data.models, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `models-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      message.success(`已导出 ${res.data.count} 个模型`);
+    } catch (e) {
+      message.error(`导出失败: ${String(e)}`);
+    }
+  };
+
+  // 导入：解析上传 JSON → 批量 upsert
+  const handleImportFile = (file: File) => {
+    void (async () => {
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const models: ModelExportItem[] = Array.isArray(parsed)
+          ? parsed
+          : Array.isArray(parsed.models)
+            ? parsed.models
+            : [];
+        if (models.length === 0) {
+          message.error("导入文件格式错误：需 JSON 数组或 {models: [...]}");
+          return;
+        }
+        const res = await apiModelImport(models, "upsert");
+        if (res.success && res.data) {
+          const errs = res.data.errors || [];
+          message.success(
+            `导入完成：新建 ${res.data.created} / 更新 ${res.data.updated}${errs.length ? ` / 失败 ${errs.length}` : ""}`,
+          );
+          if (errs.length) console.warn("导入失败项:", errs.slice(0, 5));
+          void load();
+        } else {
+          message.error((res as { message?: string }).message || "导入失败");
+        }
+      } catch (e) {
+        message.error(`导入失败: ${String(e)}`);
+      }
+    })();
+    return false; // 阻止 antd 默认上传
+  };
+
   if (loading && items.length === 0) {
     return (
       <div style={{ display: "flex", justifyContent: "center", padding: 80 }}>
@@ -198,6 +259,16 @@ export default function ModelRegistryPage() {
       title="模型配置"
       extra={
         <Space>
+          <Button icon={<DownloadOutlined />} onClick={handleExport}>
+            导出
+          </Button>
+          <Upload
+            accept=".json,application/json"
+            showUploadList={false}
+            beforeUpload={handleImportFile}
+          >
+            <Button icon={<UploadOutlined />}>导入</Button>
+          </Upload>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
             刷新
           </Button>
