@@ -54,12 +54,13 @@ def _decode_skill_zips(cfg: dict) -> list[bytes]:
     return out
 
 
-def _inject_task_env(cfg: dict) -> None:
+def _inject_task_env(cfg: dict, task_id: str = "") -> None:
     """任务级上下文注入进程环境变量：技能脚本（run_skill_script 子进程）读取。
 
     - kb_id / knowledge_id / doc_name → WEKNORA_*：本次任务的目标知识库与文档
     - model / base_url / api_key    → WEKNORA_LLM_*：任务级 LLM（优先于容器 env）
     - skill                         → WEKNORA_SKILL：任务绑定技能
+    - WIKI_EVENTS_LOG               → 技能脚本 LLM 事件 JSONL 落盘路径（可观测性）
     """
     for k in ("kb_id", "knowledge_id", "doc_name"):
         if cfg.get(k):
@@ -69,6 +70,16 @@ def _inject_task_env(cfg: dict) -> None:
             os.environ[f"WEKNORA_LLM_{k.upper()}"] = str(cfg[k])
     if cfg.get("skill"):
         os.environ["WEKNORA_SKILL"] = str(cfg["skill"])
+    if task_id:
+        try:
+            from api.config import get_settings
+            from pathlib import Path
+
+            ev_dir = Path(get_settings().kb_storage_dir) / "logs/events"
+            ev_dir.mkdir(parents=True, exist_ok=True)
+            os.environ["WIKI_EVENTS_LOG"] = str(ev_dir / f"{task_id}.jsonl")
+        except Exception:
+            pass
 
 
 def _build_task_model(cfg: dict):
@@ -159,7 +170,7 @@ async def run_agent(payload: dict[str, Any], task_id: str = "") -> dict[str, Any
     # 上下文本已隔离，但 Celery prefork 复用进程，不应依赖隐式行为。
     set_task_skills(None)
 
-    _inject_task_env(cfg)
+    _inject_task_env(cfg, task_id=task_id)
 
     task_skill_zips = _decode_skill_zips(cfg)
     if task_skill_zips:

@@ -1871,6 +1871,17 @@ export interface AgentTraceData {
   spans: AgentTraceSpan[];
   has_trace: boolean;
   summary?: { span_count: number; duration_ms: number; llm_calls: number; tools: string[] };
+  events?: {
+    total: number;
+    ok: number;
+    error: number;
+    retries: number;
+    retry_reasons: Record<string, number>;
+    backoff_total_s: number;
+    wait_total_s: number;
+    llm_total_s: number;
+    phases: Record<string, number>;
+  } | null;
 }
 
 export function apiGetJobTrace(jobId: string) {

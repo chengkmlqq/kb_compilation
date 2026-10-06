@@ -343,12 +343,22 @@ def get_job_trace(
         "llm_calls": llm_calls,
         "tools": tools,
     }
+    # 技能 LLM 事件摘要（logs/events/{job_id}.summary.json，worker 聚合落盘）
+    events: dict | None = None
+    ev_path = os.path.join(get_settings().kb_storage_dir, f"logs/events/{job_id}.summary.json")
+    if os.path.isfile(ev_path):
+        try:
+            with open(ev_path, encoding="utf-8") as f:
+                events = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            events = None
     return {
         "success": True,
         "data": {
             "spans": enriched,
             "has_trace": True,
             "summary": summary,
+            "events": events,
         },
     }
 

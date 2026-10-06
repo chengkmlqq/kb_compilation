@@ -273,6 +273,15 @@ def _handle_agent_wiki_build(job_id: str, task_params: str | None) -> dict[str, 
         return {"success": False, "error": repr(exc), "job_id": job_id}
 
     result["job_id"] = job_id
+    # ── 失败如实标记（2026-10-06）：agent 汇报"构建未完成/两次超时"等 → 标失败
+    if result.get("success"):
+        _out = str(result.get("output") or "")
+        _fail_kw = ("构建未完成", "两次超时", "均确认失败", "执行结果：构建失败",
+                    "构建失败", "未完成（两次超时）", "两次运行均已确认失败")
+        if any(k in _out for k in _fail_kw):
+            result["success"] = False
+            result["error"] = f"agent 汇报构建失败: {_out[:200]}"
+            _write_progress(job_id, f"[agent] 构建未完成（agent 自报失败），任务标记 FAILED")
     if result.get("success"):
         logger.info("agent wiki build done job=%s runs_ms=%s", job_id, result.get("runs_ms"))
         _write_progress(job_id, f"[agent] 完成（{result.get('runs_ms')}ms）")
@@ -305,6 +314,53 @@ def _handle_agent_wiki_build(job_id: str, task_params: str | None) -> dict[str, 
                 _write_progress(job_id, line)
     except Exception as exc:  # noqa: BLE001 - trace 落盘失败不阻塞任务
         logger.warning("agent trace persist failed job=%s: %s", job_id, exc)
+
+    # ── 技能 LLM 事件聚合（logs/events/{job_id}.jsonl → 摘要 + 事件文件）──
+    try:
+        from api.config import get_settings as _gs
+        from pathlib import Path as _P
+
+        ev_file = _P(_gs().kb_storage_dir) / f"logs/events/{job_id}.jsonl"
+        if ev_file.exists():
+            evs = []
+            for line in ev_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    try:
+                        evs.append(json.loads(line))
+                    except Exception:
+                        pass
+            ok_evs = [e for e in evs if e.get("kind") == "ok"]
+            err_evs = [e for e in evs if e.get("kind") == "error"]
+            retries = sum(len(e.get("retry_events") or []) for e in evs)
+            retry_reasons: dict[str, int] = {}
+            backoff_total = 0
+            for e in evs:
+                for r in e.get("retry_events") or []:
+                    retry_reasons[r.get("reason", "?")] = retry_reasons.get(r.get("reason", "?"), 0) + 1
+                    backoff_total += int(r.get("backoff_s") or 0)
+            wait_total = sum(int(e.get("wait_ms") or 0) for e in evs) / 1000
+            llm_total = sum(int(e.get("llm_ms") or 0) for e in evs) / 1000
+            phases: dict[str, int] = {}
+            for e in evs:
+                p = e.get("phase") or "?"
+                phases[p] = phases.get(p, 0) + 1
+            ev_summary = {
+                "total": len(evs), "ok": len(ok_evs), "error": len(err_evs),
+                "retries": retries, "retry_reasons": retry_reasons,
+                "backoff_total_s": backoff_total, "wait_total_s": round(wait_total, 1),
+                "llm_total_s": round(llm_total, 1), "phases": phases,
+            }
+            ev_out = _P(_gs().kb_storage_dir) / f"logs/events/{job_id}.summary.json"
+            ev_out.write_text(json.dumps(ev_summary, ensure_ascii=False), encoding="utf-8")
+            ev_line = (
+                f"LLM 明细: 调用{len(ok_evs)} 失败{len(err_evs)} 重试{retries}次"
+                f"(429:{retry_reasons.get('http_429', 0)} 超时:{retry_reasons.get('network', 0)}) "
+                f"退避等待{backoff_total}s 节流等待{ev_summary['wait_total_s']}s LLM耗时{ev_summary['llm_total_s']}s"
+            )
+            _write_progress(job_id, ev_line)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("agent events aggregate failed job=%s: %s", job_id, exc)
     return result
 
 

@@ -511,6 +511,45 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
               )}
             </div>
 
+            {/* LLM 构建明细（技能脚本埋点：逐次调用/重试/退避，定位慢在哪） */}
+            {trace?.events ? (
+              <div>
+                <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 8 }}>
+                  LLM 构建明细
+                  <Space size={6} style={{ marginLeft: 8, fontWeight: 400, fontSize: 12 }}>
+                    <Tag color="cyan">调用 {trace.events.ok}</Tag>
+                    {trace.events.error > 0 ? (
+                      <Tag color="red">失败 {trace.events.error}</Tag>
+                    ) : null}
+                    <Tag color={trace.events.retries > 0 ? "orange" : "default"}>
+                      重试 {trace.events.retries}
+                    </Tag>
+                    {trace.events.retry_reasons.http_429 ? (
+                      <Tag color="red">429 ×{trace.events.retry_reasons.http_429}</Tag>
+                    ) : null}
+                    {trace.events.retry_reasons.network ? (
+                      <Tag color="red">网络/超时 ×{trace.events.retry_reasons.network}</Tag>
+                    ) : null}
+                    <Tag>LLM 耗时 {trace.events.llm_total_s}s</Tag>
+                    <Tag>节流等待 {trace.events.wait_total_s}s</Tag>
+                    {trace.events.backoff_total_s > 0 ? (
+                      <Tag color="orange">退避等待 {trace.events.backoff_total_s}s</Tag>
+                    ) : null}
+                  </Space>
+                </div>
+                <Table
+                  size="small"
+                  pagination={false}
+                  rowKey={(r) => r.phase}
+                  dataSource={Object.entries(trace.events.phases).map(([phase, n]) => ({ phase, n }))}
+                  columns={[
+                    { title: "构建阶段", dataIndex: "phase", width: 220 },
+                    { title: "LLM 调用次数", dataIndex: "n", width: 120 },
+                  ]}
+                />
+              </div>
+            ) : null}
+
             <div>
               <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 8 }}>
                 任务参数
