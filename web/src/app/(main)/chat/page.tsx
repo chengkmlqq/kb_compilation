@@ -43,6 +43,7 @@ import {
   apiGenerateTitle,
   apiListAgents,
   apiListAttachments,
+  apiListModels,
   apiListKbs,
   apiListSessions,
   apiLoadSessionMessages,
@@ -102,6 +103,9 @@ export default function ChatPage() {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [searchResults, setSearchResults] = useState<(ChatMessageItem & { session_id: string; session_title: string })[]>([]);
   const [searching, setSearching] = useState(false);
+  // 2026-10-06: 模型切换——chat 模型下拉（空=默认模型）
+  const [chatModels, setChatModels] = useState<ModelItem[]>([]);
+  const [modelId, setModelId] = useState<string>("");
   // 引用抽屉（WeKnora 对齐：气泡角标 → 右侧抽屉看全部引用原文）
   const [refDrawer, setRefDrawer] = useState<{
     open: boolean;
@@ -147,6 +151,11 @@ export default function ChatPage() {
           })),
         );
       }
+    })();
+    // 2026-10-06: 模型切换——加载 chat 模型列表
+    void (async () => {
+      const res = await apiListModels({ type: "chat" });
+      if (res.success) setChatModels(res.data?.items || []);
     })();
   }, [loadSessions]);
 
@@ -383,6 +392,7 @@ export default function ChatPage() {
           top_k: 5,
           threshold: 0.2,
           embed_query: true,
+          model_id: modelId || undefined, // 2026-10-06: 模型切换（空=默认模型）
         }),
         signal: controller.signal,
       });
@@ -922,6 +932,25 @@ export default function ChatPage() {
         </div>
 
         <div style={{ padding: "12px 16px", borderTop: "1px solid #f0f0f0" }}>
+          {/* 2026-10-06: 模型切换——chat 模型下拉（空=默认模型） */}
+          {chatModels.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <Select
+                value={modelId || undefined}
+                onChange={setModelId}
+                placeholder="默认模型"
+                allowClear
+                style={{ width: 180 }}
+                options={chatModels.map((m) => ({
+                  value: m.id,
+                  label: m.display_name || m.name || m.id,
+                }))}
+              />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                选择问答模型（留空=系统默认）
+              </Text>
+            </div>
+          )}
           {/* 附件区 */}
           {(attachments.length > 0 || true) && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>

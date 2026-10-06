@@ -52,6 +52,7 @@ def load_chat_config(
     user_id: str = "",
     team_name: str = "",
     is_sys_admin: bool = False,
+    model_id: str | None = None,
 ) -> ChatConfig:
     """Resolve chat config with scoped model priority.
 
@@ -59,6 +60,7 @@ def load_chat_config(
     model registry), then the legacy modo_dim SYSTEM_CONFIG > env path.
     Consumers with no user context (worker/wiki build, MCP) skip personal
     and team scopes and resolve the system default first, then legacy/env.
+    model_id: 显式指定模型（问答界面模型切换，2026-10-06）。
     """
     settings = get_settings()
 
@@ -72,6 +74,7 @@ def load_chat_config(
                 caller_user_id=user_id or "",
                 caller_team_name=team_name or "",
                 is_sys_admin=is_sys_admin,
+                model_id=model_id,
             )
             if resolved and resolved.get("base_url"):
                 return ChatConfig(

@@ -43,6 +43,8 @@ class QARequest(BaseModel):
     top_k: int | None = None
     threshold: float | None = None
     embed_query: bool = True
+    # 2026-10-06: 问答界面模型切换（指定 chat 模型 id；不传=用默认模型）
+    model_id: str | None = None
 
 
 def _sse(event: dict) -> str:
@@ -160,13 +162,28 @@ def _run_generation(
         thinking_parts: list[str] = []
         refs: list[dict] = []
         try:
+            requested_cfg = None
+            if req.model_id:
+                # 2026-10-06: 模型切换——指定模型则显式解析（文本/图片均生效）
+                try:
+                    from api.services.chat import load_chat_config
+
+                    requested_cfg = load_chat_config(
+                        db,
+                        user_id=ctx_user_id,
+                        team_name=ctx_team_name,
+                        is_sys_admin=ctx_is_admin,
+                        model_id=req.model_id,
+                    )
+                except Exception:  # noqa: BLE001
+                    requested_cfg = None
             if image_urls:
                 # 图片问答要求对话模型支持视觉（supports_vision）
                 try:
                     from api.models.model import KbModel
                     from api.services.chat import load_chat_config
 
-                    chat_cfg = load_chat_config(
+                    chat_cfg = requested_cfg or load_chat_config(
                         db,
                         user_id=ctx_user_id,
                         team_name=ctx_team_name,
@@ -192,6 +209,7 @@ def _run_generation(
                 user_id=ctx_user_id,
                 team_name=ctx_team_name,
                 is_sys_admin=ctx_is_admin,
+                chat_cfg=requested_cfg if req.model_id else None,  # 2026-10-06: 指定模型时复用解析结果
             ):
                 if event.get("type") == "context":
                     hits = event.get("hits") or []
