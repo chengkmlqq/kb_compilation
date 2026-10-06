@@ -246,11 +246,19 @@ def ingest_document(
         result["success"] = False
         return result
 
-    # 3. embed
+    # 3. embed（失败必须显式 FAILED，否则文档停在 EMBEDDING 残留——历史坑）
     update_document_state(kb_db, document.id, "EMBEDDING")
     kb_db.commit()
     texts = [text for _, text in chunks]
-    vectors = embed_chunks(embedding_client, texts)
+    try:
+        vectors = embed_chunks(embedding_client, texts)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("embed failed for document %s", document.id)
+        update_document_state(kb_db, document.id, "FAILED", error=f"embed: {e}")
+        kb_db.commit()
+        result["error"] = f"embed: {e}"
+        result["success"] = False
+        return result
 
     # 4. store
     meta = {"source_file": document.file_name, "parse_engine": used_engine}

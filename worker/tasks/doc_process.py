@@ -75,7 +75,14 @@ def process_document(document_id: str, file_content: bytes, parser_engine: str |
                     "error": f"document bytes unavailable (storage_path={document.storage_path!r})",
                 }
 
-        client = get_embedding_client(db, kb_id=document.kb_id)
+        try:
+            client = get_embedding_client(db, kb_id=document.kb_id)
+        except Exception as exc:  # noqa: BLE001 - embedding 不可用必须显式 FAILED，防状态残留
+            logger.exception("embedding client unavailable for document %s", document_id)
+            document.parse_state = "FAILED"
+            document.parse_error = str(exc)[:200]
+            db.commit()
+            return {"success": False, "error": f"embedding 模型不可用: {exc}"}
         return ingest_document(db, document, file_content, client, parser_engine=parser_engine)
     finally:
         db.close()
