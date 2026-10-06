@@ -6,13 +6,15 @@ import {
   Button,
   Card,
   Checkbox,
+  Col,
+  Dropdown,
   Empty,
   Form,
   Input,
-  List,
   Modal,
   Pagination,
   Radio,
+  Row,
   Select,
   Space,
   Switch,
@@ -20,11 +22,15 @@ import {
   Typography,
 } from "antd";
 import {
+  ApartmentOutlined,
   BookOutlined,
   DeleteOutlined,
   FileTextOutlined,
-  FolderOpenOutlined,
+  MessageOutlined,
+  MoreOutlined,
+  PictureOutlined,
   PlusOutlined,
+  PushpinOutlined,
   SlidersOutlined,
 } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
@@ -41,6 +47,7 @@ import {
   ModelItem,
 } from "@/lib/api";
 import ChunkingConfigModal from "@/components/ChunkingConfigModal";
+import KBConfigModal from "@/components/KBConfigModal";
 
 const PIPELINE_OPTIONS = [
   { label: "向量检索", value: "vector", default: true },
@@ -48,6 +55,16 @@ const PIPELINE_OPTIONS = [
   { label: "Wiki 构建", value: "wiki", default: false },
   { label: "知识图谱", value: "graph", default: false },
 ];
+
+const PIN_KEY = "kb.top";
+
+const getPinned = (): Set<string> => {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(PIN_KEY) || "[]") as string[]);
+  } catch {
+    return new Set();
+  }
+};
 
 export default function KbsPage() {
   const { message, modal } = App.useApp();
@@ -62,9 +79,43 @@ export default function KbsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
+  const [search, setSearch] = useState("");
+  const [pinned, setPinned] = useState<Set<string>>(() => getPinned());
+  const [configKb, setConfigKb] = useState<KbItem | null>(null);
   const [form] = Form.useForm();
 
   const customWiki = Form.useWatch("custom_wiki_generation", form) ?? false;
+
+  const togglePin = (id: string) => {
+    setPinned((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem(PIN_KEY, JSON.stringify([...next]));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+
+  const visibleKbs = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = q
+      ? kbs.filter(
+          (k) =>
+            k.name.toLowerCase().includes(q) ||
+            (k.label || "").toLowerCase().includes(q)
+        )
+      : kbs;
+    return [...filtered].sort((a, b) => {
+      const pa = pinned.has(a.id) ? 1 : 0;
+      const pb = pinned.has(b.id) ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      return 0;
+    });
+  }, [kbs, search, pinned]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -204,69 +255,127 @@ export default function KbsPage() {
     <Card
       title="知识库管理"
       extra={
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-          新建知识库
-        </Button>
+        <Space wrap>
+          <Input.Search
+            allowClear
+            placeholder="搜索知识库名称/标签"
+            style={{ width: 240 }}
+            onSearch={(v) => setSearch(v)}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+            新建知识库
+          </Button>
+        </Space>
       }
     >
-      <List
-        loading={loading}
-        dataSource={kbs}
-        locale={{ emptyText: <Empty description="暂无知识库，点击右上角新建" /> }}
-        renderItem={(kb) => (
-          <List.Item
-            actions={[
-              <Button
-                key="open"
-                type="link"
-                icon={<FolderOpenOutlined />}
-                onClick={() => router.push(`/kbs/${kb.id}`)}
-              >
-                打开
-              </Button>,
-              <Button
-                key="chunking"
-                type="link"
-                icon={<SlidersOutlined />}
-                onClick={() => setChunkingKbId(kb.id)}
-              >
-                切片配置
-              </Button>,
-              <Button
-                key="del"
-                type="link"
-                danger
-                icon={<DeleteOutlined />}
-                onClick={() => onDelete(kb)}
-              >
-                删除
-              </Button>,
-            ]}
-          >
-            <List.Item.Meta
-              title={
-                <Space>
-                  <Typography.Link onClick={() => router.push(`/kbs/${kb.id}`)}>
-                    {kb.name}
-                  </Typography.Link>
-                  {kb.label && <Tag>{kb.label}</Tag>}
-                </Space>
-              }
-              description={
-                <Space size="large">
-                  <span>
-                    <FileTextOutlined /> 文档 {kb.doc_count ?? 0}
-                  </span>
-                  <span>
-                    <BookOutlined /> Wiki 页 {kb.page_count ?? 0}
-                  </span>
-                  {kb.description && <Typography.Text type="secondary">{kb.description}</Typography.Text>}
-                </Space>
-              }
-            />
-          </List.Item>
-        )}
-      />
+      {visibleKbs.length === 0 ? (
+        <Empty description="暂无知识库，点击右上角「新建知识库」创建">
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+            新建知识库
+          </Button>
+        </Empty>
+      ) : (
+        <Row gutter={[16, 16]}>
+          {visibleKbs.map((kb) => {
+            const isFaq = kb.type === "faq";
+            const graphOn = Boolean(kb.indexing_strategy?.graph_enabled);
+            const vlmOn = kb.vlm_config && Object.keys(kb.vlm_config).length > 0;
+            const pinnedNow = pinned.has(kb.id);
+            return (
+              <Col key={kb.id} xs={24} sm={12} lg={8} xl={6}>
+                <Card
+                  size="small"
+                  hoverable
+                  style={{ height: "100%" }}
+                  onClick={() => router.push(`/kbs/${kb.id}`)}
+                  title={
+                    <Space>
+                      <span
+                        style={{
+                          fontSize: 20,
+                          color: isFaq ? "#52c41a" : "#1677ff",
+                        }}
+                      >
+                        {isFaq ? <MessageOutlined /> : <FileTextOutlined />}
+                      </span>
+                      <Typography.Text strong ellipsis style={{ maxWidth: 140 }}>
+                        {kb.name}
+                      </Typography.Text>
+                    </Space>
+                  }
+                  extra={
+                    <Dropdown
+                      menu={{
+                        items: [
+                          { key: "open", label: "打开知识库" },
+                          { key: "config", label: "知识库配置" },
+                          { key: "chunking", label: "切片配置" },
+                          { type: "divider" },
+                          pinnedNow
+                            ? { key: "unpin", label: "取消置顶" }
+                            : { key: "pin", label: "置顶", icon: <PushpinOutlined /> },
+                          { type: "divider" },
+                          { key: "delete", label: "删除", danger: true },
+                        ],
+                        onClick: ({ key, domEvent }) => {
+                          domEvent.stopPropagation();
+                          if (key === "open") router.push(`/kbs/${kb.id}`);
+                          else if (key === "config") setConfigKb(kb);
+                          else if (key === "chunking") setChunkingKbId(kb.id);
+                          else if (key === "pin") togglePin(kb.id);
+                          else if (key === "unpin") togglePin(kb.id);
+                          else if (key === "delete") onDelete(kb);
+                        },
+                      }}
+                    >
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<MoreOutlined />}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </Dropdown>
+                  }
+                >
+                  <Typography.Paragraph
+                    type="secondary"
+                    ellipsis={{ rows: 2 }}
+                    style={{ minHeight: 44, marginBottom: 8 }}
+                  >
+                    {kb.description || "（无描述）"}
+                  </Typography.Paragraph>
+                  <Space wrap size={4}>
+                    <Tag color="blue">
+                      <FileTextOutlined /> 文档 {kb.doc_count ?? 0}
+                    </Tag>
+                    <Tag color="green">
+                      <BookOutlined /> Wiki {kb.page_count ?? 0}
+                    </Tag>
+                    {kb.label && <Tag>{kb.label}</Tag>}
+                    {graphOn && (
+                      <Tag icon={<ApartmentOutlined />} color="purple">
+                        图谱
+                      </Tag>
+                    )}
+                    {vlmOn && (
+                      <Tag icon={<PictureOutlined />} color="orange">
+                        多模态
+                      </Tag>
+                    )}
+                    {isFaq && <Tag color="cyan">FAQ</Tag>}
+                    {pinnedNow && (
+                      <Tag icon={<PushpinOutlined />} color="gold">
+                        置顶
+                      </Tag>
+                    )}
+                  </Space>
+                </Card>
+              </Col>
+            );
+          })}
+        </Row>
+      )}
 
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
         <Pagination
@@ -394,6 +503,14 @@ export default function KbsPage() {
         open={chunkingKbId !== null}
         kbId={chunkingKbId ?? ""}
         onClose={() => setChunkingKbId(null)}
+      />
+      <KBConfigModal
+        kb={configKb}
+        open={configKb !== null}
+        onClose={(changed) => {
+          setConfigKb(null);
+          if (changed) void load();
+        }}
       />
     </Card>
   );

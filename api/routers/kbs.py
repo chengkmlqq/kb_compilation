@@ -291,32 +291,69 @@ def get_documents(
     kb_id: str,
     page: int = 1,
     page_size: int = 20,
+    keyword: str = "",
+    file_type: str = "",
+    parse_status: str = "",
     db: Session = Depends(get_db),
 ) -> dict:
     if not get_kb(db, kb_id):
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
-    return {"success": True, "data": list_documents(db, kb_id, page, page_size)}
+    return {
+        "success": True,
+        "data": list_documents(
+            db, kb_id, page, page_size,
+            keyword=keyword, file_type=file_type, parse_status=parse_status,
+        ),
+    }
 
 
 @router.post("/{kb_id}/documents/upload")
 async def upload_document(
     kb_id: str,
-    file: UploadFile,
+    file: UploadFile | None = None,
+    url: str = Query(default="", max_length=2000),
+    file_name: str = Query(default="", max_length=255),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Accept a document upload, persist bytes locally, enqueue Celery parse.
-
+    """Accept a document upload (multipart file OR remote URL), persist bytes
+    locally, enqueue Celery parse.
     Pipeline: bytes -> {KB_STORAGE_DIR}/{kb_id}/{doc_id}{ext} -> kb_document
     row (PENDING) -> modo_job row + Celery send_task (KbDocumentProcessTask).
+    URL mode fetches the remote document with a 20s timeout and the same size
+    cap as file uploads.
     """
     if not get_kb(db, kb_id):
         raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
 
-    file_name = (file.filename or "untitled").strip()
-    if not file_name or file_name == "untitled":
-        raise HTTPException(status_code=400, detail="文件名不能为空")
+    if url.strip():
+        # URL 导入模式
+        try:
+            from urllib.parse import urlparse
 
-    content = await file.read()
+            parsed = urlparse(url.strip())
+            if parsed.scheme not in ("http", "https"):
+                raise HTTPException(status_code=400, detail="仅支持 http/https 链接导入")
+            import urllib.request
+
+            req = urllib.request.Request(url.strip(), headers={"User-Agent": "Mozilla/5.0 kb-importer"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                content = resp.read()
+            base_name = Path(parsed.path).name or ""
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("URL import fetch failed")
+            raise HTTPException(status_code=400, detail=f"URL 抓取失败: {exc}") from exc
+        fname = (file_name.strip() or base_name or "untitled").strip()
+        if fname == "untitled":
+            raise HTTPException(status_code=400, detail="无法从链接识别文件名，请用 file_name 指定")
+    else:
+        if file is None:
+            raise HTTPException(status_code=400, detail="请上传文件或提供 url")
+        fname = (file.filename or "untitled").strip()
+        if not fname or fname == "untitled":
+            raise HTTPException(status_code=400, detail="文件名不能为空")
+        content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="文件内容为空")
     if len(content) > MAX_UPLOAD_BYTES:
@@ -329,7 +366,7 @@ async def upload_document(
     from api.services import storage as storage_svc
 
     doc_id = uuid.uuid4().hex
-    ext = Path(file_name).suffix or ""
+    ext = Path(fname).suffix or ""
     storage_path = storage_svc.resolve_new_path(f"kb_documents/{kb_id}/{doc_id}{ext}")
     try:
         storage_svc.put_bytes(storage_path, content)
@@ -341,7 +378,7 @@ async def upload_document(
     doc = create_document(
         db,
         kb_id=kb_id,
-        file_name=file_name,
+        file_name=fname,
         file_ext=ext,
         file_size=len(content),
         storage_path=storage_path,

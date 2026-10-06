@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from api.db import get_db
 from api.models.knowledge import KbAgent
 from api.services.agents import (
+    copy_agent,
     create_agent,
     delete_agent,
     effective_system_prompt,
@@ -79,6 +80,14 @@ def delete(agent_id: str, db: Session = Depends(get_db)) -> dict:
     if not delete_agent(db, agent_id):
         raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
     return {"success": True}
+
+
+@router.post("/{agent_id}/copy")
+def copy(agent_id: str, db: Session = Depends(get_db)) -> dict:
+    agent = copy_agent(db, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
+    return {"success": True, "data": {"id": agent.id, "name": agent.name}}
 
 
 class AgentQARequest(BaseModel):

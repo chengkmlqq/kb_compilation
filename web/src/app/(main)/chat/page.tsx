@@ -1,17 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   App,
   Button,
   Card,
+  Col,
   Drawer,
   Empty,
   Input,
   List,
   Modal,
   Popconfirm,
+  Row,
   Select,
   Space,
   Spin,
@@ -27,6 +29,7 @@ import {
   PaperClipOutlined,
   PlusOutlined,
   PushpinOutlined,
+  ReloadOutlined,
   SearchOutlined,
   SendOutlined,
   StopOutlined,
@@ -54,6 +57,7 @@ import {
   ChatSessionItem,
   KbItem,
 } from "@/lib/api";
+import MarkdownViewer from "@/components/MarkdownViewer";
 
 const { Text } = Typography;
 
@@ -62,6 +66,7 @@ interface UiMessage extends ChatMessageItem {
   followUps?: string[];
   followUpLoading?: boolean;
   followUpsDismissed?: boolean;
+  error?: boolean;
 }
 
 // 切页续传锚点：qa-resume:{sessionId} → {stream_id, offset}
@@ -93,6 +98,7 @@ export default function ChatPage() {
   const [agentMode, setAgentMode] = useState<string>(); // 选中的 agent id
   const [attachments, setAttachments] = useState<ChatAttachmentItem[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [refsDrawer, setRefsDrawer] = useState<{ title: string; refs: ChatRefItem[] } | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [searchResults, setSearchResults] = useState<(ChatMessageItem & { session_id: string; session_title: string })[]>([]);
   const [searching, setSearching] = useState(false);
@@ -495,8 +501,15 @@ export default function ChatPage() {
           }
         });
       } else {
+        // 失败：保留用户消息，助手消息标记 error（提供「重试」入口）
         toast.error("对话请求失败，请重试");
-        setMsgs((prev) => prev.filter((m) => m.id !== placeholder.id));
+        setMsgs((prev) =>
+          prev.map((m) =>
+            m.id === placeholder.id
+              ? { ...m, content: "", streaming: false, error: true }
+              : m,
+          ),
+        );
       }
       setStreaming(false);
       scrollBottom();
@@ -510,6 +523,18 @@ export default function ChatPage() {
   // 触发追问
   const askFollowUp = (q: string) => {
     void send(q);
+  };
+
+  // 重新生成：重发该回答前一条用户消息
+  const regenerate = (msgs_: UiMessage[], idx: number) => {
+    for (let k = idx - 1; k >= 0; k--) {
+      const prev = msgs_[k];
+      if (prev.role === "user" && prev.content) {
+        void send(prev.content);
+        return;
+      }
+    }
+    toast.warning("未找到可重新生成的问题");
   };
 
   const deleteSession = async (id: string) => {
@@ -597,6 +622,14 @@ export default function ChatPage() {
     await loadSessions();
   };
 
+  const [sessionSearch, setSessionSearch] = useState("");
+
+  const filteredSessions = useMemo(() => {
+    const q = sessionSearch.trim().toLowerCase();
+    if (!q) return sessions;
+    return sessions.filter((s) => s.title.toLowerCase().includes(q));
+  }, [sessions, sessionSearch]);
+
   return (
     <div style={{ display: "flex", height: "calc(100vh - 64px - 48px)", gap: 16 }}>
       {/* 左：会话列表 */}
@@ -612,8 +645,16 @@ export default function ChatPage() {
           </Space>
         }
       >
-        <List
-          dataSource={sessions}
+        <Input
+          allowClear
+          placeholder="搜索会话"
+          prefix={<SearchOutlined style={{ color: "#999" }} />}
+          style={{ marginBottom: 8 }}
+          value={sessionSearch}
+          onChange={(e) => setSessionSearch(e.target.value)}
+        />
+        <List<ChatSessionItem>
+          dataSource={filteredSessions}
           locale={{ emptyText: <Empty description="暂无会话" /> }}
           renderItem={(s) => (
             <List.Item
@@ -712,13 +753,40 @@ export default function ChatPage() {
             <div style={{ textAlign: "center", padding: 32 }}>
               <Text type="secondary" style={{ fontSize: 15 }}>输入问题开始问答，回答基于知识库检索片段生成。</Text>
               {recommendations.length > 0 && (
-                <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 8, alignItems: "center" }}>
-                  <Text type="secondary">推荐问题</Text>
-                  {recommendations.map((q, i) => (
-                    <Button key={i} onClick={() => void send(q)} style={{ maxWidth: 420 }}>
-                      {q}
+                <div style={{ marginTop: 20, maxWidth: 720, marginLeft: "auto", marginRight: "auto" }}>
+                  <Space style={{ justifyContent: "center", width: "100%", marginBottom: 12 }}>
+                    <Text type="secondary" style={{ fontSize: 13 }}>💡 推荐问题</Text>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<ReloadOutlined />}
+                      onClick={async () => {
+                        const rec = await apiRecommendQuestions(kbId);
+                        if (rec.success) setRecommendations(rec.data?.questions || []);
+                      }}
+                    >
+                      换一批
                     </Button>
-                  ))}
+                  </Space>
+                  <Row gutter={[12, 12]} justify="center">
+                    {recommendations.map((q, i) => (
+                      <Col key={i} xs={24} sm={12} lg={8}>
+                        <Card
+                          size="small"
+                          hoverable
+                          onClick={() => void send(q)}
+                          style={{ textAlign: "left", minHeight: 76 }}
+                        >
+                          <Space size={6}>
+                            <Tag color="cyan">FAQ</Tag>
+                            <Text style={{ fontSize: 13 }} ellipsis={{ tooltip: q }}>
+                              {q}
+                            </Text>
+                          </Space>
+                        </Card>
+                      </Col>
+                    ))}
+                  </Row>
                 </div>
               )}
             </div>
@@ -740,11 +808,36 @@ export default function ChatPage() {
                     {m.role === "assistant" && m.thinking && (
                       <ThinkingBlock thinking={m.thinking} streaming={!!m.streaming} />
                     )}
-                    {m.content || (m.streaming ? "思考中…" : "")}
-                    {m.streaming && m.content && (
-                      <span style={{ display: "inline-block", animation: "none", marginLeft: 2 }}>
-                        <span style={{ animation: "kb-blink 1s infinite" }}>▋</span>
-                      </span>
+                    {m.error ? (
+                      <div>
+                        <Text type="danger">回答失败，请重试</Text>
+                        <Button
+                          size="small"
+                          type="primary"
+                          danger
+                          style={{ marginTop: 8, display: "block" }}
+                          onClick={() => regenerate(msgs, idx)}
+                        >
+                          重试
+                        </Button>
+                      </div>
+                    ) : m.role === "assistant" ? (
+                      <div>
+                        {m.content ? (
+                          <MarkdownViewer text={m.content} />
+                        ) : m.streaming ? (
+                          "思考中…"
+                        ) : (
+                          ""
+                        )}
+                        {m.streaming && m.content && (
+                          <span style={{ display: "inline-block", marginLeft: 2 }}>
+                            <span style={{ animation: "kb-blink 1s infinite" }}>▋</span>
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span style={{ whiteSpace: "pre-wrap" }}>{m.content}</span>
                     )}
                   </div>
                 </div>
@@ -792,6 +885,19 @@ export default function ChatPage() {
                         </Tag>
                       )}
                     </Space>
+                  </div>
+                )}
+                {/* 重新生成（对齐 WeKnora 回答操作） */}
+                {m.role === "assistant" && !m.streaming && !m.error && m.content && (
+                  <div style={{ marginTop: 4 }}>
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ padding: 0, height: "auto", fontSize: 12 }}
+                      onClick={() => regenerate(msgs, idx)}
+                    >
+                      重新生成
+                    </Button>
                   </div>
                 )}
                 {/* 追问建议 */}

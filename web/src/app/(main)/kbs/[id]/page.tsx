@@ -1,15 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   App,
   Button,
   Card,
   Descriptions,
+  Dropdown,
   Empty,
   Input,
   List,
+  Modal,
   Segmented,
+  Select,
   Space,
   Spin,
   Table,
@@ -19,8 +22,11 @@ import {
   Upload,
 } from "antd";
 import {
+  CloudUploadOutlined,
   DownloadOutlined,
+  FileTextOutlined,
   InboxOutlined,
+  LinkOutlined,
   RedoOutlined,
   ReloadOutlined,
   SettingOutlined,
@@ -34,6 +40,7 @@ import WikiBrowseView from "@/components/WikiBrowseView";
 import WikiManagePanel from "@/components/WikiManagePanel";
 import DocCardView, { fileTypeIcon, formatSize } from "@/components/DocCardView";
 import DocDetailDrawer from "@/components/DocDetailDrawer";
+import UrlImportModal from "@/components/UrlImportModal";
 import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 import KBConfigModal from "@/components/KBConfigModal";
 import {
@@ -44,6 +51,7 @@ import {
   apiReparseDocument,
   apiSearch,
   apiUploadDocument,
+  apiUploadDocumentByUrl,
   apiWikiPage,
   apiWikiTree,
   DocItem,
@@ -63,14 +71,20 @@ const PARSE_STATE_COLOR: Record<string, string> = {
 export default function KbDetailPage() {
   const { id } = useParams<{ id: string }>();
   const kbId = id;
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
   const [docPage, setDocPage] = useState(1);
   const [docPageSize, setDocPageSize] = useState(20);
   const [docTotal, setDocTotal] = useState(0);
+  const [docKeyword, setDocKeyword] = useState("");
+  const [docStatus, setDocStatus] = useState("");
+  const [docType, setDocType] = useState("");
+  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
+  const [urlOpen, setUrlOpen] = useState(false);
   const [docView, setDocView] = useState<"card" | "list">(
     () => (localStorage.getItem("kb.docs.viewMode") as "card" | "list") || "card",
   );
@@ -111,7 +125,11 @@ export default function KbDetailPage() {
   const load = useCallback(async () => {
     setDocsLoading(true);
     try {
-      const res = await apiListDocuments(kbId, docPage, docPageSize);
+      const res = await apiListDocuments(kbId, docPage, docPageSize, {
+        keyword: docKeyword.trim() || undefined,
+        parseStatus: docStatus || undefined,
+        fileType: docType || undefined,
+      });
       if (res.success) {
         setDocs(res.data?.items || []);
         setDocTotal(res.data?.total ?? 0);
@@ -119,7 +137,7 @@ export default function KbDetailPage() {
     } finally {
       setDocsLoading(false);
     }
-  }, [kbId, docPage, docPageSize]);
+  }, [kbId, docPage, docPageSize, docKeyword, docStatus, docType]);
 
   const loadWiki = useCallback(async () => {
     setWikiLoading(true);
@@ -165,27 +183,6 @@ export default function KbDetailPage() {
     }
   };
 
-  const uploadProps = useMemo(
-    () => ({
-      beforeUpload: (file: File) => {
-        void (async () => {
-          const res = await apiUploadDocument(kbId, file);
-          if (res.success) {
-            message.success(`「${file.name}」已上传，后台解析中`);
-            setDocPage(1); // 新文档按创建时间倒序排在第 1 页
-            void load();
-          } else {
-            message.error(res.message || "上传失败");
-          }
-        })();
-        return false; // prevent antd auto-upload; we handle it manually
-      },
-      showUploadList: false,
-      multiple: true,
-    }),
-    [kbId, load, message],
-  );
-
   const onDeleteDoc = async (doc: DocItem) => {
     const res = await apiDeleteDocument(kbId, doc.id);
     if (res.success) {
@@ -223,8 +220,69 @@ export default function KbDetailPage() {
     router.push(`/jobs?keyword=DOC_${doc.id}`);
   };
 
+  const selectedList = docs.filter((d) => selectedDocs.has(d.id));
+
+  const onBatchReparse = async () => {
+    if (selectedList.length === 0) return;
+    for (const d of selectedList) {
+      await apiReparseDocument(kbId, d.id).catch(() => undefined);
+    }
+    message.success(`已重新入队 ${selectedList.length} 个文档解析`);
+    setSelectedDocs(new Set());
+    void load();
+  };
+
+  const onBatchDelete = () => {
+    const n = selectedList.length;
+    if (n === 0) return;
+    modal.confirm({
+      title: `删除选中的 ${n} 个文档？`,
+      content: "删除后不可恢复（关联分块与向量一并清理）。",
+      okText: "删除",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        for (const d of selectedList) {
+          await apiDeleteDocument(kbId, d.id).catch(() => undefined);
+        }
+        message.success(`已删除 ${n} 个文档`);
+        setSelectedDocs(new Set());
+        void load();
+      },
+    });
+  };
+
+  const onUploadByUrl = async (url: string, fname: string) => {
+    const res = await apiUploadDocumentByUrl(kbId, url.trim(), fname.trim() || undefined);
+    if (res.success) {
+      message.success("链接已抓取，后台解析中");
+      setDocPage(1);
+      void load();
+    } else {
+      message.error(res.message || "URL 导入失败");
+    }
+  };
+
   return (
     <Space direction="vertical" size="large" style={{ display: "flex" }}>
+      {/* KB 概览条：对齐 WeKnora 详情顶部（类型/归属/向量库/统计/索引开关） */}
+      {kb && (
+        <Card size="small">
+          <Descriptions size="small" column={{ xs: 2, md: 4 }}>
+            <Descriptions.Item label="类型">
+              {kb.type === "faq" ? "问答对型" : "文档型"}
+            </Descriptions.Item>
+            <Descriptions.Item label="归属">
+              {kb.scope === "system" ? "系统" : kb.scope === "team" ? "团队" : "个人"}
+            </Descriptions.Item>
+            <Descriptions.Item label="向量库">
+              {kb.vector_store_id ? "自定义资源" : "系统默认（pgvector）"}
+            </Descriptions.Item>
+            <Descriptions.Item label="统计">
+              {kb.doc_count ?? 0} 文档 / {kb.page_count ?? 0} Wiki 页
+            </Descriptions.Item>
+          </Descriptions>
+        </Card>
+      )}
       <Tabs
         activeKey={activeTab}
         onChange={setActiveTab}
@@ -234,9 +292,55 @@ export default function KbDetailPage() {
             label: `文档（${docTotal}）`,
             children: (
               <Card
-                title="知识库文档"
+                title={`知识库文档（${docTotal}）`}
                 extra={
                   <Space wrap>
+                    <Input
+                      allowClear
+                      placeholder="按文件名筛选"
+                      style={{ width: 160 }}
+                      value={docKeyword}
+                      onChange={(e) => {
+                        setDocKeyword(e.target.value);
+                        setDocPage(1);
+                      }}
+                      onPressEnter={() => void load()}
+                      suffix={
+                        docKeyword ? (
+                          <ReloadOutlined onClick={() => { setDocKeyword(""); setDocPage(1); }} />
+                        ) : null
+                      }
+                    />
+                    <Select
+                      allowClear
+                      placeholder="解析状态"
+                      style={{ width: 130 }}
+                      value={docStatus || undefined}
+                      onChange={(v) => {
+                        setDocStatus(v || "");
+                        setDocPage(1);
+                        void load();
+                      }}
+                      options={["PENDING", "PARSING", "EMBEDDING", "READY", "FAILED"].map((s) => ({
+                        label: s,
+                        value: s,
+                      }))}
+                    />
+                    <Select
+                      allowClear
+                      placeholder="文件类型"
+                      style={{ width: 120 }}
+                      value={docType || undefined}
+                      onChange={(v) => {
+                        setDocType(v || "");
+                        setDocPage(1);
+                        void load();
+                      }}
+                      options={["md", "pdf", "docx", "xlsx", "pptx", "txt", "epub"].map((t) => ({
+                        label: t.toUpperCase(),
+                        value: t,
+                      }))}
+                    />
                     <Segmented
                       value={docView}
                       onChange={(v) => {
@@ -262,12 +366,71 @@ export default function KbDetailPage() {
                     <Button icon={<SettingOutlined />} onClick={() => setConfigOpen(true)}>
                       知识库配置
                     </Button>
-                    <Upload.Dragger {...uploadProps} style={{ width: 260, padding: "8px 12px" }}>
-                      点击或拖拽上传文档（md/pdf/docx/xlsx/pptx/epub 等）
-                    </Upload.Dragger>
+                    <Dropdown
+                      menu={{
+                        items: [
+                          { key: "local", label: "本地上传", icon: <CloudUploadOutlined /> },
+                          { key: "url", label: "URL 导入", icon: <LinkOutlined /> },
+                        ],
+                        onClick: ({ key }) => {
+                          if (key === "url") setUrlOpen(true);
+                          else if (key === "local") fileInputRef.current?.click();
+                        },
+                      }}
+                    >
+                      <Button type="primary" icon={<CloudUploadOutlined />}>
+                        上传文档
+                      </Button>
+                    </Dropdown>
+                    {/* 隐藏的文件选择触发器（本地上传） */}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        const files = e.target.files;
+                        if (files) {
+                          for (const f of Array.from(files)) {
+                            void (async () => {
+                              const res = await apiUploadDocument(kbId, f);
+                              if (res.success) message.success(`「${f.name}」已上传，后台解析中`);
+                              else message.error(res.message || `「${f.name}」上传失败`);
+                            })();
+                          }
+                          setDocPage(1);
+                          void load();
+                        }
+                        e.target.value = "";
+                      }}
+                    />
                   </Space>
                 }
               >
+                {selectedList.length > 0 && (
+                  <Space
+                    style={{
+                      display: "flex",
+                      marginBottom: 12,
+                      padding: "8px 12px",
+                      background: "#e6f4ff",
+                      borderRadius: 8,
+                    }}
+                  >
+                    <Typography.Text strong>
+                      已选 {selectedList.length} 个文档
+                    </Typography.Text>
+                    <Button size="small" icon={<RedoOutlined />} onClick={() => void onBatchReparse()}>
+                      批量重建
+                    </Button>
+                    <Button size="small" danger icon={<DownloadOutlined />} onClick={onBatchDelete}>
+                      批量删除
+                    </Button>
+                    <Button size="small" type="link" onClick={() => setSelectedDocs(new Set())}>
+                      取消选择
+                    </Button>
+                  </Space>
+                )}
                 {docView === "card" ? (
                   <DocCardView
                     items={docs}
@@ -283,6 +446,10 @@ export default function KbDetailPage() {
                   size="small"
                   loading={docsLoading}
                   dataSource={docs}
+                  rowSelection={{
+                    selectedRowKeys: [...selectedDocs],
+                    onChange: (keys) => setSelectedDocs(new Set(keys as string[])),
+                  }}
                   onRow={(doc) => ({ onClick: () => setDetailDoc(doc) })}
                   pagination={{
                     current: docPage,
@@ -434,6 +601,13 @@ export default function KbDetailPage() {
         open={chunkingOpen}
         kbId={kbId}
         onClose={() => setChunkingOpen(false)}
+      />
+
+      {/* URL 导入弹窗（对齐 WeKnora 上传下拉的链接导入） */}
+      <UrlImportModal
+        open={urlOpen}
+        onClose={() => setUrlOpen(false)}
+        onSubmit={onUploadByUrl}
       />
 
       {/* 知识库配置（WeKnora 对齐：索引开关/类型/技能绑定/模型绑定/图谱/FAQ） */}

@@ -114,6 +114,11 @@ export interface KbItem {
   embedding_model_id?: string | null;
   summary_model_id?: string | null;
   extract_config?: { enabled?: boolean; [k: string]: unknown };
+  vlm_config?: Record<string, unknown>;
+  asr_config?: Record<string, unknown>;
+  storage_provider_config?: Record<string, unknown>;
+  storage_backend_id?: string;
+  vector_store_id?: string;
 }
 
 export interface PageList<T> {
@@ -190,8 +195,19 @@ export interface DocItem {
   created_at?: string | null;
 }
 
-export function apiListDocuments(kbId: string, page = 1, pageSize = 20) {
-  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+export function apiListDocuments(
+  kbId: string,
+  page = 1,
+  pageSize = 20,
+  opts: { keyword?: string; fileType?: string; parseStatus?: string } = {}
+) {
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize),
+  });
+  if (opts.keyword) params.set("keyword", opts.keyword);
+  if (opts.fileType) params.set("file_type", opts.fileType);
+  if (opts.parseStatus) params.set("parse_status", opts.parseStatus);
   return request<PageList<DocItem>>(`/api/v1/kbs/${kbId}/documents?${params.toString()}`);
 }
 
@@ -201,6 +217,14 @@ export function apiUploadDocument(kbId: string, file: File) {
   return request<DocItem>(`/api/v1/kbs/${kbId}/documents/upload`, {
     method: "POST",
     body: form,
+  });
+}
+
+export function apiUploadDocumentByUrl(kbId: string, url: string, fileName?: string) {
+  const params = new URLSearchParams({ url });
+  if (fileName) params.set("file_name", fileName);
+  return request<DocItem>(`/api/v1/kbs/${kbId}/documents/upload?${params.toString()}`, {
+    method: "POST",
   });
 }
 
@@ -525,6 +549,12 @@ export function apiUpdateAgent(agentId: string, payload: { name?: string; descri
 
 export function apiDeleteAgent(agentId: string) {
   return request(`/api/v1/agents/${agentId}`, { method: "DELETE" });
+}
+
+export function apiCopyAgent(agentId: string) {
+  return request<{ id: string; name: string }>(`/api/v1/agents/${agentId}/copy`, {
+    method: "POST",
+  });
 }
 
 // ---- datasources (framework page) ----

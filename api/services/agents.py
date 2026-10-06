@@ -268,6 +268,27 @@ def create_agent(
     return agent
 
 
+def copy_agent(db: Session, agent_id: str) -> KbAgent | None:
+    """Duplicate an agent (name gets " - 副本" suffix; builtin flag cleared)."""
+    src = get_agent(db, agent_id)
+    if src is None:
+        return None
+    dup = KbAgent(
+        id=uuid.uuid4().hex[:36],
+        name=f"{src.name} - 副本",
+        description=src.description,
+        avatar=src.avatar,
+        team_name=src.team_name,
+        created_by=src.created_by,
+        is_builtin=False,
+        config=(src.config or {}),
+    )
+    db.add(dup)
+    db.commit()
+    db.refresh(dup)
+    return dup
+
+
 def update_agent(db: Session, agent_id: str, fields: dict) -> KbAgent | None:
     agent = db.execute(select(KbAgent).where(KbAgent.id == agent_id)).scalars().first()
     if not agent:

@@ -1,9 +1,30 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { App, Button, Card, Empty, List, Space, Tag, Typography } from "antd";
-import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  App,
+  Button,
+  Card,
+  Col,
+  Dropdown,
+  Empty,
+  Input,
+  Row,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
+import {
+  CopyOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  MessageOutlined,
+  MoreOutlined,
+  PlusOutlined,
+  RobotOutlined,
+} from "@ant-design/icons";
+import {
+  apiCopyAgent,
   apiCreateAgent,
   apiDeleteAgent,
   apiListAgents,
@@ -12,10 +33,41 @@ import {
 } from "@/lib/api";
 import AgentEditorModal, { AgentEditorValues } from "@/components/AgentEditorModal";
 
+const modeLabel = (c: Record<string, unknown> | undefined) =>
+  c?.agent_mode === "smart-reasoning" ? "智能推理" : "快速问答";
+
+const modeIcon = (c: Record<string, unknown> | undefined, builtin?: boolean) => {
+  if (builtin) {
+    return c?.agent_mode === "smart-reasoning" ? (
+      <RobotOutlined style={{ fontSize: 28, color: "#1677ff" }} />
+    ) : (
+      <MessageOutlined style={{ fontSize: 28, color: "#52c41a" }} />
+    );
+  }
+  return (
+    <span style={{ fontSize: 28 }}>
+      {c?.avatar ? String(c.avatar) : "🤖"}
+    </span>
+  );
+};
+
+const featureBadges = (c: Record<string, unknown> | undefined) => {
+  const out: React.ReactNode[] = [];
+  const kbCount = Array.isArray(c?.knowledge_bases) ? c.knowledge_bases.length : 0;
+  if (kbCount > 0) out.push(<Tag key="kb" color="blue">知识库 {kbCount}</Tag>);
+  const tools = Array.isArray(c?.allowed_tools) ? c.allowed_tools : [];
+  if (tools.length > 0) out.push(<Tag key="tools" color="purple">工具 {tools.length}</Tag>);
+  if (c?.enable_query_expansion || c?.enable_rewrite)
+    out.push(<Tag key="rewrite" color="cyan">意图改写</Tag>);
+  if (c?.vlm_model_id) out.push(<Tag key="vlm" color="orange">多模态</Tag>);
+  return out;
+};
+
 export default function AgentsPage() {
   const { message, modal } = App.useApp();
   const [agents, setAgents] = useState<AgentItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<AgentItem | null>(null);
 
@@ -33,14 +85,23 @@ export default function AgentsPage() {
     void load();
   }, [load]);
 
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return agents;
+    return agents.filter(
+      (a) =>
+        a.name.toLowerCase().includes(q) ||
+        (a.description || "").toLowerCase().includes(q)
+    );
+  }, [agents, search]);
+
   const handleSubmit = async (values: AgentEditorValues) => {
     if (editing) {
-      const res = await apiUpdateAgent(editing.id, {
+      return apiUpdateAgent(editing.id, {
         name: values.name,
         description: values.description,
         config: values.config,
       });
-      return res;
     }
     return apiCreateAgent({
       name: values.name,
@@ -66,67 +127,137 @@ export default function AgentsPage() {
     });
   };
 
-  const modeLabel = (c: Record<string, unknown> | undefined) =>
-    c?.agent_mode === "smart-reasoning" ? "智能推理" : "快速问答";
+  const onCopy = async (agent: AgentItem) => {
+    const res = await apiCopyAgent(agent.id);
+    if (res.success) {
+      message.success(`已复制为「${res.data?.name || agent.name} - 副本」`);
+      void load();
+    } else {
+      message.error(res.message || "复制失败");
+    }
+  };
+
+  const onToggleDisabled = async (agent: AgentItem) => {
+    const cfg = { ...(agent.config || {}) };
+    const disabled = Boolean(cfg.disabled);
+    const res = await apiUpdateAgent(agent.id, {
+      config: { ...cfg, disabled: !disabled },
+    });
+    if (res.success) {
+      message.success(disabled ? "已启用" : "已停用");
+      void load();
+    } else {
+      message.error(res.message || "操作失败");
+    }
+  };
+
+  const menuItems = (agent: AgentItem) => {
+    const disabled = Boolean(agent.config?.disabled);
+    return [
+      { key: "edit", label: "编辑", icon: <EditOutlined /> },
+      { key: "copy", label: "复制", icon: <CopyOutlined /> },
+      { type: "divider" as const },
+      disabled
+        ? { key: "enable", label: "启用" }
+        : { key: "disable", label: "停用" },
+      { type: "divider" as const },
+      { key: "delete", label: "删除", danger: true, icon: <DeleteOutlined /> },
+    ];
+  };
 
   return (
     <Card
       title="智能体配置"
       extra={
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => {
-            setEditing(null);
-            setEditorOpen(true);
-          }}
-        >
-          新建智能体
-        </Button>
+        <Space wrap>
+          <Input.Search
+            allowClear
+            placeholder="搜索智能体名称/描述"
+            style={{ width: 220 }}
+            onSearch={(v) => setSearch(v)}
+          />
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              setEditing(null);
+              setEditorOpen(true);
+            }}
+          >
+            新建智能体
+          </Button>
+        </Space>
       }
     >
-      <List
-        loading={loading}
-        dataSource={agents}
-        locale={{ emptyText: <Empty description="暂无智能体，点右上角新建" /> }}
-        renderItem={(agent) => (
-          <List.Item
-            actions={[
-              <Button
-                key="edit"
-                icon={<EditOutlined />}
-                onClick={() => {
-                  setEditing(agent);
-                  setEditorOpen(true);
-                }}
-              >
-                编辑
-              </Button>,
-              <Button
-                key="del"
-                danger
-                icon={<DeleteOutlined />}
-                onClick={() => onDelete(agent)}
-              >
-                删除
-              </Button>,
-            ]}
+      {visible.length === 0 ? (
+        <Empty description="暂无智能体">
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              setEditing(null);
+              setEditorOpen(true);
+            }}
           >
-            <List.Item.Meta
-              title={
-                <Space>
-                  <Typography.Text strong>{agent.name}</Typography.Text>
-                  {agent.is_builtin && <Tag color="blue">内置</Tag>}
-                  <Tag>{modeLabel(agent.config)}</Tag>
-                </Space>
-              }
-              description={
-                agent.description || "（无描述）"
-              }
-            />
-          </List.Item>
-        )}
-      />
+            新建智能体
+          </Button>
+        </Empty>
+      ) : (
+        <Row gutter={[16, 16]}>
+          {visible.map((agent) => {
+            const disabled = Boolean(agent.config?.disabled);
+            return (
+              <Col key={agent.id} xs={24} sm={12} lg={8} xl={6}>
+                <Card
+                  size="small"
+                  hoverable
+                  style={{ height: "100%", opacity: disabled ? 0.55 : 1 }}
+                  title={
+                    <Space>
+                      {modeIcon(agent.config, agent.is_builtin)}
+                      <Typography.Text strong ellipsis style={{ maxWidth: 120 }}>
+                        {agent.name}
+                      </Typography.Text>
+                    </Space>
+                  }
+                  extra={
+                    <Dropdown
+                      menu={{
+                        items: menuItems(agent),
+                        onClick: ({ key }) => {
+                          if (key === "edit") {
+                            setEditing(agent);
+                            setEditorOpen(true);
+                          } else if (key === "copy") void onCopy(agent);
+                          else if (key === "enable" || key === "disable")
+                            void onToggleDisabled(agent);
+                          else if (key === "delete") onDelete(agent);
+                        },
+                      }}
+                    >
+                      <Button type="text" size="small" icon={<MoreOutlined />} />
+                    </Dropdown>
+                  }
+                >
+                  <Typography.Paragraph
+                    type="secondary"
+                    ellipsis={{ rows: 2 }}
+                    style={{ minHeight: 44, marginBottom: 8 }}
+                  >
+                    {agent.description || "（无描述）"}
+                  </Typography.Paragraph>
+                  <Space wrap size={4}>
+                    {agent.is_builtin && <Tag color="blue">内置</Tag>}
+                    <Tag>{modeLabel(agent.config)}</Tag>
+                    {disabled && <Tag color="red">已停用</Tag>}
+                    {featureBadges(agent.config)}
+                  </Space>
+                </Card>
+              </Col>
+            );
+          })}
+        </Row>
+      )}
 
       <AgentEditorModal
         mode={editing ? "edit" : "create"}

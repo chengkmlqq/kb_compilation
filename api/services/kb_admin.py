@@ -417,8 +417,22 @@ def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def list_documents(db: Session, kb_id: str, page: int = 1, page_size: int = 20) -> dict:
+def list_documents(
+    db: Session,
+    kb_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    keyword: str = "",
+    file_type: str = "",
+    parse_status: str = "",
+) -> dict:
     stmt = select(KbDocument).where(KbDocument.kb_id == kb_id)
+    if keyword:
+        stmt = stmt.where(KbDocument.file_name.like(f"%{keyword}%"))
+    if file_type:
+        stmt = stmt.where(KbDocument.file_ext == file_type.lstrip(".").lower())
+    if parse_status:
+        stmt = stmt.where(KbDocument.parse_state == parse_status.upper())
     total = len(db.execute(stmt).scalars().all())
     rows = (
         db.execute(
