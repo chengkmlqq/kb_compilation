@@ -1234,7 +1234,13 @@ def wiki_rebuild_links(db: Session, kb_id: str) -> dict:
     added = 0
     for p in pages:
         targets = _re.findall(r"\[\[([^\]|]+)", p.content or "")
+        seen: set[str] = set()
         for t in targets:
+            # 页面内去重：select 去重查不到本事务未 flush 的 pending 行，
+            # 同页重复 wikilink 会插两条触发 uk_wiki_link_pair 冲突
+            if t in seen:
+                continue
+            seen.add(t)
             target = slug_to_page.get(t)
             if not target or target.id == p.id:
                 continue
