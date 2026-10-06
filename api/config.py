@@ -65,9 +65,15 @@ class Settings:
     KB_STORAGE_DIR: str = os.getenv("KB_STORAGE_DIR", "")
 
     # --- Vector store backend ---
-    # pg (default, pgvector) | es (reserved). Business tables always live on
-    # the framework store; only chunk embeddings go to the vector backend.
+    # pg (default, pgvector) | es (Elasticsearch dense_vector kNN).
+    # Business tables always live on the framework store; only chunk
+    # embeddings go to the vector backend.
     VECTOR_STORE_TYPE: str = os.getenv("VECTOR_STORE_TYPE", "pg")
+    # Elasticsearch connection (used when VECTOR_STORE_TYPE=es).
+    ES_URL: str = os.getenv("ES_URL", "http://127.0.0.1:9200")
+    ES_USERNAME: str = os.getenv("ES_USERNAME", "")
+    ES_PASSWORD: str = os.getenv("ES_PASSWORD", "")
+    ES_INDEX_NAME: str = os.getenv("ES_INDEX_NAME", "kb_chunks")
 
     # --- Flower (Celery worker 监控，worker monitor page) ---
     # Base URL of the Flower HTTP API. In docker-compose the api-server reaches

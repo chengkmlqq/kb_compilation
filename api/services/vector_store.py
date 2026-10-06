@@ -18,6 +18,7 @@ import logging
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import delete, select
 
@@ -29,6 +30,11 @@ logger = logging.getLogger(__name__)
 
 VECTOR_STORE_PG = "pg"
 VECTOR_STORE_ES = "es"
+
+
+def _parse_es_hosts(url: str) -> list[str]:
+    """Split an ES URL list: 'http://a:9200,http://b:9200' -> [urls]."""
+    return [u.strip() for u in url.split(",") if u.strip()] or ["http://127.0.0.1:9200"]
 
 
 @dataclass
@@ -145,31 +151,96 @@ class PgVectorStore(VectorStore):
 
 
 class EsVectorStore(VectorStore):
-    """Elasticsearch implementation — reserved.
+    """Elasticsearch implementation — dense_vector cosine kNN.
 
-    Kept as a stub so the platform can adopt ES without changing callers.
-    Until configured, every operation raises (the vector arm is then disabled
-    by callers and keyword-only search continues to work).
+    Maps `kb_embedding` semantics onto an ES index:
+
+    - doc `_id` = chunk_id (upsert = index with that id, same replace semantics)
+    - fields: kb_id (keyword), chunk_id (keyword), enabled (boolean),
+      embedding (dense_vector, index=True, similarity=cosine)
+    - `search` = `_knn_search` with a kb_id+enabled bool filter; returned
+      `_score` is cosine similarity, threshold applied app-side so behaviour
+      matches PgVectorStore (score > threshold, sorted desc).
     """
 
-    def __init__(self, hosts: list[str] | None = None, index: str = "kb_chunks") -> None:
-        self.hosts = hosts or []
-        self.index = index
+    def __init__(self, hosts: list[str] | None = None, index: str | None = None) -> None:
+        settings = get_settings()
+        self.hosts = hosts or _parse_es_hosts(settings.ES_URL)
+        self.index = index or settings.ES_INDEX_NAME or "kb_chunks"
+        self.username = settings.ES_USERNAME or ""
+        self.password = settings.ES_PASSWORD or ""
+        self._client: Any | None = None
+        self._dims: int | None = None
 
-    def _unavailable(self) -> RuntimeError:
-        return RuntimeError(
-            "EsVectorStore is reserved (not implemented). Configure VECTOR_STORE_TYPE=pg "
-            "or implement the ES adapter (see api/services/vector_store.py)."
+    # --- client / index plumbing -------------------------------------------
+    @property
+    def client(self) -> Any:
+        """Lazy ES client (import elasticsearch only when actually used)."""
+        if self._client is None:
+            try:
+                from elasticsearch import Elasticsearch
+            except ImportError as exc:  # pragma: no cover - env check
+                raise RuntimeError(
+                    "elasticsearch package missing — add it to pyproject "
+                    "(VECTOR_STORE_TYPE=es requires the ES client)"
+                ) from exc
+            kwargs: dict[str, Any] = {}
+            if self.username:
+                kwargs["basic_auth"] = (self.username, self.password)
+            self._client = Elasticsearch(self.hosts, timeout=30, max_retries=2, retry_on_timeout=True, **kwargs)
+        return self._client
+
+    def _ensure_index(self, dims: int) -> None:
+        if self._dims == dims:
+            return
+        if not self.client.indices.exists(index=self.index):
+            self.client.indices.create(
+                index=self.index,
+                mappings={
+                    "properties": {
+                        "kb_id": {"type": "keyword"},
+                        "chunk_id": {"type": "keyword"},
+                        "enabled": {"type": "boolean"},
+                        "embedding": {
+                            "type": "dense_vector",
+                            "dims": dims,
+                            "index": True,
+                            "similarity": "cosine",
+                        },
+                    }
+                },
+            )
+        self._dims = dims
+
+    # --- contract -----------------------------------------------------------
+    def upsert(self, kb_id: str, chunk_id: str, vector: list[float]) -> None:
+        self._ensure_index(len(vector))
+        self.client.index(
+            index=self.index,
+            id=chunk_id,
+            document={
+                "kb_id": kb_id,
+                "chunk_id": chunk_id,
+                "enabled": True,
+                "embedding": vector,
+            },
         )
 
-    def upsert(self, kb_id: str, chunk_id: str, vector: list[float]) -> None:
-        raise self._unavailable()
-
     def delete_by_chunks(self, chunk_ids: list[str]) -> None:
-        raise self._unavailable()
+        if not chunk_ids:
+            return
+        if not self.client.indices.exists(index=self.index):
+            return
+        operations = [{"delete": {"_index": self.index, "_id": cid}} for cid in chunk_ids]
+        try:
+            self.client.bulk(operations=operations)  # elasticsearch>=8
+        except TypeError:  # pragma: no cover - client <8 fallback
+            self.client.bulk(body=operations)
 
     def delete_by_kb(self, kb_id: str) -> None:
-        raise self._unavailable()
+        if not self.client.indices.exists(index=self.index):
+            return
+        self.client.delete_by_query(index=self.index, query={"term": {"kb_id": kb_id}})
 
     def search(
         self,
@@ -178,7 +249,40 @@ class EsVectorStore(VectorStore):
         top_k: int = 10,
         threshold: float = 0.2,
     ) -> list[VectorHit]:
-        raise self._unavailable()
+        if not self.client.indices.exists(index=self.index):
+            return []
+        k = max(top_k * 4, 100)
+        resp = self.client.knn_search(
+            index=self.index,
+            knn={
+                "field": "embedding",
+                "query_vector": query_vector,
+                "k": k,
+                "num_candidates": max(top_k * 10, 100),
+            },
+            filter={
+                "bool": {
+                    "must": [
+                        {"term": {"kb_id": kb_id}},
+                        {"term": {"enabled": True}},
+                    ]
+                }
+            },
+            source=False,
+        )
+        hits: list[VectorHit] = []
+        for h in resp.get("hits", {}).get("hits", []):
+            # ES dense_vector cosine similarity is mapped to (1+cos)/2 (orthogonal=0.5,
+            # identical=1.0); invert to the raw cosine in [-1, 1] so scores and the
+            # `threshold` semantics match PgVectorStore (cosine > threshold).
+            es_score = float(h.get("_score") or 0.0)
+            cosine = es_score * 2.0 - 1.0
+            if cosine < threshold:
+                continue
+            hits.append(VectorHit(chunk_id=h["_id"], score=cosine))
+            if len(hits) >= top_k:
+                break
+        return hits
 
 
 _store: VectorStore | None = None
