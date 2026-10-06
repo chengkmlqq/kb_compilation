@@ -168,9 +168,10 @@ class EmbeddingClient:
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 time.sleep(1.0 * (attempt + 1))
-        # Degrade gracefully: keep chunks but leave them un-embedded (keyword arm still works).
-        logger.error("embedding batch failed after retries: %s", last_err)
-        return [_zero_vector(self.cfg.dim) for _ in texts]
+        # 不再静默降级写零向量（历史坑：402/配置缺失时全库写入零向量占位，
+        # 检索 cosine 全 0 退化 + UI 显示 READY 假成功）。由调用方显式处理
+        # （ingest 标 FAILED / 重嵌脚本计数重试）。
+        raise RuntimeError(f"embedding batch failed after retries: {last_err}") from last_err
 
     def embed_query(self, text: str) -> list[float] | None:
         """Embed a single query; None when the model is unavailable."""
