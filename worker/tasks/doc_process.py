@@ -228,10 +228,12 @@ def _agent_task_target() -> tuple[str, str]:
     `WIKI_AGENT_MODE=gateway` 回退到外部 agent-gateway（KbAgentGatewayTask，
     HTTP 提交独立部署的网关容器，default 队列）——新链路未稳定时的并行/回滚路径。
     """
-    mode = (os.getenv("WIKI_AGENT_MODE") or "inline").strip().lower()
+    mode = (os.getenv("WIKI_AGENT_MODE") or "direct").strip().lower()
+    if mode == "agent":
+        return "KbAgentWikiBuildTask", "agent"
     if mode == "gateway":
         return "KbAgentGatewayTask", "default"
-    return "KbAgentWikiBuildTask", "agent"
+    return "KbSkillDirectBuildTask", "agent"
 
 
 def _enqueue_wiki_skill_task(

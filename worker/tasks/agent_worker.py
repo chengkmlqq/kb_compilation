@@ -392,8 +392,222 @@ def _handle_agent_wiki_build(job_id: str, task_params: str | None) -> dict[str, 
     return result
 
 
+# ===========================================================================
+# KbSkillDirectBuildTask —— 技能直跑（2026-10-06 新增，默认构建路径）
+#
+# 动机（监控实证）：内联 agent 编排路径 60 轮工具调用上限频繁触发
+# MaxTurnsExceeded（2/29 篇 FAILED，每篇空转 98-132 分钟），而实际 LLM
+# 耗时仅 ~8 分钟/篇——瓶颈在 agent 编排不在 LLM。直跑路径：worker 解压
+# 技能包 → 直接 subprocess 执行 scripts/run_one.py（确定性脚本链路，
+# 技能全部特性保留：本体 schema 动态化/步骤埋点/建页批量/图谱），无 agent
+# 思考轮与轮次上限。agent 模式保留回退：WIKI_AGENT_MODE=agent。
+# ===========================================================================
+TASK_CLASS_SKILL_DIRECT = "KbSkillDirectBuildTask"
+
+
+def _extract_skill_scripts(config: dict[str, Any]) -> str:
+    """解压技能 zip → 返回含 run_one.py 的 scripts 目录（空串=失败）。"""
+    import base64
+    import io
+    import tempfile
+    import zipfile
+    from pathlib import Path
+
+    raw = config.get("skill_zip") or config.get("skill_zip_base64")
+    if not raw:
+        return ""
+    if isinstance(raw, str):
+        try:
+            raw = base64.b64decode(raw)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("skill_zip base64 解码失败: %s", exc)
+            return ""
+    tmp = tempfile.mkdtemp(prefix="skill_direct_")
+    try:
+        zipfile.ZipFile(io.BytesIO(raw)).extractall(tmp)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("技能 zip 解压失败: %s", exc)
+        return ""
+    for pat in ("run_one.py", "build_wiki.py", "build_full.py"):
+        for cand in Path(tmp).rglob(pat):
+            if cand.parent.name == "scripts":
+                return str(cand.parent)
+    return ""
+
+
+def _inject_direct_env(config: dict[str, Any], job_id: str) -> None:
+    """注入任务级 env（与 runtime._inject_task_env 同构）：技能脚本子进程读取。"""
+    import os
+    from pathlib import Path
+
+    for k in ("kb_id", "knowledge_id", "doc_name"):
+        if config.get(k):
+            os.environ[f"WEKNORA_{k.upper()}"] = str(config[k])
+    for k in ("model", "base_url", "api_key"):
+        if config.get(k):
+            os.environ[f"WEKNORA_LLM_{k.upper()}"] = str(config[k])
+    if config.get("skill"):
+        os.environ["WEKNORA_SKILL"] = str(config["skill"])
+    try:
+        from api.config import get_settings
+
+        ev_dir = Path(get_settings().kb_storage_dir) / "logs/events"
+        ev_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["WIKI_EVENTS_LOG"] = str(ev_dir / f"{job_id}.jsonl")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _aggregate_events(job_id: str) -> dict:
+    """聚合技能 LLM 事件 + 步骤时间线 → summary.json + 日志摘要行。"""
+    from pathlib import Path
+
+    from api.config import get_settings
+
+    base = Path(get_settings().kb_storage_dir) / "logs/events"
+    ev_file = base / f"{job_id}.jsonl"
+    if not ev_file.exists():
+        return {}
+    evs: list[dict] = []
+    for line in ev_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            evs.append(json.loads(line))
+        except Exception:  # noqa: BLE001
+            pass
+    ok_evs = [e for e in evs if e.get("kind") == "ok"]
+    err_evs = [e for e in evs if e.get("kind") == "error"]
+    step_evs = [e for e in evs if e.get("kind") == "step"]
+    steps: list[dict] = []
+    step_open: dict[str, dict] = {}
+    for e in step_evs:
+        st = str(e.get("step") or "?")
+        status = str(e.get("status") or "")
+        if status == "start":
+            step_open[st] = {"step": st, "status": "running", "ms": 0}
+        elif status in ("done", "fail"):
+            prev = step_open.pop(st, None) or {"step": st, "status": "running", "ms": 0}
+            prev["status"] = "done" if status == "done" else "fail"
+            prev["ms"] = int(e.get("ms") or 0)
+            steps.append(prev)
+    for st, prev in step_open.items():
+        steps.append({**prev, "status": "interrupted"})
+    retries = sum(len(e.get("retry_events") or []) for e in evs)
+    retry_reasons: dict[str, int] = {}
+    backoff_total = 0
+    for e in evs:
+        for r in e.get("retry_events") or []:
+            retry_reasons[r.get("reason", "?")] = retry_reasons.get(r.get("reason", "?"), 0) + 1
+            backoff_total += int(r.get("backoff_s") or 0)
+    wait_total = sum(int(e.get("wait_ms") or 0) for e in evs) / 1000
+    llm_total = sum(int(e.get("llm_ms") or 0) for e in evs) / 1000
+    phases: dict[str, int] = {}
+    for e in evs:
+        p = e.get("phase") or "?"
+        phases[p] = phases.get(p, 0) + 1
+    summary = {
+        "total": len(evs), "ok": len(ok_evs), "error": len(err_evs),
+        "retries": retries, "retry_reasons": retry_reasons,
+        "backoff_total_s": backoff_total, "wait_total_s": round(wait_total, 1),
+        "llm_total_s": round(llm_total, 1), "phases": phases, "steps": steps,
+    }
+    (base / f"{job_id}.summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False), encoding="utf-8"
+    )
+    done_steps = [s for s in steps if s.get("status") in ("done", "fail")]
+    step_s = sum(s.get("ms") or 0 for s in done_steps) / 1000
+    slowest = max(done_steps, key=lambda s: s.get("ms") or 0) if done_steps else None
+    line = (
+        f"LLM 明细: 调用{len(ok_evs)} 失败{len(err_evs)} 重试{retries}次"
+        f"(429:{retry_reasons.get('http_429', 0)} 超时:{retry_reasons.get('network', 0)}) "
+        f"退避等待{backoff_total}s 节流等待{round(wait_total,1)}s LLM耗时{round(llm_total,1)}s"
+    )
+    if done_steps:
+        line += f" | 步骤{len(done_steps)}步 合计{round(step_s)}s"
+        if slowest:
+            line += f" 最慢={slowest['step']} {round((slowest['ms'] or 0)/1000)}s"
+    _write_progress(job_id, line)
+    return summary
+
+
+def _handle_skill_direct_build(job_id: str, task_params: str | None) -> dict[str, Any]:
+    """技能直跑：解压技能 → subprocess 执行 run_one.py（无 agent 编排）。"""
+    import os
+    import subprocess
+    import sys
+    import time
+
+    params = _params(task_params)
+    config: dict[str, Any] = dict(params.get("config") or {})
+    config["job_id"] = job_id
+    kb_id = str(config.get("kb_id") or "")
+    kid = str(config.get("knowledge_id") or config.get("kid") or config.get("doc_name") or "")
+    if not kb_id or not kid:
+        return {"success": False, "error": f"参数缺失 kb_id={kb_id} kid={kid}", "job_id": job_id}
+
+    _attach_skill_zip(config, kb_id=kb_id)
+    _resolve_llm_config(config, kb_id=kb_id)
+    scripts_dir = _extract_skill_scripts(config)
+    if not scripts_dir:
+        return {
+            "success": False,
+            "error": f"技能包缺失或无 run_one.py（skill={config.get('skill')}）",
+            "job_id": job_id,
+        }
+    _inject_direct_env(config, job_id)
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+
+    entry = os.path.join(scripts_dir, "run_one.py")
+    if not os.path.isfile(entry):
+        entry = os.path.join(scripts_dir, "build_wiki.py")
+    cmd = [sys.executable, entry, kid, "--kb", kb_id]
+    _write_progress(
+        job_id,
+        f"[direct] 技能直跑开始 skill={config.get('skill') or '-'} "
+        f"kid={kid[:12]} 入口={os.path.basename(entry)}",
+    )
+    t0 = time.time()
+    try:
+        proc = subprocess.run(
+            cmd, cwd=scripts_dir, capture_output=True, text=True,
+            timeout=int(os.getenv("WIKI_DIRECT_TIMEOUT", "10800")), env=env,
+        )
+        rc = proc.returncode
+        out_tail = (proc.stdout or "")[-3000:] + ("\n[stderr]\n" + (proc.stderr or "")[-1500:] if proc.stderr else "")
+    except subprocess.TimeoutExpired as exc:
+        rc = -1
+        out_tail = (exc.stdout or b"").decode("utf-8", "replace")[-2000:] if isinstance(exc.stdout, bytes) else str(exc.stdout or "")[-2000:]
+        out_tail += "\n[超时] 技能直跑超过 WIKI_DIRECT_TIMEOUT"
+    duration_ms = int((time.time() - t0) * 1000)
+
+    result: dict[str, Any] = {
+        "success": rc == 0,
+        "output": out_tail,
+        "runs_ms": duration_ms,
+        "duration_ms": duration_ms,
+        "mode": "skill_direct",
+        "job_id": job_id,
+    }
+    if not result["success"]:
+        result["error"] = f"run_one.py 退出码 {rc}（{out_tail[-300:]}）"
+        logger.warning("skill direct build failed job=%s rc=%s", job_id, rc)
+        _write_progress(job_id, f"[direct] 失败 rc={rc}")
+    else:
+        logger.info("skill direct build done job=%s runs_ms=%s", job_id, duration_ms)
+        _write_progress(job_id, f"[direct] 完成（{duration_ms}ms）")
+
+    try:
+        _aggregate_events(job_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("direct events aggregate failed job=%s: %s", job_id, exc)
+    return result
+
+
 def register_task_handlers() -> None:
     TASK_CLASS_REGISTRY[TASK_CLASS_AGENT_WIKI_BUILD] = _handle_agent_wiki_build
+    TASK_CLASS_REGISTRY[TASK_CLASS_SKILL_DIRECT] = _handle_skill_direct_build
 
 
 register_task_handlers()
