@@ -70,9 +70,15 @@ def get_datasources(
     page: int = 1,
     page_size: int = 10,
     keyword: str = "",
+    name: str = "",
+    label: str = "",
+    dsType: str = "",
     db: Session = Depends(get_db),
 ) -> dict:
-    return {"success": True, "data": list_datasources(db, page, page_size, keyword)}
+    return {
+        "success": True,
+        "data": list_datasources(db, page, page_size, keyword, name=name, label=label, ds_type=dsType),
+    }
 
 
 class DatasourceSaveRequest(BaseModel):

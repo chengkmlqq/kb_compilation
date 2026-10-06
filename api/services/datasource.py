@@ -130,12 +130,30 @@ def find_accessible_datasource_by_id(db: Session, ds_id: str, identity) -> Datas
     return entry
 
 
-def list_datasources(db: Session, page: int = 1, page_size: int = 10, keyword: str = "") -> dict:
-    """Paginated datasource list (mirrors open /datasources list)."""
+def list_datasources(
+    db: Session,
+    page: int = 1,
+    page_size: int = 10,
+    keyword: str = "",
+    name: str = "",
+    label: str = "",
+    ds_type: str = "",
+) -> dict:
+    """Paginated datasource list.
+
+    Filters mirror ds PageFilter: name / label / dsType (independent, AND-combined).
+    `keyword` stays as the legacy combined matcher.
+    """
     stmt = select(Datasource)
     if keyword:
         like = f"%{keyword}%"
         stmt = stmt.where(or_(Datasource.name.like(like), Datasource.label.like(like)))
+    if name:
+        stmt = stmt.where(Datasource.name.like(f"%{name.strip()}%"))
+    if label:
+        stmt = stmt.where(Datasource.label.like(f"%{label.strip()}%"))
+    if ds_type:
+        stmt = stmt.where(Datasource.ds_type == ds_type)
     total = len(db.execute(stmt).scalars().all())
     rows = db.execute(stmt.offset((page - 1) * page_size).limit(page_size)).scalars().all()
     items = [
@@ -559,6 +577,9 @@ def list_ds_form_fields(db: Session, ds_type: str, ds_version: str | None = None
             "options": r.options,
             "placeHold": r.place_hold,
             "regex": r.regex,
+            "required": r.required,
+            "tooltip": r.tooltip,
+            "validInfo": r.valid_info,
             "dsVersion": r.ds_version,
         }
         for r in rows

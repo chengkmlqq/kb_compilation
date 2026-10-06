@@ -569,9 +569,16 @@ export interface DatasourceItem {
   state?: string;
 }
 
-export function apiListDatasources(page = 1, pageSize = 10, keyword = "") {
+export function apiListDatasources(
+  page = 1,
+  pageSize = 10,
+  opts: { keyword?: string; name?: string; label?: string; dsType?: string } = {},
+) {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-  if (keyword) params.set("keyword", keyword);
+  if (opts.keyword) params.set("keyword", opts.keyword);
+  if (opts.name) params.set("name", opts.name);
+  if (opts.label) params.set("label", opts.label);
+  if (opts.dsType) params.set("dsType", opts.dsType);
   return request<{ items?: DatasourceItem[]; total?: number }>(
     `/api/v1/open/datasources?${params.toString()}`,
   );
@@ -617,6 +624,9 @@ export interface DsFormFieldItem {
   options?: string | null;
   placeHold?: string | null;
   regex?: string | null;
+  required?: number | null;
+  tooltip?: string | null;
+  validInfo?: string | null;
   dsVersion?: string | null;
 }
 
