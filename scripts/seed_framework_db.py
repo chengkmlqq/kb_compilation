@@ -42,35 +42,37 @@ SEED_TEAM = os.getenv("KB_SEED_TEAM", "默认团队")
 # 可用环境变量 KB_SEED_ROLE 覆盖。
 SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 
-# KB 菜单树（1 顶级 + 3 纯目录分组 + 1 分组兼页面(系统管理) + 13 页面 = 18 项；sort_num 决定同级顺序）
+# KB 菜单树（4 顶级分组 + 13 页面 = 17 项；sort_num 决定同级顺序）
 # (menu_id, menu_name, menu_label, route, parent_id, menu_icon, sort_num)
 # menu_id 用固定值（workers/mcps/skills/cron 用生产环境已验证的 UUID），
 # 保证多次初始化幂等、且与已部署环境完全一致。
 #
-# 三级骨架（对齐 data-synth 墨斗平台菜单结构）：Header 顶级(nav) → Sider 分组 → 页面。
+# 2026-10-06 调整（方案A）：原 root_kb「知识库平台」顶级节点移除——左上角 Logo
+# 品牌区已承担该语义，顶部 Header 顶级导航改为 4 个分组直接提升为顶级，
+# 避免「知识库平台」标签重复出现。
+# 结构：Header 顶级(nav)= 知识管理/智能应用/数据与任务/系统管理 → Sider 分组 → 页面。
 #   - route 留空 = 纯目录分组（只展开不跳转，对齐 ds 的 dir 节点）
 #   - route 有值且带子级 = 分组兼页面（点击自身跳该路由，对齐 ds「系统管理 /system/users」模式）
 KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
-    ("root_kb", "kb", "知识库平台", None, None, "AppstoreOutlined", 0),
-    # ---- 知识管理（纯目录） ----
-    ("grp_knowledge", "grp_knowledge", "知识管理", None, "root_kb", "FolderOutlined", 1),
+    # ---- 知识管理（纯目录，顶级） ----
+    ("grp_knowledge", "grp_knowledge", "知识管理", None, None, "FolderOutlined", 1),
     ("kbs", "kbs", "知识库管理", "/kbs", "grp_knowledge", "AppstoreOutlined", 1),
     ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_knowledge", "FileOutlined", 2),
-    # ---- 智能应用（纯目录） ----
-    ("grp_ai", "grp_ai", "智能应用", None, "root_kb", "FolderOutlined", 2),
+    # ---- 智能应用（纯目录，顶级） ----
+    ("grp_ai", "grp_ai", "智能应用", None, None, "FolderOutlined", 2),
     ("chat", "chat", "智能问答", "/chat", "grp_ai", "CommentOutlined", 1),
     ("agents", "agents", "智能体配置", "/agents", "grp_ai", "RobotOutlined", 2),
     ("d83aee0d1d8a4fce8a6bd121b6efc5fa", "websearch", "联网搜索", "/websearch", "grp_ai", "SearchOutlined", 3),
-    # ---- 数据与任务（纯目录） ----
-    ("grp_data", "grp_data", "数据与任务", None, "root_kb", "FolderOutlined", 3),
+    # ---- 数据与任务（纯目录，顶级） ----
+    ("grp_data", "grp_data", "数据与任务", None, None, "FolderOutlined", 3),
     ("datasources", "datasources", "数据源", "/datasources", "grp_data", "DatabaseOutlined", 1),
     ("jobs", "jobs", "任务监控", "/jobs", "grp_data", "DashboardOutlined", 2),
     ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_data", "ScheduleOutlined", 3),
     ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_data", "CloudServerOutlined", 4),
     ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_data", "TableOutlined", 5),
-    # ---- 系统管理（分组兼页面：点击自身跳 /system → 重定向到默认子页 /system/users）。
+    # ---- 系统管理（分组兼页面，顶级：点击自身跳 /system → 重定向到默认子页 /system/users）。
     # 用户/角色/团队/菜单/日志均为独立页面路由（对齐 ds system/* 独立页面，无顶部 Tab 聚合页）。
-    ("system", "system", "系统管理", "/system", "root_kb", "SettingOutlined", 4),
+    ("system", "system", "系统管理", "/system", None, "SettingOutlined", 4),
     ("sys_users", "sys_users", "用户管理", "/system/users", "system", "TeamOutlined", 1),
     ("sys_roles", "sys_roles", "角色管理", "/system/roles", "system", "SafetyOutlined", 2),
     ("sys_teams", "sys_teams", "团队管理", "/system/teams", "system", "PartitionOutlined", 3),

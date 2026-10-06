@@ -37,20 +37,22 @@ const MenuContext = createContext<MenuContextType | undefined>(undefined);
 
 /** 内置菜单（后端 my-menus 为空时的回退；三级骨架，对齐 seed 与 ds） */
 const FALLBACK_MENUS: SysMenuItem[] = [
-  // 三级骨架（对齐 data-synth）：顶级 → 分组 → 页面；分组 route 留空=纯目录
-  { menu_id: "grp_knowledge", menu_name: "grp_knowledge", menu_label: "知识管理", route: null, parent_id: "root_kb", menu_icon: "FolderOutlined", sort_num: 1, state: "1" },
+  // 两级骨架（对齐 data-synth）：顶级(分组) → 页面；分组 route 留空=纯目录。
+  // 2026-10-06 方案A：root_kb「知识库平台」顶级节点移除（左上角 Logo 品牌区承担），
+  // 4 个分组直接提升为顶级，避免顶部 Header 导航出现重复标签。
+  { menu_id: "grp_knowledge", menu_name: "grp_knowledge", menu_label: "知识管理", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 1, state: "1" },
   { menu_id: "kbs", menu_name: "kbs", menu_label: "知识库管理", route: "/kbs", parent_id: "grp_knowledge", menu_icon: "AppstoreOutlined", sort_num: 1, state: "1" },
   { menu_id: "files", menu_name: "files", menu_label: "文件管理", route: "/files", parent_id: "grp_knowledge", menu_icon: "FileOutlined", sort_num: 2, state: "1" },
-  { menu_id: "grp_ai", menu_name: "grp_ai", menu_label: "智能应用", route: null, parent_id: "root_kb", menu_icon: "FolderOutlined", sort_num: 2, state: "1" },
+  { menu_id: "grp_ai", menu_name: "grp_ai", menu_label: "智能应用", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 2, state: "1" },
   { menu_id: "chat", menu_name: "chat", menu_label: "智能问答", route: "/chat", parent_id: "grp_ai", menu_icon: "CommentOutlined", sort_num: 1, state: "1" },
   { menu_id: "agents", menu_name: "agents", menu_label: "智能体配置", route: "/agents", parent_id: "grp_ai", menu_icon: "RobotOutlined", sort_num: 2, state: "1" },
   { menu_id: "websearch", menu_name: "websearch", menu_label: "联网搜索", route: "/websearch", parent_id: "grp_ai", menu_icon: "SearchOutlined", sort_num: 3, state: "1" },
-  { menu_id: "grp_data", menu_name: "grp_data", menu_label: "数据与任务", route: null, parent_id: "root_kb", menu_icon: "FolderOutlined", sort_num: 3, state: "1" },
+  { menu_id: "grp_data", menu_name: "grp_data", menu_label: "数据与任务", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 3, state: "1" },
   { menu_id: "datasources", menu_name: "datasources", menu_label: "数据源", route: "/datasources", parent_id: "grp_data", menu_icon: "DatabaseOutlined", sort_num: 1, state: "1" },
   { menu_id: "jobs", menu_name: "jobs", menu_label: "任务监控", route: "/jobs", parent_id: "grp_data", menu_icon: "DashboardOutlined", sort_num: 2, state: "1" },
   { menu_id: "cron", menu_name: "cron", menu_label: "任务管理", route: "/cron", parent_id: "grp_data", menu_icon: "ScheduleOutlined", sort_num: 3, state: "1" },
   { menu_id: "workers", menu_name: "workers", menu_label: "主机监控", route: "/workers", parent_id: "grp_data", menu_icon: "CloudServerOutlined", sort_num: 4, state: "1" },
-  { menu_id: "system", menu_name: "system", menu_label: "系统管理", route: "/system", parent_id: "root_kb", menu_icon: "SettingOutlined", sort_num: 4, state: "1" },
+  { menu_id: "system", menu_name: "system", menu_label: "系统管理", route: "/system", parent_id: null, menu_icon: "SettingOutlined", sort_num: 4, state: "1" },
   { menu_id: "sys_users", menu_name: "sys_users", menu_label: "用户管理", route: "/system/users", parent_id: "system", menu_icon: "TeamOutlined", sort_num: 1, state: "1" },
   { menu_id: "sys_roles", menu_name: "sys_roles", menu_label: "角色管理", route: "/system/roles", parent_id: "system", menu_icon: "SafetyOutlined", sort_num: 2, state: "1" },
   { menu_id: "sys_teams", menu_name: "sys_teams", menu_label: "团队管理", route: "/system/teams", parent_id: "system", menu_icon: "PartitionOutlined", sort_num: 3, state: "1" },
