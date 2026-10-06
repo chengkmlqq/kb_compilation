@@ -63,6 +63,7 @@ function entityLabel(type?: string): string {
 }
 
 interface Pt {
+  name: string;
   x: number;
   y: number;
   vx: number;
@@ -198,6 +199,7 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
       nodeList.forEach((n, i) => {
         const ang = (2 * Math.PI * i) / nodeList.length;
         st.nodes.set(n.name, {
+          name: n.name,
           x: W / 2 + Math.cos(ang) * (Math.min(W, H) / 2 - 60),
           y: H / 2 + Math.sin(ang) * (Math.min(W, H) / 2 - 60),
           vx: 0,
@@ -211,11 +213,45 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
     const spring = 0.008;
     const restLen = 110;
 
+    // ── 性能优化（2026-10-06）：DOM 复用 + 邻接表力计算 + 边降载 + 稳定停止 ──
+    // 元素缓存：节点 name → <g>、边 src|tgt → <line>，只创建一次，之后每帧 setAttribute
+    const nodeElCache = new Map<string, SVGGElement>();
+    const edgeElCache = new Map<string, SVGLineElement>();
+    const labelCache = new Map<string, SVGTextElement>();
+    let rootG: SVGGElement | null = null;
+    // 边降载：>EDGE_CAP 条时按端节点度数排序取前 EDGE_CAP 条
+    const EDGE_CAP = 600;
+    // 力计算邻接表：每节点只遍历相连边（O(Σdeg) 而非 O(n×E)，110 万次/帧 → ~7 千次/帧）
+    const adj = new Map<string, Array<{ ta: string; tb: string }>>();
+    for (const e of edgeList) {
+      if (!adj.has(e.source)) adj.set(e.source, []);
+      if (!adj.has(e.target)) adj.set(e.target, []);
+      adj.get(e.source)!.push({ ta: e.source, tb: e.target });
+      adj.get(e.target)!.push({ ta: e.target, tb: e.source });
+    }
+
+    const edgeRenderList = () => {
+      if (edgeList.length <= EDGE_CAP) return edgeList;
+      const deg = new Map<string, number>();
+      for (const n of nodeList) deg.set(n.name, n.degree || 0);
+      return [...edgeList]
+        .sort(
+          (a, b) =>
+            Math.max(deg.get(b.source) || 0, deg.get(b.target) || 0) -
+            Math.max(deg.get(a.source) || 0, deg.get(a.target) || 0),
+        )
+        .slice(0, EDGE_CAP);
+    };
+
     const simulate = () => {
       const nodes = st.nodes;
       const arr = Array.from(nodes.values());
+      let totalV = 0;
       for (const a of arr) {
-        if (a.pinned) continue;
+        if (a.pinned) {
+          totalV += Math.abs(a.vx) + Math.abs(a.vy);
+          continue;
+        }
         a.vx *= 0.85;
         a.vy *= 0.85;
         for (const b of arr) {
@@ -227,10 +263,10 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
           a.vx += (dx / Math.sqrt(d2)) * f * 0.1;
           a.vy += (dy / Math.sqrt(d2)) * f * 0.1;
         }
-        for (const e of edgeList) {
-          const ta = nodes.get(e.source);
-          const tb = nodes.get(e.target);
-          if (!ta || !tb || ta === a || tb === a) continue;
+        for (const e of adj.get(a.name) || []) {
+          const ta = nodes.get(e.ta);
+          const tb = nodes.get(e.tb);
+          if (!ta || !tb || ta === a) continue;
           const dx = tb.x - a.x;
           const dy = tb.y - a.y;
           const d = Math.sqrt(dx * dx + dy * dy) + 1;
@@ -242,25 +278,45 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
         a.y += a.vy;
         a.x = Math.max(20, Math.min(W - 20, a.x));
         a.y = Math.max(20, Math.min(H - 20, a.y));
+        totalV += Math.abs(a.vx) + Math.abs(a.vy);
       }
       render();
+      // 稳定停止：总速度低于阈值 → 停帧（省 CPU/GPU；hover/拖拽/缩放再唤醒）
       st.raf = requestAnimationFrame(simulate);
+      if (arr.length > 5 && totalV < 0.5) {
+        cancelAnimationFrame(st.raf);
+        st.raf = 0;
+      }
     };
 
     const render = () => {
       const container = svg;
-      container.innerHTML = "";
-      const g = document.createElementNS(ns, "g");
-      g.setAttribute("transform", `translate(${st.viewX},${st.viewY}) scale(${st.scale})`);
-      container.appendChild(g);
+      if (!rootG) {
+        rootG = document.createElementNS(ns, "g");
+        container.appendChild(rootG);
+      }
+      rootG.setAttribute("transform", `translate(${st.viewX},${st.viewY}) scale(${st.scale})`);
 
-      // edges（含关系类型标签）
-      for (const e of edgeList) {
+      // edges（DOM 复用：只创建一次，更新属性；hover 边高亮）
+      const activeEdges = edgeRenderList();
+      const hoveredSet = new Set<string>();
+      for (const e of activeEdges) {
+        if (st.hover && (e.source === st.hover || e.target === st.hover)) {
+          hoveredSet.add(`${e.source}|${e.target}`);
+        }
+      }
+      for (const e of activeEdges) {
         const a = st.nodes.get(e.source);
         const b = st.nodes.get(e.target);
         if (!a || !b) continue;
-        const hovered = st.hover && (e.source === st.hover || e.target === st.hover);
-        const line = document.createElementNS(ns, "line");
+        const key = `${e.source}|${e.target}`;
+        let line = edgeElCache.get(key);
+        if (!line) {
+          line = document.createElementNS(ns, "line");
+          rootG.appendChild(line);
+          edgeElCache.set(key, line);
+        }
+        const hovered = hoveredSet.has(key);
         line.setAttribute("x1", String(a.x));
         line.setAttribute("y1", String(a.y));
         line.setAttribute("x2", String(b.x));
@@ -268,67 +324,81 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
         line.setAttribute("stroke", hovered ? "#1677ff" : "#d9d9d9");
         line.setAttribute("stroke-width", hovered ? "2.5" : "1.2");
         line.setAttribute("opacity", hovered ? "0.95" : "0.55");
-        g.appendChild(line);
         if (hovered && e.type) {
           const mx = (a.x + b.x) / 2;
           const my = (a.y + b.y) / 2 - 4;
-          const lbl = document.createElementNS(ns, "text");
+          let lbl = labelCache.get(`edge|${key}`);
+          if (!lbl) {
+            lbl = document.createElementNS(ns, "text");
+            lbl.setAttribute("text-anchor", "middle");
+            lbl.setAttribute("font-size", "11");
+            lbl.setAttribute("fill", "#1677ff");
+            lbl.setAttribute("font-weight", "bold");
+            rootG.appendChild(lbl);
+            labelCache.set(`edge|${key}`, lbl);
+          }
           lbl.setAttribute("x", String(mx));
           lbl.setAttribute("y", String(my));
-          lbl.setAttribute("text-anchor", "middle");
-          lbl.setAttribute("font-size", "11");
-          lbl.setAttribute("fill", "#1677ff");
-          lbl.setAttribute("font-weight", "bold");
           lbl.textContent = e.type.length > 12 ? e.type.slice(0, 12) + "…" : e.type;
-          g.appendChild(lbl);
+        } else {
+          const lbl = labelCache.get(`edge|${key}`);
+          if (lbl) lbl.setAttribute("opacity", "0");
         }
       }
 
-      // nodes
+      // nodes（DOM 复用）
       for (const n of nodeList) {
         const p = st.nodes.get(n.name);
         if (!p) continue;
         const isHover = st.hover === n.name;
         const radius = 12 + Math.min(10, n.degree || 0) * 1.1;
-        const group = document.createElementNS(ns, "g");
+        let group = nodeElCache.get(n.name);
+        if (!group) {
+          group = document.createElementNS(ns, "g");
+          group.style.cursor = "pointer";
+          group.addEventListener("mouseenter", () => {
+            st.hover = n.name;
+            render();
+            if (!st.raf) st.raf = requestAnimationFrame(simulate);
+          });
+          group.addEventListener("mouseleave", () => {
+            st.hover = "";
+            render();
+          });
+          group.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            selectNode(n.name);
+          });
+          group.addEventListener("dblclick", (ev) => {
+            ev.stopPropagation();
+            focusEgo(n.name);
+          });
+          const circle = document.createElementNS(ns, "circle");
+          circle.setAttribute("r", String(radius));
+          circle.setAttribute("fill", entityColor(n.entity_type));
+          circle.setAttribute("stroke", "#fff");
+          circle.setAttribute("stroke-width", "1.5");
+          group.appendChild(circle);
+          const label = document.createElementNS(ns, "text");
+          label.setAttribute("text-anchor", "middle");
+          label.setAttribute("font-size", "12");
+          label.setAttribute("fill", "#555");
+          label.setAttribute("y", String(radius + 14));
+          group.appendChild(label);
+          rootG.appendChild(group);
+          nodeElCache.set(n.name, group);
+        }
         group.setAttribute("transform", `translate(${p.x},${p.y})`);
-        group.style.cursor = "pointer";
-        group.addEventListener("mouseenter", () => {
-          st.hover = n.name;
-          render();
-        });
-        group.addEventListener("mouseleave", () => {
-          st.hover = "";
-          render();
-        });
-        group.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          selectNode(n.name);
-        });
-        group.addEventListener("dblclick", (ev) => {
-          ev.stopPropagation();
-          focusEgo(n.name);
-        });
-
-        const circle = document.createElementNS(ns, "circle");
-        circle.setAttribute("r", String(radius));
-        circle.setAttribute("fill", entityColor(n.entity_type));
+        const circle = group.childNodes[0] as SVGCircleElement;
         circle.setAttribute("opacity", isHover ? "0.95" : "0.85");
         circle.setAttribute("stroke", isHover ? "#333" : "#fff");
-        circle.setAttribute("stroke-width", "1.5");
-        group.appendChild(circle);
-
-        const label = document.createElementNS(ns, "text");
-        label.setAttribute("text-anchor", "middle");
-        label.setAttribute("y", String(radius + 14));
-        label.setAttribute("font-size", "12");
+        const label = group.childNodes[1] as SVGTextElement;
         label.setAttribute("fill", isHover ? "#1677ff" : "#555");
         label.setAttribute("font-weight", isHover ? "bold" : "normal");
         label.textContent = n.name.length > 10 ? n.name.slice(0, 10) + "…" : n.name;
-        group.appendChild(label);
-        g.appendChild(group);
       }
     };
+
 
     // 拖拽 / 缩放 / 平移（同 WikiGraphView）
     let downPos: { x: number; y: number } | null = null;
