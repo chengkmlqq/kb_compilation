@@ -9,6 +9,7 @@ import {
   Empty,
   Input,
   List,
+  Segmented,
   Space,
   Spin,
   Table,
@@ -27,6 +28,7 @@ import {
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import WikiGraphView from "@/components/WikiGraphView";
 import Neo4jGraphView from "@/components/Neo4jGraphView";
+import WikiBrowseView from "@/components/WikiBrowseView";
 import WikiManagePanel from "@/components/WikiManagePanel";
 import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 import KBConfigModal from "@/components/KBConfigModal";
@@ -68,7 +70,7 @@ export default function KbDetailPage() {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [searching, setSearching] = useState(false);
-  const [wikiView, setWikiView] = useState<"list" | "graph">("list");
+  const [wikiView, setWikiView] = useState<"browse" | "list" | "graph">("browse");
   const [focusSlug, setFocusSlug] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState("docs");
   const [chunkingOpen, setChunkingOpen] = useState(false);
@@ -279,13 +281,15 @@ export default function KbDetailPage() {
                       loading={searching}
                       style={{ width: 280 }}
                     />
-                    <Button
-                      icon={<ShareAltOutlined />}
-                      type={wikiView === "graph" ? "primary" : "default"}
-                      onClick={() => setWikiView(wikiView === "graph" ? "list" : "graph")}
-                    >
-                      {wikiView === "graph" ? "列表视图" : "图谱视图"}
-                    </Button>
+                    <Segmented
+                      value={wikiView}
+                      onChange={(v) => setWikiView(v as "browse" | "list" | "graph")}
+                      options={[
+                        { value: "browse", label: "浏览" },
+                        { value: "list", label: "管理" },
+                        { value: "graph", label: "图谱" },
+                      ]}
+                    />
                   </Space>
                 }
               >
@@ -305,8 +309,16 @@ export default function KbDetailPage() {
                   />
                 ) : wikiView === "graph" ? (
                   <WikiGraphView kbId={kbId} focusSlug={focusSlug} />
-                ) : (
+                ) : wikiView === "list" ? (
                   <WikiManagePanel kbId={kbId} />
+                ) : (
+                  <WikiBrowseView
+                    kbId={kbId}
+                    folders={wiki?.folders || []}
+                    pages={wiki?.pages || []}
+                    focusSlug={focusSlug}
+                    onTreeChanged={loadWiki}
+                  />
                 )}
               </Card>
             ),
