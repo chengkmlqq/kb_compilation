@@ -171,39 +171,63 @@ def _persist_document_images(
 ) -> str:
     """文档解析图片持久化（2026-10-07 文档图片可理解改造）：
     images {name: data_url} → 存对象存储 kb_documents/<doc_id>/images/<name>，
-    md 中内联 data URL 替换为 ``![name](kb-image://<doc_id>/<name>)`` 引用
-    （问答时按引用读回注入视觉模型）。解析引擎不产出 images 时原样返回。
+    md 中内联 data URL 替换为 ``![name](kb-image://<doc_id>/images/<name>)`` 引用
+    （问答时按引用读回注入视觉模型）。
+
+    兼容两种解析器契约：
+    - images dict 非空（MinerU 官方/云端：images map + md data URL）
+    - images dict 为空（自建 mineru shim：只返回 md，图片为 data URL 内联）——
+      此时从 md 正则提取 data:image URL 兜底持久化。
+    解析引擎不产出图片时原样返回。
     """
-    if not images:
-        return markdown
-    try:
-        from api.services.storage import put_bytes, resolve_new_path
-        from worker.tasks.parsers.mineru_parser import decode_image
-    except Exception:  # noqa: BLE001 - 存储不可用不阻断 ingest
-        return markdown
+    import base64
+    import re
+
+    # 1) 归一：images dict 内的图 + md 内联的 data URL 图（去重）
+    refs_seen: set[str] = set()
+
+    def _put(name: str, raw: bytes) -> bool:
+        try:
+            from api.services.storage import put_bytes, resolve_new_path
+
+            rel = f"kb_documents/{document_id}/images/{name}"
+            put_bytes(resolve_new_path(rel), raw, content_type="image/png")
+            return True
+        except Exception:  # noqa: BLE001 - 存储不可用不阻断 ingest
+            return False
 
     new_md = markdown
-    for name, data_url in images.items():
+    # 1a) images dict 优先（key 为图名）
+    for name, data_url in (images or {}).items():
         try:
-            raw = decode_image(data_url)
-            if not raw:
-                continue
-            rel = f"kb_documents/{document_id}/images/{name}"
-            storage_path = put_bytes(resolve_new_path(rel), raw, content_type="image/png")
-            if not storage_path:
-                continue
-            # md 中该 data URL 内联替换为可解析引用（路径含 images/，与存储一致）
-            ref = f"![{name}](kb-image://{document_id}/images/{name})"
-            if data_url in new_md:
-                new_md = new_md.replace(data_url, ref)
-            else:
-                # images value 可能是裸 base64——按常见内联形式兜底替换
-                import re
+            raw = base64.b64decode(data_url.split(",")[-1])
+        except Exception:  # noqa: BLE001
+            continue
+        if not raw or not _put(name, raw):
+            continue
+        ref = f"![{name}](kb-image://{document_id}/images/{name})"
+        if data_url in new_md:
+            new_md = new_md.replace(data_url, ref)
+        else:
+            pat = re.escape(data_url)
+            new_md = re.sub(rf"!\[[^\]]*\]\({pat}\)", ref, new_md)
+        refs_seen.add(f"data:{data_url}")
 
-                pattern = re.escape(data_url)
-                new_md = re.sub(rf"!\[[^\]]*\]\({pattern}\)", ref, new_md)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("persist doc image %s failed: %s", name, exc)
+    # 1b) md 内联 data URL 兜底（自建 mineru shim 契约：无 images map）
+    for m in re.finditer(r"!\[[^\]]*\]\((data:image/[^)]+)\)", new_md):
+        data_url, alt = m.group(1), m.group(0)
+        if data_url in refs_seen:
+            continue
+        try:
+            raw = base64.b64decode(data_url.split(",")[-1])
+        except Exception:  # noqa: BLE001
+            continue
+        name = f"{len(refs_seen)}.png"
+        if not raw or not _put(name, raw):
+            continue
+        ref = f"![{name}](kb-image://{document_id}/images/{name})"
+        refs_seen.add(data_url)
+        new_md = new_md.replace(m.group(0), ref)
     return new_md
 
 
