@@ -20,6 +20,7 @@ import {
   Tag,
   Typography,
   Upload,
+  Pagination,
 } from "antd";
 import {
   CloudUploadOutlined,
@@ -432,14 +433,30 @@ export default function KbDetailPage() {
                   </Space>
                 )}
                 {docView === "card" ? (
-                  <DocCardView
-                    items={docs}
-                    onOpen={setDetailDoc}
-                    onDownload={onDownloadDoc}
-                    onReparse={onReparseDoc}
-                    onDelete={onDeleteDoc}
-                    onTrace={onViewTrace}
-                  />
+                  <>
+                    <DocCardView
+                      items={docs}
+                      onOpen={setDetailDoc}
+                      onDownload={onDownloadDoc}
+                      onReparse={onReparseDoc}
+                      onDelete={onDeleteDoc}
+                      onTrace={onViewTrace}
+                    />
+                    {/* 2026-10-06: 卡片视图补充分页(与列表视图同源 docPage/docPageSize)，否则只能看当前页 */}
+                    <div className="mt-3 flex justify-end">
+                      <Pagination
+                        current={docPage}
+                        pageSize={docPageSize}
+                        total={docTotal}
+                        showSizeChanger
+                        showTotal={(t) => `共 ${t} 个文档`}
+                        onChange={(p, ps) => {
+                          setDocPage(p);
+                          setDocPageSize(ps);
+                        }}
+                      />
+                    </div>
+                  </>
                 ) : (
                 <Table<DocItem>
                   rowKey="id"
