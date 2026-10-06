@@ -57,6 +57,7 @@ import {
   QaStreamEvent,
   ChatSessionItem,
   KbItem,
+  ModelItem,
 } from "@/lib/api";
 import MarkdownViewer from "@/components/MarkdownViewer";
 
