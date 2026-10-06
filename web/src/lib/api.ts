@@ -168,6 +168,7 @@ export interface KbCreatePayload {
   summary_model_id?: string | null;
   vector_store_id?: string | null;
   configs?: Record<string, unknown>;
+  ontology_schema_name?: string;
 }
 
 export function apiCreateKb(payload: KbCreatePayload) {
@@ -1299,6 +1300,97 @@ export function apiModelImport(models: ModelExportItem[], mode = "upsert") {
 
 export function apiDeleteModel(id: string) {
   return request<{ deleted: boolean }>(`/api/v1/models/${id}`, { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------------------
+// 本体 Schema（抽取分类结构配置）
+// ---------------------------------------------------------------------------
+export interface OntologyCategory {
+  id: string;
+  schema_name: string;
+  schema_label: string;
+  schema_desc: string | null;
+  dimension: "business" | "rule";
+  cat_no: number;
+  cat_name: string;
+  cat_label: string;
+  prompt_hint: string | null;
+  neo4j_edge: string | null;
+  state: string;
+  sort: number;
+  created_at: string | null;
+}
+
+export interface OntologySchemaGroup {
+  schema_name: string;
+  schema_label: string;
+  schema_desc: string | null;
+  business: OntologyCategory[];
+  rule: OntologyCategory[];
+  total: number;
+}
+
+export interface OntologyKbBinding {
+  kb_id: string;
+  schema_name: string | null;
+  schema: OntologySchemaGroup | null;
+}
+
+export interface OntologyCategoryPayload {
+  schema_name: string;
+  schema_label?: string;
+  schema_desc?: string | null;
+  dimension: "business" | "rule";
+  cat_no: number;
+  cat_name: string;
+  cat_label?: string;
+  prompt_hint?: string | null;
+  neo4j_edge?: string | null;
+  state?: string;
+}
+
+export function apiListOntologySchemas(schemaName?: string, dimension?: string) {
+  const q = new URLSearchParams();
+  if (schemaName) q.set("schema_name", schemaName);
+  if (dimension) q.set("dimension", dimension);
+  const qs = q.toString();
+  return request<{ schemas: OntologySchemaGroup[] }>(`/api/v1/ontology-schemas${qs ? `?${qs}` : ""}`);
+}
+
+export function apiCreateOntologyCategory(payload: OntologyCategoryPayload) {
+  return request<{ item: OntologyCategory }>("/api/v1/ontology-schemas", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateOntologyCategory(id: string, payload: OntologyCategoryPayload) {
+  return request<{ item: OntologyCategory }>(`/api/v1/ontology-schemas/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiDeleteOntologyCategory(id: string) {
+  return request<{ deleted: string }>(`/api/v1/ontology-schemas/${id}`, { method: "DELETE" });
+}
+
+export function apiCopyOntologySchema(sourceSchema: string, newSchemaName: string, newSchemaLabel = "") {
+  return request<{ copied: number; schema_name: string }>("/api/v1/ontology-schemas/copy", {
+    method: "POST",
+    body: JSON.stringify({ source_schema: sourceSchema, new_schema_name: newSchemaName, new_schema_label: newSchemaLabel }),
+  });
+}
+
+export function apiGetKbOntologySchema(kbId: string) {
+  return request<OntologyKbBinding>(`/api/v1/kbs/${kbId}/ontology-schema`);
+}
+
+export function apiBindKbOntologySchema(kbId: string, schemaName: string | null) {
+  return request<{ kb_id: string; schema_name: string | null }>(`/api/v1/kbs/${kbId}/ontology-schema`, {
+    method: "PUT",
+    body: JSON.stringify({ schema_name: schemaName }),
+  });
 }
 
 export function apiCopyModel(id: string) {

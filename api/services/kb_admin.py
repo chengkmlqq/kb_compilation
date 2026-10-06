@@ -150,6 +150,7 @@ def create_kb(
     storage_backend_id: str | None = None,
     vector_store_id: str | None = None,
     configs: dict | None = None,
+    ontology_schema_name: str | None = None,
 ) -> KbDatasource:
     """Create a KB; name is required, id is generated if absent.
 
@@ -195,6 +196,15 @@ def create_kb(
     db.add(kb)
     db.commit()
     db.refresh(kb)
+    if ontology_schema_name:
+        from api.models.ontology import KbOntologySchema
+
+        bind = db.get(KbOntologySchema, kb.id)
+        if bind:
+            bind.schema_name = ontology_schema_name
+        else:
+            db.add(KbOntologySchema(kb_id=kb.id, schema_name=ontology_schema_name))
+        db.commit()
     return kb
 
 

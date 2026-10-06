@@ -12,5 +12,6 @@ from api.models import chat_session  # noqa: F401  (registers chat session/messa
 from api.models import model  # noqa: F401  (registers scoped model registry kb_model)
 from api.models import mcp_skill  # noqa: F401  (registers kb_mcp_server / kb_skill)
 from api.models import websearch  # noqa: F401  (registers kb_websearch_provider)
+from api.models import ontology  # noqa: F401  (registers ontology_schema / kb_ontology_schema)
 
-__all__ = ["framework", "knowledge", "chat_session", "model", "mcp_skill", "websearch"]
+__all__ = ["framework", "knowledge", "chat_session", "model", "mcp_skill", "websearch", "ontology"]

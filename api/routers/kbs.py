@@ -94,6 +94,7 @@ class KBCreateRequest(BaseModel):
     storage_backend_id: str | None = None
     vector_store_id: str | None = None
     configs: dict | None = None  # wiki/extract/faq/vlm/asr/storage 等 JSON 配置
+    ontology_schema_name: str | None = None  # 绑定本体 Schema（抽取分类结构，多领域）
 
 
 class KBUpdateRequest(BaseModel):
@@ -235,6 +236,7 @@ def post_kb(
             storage_backend_id=req.storage_backend_id,
             vector_store_id=req.vector_store_id,
             configs=req.configs,
+            ontology_schema_name=req.ontology_schema_name,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

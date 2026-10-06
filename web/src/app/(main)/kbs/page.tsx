@@ -40,11 +40,13 @@ import {
   apiListDatasources,
   apiListKbs,
   apiListModels,
+  apiListOntologySchemas,
   apiListSkillsRegistry,
   DatasourceItem,
   KbCreatePayload,
   KbItem,
   ModelItem,
+  OntologySchemaGroup,
 } from "@/lib/api";
 import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 import KBConfigModal from "@/components/KBConfigModal";
@@ -76,6 +78,7 @@ export default function KbsPage() {
   const [skills, setSkills] = useState<{ name: string; description?: string }[]>([]);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [vectorStores, setVectorStores] = useState<DatasourceItem[]>([]);
+  const [ontologySchemas, setOntologySchemas] = useState<OntologySchemaGroup[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
@@ -153,9 +156,21 @@ export default function KbsPage() {
     void (async () => {
       try {
         const res = await apiListModels();
-        if (res.success && res.data) setModels(res.data.items);
+        if (res.success && res.data) setModels(res.data.items || []);
       } catch {
-        // 模型列表加载失败不阻断创建（留空走系统默认模型）
+        // 模型列表加载失败不阻断创建
+      }
+    })();
+  }, []);
+
+  // 本体 Schema 下拉数据源（抽取分类结构，多领域）
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await apiListOntologySchemas();
+        setOntologySchemas(res.data?.schemas || []);
+      } catch {
+        // schema 列表加载失败不阻断创建（Select 为空时由必填校验提示）
       }
     })();
   }, []);
@@ -212,6 +227,7 @@ export default function KbsPage() {
       summary_model_id: values.summary_model_id || undefined,
       vector_store_id: values.vector_store_id || undefined,
       configs: values.wiki_skill ? { wiki_config: { skill: values.wiki_skill } } : undefined,
+      ontology_schema_name: values.ontology_schema_name,
     };
     const res = await apiCreateKb(payload);
     if (res.success) {
@@ -440,6 +456,20 @@ export default function KbsPage() {
             extra="向量/关键词检索默认开启；Wiki 构建与知识图谱需显式开启（上传文档后才会自动构建）"
           >
             <Checkbox.Group options={PIPELINE_OPTIONS.map((o) => ({ label: o.label, value: o.value }))} />
+          </Form.Item>
+          <Form.Item
+            name="ontology_schema_name"
+            label="本体 Schema（抽取分类结构）"
+            rules={[{ required: true, message: "请选择本体 Schema" }]}
+            extra="定义文档抽取的业务/规则分类结构与提示词，支持多领域（市场监管法规、供管制度等）"
+          >
+            <Select
+              placeholder="选择 Schema"
+              options={ontologySchemas.map((s) => ({
+                label: `${s.schema_label}（业务${s.business.length}类/规则${s.rule.length}类）`,
+                value: s.schema_name,
+              }))}
+            />
           </Form.Item>
           <Form.Item
             name="embedding_model_id"
