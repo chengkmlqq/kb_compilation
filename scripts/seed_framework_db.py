@@ -260,7 +260,7 @@ def main() -> None:
         db.commit()
         print(
             f"[5/5] KB 菜单树种子 OK: 共 {len(KB_MENUS)} 项 "
-            f"(root_kb + {len(KB_MENUS) - 1} 子菜单) "
+            f"(顶级分组 {sum(1 for _, _, _, _, p, *_ in KB_MENUS if not p)} 个 + 页面 {sum(1 for _, _, _, _, p, *_ in KB_MENUS if p)} 个) "
             f"[新建 {created} / 修正 {updated} / 新增授权 {granted}]"
         )
 
