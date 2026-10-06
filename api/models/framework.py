@@ -431,26 +431,6 @@ class InterfaceLog(Base):
     request_body: Mapped[str | None] = mapped_column(Text)
 
 
-class SystemMessage(Base):
-    __tablename__ = "modo_system_message"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    title: Mapped[str] = mapped_column(String(256), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    type: Mapped[str] = mapped_column(String(20), nullable=False)  # INFO/WARNING/ERROR/SUCCESS
-    is_read: Mapped[str] = mapped_column(String(1), nullable=False, default="0")
-    read_date: Mapped[object | None] = mapped_column(DateTime)
-    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="NORMAL")
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE")
-    sender_id: Mapped[str | None] = mapped_column(String(64))
-    link_url: Mapped[str | None] = mapped_column(String(512))
-    create_date: Mapped[object | None] = mapped_column(
-        DateTime, server_default=text("CURRENT_TIMESTAMP")
-    )
-    expire_date: Mapped[object | None] = mapped_column(DateTime)
-
-
 class Seq(Base):
     __tablename__ = "modo_seq"
 
@@ -573,7 +553,6 @@ __all__ = [
     "SyncLog",
     "SyncDetail",
     "InterfaceLog",
-    "SystemMessage",
     "Seq",
     "SysFile",
     "OperationDoc",

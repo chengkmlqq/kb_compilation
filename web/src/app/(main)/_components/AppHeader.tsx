@@ -9,7 +9,6 @@ import {
   UserOutlined,
 } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
-import { NotificationBell } from "./NotificationBell";
 import {
   apiGetDefaultTeam,
   apiMe,
@@ -294,9 +293,8 @@ export const AppHeader: React.FC = () => {
           中间留弹性空位，右侧为用户区 */}
       <div style={{ flex: 1 }} />
 
-      {/* Right: 通知铃 + 用户下拉（2026-10-06 移除搜索/查询按钮） */}
+      {/* Right: 用户下拉（2026-10-06 通知管理功能已删除） */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, height: 45 }}>
-        <NotificationBell />
         <Dropdown
           open={dropdownOpen}
           onOpenChange={(open) => {

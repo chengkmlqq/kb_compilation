@@ -1897,48 +1897,6 @@ export function apiSetDefaultTeam(teamName: string) {
   );
 }
 
-// ---- 通知（系统消息，modo_system_message） ----
-
-export interface NotificationItem {
-  id: string;
-  title: string;
-  content: string;
-  type?: string;
-  is_read?: string;
-  priority?: string;
-  link_url?: string | null;
-  sender_id?: string | null;
-  create_date?: string;
-}
-
-export function apiNotificationUnreadCount() {
-  return request<{ unread_count: number }>("/api/v1/system/notifications/unread-count");
-}
-
-export function apiListNotifications(params: { tab?: "unread" | "all"; page?: number; page_size?: number } = {}) {
-  const q = new URLSearchParams();
-  q.set("tab", params.tab || "unread");
-  if (params.page) q.set("page", String(params.page));
-  if (params.page_size) q.set("page_size", String(params.page_size));
-  return request<{ items: NotificationItem[]; total: number }>(
-    `/api/v1/system/notifications?${q.toString()}`,
-  );
-}
-
-export function apiMarkNotificationRead(messageId: string) {
-  return request<{ success: boolean; message?: string }>(
-    `/api/v1/system/notifications/${encodeURIComponent(messageId)}/read`,
-    { method: "POST" },
-  );
-}
-
-export function apiMarkAllNotificationsRead() {
-  return request<{ success: boolean; message?: string }>(
-    "/api/v1/system/notifications/read-all",
-    { method: "POST" },
-  );
-}
-
 // ---- 菜单图标目录 ----
 
 export function apiListMenuIcons() {
@@ -2382,51 +2340,4 @@ export function apiDatagridExportSql(dsName: string, sql: string, tableName = "e
     method: "POST",
     body: JSON.stringify({ dsName, sql, tableName }),
   }) as unknown as Promise<DatagridExportResult>;
-}
-
-// ---- 通知管理端（对齐 ds sendSystemMessageAction 等） ----
-
-export interface NotifyUserItem {
-  user_id?: string;
-  user_name?: string;
-  email?: string | null;
-}
-
-export function apiListNotifyUsers(keyWord = "") {
-  return request<{ items: NotifyUserItem[]; total: number }>(
-    `/api/v1/system/notifications/users?keyWord=${encodeURIComponent(keyWord)}`,
-  );
-}
-
-export interface SendMessagePayload {
-  userIds?: string[];
-  title: string;
-  content: string;
-  type?: "INFO" | "WARNING" | "ERROR" | "SUCCESS";
-  priority?: "LOW" | "NORMAL" | "HIGH";
-  linkUrl?: string;
-}
-
-export function apiSendSystemMessage(payload: SendMessagePayload) {
-  return request<{ sent: number }>("/api/v1/system/notifications/send", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export interface TestAlertApiPayload {
-  endpoint: string;
-  method: "POST" | "PUT" | "PATCH";
-  id?: string;
-  alertLevel?: string;
-  alertTitle: string;
-  alertContent?: string;
-  alertTime?: string;
-}
-
-export function apiTestExternalAlertApi(payload: TestAlertApiPayload) {
-  return request<{ status_code: number; body: string }>(
-    "/api/v1/system/notifications/test-alert-api",
-    { method: "POST", body: JSON.stringify(payload) },
-  );
 }

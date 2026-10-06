@@ -77,9 +77,7 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("sys_roles", "sys_roles", "角色管理", "/system/roles", "system", "SafetyOutlined", 2),
     ("sys_teams", "sys_teams", "团队管理", "/system/teams", "system", "PartitionOutlined", 3),
     ("sys_menus", "sys_menus", "菜单管理", "/system/menus", "system", "MenuOutlined", 4),
-    ("sys_logs", "sys_logs", "操作日志", "/system/logs", "system", "ProfileOutlined", 5),
-    ("notify", "notify", "通知管理", "/notification", "system", "BellOutlined", 6),
-    ("models", "models", "模型配置", "/models", "system", "CloudServerOutlined", 7),
+    ("sys_logs", "sys_logs", "操作日志", "/system/logs", "system", "ProfileOutlined", 5),    ("models", "models", "模型配置", "/models", "system", "CloudServerOutlined", 7),
     ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "system", "ApiOutlined", 8),
     ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "system", "ToolOutlined", 9),
 ]
