@@ -46,7 +46,6 @@ FRAMEWORK_TABLES = {
     "modo_sync_log",
     "modo_sync_detail",
     "modo_interface_log",
-    "modo_system_message",
     "modo_seq",
     "modo_sys_file",
     "modo_operation_doc",
@@ -67,6 +66,8 @@ KNOWLEDGE_BUSINESS_TABLES = {
     "wiki_operation_log",
     "wiki_feedback",
     "kb_agent",
+    "ontology_schema",
+    "kb_ontology_schema",
 }
 
 # Chat conversation persistence (chat_session / chat_message / chat_attachment) — framework store.
