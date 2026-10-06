@@ -270,7 +270,9 @@ def create_agent(
 
 def copy_agent(db: Session, agent_id: str) -> KbAgent | None:
     """Duplicate an agent (name gets " - 副本" suffix; builtin flag cleared)."""
-    src = get_agent(db, agent_id)
+    from sqlalchemy import select
+
+    src = db.execute(select(KbAgent).where(KbAgent.id == agent_id)).scalars().first()
     if src is None:
         return None
     dup = KbAgent(
