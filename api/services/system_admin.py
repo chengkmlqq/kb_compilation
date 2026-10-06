@@ -13,15 +13,18 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from datetime import datetime
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from api.lib.crypto import aes_encrypt
 from api.models.framework import (
     Menu,
     OperLog,
     RoleMenuRela,
     Team,
+    TeamMember,
     User,
     UserRole,
     UserRoleRela,
@@ -486,9 +489,301 @@ def is_platform_admin(db: Session, user_id: str, admin_users: list[str] | None =
     return bool(admin_users and user_id in admin_users)
 
 
+# ============================================================================
+# User CRUD（对齐 data-synth modoUser create / update / deleteRealAll /
+# userRoleRela 角色关系）——系统管理页「用户」全量 CRUD
+# ============================================================================
+
+
+def _now() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def create_user(db: Session, payload: dict) -> dict:
+    """新建用户。pwd 明文入参，落库 AES 加密（登录校验同款）。"""
+    user_id = (payload.get("userId") or "").strip()
+    if not user_id:
+        return {"success": False, "message": "用户ID不能为空", "data": None}
+    exists = db.execute(select(User).where(User.user_id == user_id)).scalars().first()
+    if exists:
+        return {"success": False, "message": f"用户 {user_id} 已存在", "data": None}
+    pwd = payload.get("pwd") or ""
+    if not pwd:
+        return {"success": False, "message": "密码不能为空", "data": None}
+    user = User(
+        id=uuid.uuid4().hex[:32],
+        user_id=user_id,
+        user_name=payload.get("userName") or "",
+        user_pwd=aes_encrypt(pwd),
+        email=payload.get("email") or "",
+        phone=payload.get("phone") or "",
+        create_dt=_now(),
+        state=payload.get("state") or "1",
+        default_team=payload.get("defaultTeam") or "",
+    )
+    db.add(user)
+    db.flush()
+    role_ids = payload.get("roleIds") or []
+    if role_ids:
+        _assign_user_roles(db, user_id, role_ids)
+    db.commit()
+    return {"success": True, "message": "用户已创建", "data": {"user_id": user_id}}
+
+
+def update_user(db: Session, user_id: str, payload: dict) -> dict:
+    user = db.execute(select(User).where(User.user_id == user_id)).scalars().first()
+    if not user:
+        return {"success": False, "message": "用户不存在", "data": None}
+    user.user_name = payload.get("userName", user.user_name) or ""
+    user.email = payload.get("email", user.email) or ""
+    user.phone = payload.get("phone", user.phone) or ""
+    user.default_team = payload.get("defaultTeam", user.default_team) or ""
+    user.state = payload.get("state", user.state) or "1"
+    db.commit()
+    return {"success": True, "message": "用户已更新", "data": {"user_id": user_id}}
+
+
+def delete_user(db: Session, user_id: str) -> dict:
+    user = db.execute(select(User).where(User.user_id == user_id)).scalars().first()
+    if not user:
+        return {"success": False, "message": "用户不存在", "data": None}
+    # 连带清理：角色关系 + 团队成员关系（对齐 ds deleteRealAll 语义）
+    db.execute(delete(UserRoleRela).where(UserRoleRela.user_id == user_id))
+    db.execute(delete(TeamMember).where(TeamMember.user_id == user_id))
+    db.delete(user)
+    db.commit()
+    return {"success": True, "message": "用户已删除", "data": {"user_id": user_id}}
+
+
+def reset_user_pwd(db: Session, user_id: str, pwd: str) -> dict:
+    user = db.execute(select(User).where(User.user_id == user_id)).scalars().first()
+    if not user:
+        return {"success": False, "message": "用户不存在", "data": None}
+    if not pwd:
+        return {"success": False, "message": "新密码不能为空", "data": None}
+    user.user_pwd = aes_encrypt(pwd)
+    db.commit()
+    return {"success": True, "message": "密码已重置", "data": {"user_id": user_id}}
+
+
+def user_role_ids(db: Session, user_id: str) -> list[str]:
+    return list(
+        db.execute(select(UserRoleRela.role_id).where(UserRoleRela.user_id == user_id))
+        .scalars()
+        .all()
+    )
+
+
+def _assign_user_roles(db: Session, user_id: str, role_ids: list[str]) -> None:
+    db.execute(delete(UserRoleRela).where(UserRoleRela.user_id == user_id))
+    for rid in role_ids:
+        db.add(
+            UserRoleRela(
+                rela_id=uuid.uuid4().hex[:32],
+                role_id=rid,
+                user_id=user_id,
+            )
+        )
+
+
+def assign_user_roles(db: Session, user_id: str, role_ids: list[str]) -> dict:
+    user = db.execute(select(User).where(User.user_id == user_id)).scalars().first()
+    if not user:
+        return {"success": False, "message": "用户不存在", "data": None}
+    valid = set(
+        db.execute(select(UserRole.role_id)).scalars().all()
+    )
+    bad = [r for r in role_ids if r not in valid]
+    if bad:
+        return {"success": False, "message": f"角色不存在: {bad}", "data": None}
+    _assign_user_roles(db, user_id, role_ids)
+    db.commit()
+    return {"success": True, "message": "角色分配成功", "data": {"user_id": user_id}}
+
+
+# ============================================================================
+# Team CRUD（对齐 data-synth 团队管理 create / edit / delete + 成员维护）
+# ============================================================================
+
+
+def create_team(db: Session, payload: dict) -> dict:
+    team_name = (payload.get("teamName") or "").strip()
+    if not team_name:
+        return {"success": False, "message": "团队编码不能为空", "data": None}
+    exists = db.execute(select(Team).where(Team.team_name == team_name)).scalars().first()
+    if exists:
+        return {"success": False, "message": f"团队 {team_name} 已存在", "data": None}
+    parent = payload.get("parentTeamName") or ""
+    parent_team = None
+    if parent:
+        parent_team = db.execute(select(Team).where(Team.team_name == parent)).scalars().first()
+        if not parent_team:
+            return {"success": False, "message": f"父团队 {parent} 不存在", "data": None}
+    team = Team(
+        team_id=uuid.uuid4().hex[:32],
+        team_name=team_name,
+        label=payload.get("label") or "",
+        descr=payload.get("descr") or "",
+        parent_team_name=parent or "",
+        parent_team_id=parent_team.team_id if parent_team else None,
+        state=payload.get("state") or "1",
+        create_dt=_now(),
+    )
+    db.add(team)
+    db.commit()
+    return {"success": True, "message": "团队已创建", "data": {"team_name": team_name}}
+
+
+def update_team(db: Session, team_name: str, payload: dict) -> dict:
+    team = db.execute(select(Team).where(Team.team_name == team_name)).scalars().first()
+    if not team:
+        return {"success": False, "message": "团队不存在", "data": None}
+    parent = payload.get("parentTeamName")
+    if parent is not None:
+        if parent and parent != team_name:
+            parent_team = db.execute(select(Team).where(Team.team_name == parent)).scalars().first()
+            if not parent_team:
+                return {"success": False, "message": f"父团队 {parent} 不存在", "data": None}
+            team.parent_team_name = parent
+            team.parent_team_id = parent_team.team_id
+        else:
+            team.parent_team_name = parent or ""
+            team.parent_team_id = None
+    if "label" in payload:
+        team.label = payload["label"] or ""
+    if "descr" in payload:
+        team.descr = payload["descr"] or ""
+    if "state" in payload:
+        team.state = payload["state"] or "1"
+    db.commit()
+    return {"success": True, "message": "团队已更新", "data": {"team_name": team_name}}
+
+
+def delete_team(db: Session, team_name: str) -> dict:
+    team = db.execute(select(Team).where(Team.team_name == team_name)).scalars().first()
+    if not team:
+        return {"success": False, "message": "团队不存在", "data": None}
+    if team_name == "ROOT":
+        return {"success": False, "message": "根团队 ROOT 不允许删除", "data": None}
+    # 连带清理：团队成员关系 + 用户默认团队引用
+    db.execute(delete(TeamMember).where(TeamMember.team_name == team_name))
+    users = db.execute(select(User).where(User.default_team == team_name)).scalars().all()
+    for u in users:
+        u.default_team = ""
+    # 子团队父级引用清空
+    children = db.execute(select(Team).where(Team.parent_team_name == team_name)).scalars().all()
+    for c in children:
+        c.parent_team_name = ""
+        c.parent_team_id = None
+    db.delete(team)
+    db.commit()
+    return {"success": True, "message": "团队已删除", "data": {"team_name": team_name}}
+
+
+def team_members(db: Session, team_name: str) -> dict:
+    """团队成员（含用户基本信息），对齐 ds 团队 Tabs 成员面板。"""
+    rows = db.execute(
+        select(TeamMember, User)
+        .join(User, User.user_id == TeamMember.user_id, isouter=True)
+        .where(TeamMember.team_name == team_name)
+    ).all()
+    items = [
+        {
+            "user_id": tm.user_id,
+            "user_name": u.user_name if u else "",
+            "email": u.email if u else "",
+            "phone": u.phone if u else "",
+            "state": u.state if u else "",
+        }
+        for tm, u in rows
+    ]
+    return {"items": items, "total": len(items)}
+
+
+def save_team_members(db: Session, team_name: str, user_ids: list[str]) -> dict:
+    team = db.execute(select(Team).where(Team.team_name == team_name)).scalars().first()
+    if not team:
+        return {"success": False, "message": "团队不存在", "data": None}
+    valid = set(db.execute(select(User.user_id)).scalars().all())
+    bad = [u for u in user_ids if u not in valid]
+    if bad:
+        return {"success": False, "message": f"用户不存在: {bad}", "data": None}
+    db.execute(delete(TeamMember).where(TeamMember.team_name == team_name))
+    for uid in user_ids:
+        db.add(
+            TeamMember(
+                member_id=uuid.uuid4().hex[:32],
+                team_name=team_name,
+                user_id=uid,
+                create_dt=_now(),
+            )
+        )
+    db.commit()
+    return {"success": True, "message": "团队成员已保存", "data": {"team_name": team_name}}
+
+
+# ============================================================================
+# 菜单 API 权限（对齐 data-synth 菜单服务授权；存 menu_ext_conf JSON）
+# ============================================================================
+
+
+def get_menu_apis(db: Session, menu_id: str) -> dict:
+    menu = db.execute(select(Menu).where(Menu.menu_id == menu_id)).scalars().first()
+    if not menu:
+        return {"success": False, "message": "菜单不存在", "data": None}
+    apis: list[dict] = []
+    if menu.menu_ext_conf:
+        try:
+            conf = json.loads(menu.menu_ext_conf)
+            apis = conf.get("api_perms") or []
+        except (ValueError, TypeError):
+            apis = []
+    return {"success": True, "data": {"menu_id": menu_id, "apis": apis}}
+
+
+def save_menu_apis(db: Session, menu_id: str, apis: list[dict]) -> dict:
+    menu = db.execute(select(Menu).where(Menu.menu_id == menu_id)).scalars().first()
+    if not menu:
+        return {"success": False, "message": "菜单不存在", "data": None}
+    cleaned: list[dict] = []
+    for a in apis or []:
+        path = (a.get("path") or "").strip()
+        method = (a.get("method") or "GET").strip().upper()
+        if path:
+            cleaned.append({"path": path, "method": method})
+    conf: dict = {}
+    if menu.menu_ext_conf:
+        try:
+            conf = json.loads(menu.menu_ext_conf) or {}
+        except (ValueError, TypeError):
+            conf = {}
+    conf["api_perms"] = cleaned
+    menu.menu_ext_conf = json.dumps(conf, ensure_ascii=False)
+    db.commit()
+    return {"success": True, "message": "API 权限已保存", "data": {"menu_id": menu_id}}
+
+
+def menu_api_perms(db: Session, menu_id: str) -> list[dict]:
+    """Read-only helper for the middleware RBAC guard: api_perms of a menu."""
+    menu = db.execute(select(Menu).where(Menu.menu_id == menu_id)).scalars().first()
+    if not menu or not menu.menu_ext_conf:
+        return []
+    try:
+        conf = json.loads(menu.menu_ext_conf)
+        return conf.get("api_perms") or []
+    except (ValueError, TypeError):
+        return []
+
+
 __all__ = [
+    "assign_user_roles",
+    "create_team",
+    "create_user",
     "delete_menu",
     "delete_role",
+    "delete_team",
+    "delete_user",
+    "get_menu_apis",
     "get_role_menus",
     "get_role_users",
     "is_platform_admin",
@@ -497,10 +792,18 @@ __all__ = [
     "list_roles",
     "list_teams",
     "list_users",
+    "menu_api_perms",
     "my_menus",
+    "reset_user_pwd",
     "save_menu",
+    "save_menu_apis",
     "save_role",
     "save_role_menus",
     "save_role_users",
+    "save_team_members",
+    "team_members",
+    "update_team",
+    "update_user",
+    "user_role_ids",
     "user_roles",
 ]

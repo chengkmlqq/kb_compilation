@@ -18,11 +18,17 @@ from __future__ import annotations
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 
 from api.config import get_settings
 from api.db import get_sessionmaker
+from api.models.framework import Menu
 from api.services.identity import check_path_permission, decode_identity_cookie
-from api.services.system_admin import is_platform_admin
+from api.services.system_admin import (
+    is_platform_admin,
+    menu_api_perms,
+    my_menus,
+)
 
 WHITELIST_PREFIXES: tuple[str, ...] = (
     "/health",
@@ -66,6 +72,45 @@ def is_whitelisted(path: str) -> bool:
     return any(path.startswith(p) for p in WHITELIST_PREFIXES)
 
 
+def _api_perm_match(path: str, method: str, perm: dict) -> bool:
+    """API 权限条目匹配：path 前缀匹配 + 方法相等（'*' 通配任意方法）。"""
+    p = (perm.get("path") or "").rstrip("/")
+    m = (perm.get("method") or "*").strip().upper()
+    if not p:
+        return False
+    if path == p or path.startswith(f"{p}/"):
+        return m == "*" or m == method
+    return False
+
+
+def _menu_api_guard(db, identity_user_id: str, path: str, method: str, page_route: str) -> bool:
+    """菜单 API 授权过滤（对齐 data-synth 菜单服务授权）。
+
+    仅当用户可访问的菜单中、与当前页面 route 匹配的菜单配置了
+    api_perms 时才收紧：请求的 API 必须命中其中一条，否则拒绝。
+    未配置 api_perms 的菜单保持原行为（不影响现有部署）。
+    """
+    menu_data = my_menus(db, identity_user_id, is_admin=False)
+    menu_ids = [x["menu_id"] for x in menu_data.get("items", [])]
+    restricted = False
+    covered = False
+    for mid in menu_ids:
+        mrow = db.execute(select(Menu).where(Menu.menu_id == mid)).scalars().first()
+        if not mrow:
+            continue
+        if (mrow.route or "").rstrip("/") != page_route:
+            continue
+        perms = menu_api_perms(db, mid)
+        if not perms:
+            continue
+        restricted = True
+        if any(_api_perm_match(path, method, p) for p in perms):
+            covered = True
+    if restricted and not covered:
+        return False
+    return True
+
+
 async def rbac_guard(request: Request, call_next):
     """FastAPI middleware entry — registered in api/main.py."""
     path = request.url.path
@@ -96,6 +141,15 @@ async def rbac_guard(request: Request, call_next):
             return JSONResponse(
                 status_code=403,
                 content={"success": False, "error": "访问被拒绝", "reason": reason},
+            )
+        if not _menu_api_guard(db, identity.user_id, path, request.method.upper(), page_route):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "success": False,
+                    "error": "访问被拒绝",
+                    "reason": "该 API 未被菜单服务授权",
+                },
             )
     finally:
         db.close()

@@ -972,6 +972,7 @@ export interface SysTeamItem {
   descr?: string | null;
   parent_team_name?: string | null;
   state?: string | null;
+  create_dt?: string | null;
 }
 
 export interface SysMenuItem {
@@ -1120,6 +1121,138 @@ export function apiDeleteMenu(menuId: string) {
   return request<{ success: boolean; message?: string }>(
     `/api/v1/system/menus/${encodeURIComponent(menuId)}`,
     { method: "DELETE" },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 用户 CRUD / 角色配置 / 重置密码（对齐 data-synth UserManagerNeo 交互面）
+// ---------------------------------------------------------------------------
+
+export interface SysUserWrite {
+  userId: string;
+  userName?: string;
+  pwd?: string;
+  email?: string;
+  phone?: string;
+  defaultTeam?: string;
+  state?: string;
+  roleIds?: string[];
+}
+
+export function apiCreateUser(payload: SysUserWrite) {
+  return request<{ success: boolean; message?: string }>("/api/v1/system/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateUser(userId: string, payload: Partial<SysUserWrite>) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/users/${encodeURIComponent(userId)}`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export function apiDeleteUser(userId: string) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/users/${encodeURIComponent(userId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function apiResetUserPwd(userId: string, pwd: string) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/users/${encodeURIComponent(userId)}/pwd`,
+    { method: "POST", body: JSON.stringify({ pwd }) },
+  );
+}
+
+export function apiGetUserRoles(userId: string) {
+  return request<{ roleIds: string[] }>(
+    `/api/v1/system/users/${encodeURIComponent(userId)}/roles`,
+  );
+}
+
+export function apiSaveUserRoles(userId: string, roleIds: string[]) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/users/${encodeURIComponent(userId)}/roles`,
+    { method: "PUT", body: JSON.stringify({ roleIds }) },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 团队 CRUD + 成员维护（对齐 data-synth TeamManagerZj 交互面）
+// ---------------------------------------------------------------------------
+
+export interface SysTeamWrite {
+  teamName?: string;
+  label?: string;
+  descr?: string;
+  parentTeamName?: string;
+  state?: string;
+}
+
+export interface SysTeamMemberItem {
+  user_id?: string;
+  user_name?: string;
+  email?: string | null;
+  phone?: string | null;
+  state?: string | null;
+}
+
+export function apiCreateTeam(payload: SysTeamWrite) {
+  return request<{ success: boolean; message?: string }>("/api/v1/system/teams", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateTeam(teamName: string, payload: Partial<SysTeamWrite>) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/teams/${encodeURIComponent(teamName)}`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export function apiDeleteTeam(teamName: string) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/teams/${encodeURIComponent(teamName)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function apiGetTeamMembers(teamName: string) {
+  return request<{ items: SysTeamMemberItem[]; total: number }>(
+    `/api/v1/system/teams/${encodeURIComponent(teamName)}/members`,
+  );
+}
+
+export function apiSaveTeamMembers(teamName: string, userIds: string[]) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/teams/${encodeURIComponent(teamName)}/members`,
+    { method: "PUT", body: JSON.stringify({ userIds }) },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 菜单 API 权限（对齐 data-synth 菜单服务授权）
+// ---------------------------------------------------------------------------
+
+export interface SysApiPerm {
+  path: string;
+  method?: string;
+}
+
+export function apiGetMenuApis(menuId: string) {
+  return request<{ menu_id?: string; apis: SysApiPerm[] }>(
+    `/api/v1/system/menus/${encodeURIComponent(menuId)}/apis`,
+  );
+}
+
+export function apiSaveMenuApis(menuId: string, apis: SysApiPerm[]) {
+  return request<{ success: boolean; message?: string }>(
+    `/api/v1/system/menus/${encodeURIComponent(menuId)}/apis`,
+    { method: "PUT", body: JSON.stringify({ apis }) },
   );
 }
 

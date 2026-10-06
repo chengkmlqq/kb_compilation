@@ -15,18 +15,94 @@ import {
   Radio,
   Select,
   Space,
+  Table,
   Tree,
   TreeSelect,
 } from "antd";
 import {
   apiCreateMenu,
   apiDeleteMenu,
+  apiGetMenuApis,
   apiListMenuIcons,
   apiListMenus,
+  apiSaveMenuApis,
   apiUpdateMenu,
+  SysApiPerm,
   SysMenuItem,
 } from "@/lib/api";
 import { collectSubtreeIds, menusToTreeData } from "../_shared";
+
+const API_METHOD_OPTIONS = ["GET", "POST", "PUT", "DELETE", "PATCH", "*"];
+
+function ApiPermEditor({
+  value,
+  onChange,
+}: {
+  value?: SysApiPerm[];
+  onChange?: (v: SysApiPerm[]) => void;
+}) {
+  const rows = value || [];
+  const update = (i: number, patch: Partial<SysApiPerm>) => {
+    const next = rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r));
+    onChange?.(next);
+  };
+  const remove = (i: number) => {
+    onChange?.(rows.filter((_, idx) => idx !== i));
+  };
+  const add = () => {
+    onChange?.([...rows, { path: "", method: "GET" }]);
+  };
+  return (
+    <div>
+      <Table
+        rowKey={(_, i) => String(i)}
+        size="small"
+        pagination={false}
+        dataSource={rows}
+        locale={{ emptyText: "未配置 API 权限（保持现状，不额外限制）" }}
+        columns={[
+          {
+            title: "API 路径",
+            dataIndex: "path",
+            render: (v: string, _r, i: number) => (
+              <Input
+                placeholder="/api/v1/kbs/search"
+                value={v}
+                onChange={(e) => update(i, { path: e.target.value })}
+              />
+            ),
+          },
+          {
+            title: "方法",
+            dataIndex: "method",
+            width: 120,
+            render: (v: string, _r, i: number) => (
+              <Select
+                value={v || "GET"}
+                options={API_METHOD_OPTIONS.map((m) => ({ label: m, value: m }))}
+                onChange={(m) => update(i, { method: m })}
+              />
+            ),
+          },
+          {
+            title: "",
+            width: 56,
+            render: (_v, _r, i: number) => (
+              <Button size="small" type="link" danger onClick={() => remove(i)}>
+                删除
+              </Button>
+            ),
+          },
+        ]}
+        footer={() => (
+          <Button size="small" type="dashed" block onClick={add}>
+            + 添加 API
+          </Button>
+        )}
+      />
+    </div>
+  );
+}
 
 export default function SystemMenusPage() {
   const { message } = App.useApp();
@@ -41,6 +117,13 @@ export default function SystemMenusPage() {
   const [menuForm] = Form.useForm();
   const [savingMenu, setSavingMenu] = useState(false);
   const [selectedMenuId, setSelectedMenuId] = useState<string | null>(null);
+
+  // API 权限（对齐 ds 菜单服务授权）
+  const [apiModalOpen, setApiModalOpen] = useState(false);
+  const [apiMenu, setApiMenu] = useState<SysMenuItem | null>(null);
+  const [apiPerms, setApiPerms] = useState<SysApiPerm[]>([]);
+  const [apiLoading, setApiLoading] = useState(false);
+  const [savingApis, setSavingApis] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -129,14 +212,43 @@ export default function SystemMenusPage() {
   };
 
   const doDeleteMenu = async (menuId: string) => {
-    const res = await apiDeleteMenu(menuId);
-    if (res.success) {
-      message.success("菜单已删除");
-      await load();
-    } else {
-      message.error(res.message || "删除失败");
-    }
-  };
+      const res = await apiDeleteMenu(menuId);
+      if (res.success) {
+        message.success("菜单已删除");
+        await load();
+      } else {
+        message.error(res.message || "删除失败");
+      }
+    };
+
+    const openApiPerms = async (m: SysMenuItem) => {
+      setApiMenu(m);
+      setApiPerms([]);
+      setApiModalOpen(true);
+      setApiLoading(true);
+      try {
+        const res = await apiGetMenuApis(m.menu_id as string);
+        if (res.success && res.data) setApiPerms(res.data.apis || []);
+      } finally {
+        setApiLoading(false);
+      }
+    };
+
+    const doSaveApiPerms = async () => {
+      if (!apiMenu) return;
+      setSavingApis(true);
+      try {
+        const res = await apiSaveMenuApis(apiMenu.menu_id as string, apiPerms);
+        if (res.success) {
+          message.success(res.message || "API 权限已保存");
+          setApiModalOpen(false);
+        } else {
+          message.error(res.message || "保存失败");
+        }
+      } finally {
+        setSavingApis(false);
+      }
+    };
 
   return (
     <Card
@@ -182,10 +294,13 @@ export default function SystemMenusPage() {
                     </Button>
                   </Popconfirm>
                   <Button size="small" type="link" onClick={() => openCreate(m.menu_id)}>
-                    新增子
-                  </Button>
-                </Space>
-              )}
+                                      新增子
+                                    </Button>
+                                    <Button size="small" type="link" onClick={() => void openApiPerms(m)}>
+                                      授权API
+                                    </Button>
+                                  </Space>
+                                )}
             </Space>
           );
         }}
@@ -246,10 +361,30 @@ export default function SystemMenusPage() {
             </Radio.Group>
           </Form.Item>
           <Form.Item name="menu_descr" label="描述">
-            <Input.TextArea rows={2} />
-          </Form.Item>
-        </Form>
-      </Modal>
-    </Card>
-  );
+                      <Input.TextArea rows={2} />
+                    </Form.Item>
+                  </Form>
+                </Modal>
+
+                {/* API 权限（对齐 ds 菜单服务授权；中间件按此白名单过滤该页面 API） */}
+                <Modal
+                  title={`API 权限: ${apiMenu?.menu_label || apiMenu?.menu_name || ""}`}
+                  open={apiModalOpen}
+                  onCancel={() => setApiModalOpen(false)}
+                  onOk={() => void doSaveApiPerms()}
+                  confirmLoading={savingApis}
+                  okText="保存"
+                  width={640}
+                  destroyOnClose
+                >
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="配置后，拥有该菜单的角色访问该页面 API 时仅放行列表内的接口（未配置保持现状不限制）。API 路径为该页面对应 /api/v1 下的接口前缀，方法可选 * 通配。"
+                  />
+                  <ApiPermEditor value={apiPerms} onChange={setApiPerms} />
+                </Modal>
+              </Card>
+            );
 }

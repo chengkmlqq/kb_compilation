@@ -7,10 +7,10 @@ import {
   App,
   Button,
   Card,
+  Drawer,
   Empty,
   Form,
   Input,
-  Modal,
   Popconfirm,
   Radio,
   Space,
@@ -269,85 +269,107 @@ export default function SystemRolesPage() {
         ]}
       />
 
-      {/* 新建/编辑角色 */}
-      <Modal
-        title={editingRole ? `编辑角色: ${editingRole.role_name}` : "新建角色"}
-        open={roleModalOpen}
-        onCancel={() => setRoleModalOpen(false)}
-        onOk={() => void doSaveRole()}
-        confirmLoading={savingRole}
-        destroyOnClose
-      >
-        <Form form={roleForm} layout="vertical" initialValues={{ role_type: "team-role", state: "1" }}>
-          <Form.Item
-            name="role_id"
-            label="角色编码"
-            rules={[{ required: true, message: "请输入角色编码" }]}
-          >
-            <Input placeholder="如 team-reader" disabled={!!editingRole} />
-          </Form.Item>
-          <Form.Item name="role_name" label="角色名称" rules={[{ required: true, message: "请输入角色名称" }]}>
-            <Input placeholder="角色名称" />
-          </Form.Item>
-          <Form.Item name="role_type" label="角色类型" rules={[{ required: true }]}>
-            <Radio.Group>
-              <Radio value="plat-mgr">平台管理</Radio>
-              <Radio value="team-role">团队角色</Radio>
-            </Radio.Group>
-          </Form.Item>
-          <Form.Item name="role_descr" label="角色描述">
-            <Input.TextArea rows={2} placeholder="角色描述（可选）" maxLength={50} />
-          </Form.Item>
-          <Form.Item name="state" label="状态">
-            <Radio.Group>
-              <Radio value="1">有效</Radio>
-              <Radio value="0">无效</Radio>
-            </Radio.Group>
-          </Form.Item>
-        </Form>
-      </Modal>
+      {/* 新建/编辑角色（对齐 ds Drawer 表单） */}
+            <Drawer
+              title={editingRole ? `编辑角色: ${editingRole.role_name}` : "新建角色"}
+              open={roleModalOpen}
+              onClose={() => setRoleModalOpen(false)}
+              width={480}
+              extra={
+                <Space>
+                  <Button onClick={() => setRoleModalOpen(false)}>取消</Button>
+                  <Button type="primary" loading={savingRole} onClick={() => void doSaveRole()}>
+                    保存
+                  </Button>
+                </Space>
+              }
+            >
+              <Form form={roleForm} layout="vertical" preserve={false} initialValues={{ role_type: "team-role", state: "1" }}>
+                <Form.Item
+                  name="role_id"
+                  label="角色编码"
+                  rules={[{ required: true, message: "请输入角色编码" }]}
+                >
+                  <Input placeholder="如 team-reader" disabled={!!editingRole} />
+                </Form.Item>
+                <Form.Item name="role_name" label="角色名称" rules={[{ required: true, message: "请输入角色名称" }]}>
+                  <Input placeholder="角色名称" />
+                </Form.Item>
+                <Form.Item name="role_type" label="角色类型" rules={[{ required: true }]}>
+                  <Radio.Group>
+                    <Radio value="plat-mgr">平台管理</Radio>
+                    <Radio value="team-role">团队角色</Radio>
+                  </Radio.Group>
+                </Form.Item>
+                <Form.Item name="role_descr" label="角色描述">
+                  <Input.TextArea rows={2} placeholder="角色描述（可选）" maxLength={50} />
+                </Form.Item>
+                <Form.Item name="state" label="状态">
+                  <Radio.Group>
+                    <Radio value="1">有效</Radio>
+                    <Radio value="0">无效</Radio>
+                  </Radio.Group>
+                </Form.Item>
+              </Form>
+            </Drawer>
 
-      {/* 分配菜单 */}
-      <Modal
-        title={`分配菜单权限: ${menuModalRole?.role_name || ""}`}
-        open={menuModalOpen}
-        onCancel={() => setMenuModalOpen(false)}
-        onOk={() => void doSaveRoleMenus()}
-        confirmLoading={savingMenus}
-        width={480}
-      >
-        <Tree
-          treeData={menuTreeData}
-          checkable
-          checkedKeys={checkedMenuIds}
-          onCheck={onMenuCheck}
-          defaultExpandAll
-          height={420}
-          selectable={false}
-        />
-      </Modal>
+            {/* 分配菜单 */}
+            <Drawer
+              title={`分配菜单权限: ${menuModalRole?.role_name || ""}`}
+              open={menuModalOpen}
+              onClose={() => setMenuModalOpen(false)}
+              width={480}
+              extra={
+                <Space>
+                  <Button onClick={() => setMenuModalOpen(false)}>取消</Button>
+                  <Button type="primary" loading={savingMenus} onClick={() => void doSaveRoleMenus()}>
+                    保存
+                  </Button>
+                </Space>
+              }
+            >
+              <Tree
+                treeData={menuTreeData}
+                checkable
+                checkedKeys={checkedMenuIds}
+                onCheck={onMenuCheck}
+                defaultExpandAll
+                height={420}
+                selectable={false}
+              />
+            </Drawer>
 
-      {/* 用户配置 */}
-      <Modal
-        title={`用户配置: ${userModalRole?.role_name || ""}`}
-        open={userModalOpen}
-        onCancel={() => setUserModalOpen(false)}
-        onOk={() => void doSaveRoleUsers()}
-        confirmLoading={savingUsers || userModalLoading}
-        width={760}
-      >
-        <Transfer
-          dataSource={allUserOptions}
-          titles={["全部用户", "已选用户"]}
-          targetKeys={targetUserIds}
-          onChange={(keys) => setTargetUserIds(keys as string[])}
-          render={(item) => item.title}
-          showSearch
-          pagination={{ pageSize: 10 }}
-          listStyle={{ width: 320, height: 400 }}
-          disabled={userModalLoading}
-        />
-      </Modal>
-    </Card>
-  );
-}
+            {/* 用户配置（对齐 ds 角色用户分配 Drawer + Transfer） */}
+            <Drawer
+              title={`用户配置: ${userModalRole?.role_name || ""}`}
+              open={userModalOpen}
+              onClose={() => setUserModalOpen(false)}
+              width={760}
+              extra={
+                <Space>
+                  <Button onClick={() => setUserModalOpen(false)}>取消</Button>
+                  <Button
+                    type="primary"
+                    loading={savingUsers || userModalLoading}
+                    onClick={() => void doSaveRoleUsers()}
+                  >
+                    保存
+                  </Button>
+                </Space>
+              }
+            >
+              <Transfer
+                dataSource={allUserOptions}
+                titles={["全部用户", "已选用户"]}
+                targetKeys={targetUserIds}
+                onChange={(keys) => setTargetUserIds(keys as string[])}
+                render={(item) => item.title}
+                showSearch
+                pagination={{ pageSize: 10 }}
+                listStyle={{ width: 320, height: 400 }}
+                disabled={userModalLoading}
+              />
+            </Drawer>
+          </Card>
+        );
+      }

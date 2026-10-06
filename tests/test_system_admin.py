@@ -4,7 +4,7 @@ and the role-menu / role-user authorization writes (menu RBAC)."""
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from api.db import Base
@@ -13,13 +13,20 @@ from api.models.framework import (
     OperLog,
     RoleMenuRela,
     Team,
+    TeamMember,
     User,
     UserRole,
     UserRoleRela,
 )
 from api.services.system_admin import (
+    assign_user_roles,
+    create_team,
+    create_user,
     delete_menu,
     delete_role,
+    delete_team,
+    delete_user,
+    get_menu_apis,
     get_role_menus,
     get_role_users,
     is_platform_admin,
@@ -28,11 +35,19 @@ from api.services.system_admin import (
     list_roles,
     list_teams,
     list_users,
+    menu_api_perms,
     my_menus,
+    reset_user_pwd,
     save_menu,
+    save_menu_apis,
     save_role,
     save_role_menus,
     save_role_users,
+    save_team_members,
+    team_members,
+    update_team,
+    update_user,
+    user_role_ids,
     user_roles,
 )
 
@@ -297,4 +312,173 @@ def test_is_platform_admin(sys_db) -> None:
     assert is_platform_admin(sys_db, "admin", admin_users=["admin"]) is True
     assert is_platform_admin(sys_db, "zhang_san", admin_users=["admin"]) is False
     assert is_platform_admin(sys_db, "zhang_san") is False
+
+
+# ============================================================================
+# 用户 CRUD / 角色配置 / 重置密码（对齐 data-synth UserManagerNeo）
+# ============================================================================
+
+
+def test_create_user_and_login_pwd_matches(sys_db) -> None:
+    from api.lib.crypto import aes_encrypt
+
+    res = create_user(
+        sys_db,
+        {"userId": "wang_wu", "userName": "王五", "pwd": "Abc@1234", "state": "1"},
+    )
+    assert res["success"] is True
+    row = sys_db.execute(select(User).where(User.user_id == "wang_wu")).scalars().first()
+    assert row is not None
+    # 登录校验是 user_pwd == aes_encrypt(明文)
+    assert row.user_pwd == aes_encrypt("Abc@1234")
+
+
+def test_create_user_rejects_dup_and_empty(sys_db) -> None:
+    assert create_user(sys_db, {"userId": "zhang_san", "pwd": "x"})["success"] is False
+    assert create_user(sys_db, {"userId": "", "pwd": "x"})["success"] is False
+    assert create_user(sys_db, {"userId": "new1", "pwd": ""})["success"] is False
+
+
+def test_create_user_with_roles(sys_db) -> None:
+    res = create_user(
+        sys_db, {"userId": "new2", "userName": "新二", "pwd": "p", "roleIds": ["r1"]}
+    )
+    assert res["success"] is True
+    assert user_role_ids(sys_db, "new2") == ["r1"]
+
+
+def test_update_user_fields(sys_db) -> None:
+    res = update_user(
+        sys_db,
+        "zhang_san",
+        {"userName": "张三改", "email": "new@x.com", "phone": "138", "state": "0"},
+    )
+    assert res["success"] is True
+    row = sys_db.execute(select(User).where(User.user_id == "zhang_san")).scalars().first()
+    assert row.user_name == "张三改"
+    assert row.state == "0"
+    assert update_user(sys_db, "nobody", {})["success"] is False
+
+
+def test_reset_user_pwd(sys_db) -> None:
+    from api.lib.crypto import aes_encrypt
+
+    assert reset_user_pwd(sys_db, "li_si", "NewPwd@1")["success"] is True
+    row = sys_db.execute(select(User).where(User.user_id == "li_si")).scalars().first()
+    assert row.user_pwd == aes_encrypt("NewPwd@1")
+    assert reset_user_pwd(sys_db, "li_si", "")["success"] is False
+    assert reset_user_pwd(sys_db, "nobody", "x")["success"] is False
+
+
+def test_assign_user_roles_overwrite(sys_db) -> None:
+    assert assign_user_roles(sys_db, "li_si", ["r1"])["success"] is True
+    assert user_role_ids(sys_db, "li_si") == ["r1"]
+    assert assign_user_roles(sys_db, "li_si", ["r1", "r2"])["success"] is True
+    assert sorted(user_role_ids(sys_db, "li_si")) == ["r1", "r2"]
+    assert assign_user_roles(sys_db, "li_si", ["nope"])["success"] is False
+
+
+def test_delete_user_cascades_relations(sys_db) -> None:
+    sys_db.add(TeamMember(member_id="tm1", team_name="ROOT", user_id="li_si"))
+    sys_db.commit()
+    assert delete_user(sys_db, "li_si")["success"] is True
+    assert sys_db.execute(select(User).where(User.user_id == "li_si")).scalars().first() is None
+    assert user_role_ids(sys_db, "li_si") == []
+    assert (
+        sys_db.execute(select(TeamMember).where(TeamMember.user_id == "li_si")).scalars().first()
+        is None
+    )
+    assert delete_user(sys_db, "li_si")["success"] is False
+
+
+# ============================================================================
+# 团队 CRUD + 成员（对齐 data-synth TeamManagerZj）
+# ============================================================================
+
+
+def test_create_team_with_parent(sys_db) -> None:
+    res = create_team(
+        sys_db,
+        {"teamName": "T1", "label": "团队一", "parentTeamName": "ROOT", "state": "1"},
+    )
+    assert res["success"] is True
+    row = sys_db.execute(select(Team).where(Team.team_name == "T1")).scalars().first()
+    assert row.parent_team_name == "ROOT"
+    assert row.parent_team_id == "t1"
+    # dup / bad parent
+    assert create_team(sys_db, {"teamName": "T1"})["success"] is False
+    assert create_team(sys_db, {"teamName": "T2", "parentTeamName": "NOPE"})["success"] is False
+
+
+def test_update_team(sys_db) -> None:
+    assert update_team(sys_db, "ROOT", {"label": "根改", "state": "0"})["success"] is True
+    row = sys_db.execute(select(Team).where(Team.team_name == "ROOT")).scalars().first()
+    assert row.label == "根改"
+    assert row.state == "0"
+    assert update_team(sys_db, "NOPE", {})["success"] is False
+
+
+def test_delete_team_cascades(sys_db) -> None:
+    sys_db.add(TeamMember(member_id="tm1", team_name="ROOT", user_id="zhang_san"))
+    sys_db.execute(select(User).where(User.user_id == "zhang_san"))
+    u = sys_db.execute(select(User).where(User.user_id == "zhang_san")).scalars().first()
+    u.default_team = "ROOT"
+    sys_db.commit()
+    # ROOT protected
+    assert delete_team(sys_db, "ROOT")["success"] is False
+    create_team(sys_db, {"teamName": "T9", "label": "九"})
+    assert delete_team(sys_db, "T9")["success"] is True
+    # deleting ROOT is blocked; create a child team of ROOT and delete it, clearing default_team
+    create_team(sys_db, {"teamName": "T10", "label": "十", "parentTeamName": "ROOT"})
+    u.default_team = "T10"
+    sys_db.commit()
+    assert delete_team(sys_db, "T10")["success"] is True
+    assert u.default_team == ""
+
+
+def test_team_members_save(sys_db) -> None:
+    assert save_team_members(sys_db, "ROOT", ["zhang_san", "li_si"])["success"] is True
+    data = team_members(sys_db, "ROOT")
+    assert data["total"] == 2
+    names = sorted(x["user_id"] for x in data["items"])
+    assert names == ["li_si", "zhang_san"]
+    # overwrite semantics
+    assert save_team_members(sys_db, "ROOT", ["li_si"])["success"] is True
+    assert team_members(sys_db, "ROOT")["total"] == 1
+    assert save_team_members(sys_db, "ROOT", ["ghost"])["success"] is False
+    assert save_team_members(sys_db, "NOPE", [])["success"] is False
+
+
+# ============================================================================
+# 菜单 API 权限（对齐 data-synth 菜单服务授权）
+# ============================================================================
+
+
+def test_menu_apis_roundtrip(sys_db) -> None:
+    res = save_menu_apis(
+        sys_db,
+        "m1",
+        [{"path": "/api/v1/kbs", "method": "get"}, {"path": " /api/v1/kbs/search ", "method": ""}],
+    )
+    assert res["success"] is True
+    got = get_menu_apis(sys_db, "m1")
+    assert got["success"] is True
+    apis = got["data"]["apis"]
+    assert apis == [
+        {"path": "/api/v1/kbs", "method": "GET"},
+        {"path": "/api/v1/kbs/search", "method": "GET"},
+    ]
+    assert menu_api_perms(sys_db, "m1") == apis
+    assert get_menu_apis(sys_db, "NOPE")["success"] is False
+
+
+def test_menu_apis_blank_entries_dropped(sys_db) -> None:
+    save_menu_apis(sys_db, "m2", [{"path": "", "method": "GET"}, {"path": "/api/v1/system"}])
+    apis = menu_api_perms(sys_db, "m2")
+    assert apis == [{"path": "/api/v1/system", "method": "GET"}]
+
+
+def test_menu_apis_none_is_empty(sys_db) -> None:
+    assert menu_api_perms(sys_db, "m3") == []
+    assert get_menu_apis(sys_db, "m3")["data"]["apis"] == []
     assert is_platform_admin(sys_db, "zhang_san", admin_users=[]) is False

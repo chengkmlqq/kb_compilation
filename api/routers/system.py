@@ -24,8 +24,14 @@ from api.services.identity import (
     find_user_team_membership,
 )
 from api.services.system_admin import (
+    assign_user_roles,
+    create_team,
+    create_user,
     delete_menu,
     delete_role,
+    delete_team,
+    delete_user,
+    get_menu_apis,
     get_role_menus,
     get_role_users,
     is_platform_admin,
@@ -35,10 +41,17 @@ from api.services.system_admin import (
     list_teams,
     list_users,
     my_menus,
+    reset_user_pwd,
     save_menu,
+    save_menu_apis,
     save_role,
     save_role_menus,
     save_role_users,
+    save_team_members,
+    team_members,
+    update_team,
+    update_user,
+    user_role_ids,
 )
 
 router = APIRouter(prefix="/system", tags=["system"])
@@ -294,6 +307,141 @@ def get_menu_icons() -> dict:
 def _admin_users() -> list[str]:
     raw = get_settings().AUTH_ADMIN_USERS
     return [u.strip() for u in raw.split(",") if u.strip()] if raw else []
+
+
+# ============================================================================
+# 用户 CRUD + 角色配置 + 重置密码（对齐 data-synth UserManagerNeo 交互面）
+# ============================================================================
+
+
+class UserCreateRequest(BaseModel):
+    userId: str
+    userName: str = ""
+    pwd: str = ""
+    email: str = ""
+    phone: str = ""
+    defaultTeam: str = ""
+    state: str = "1"
+    roleIds: list[str] = []
+
+
+class UserUpdateRequest(BaseModel):
+    userName: str = ""
+    email: str = ""
+    phone: str = ""
+    defaultTeam: str = ""
+    state: str = "1"
+
+
+class ResetPwdRequest(BaseModel):
+    pwd: str = ""
+
+
+class UserRolesRequest(BaseModel):
+    roleIds: list[str] = []
+
+
+class TeamCreateRequest(BaseModel):
+    teamName: str
+    label: str = ""
+    descr: str = ""
+    parentTeamName: str = ""
+    state: str = "1"
+
+
+class TeamUpdateRequest(BaseModel):
+    label: str = ""
+    descr: str = ""
+    parentTeamName: str = ""
+    state: str = "1"
+
+
+class TeamMembersRequest(BaseModel):
+    userIds: list[str] = []
+
+
+class MenuApisRequest(BaseModel):
+    apis: list[dict] = []
+
+
+@router.post("/users")
+def post_user(req: UserCreateRequest, db: Session = Depends(get_db)) -> dict:
+    """新建用户（对齐 modoUser create）。"""
+    return create_user(db, req.model_dump())
+
+
+@router.put("/users/{user_id}")
+def put_user(user_id: str, req: UserUpdateRequest, db: Session = Depends(get_db)) -> dict:
+    return update_user(db, user_id, req.model_dump())
+
+
+@router.post("/users/{user_id}/pwd")
+def post_user_pwd(user_id: str, req: ResetPwdRequest, db: Session = Depends(get_db)) -> dict:
+    """重置用户密码（对齐 ds 用户管理「更多」下拉重置密码）。"""
+    return reset_user_pwd(db, user_id, req.pwd)
+
+
+@router.delete("/users/{user_id}")
+def remove_user(user_id: str, db: Session = Depends(get_db)) -> dict:
+    return delete_user(db, user_id)
+
+
+@router.get("/users/{user_id}/roles")
+def get_user_roles(user_id: str, db: Session = Depends(get_db)) -> dict:
+    return {"success": True, "data": {"roleIds": user_role_ids(db, user_id)}}
+
+
+@router.put("/users/{user_id}/roles")
+def put_user_roles(user_id: str, req: UserRolesRequest, db: Session = Depends(get_db)) -> dict:
+    """保存用户角色关系（对齐 userRoleRela.saveRoleRelaByUserId）。"""
+    return assign_user_roles(db, user_id, req.roleIds)
+
+
+# ============================================================================
+# 团队 CRUD + 成员维护（对齐 data-synth TeamManagerZj 交互面）
+# ============================================================================
+
+
+@router.post("/teams")
+def post_team(req: TeamCreateRequest, db: Session = Depends(get_db)) -> dict:
+    return create_team(db, req.model_dump())
+
+
+@router.put("/teams/{team_name}")
+def put_team(team_name: str, req: TeamUpdateRequest, db: Session = Depends(get_db)) -> dict:
+    return update_team(db, team_name, req.model_dump())
+
+
+@router.delete("/teams/{team_name}")
+def remove_team(team_name: str, db: Session = Depends(get_db)) -> dict:
+    return delete_team(db, team_name)
+
+
+@router.get("/teams/{team_name}/members")
+def get_team_members(team_name: str, db: Session = Depends(get_db)) -> dict:
+    return {"success": True, "data": team_members(db, team_name)}
+
+
+@router.put("/teams/{team_name}/members")
+def put_team_members(
+    team_name: str, req: TeamMembersRequest, db: Session = Depends(get_db)
+) -> dict:
+    return save_team_members(db, team_name, req.userIds)
+
+
+# ============================================================================
+# 菜单 API 权限（对齐 data-synth 菜单服务授权；中间件按此过滤）
+# ============================================================================
+
+
+@router.get("/menus/{menu_id}/apis")
+def get_menu_apis_route(menu_id: str, db: Session = Depends(get_db)) -> dict:
+    return get_menu_apis(db, menu_id)
+
+
+@router.put("/menus/{menu_id}/apis")
+def put_menu_apis(menu_id: str, req: MenuApisRequest, db: Session = Depends(get_db)) -> dict:
+    return save_menu_apis(db, menu_id, req.apis)
 
 
 __all__ = ["router"]
