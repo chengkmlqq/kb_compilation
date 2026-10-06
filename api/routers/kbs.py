@@ -62,6 +62,8 @@ from api.services.kb_admin import (
     wiki_stats,
     wiki_submit_feedback,
     wiki_tree,
+    wiki_branch,
+    wiki_folders,
     wiki_update_folder,
     wiki_update_page,
     wiki_update_feedback_status,
@@ -525,6 +527,30 @@ def get_wiki_graph_route(
         db, kb_id, mode=mode, center=center, depth=depth, limit=limit, types=type_list
     )
     return {"success": True, "data": data}
+
+
+@router.get("/{kb_id}/wiki/branch")
+def get_wiki_branch(
+    kb_id: str,
+    folder_id: str = "",
+    page: int = 1,
+    page_size: int = 50,
+    db: Session = Depends(get_db),
+) -> dict:
+    """懒加载目录分支（对齐 WeKnora 侧栏）：folder_id='' 返回根级直接子项，展开时按 folder 取。"""
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    page_size = min(max(page_size, 1), 200)
+    data = wiki_branch(db, kb_id, folder_id or "", max(page, 1), page_size)
+    return {"success": True, "data": data}
+
+
+@router.get("/{kb_id}/wiki/folders")
+def get_wiki_folders(kb_id: str, db: Session = Depends(get_db)) -> dict:
+    """全量目录元数据（轻量；懒加载树的深链定位父链 / 管理面板用）。"""
+    if not get_kb(db, kb_id):
+        raise HTTPException(status_code=404, detail=f"知识库不存在: {kb_id}")
+    return {"success": True, "data": wiki_folders(db, kb_id)}
 
 
 @router.get("/{kb_id}/wiki/pages/{slug}")

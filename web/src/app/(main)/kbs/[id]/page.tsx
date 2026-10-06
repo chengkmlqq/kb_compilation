@@ -54,11 +54,9 @@ import {
   apiUploadDocument,
   apiUploadDocumentByUrl,
   apiWikiPage,
-  apiWikiTree,
   DocItem,
   KbItem,
   SearchHit,
-  WikiTree,
 } from "@/lib/api";
 
 const PARSE_STATE_COLOR: Record<string, string> = {
@@ -90,8 +88,6 @@ export default function KbDetailPage() {
     () => (localStorage.getItem("kb.docs.viewMode") as "card" | "list") || "card",
   );
   const [detailDoc, setDetailDoc] = useState<DocItem | null>(null);
-  const [wiki, setWiki] = useState<WikiTree | null>(null);
-  const [wikiLoading, setWikiLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [searching, setSearching] = useState(false);
@@ -140,20 +136,9 @@ export default function KbDetailPage() {
     }
   }, [kbId, docPage, docPageSize, docKeyword, docStatus, docType]);
 
-  const loadWiki = useCallback(async () => {
-    setWikiLoading(true);
-    try {
-      const res = await apiWikiTree(kbId);
-      if (res.success) setWiki(res.data || null);
-    } finally {
-      setWikiLoading(false);
-    }
-  }, [kbId]);
-
   useEffect(() => {
     void load();
-    void loadWiki();
-  }, [load, loadWiki]);
+  }, [load]);
 
   // Auto-poll while any document is still being parsed (PENDING/PARSING/EMBEDDING).
   const hasInFlight = docs.some((d) =>
@@ -166,11 +151,6 @@ export default function KbDetailPage() {
     }, 3000);
     return () => clearInterval(timer);
   }, [hasInFlight, load]);
-
-  // Refresh the wiki tree once documents finish parsing (pages appear after READY).
-  useEffect(() => {
-    if (!hasInFlight) void loadWiki();
-  }, [hasInFlight, loadWiki]);
 
   const doSearch = async () => {
     if (!query.trim()) return;
@@ -587,10 +567,8 @@ export default function KbDetailPage() {
                 ) : (
                   <WikiBrowseView
                     kbId={kbId}
-                    folders={wiki?.folders || []}
-                    pages={wiki?.pages || []}
                     focusSlug={focusSlug}
-                    onTreeChanged={loadWiki}
+                    onTreeChanged={() => undefined}
                   />
                 )}
               </Card>

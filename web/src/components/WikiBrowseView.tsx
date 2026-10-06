@@ -1,10 +1,11 @@
 "use client";
 /**
  * Wiki 浏览视图：左侧目录文档树 + 右侧 md 内容（对齐 WeKnora wiki 选项卡）。
- * 树数据来自详情页已加载的 WikiTree（folders + pages，folder_id="" 为根级）。
+ * 目录树懒加载（对齐 WeKnora 侧栏）：初始只拉根级分支，展开目录时按 folder 取直接子项；
+ * 深链 focusSlug 时沿父链逐级加载并自动展开；编辑/删除页面后全树按展开状态刷新。
  * 双链 [[slug]] 原地切换页面，不跳独立阅读页；编辑/反馈弹窗内嵌。
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   App,
   Button,
@@ -26,12 +27,14 @@ import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
+  apiWikiBranch,
+  apiWikiFolders,
   apiWikiListFeedback,
   apiWikiPage,
   apiWikiSubmitFeedback,
   apiWikiUpdatePage,
   WikiFeedbackItem,
-  WikiFolderItem,
+  WikiFolderNode,
   WikiPageDetail,
   WikiPageItem,
 } from "@/lib/api";
@@ -60,21 +63,38 @@ function renderWikiLinks(content: string, kbId: string): string {
   });
 }
 
+/** antd Tree loadData 模式：按 key 替换节点并挂上 children */
+function updateTreeData(
+  list: TreeDataNode[],
+  key: React.Key,
+  children: TreeDataNode[],
+): TreeDataNode[] {
+  return list.map((node) => {
+    if (node.key === key) return { ...node, children };
+    if (node.children) {
+      return { ...node, children: updateTreeData(node.children, key, children) };
+    }
+    return node;
+  });
+}
+
 interface Props {
   kbId: string;
-  folders: WikiFolderItem[];
-  pages: WikiPageItem[];
   focusSlug?: string;
   onTreeChanged?: () => void;
 }
 
-export default function WikiBrowseView({ kbId, folders, pages, focusSlug, onTreeChanged }: Props) {
+export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged }: Props) {
   const router = useRouter();
   const { message } = App.useApp();
+  const [treeData, setTreeData] = useState<TreeDataNode[]>([]);
+  const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
   const [selectedSlug, setSelectedSlug] = useState<string>(focusSlug || "");
   const [page, setPage] = useState<WikiPageDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const expandedRef = useRef<React.Key[]>([]);
+  const selectedRef = useRef<string>(focusSlug || "");
   // 编辑
   const [editOpen, setEditOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -90,6 +110,7 @@ export default function WikiBrowseView({ kbId, folders, pages, focusSlug, onTree
     async (slug: string) => {
       setLoading(true);
       setSelectedSlug(slug);
+      selectedRef.current = slug;
       const res = await apiWikiPage(kbId, slug);
       if (res.success && res.data) {
         setPage(res.data);
@@ -103,15 +124,136 @@ export default function WikiBrowseView({ kbId, folders, pages, focusSlug, onTree
     [kbId],
   );
 
-  // 默认选中第一个页面；focusSlug 变化时跟随
+  const folderNode = useCallback(
+    (f: WikiFolderNode): TreeDataNode => ({
+      key: `folder:${f.id}`,
+      title: (
+        <Space size={4}>
+          <span>{f.name}</span>
+          {(f.child_count ?? 0) > 0 && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {f.child_count}
+            </Typography.Text>
+          )}
+        </Space>
+      ),
+      // 无直接子项（子目录+子页面）则为叶子，不显示展开箭头
+      isLeaf: (f.child_count ?? 0) === 0,
+    }),
+    [],
+  );
+
+  const pageNode = useCallback((p: WikiPageItem): TreeDataNode => {
+    return {
+      key: `page:${p.slug}`,
+      title: p.title,
+      isLeaf: true,
+    };
+  }, []);
+
+  const fetchBranch = useCallback(
+    async (folderId: string): Promise<TreeDataNode[]> => {
+      const res = await apiWikiBranch(kbId, folderId);
+      if (!res.success || !res.data) return [];
+      const d = res.data;
+      const nodes = [
+        ...d.folders.map(folderNode),
+        ...d.pages.map(pageNode),
+      ];
+      // 目录在前、页面在后，目录按名称排序
+      nodes.sort((a, b) => {
+        const ak = String(a.key);
+        const bk = String(b.key);
+        if (ak.startsWith("folder:") && bk.startsWith("page:")) return -1;
+        if (ak.startsWith("page:") && bk.startsWith("folder:")) return 1;
+        const at = typeof a.title === "string" ? a.title : String(a.title);
+        const bt = typeof b.title === "string" ? b.title : String(b.title);
+        return at.localeCompare(bt);
+      });
+      return nodes;
+    },
+    [kbId, folderNode, pageNode],
+  );
+
+  // 初始加载：根级分支 + focusSlug 深链定位（沿父链逐级展开）
   useEffect(() => {
-    if (pages.length === 0) return;
-    const target =
-      pages.find((p) => p.slug === (focusSlug || "") || p.slug === selectedSlug)?.slug ||
-      pages[0].slug;
-    void loadPage(target);
+    let cancelled = false;
+    void (async () => {
+      let tree = await fetchBranch("");
+      if (cancelled) return;
+      if (focusSlug) {
+        const pageRes = await apiWikiPage(kbId, focusSlug);
+        if (!cancelled && pageRes.success && pageRes.data) {
+          const folderId = pageRes.data.folder_id || "";
+          if (folderId) {
+            const fRes = await apiWikiFolders(kbId);
+            const folders = fRes.success ? fRes.data || [] : [];
+            const chain: string[] = [];
+            let cur = folderId;
+            let guard = 0;
+            while (cur && guard < 20) {
+              chain.unshift(cur);
+              const f = folders.find((x) => x.id === cur);
+              cur = f?.parent_id || "";
+              guard += 1;
+            }
+            for (const fid of chain) {
+              if (cancelled) return;
+              const children = await fetchBranch(fid);
+              tree = updateTreeData(tree, `folder:${fid}`, children);
+              setExpandedKeys((prev) => [...new Set([...prev, `folder:${fid}`])]);
+            }
+          }
+          setSelectedSlug(focusSlug);
+          selectedRef.current = focusSlug;
+          void loadPage(focusSlug);
+        }
+      } else {
+        // 默认选中第一个根级页面
+        const rootPageKey = tree.find((n) => String(n.key).startsWith("page:"))?.key;
+        if (rootPageKey) {
+          const slug = String(rootPageKey).slice(5);
+          setSelectedSlug(slug);
+          selectedRef.current = slug;
+          void loadPage(slug);
+        }
+      }
+      if (!cancelled) setTreeData(tree);
+    })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kbId, focusSlug, pages.length]);
+  }, [kbId, focusSlug]);
+
+  const onExpand = (keys: React.Key[]) => {
+    expandedRef.current = keys;
+    setExpandedKeys(keys);
+  };
+
+  // 展开目录时懒加载该目录的直接子项（对齐 WeKnora）
+  const onLoadData = async (node: TreeDataNode): Promise<void> => {
+    const key = String(node.key);
+    if (!key.startsWith("folder:")) return;
+    const fid = key.slice(7);
+    const children = await fetchBranch(fid);
+    setTreeData((prev) => updateTreeData(prev, key, children));
+  };
+
+  // 编辑/删除等树外变更后：按当前展开状态刷新已加载分支
+  const reloadTree = useCallback(async () => {
+    let tree = await fetchBranch("");
+    for (const k of expandedRef.current) {
+      const key = String(k);
+      if (key.startsWith("folder:")) {
+        const children = await fetchBranch(key.slice(7));
+        tree = updateTreeData(tree, key, children);
+      }
+    }
+    setTreeData(tree);
+    const cur = selectedRef.current;
+    if (cur) void loadPage(cur);
+  }, [fetchBranch, loadPage]);
 
   const loadFeedback = useCallback(async () => {
     if (!page) return;
@@ -149,6 +291,7 @@ export default function WikiBrowseView({ kbId, folders, pages, focusSlug, onTree
         setEditOpen(false);
         void loadPage(page.slug);
         onTreeChanged?.();
+        void reloadTree();
       } else {
         message.error(res.message || "保存失败");
       }
@@ -173,51 +316,6 @@ export default function WikiBrowseView({ kbId, folders, pages, focusSlug, onTree
       setFeedbackSaving(false);
     }
   };
-
-  // 树构建：folder 层级 + 页面挂载（folder_id="" 页面挂根）
-  const treeData = useMemo<TreeDataNode[]>(() => {
-    const folderById = new Map<string, WikiFolderItem>();
-    folders.forEach((f) => folderById.set(f.id, f));
-    const pageByFolder = new Map<string, WikiPageItem[]>();
-    const rootPages: WikiPageItem[] = [];
-    pages.forEach((p) => {
-      const fid = p.folder_id || "";
-      if (fid === "") rootPages.push(p);
-      else {
-        const arr = pageByFolder.get(fid) || [];
-        arr.push(p);
-        pageByFolder.set(fid, arr);
-      }
-    });
-    const pageNode = (p: WikiPageItem): TreeDataNode => ({
-      key: `page:${p.slug}`,
-      title: p.title,
-      isLeaf: true,
-    });
-    const folderNode = (f: WikiFolderItem): TreeDataNode => ({
-      key: `folder:${f.id}`,
-      title: (
-        <Space size={4}>
-          <span>{f.name}</span>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {f.page_count}
-          </Typography.Text>
-        </Space>
-      ),
-      children: [
-        ...[...folderById.values()]
-          .filter((c) => c.parent_id === f.id)
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map(folderNode),
-        ...(pageByFolder.get(f.id) || []).map(pageNode),
-      ],
-    });
-    const rootFolderNodes = [...folderById.values()]
-      .filter((f) => !f.parent_id)
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map(folderNode);
-    return [...rootFolderNodes, ...rootPages.map(pageNode)];
-  }, [folders, pages]);
 
   const handleSelect = (keys: React.Key[]) => {
     const key = keys[0] as string | undefined;
@@ -258,7 +356,7 @@ export default function WikiBrowseView({ kbId, folders, pages, focusSlug, onTree
 
   return (
     <div style={{ display: "flex", gap: 16 }}>
-      {/* 左侧目录文档树 */}
+      {/* 左侧目录文档树（懒加载） */}
       <Card
         size="small"
         style={{ width: 280, flexShrink: 0, maxHeight: 560, overflowY: "auto" }}
@@ -266,7 +364,7 @@ export default function WikiBrowseView({ kbId, folders, pages, focusSlug, onTree
           <Space size={8}>
             <span>目录</span>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {treeData.length} 项
+              已加载 {treeData.length} 项
             </Typography.Text>
           </Space>
         }
@@ -275,7 +373,9 @@ export default function WikiBrowseView({ kbId, folders, pages, focusSlug, onTree
           <Empty description="暂无 wiki 页面" image={Empty.PRESENTED_IMAGE_SIMPLE} />
         ) : (
           <Tree
-            defaultExpandAll
+            loadData={onLoadData}
+            expandedKeys={expandedKeys}
+            onExpand={onExpand}
             selectedKeys={selectedSlug ? [`page:${selectedSlug}`] : []}
             onSelect={handleSelect}
             treeData={treeData}

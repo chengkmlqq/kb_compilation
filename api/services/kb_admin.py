@@ -592,7 +592,7 @@ def _remove_local_file(storage_path: str | None) -> None:
 
 
 def wiki_tree(db: Session, kb_id: str) -> dict:
-    """Folders + pages for a KB (folder_id '' = root)."""
+    """Folders + pages for a KB (folder_id '' = root). 全量（保留给管理面板等主动场景）。"""
     folders = db.execute(
         select(WikiFolder).where(WikiFolder.kb_id == kb_id).order_by(WikiFolder.created_at)
     ).scalars().all()
@@ -620,6 +620,98 @@ def wiki_tree(db: Session, kb_id: str) -> dict:
         for p in pages
     ]
     return {"kb_id": kb_id, "folders": folder_items, "pages": page_items}
+
+
+def _wiki_child_counts(db: Session, kb_id: str) -> dict[str, int]:
+    """每个 folder 的直接子项数（子目录 + 子页面），用于懒加载树判断展开箭头。"""
+    sub_folders = db.execute(
+        select(func.coalesce(WikiFolder.parent_id, ""), func.count())
+        .where(WikiFolder.kb_id == kb_id)
+        .group_by(func.coalesce(WikiFolder.parent_id, ""))
+    ).all()
+    sub_pages = db.execute(
+        select(func.coalesce(WikiPage.folder_id, ""), func.count())
+        .where(WikiPage.kb_id == kb_id, WikiPage.status == "active")
+        .group_by(func.coalesce(WikiPage.folder_id, ""))
+    ).all()
+    counts: dict[str, int] = {}
+    for fid, n in list(sub_folders) + list(sub_pages):
+        counts[fid or ""] = counts.get(fid or "", 0) + int(n)
+    return counts
+
+
+def wiki_branch(
+    db: Session, kb_id: str, folder_id: str = "", page: int = 1, page_size: int = 50
+) -> dict:
+    """懒加载分支（对齐 WeKnora 侧栏按需展开）。
+
+    folder_id='' → 根级。只返回该 folder 的直接子目录 + 直接子页面，
+    每个目录带 child_count（子目录+子页面数，前端据此显示展开箭头）。
+    页面分页，避免大知识库一次全量传输。
+    """
+    fid = folder_id or ""
+    folders = db.execute(
+        select(WikiFolder)
+        .where(WikiFolder.kb_id == kb_id, func.coalesce(WikiFolder.parent_id, "") == fid)
+        .order_by(WikiFolder.created_at)
+    ).scalars().all()
+    pages_q = select(WikiPage).where(
+        WikiPage.kb_id == kb_id,
+        WikiPage.status == "active",
+        func.coalesce(WikiPage.folder_id, "") == fid,
+    )
+    total_pages = len(db.execute(pages_q).scalars().all())
+    rows = db.execute(
+        pages_q.order_by(WikiPage.created_at).offset((page - 1) * page_size).limit(page_size)
+    ).scalars().all()
+    counts = _wiki_child_counts(db, kb_id)
+    return {
+        "kb_id": kb_id,
+        "folder_id": fid,
+        "folders": [
+            {
+                "id": f.id,
+                "name": f.name,
+                "parent_id": f.parent_id or "",
+                "child_count": counts.get(f.id, 0),
+                "page_count": 0,
+            }
+            for f in folders
+        ],
+        "pages": [
+            {
+                "id": p.id,
+                "slug": p.slug,
+                "title": p.title,
+                "page_type": p.page_type,
+                "folder_id": p.folder_id or "",
+                "summary": p.summary,
+            }
+            for p in rows
+        ],
+        "page": page,
+        "page_size": page_size,
+        "has_more": page * page_size < total_pages,
+        "total_pages": total_pages,
+        "total_folders": len(folders),
+    }
+
+
+def wiki_folders(db: Session, kb_id: str) -> list[dict]:
+    """全量目录元数据（轻量，仅用于深链定位父链 / 管理面板目录下拉）。"""
+    folders = db.execute(
+        select(WikiFolder).where(WikiFolder.kb_id == kb_id).order_by(WikiFolder.created_at)
+    ).scalars().all()
+    counts = _wiki_child_counts(db, kb_id)
+    return [
+        {
+            "id": f.id,
+            "name": f.name,
+            "parent_id": f.parent_id or "",
+            "child_count": counts.get(f.id, 0),
+        }
+        for f in folders
+    ]
 
 
 def get_wiki_page(db: Session, kb_id: str, slug: str) -> dict | None:

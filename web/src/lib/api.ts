@@ -293,6 +293,41 @@ export function apiWikiTree(kbId: string) {
   return request<WikiTree>(`/api/v1/kbs/${kbId}/wiki`);
 }
 
+export interface WikiFolderNode {
+  id: string;
+  name: string;
+  parent_id: string;
+  child_count?: number;
+  page_count?: number;
+}
+
+export interface WikiBranchData {
+  kb_id: string;
+  folder_id: string;
+  folders: WikiFolderNode[];
+  pages: WikiPageItem[];
+  page: number;
+  page_size: number;
+  has_more: boolean;
+  total_pages: number;
+  total_folders: number;
+}
+
+/** 懒加载目录分支（对齐 WeKnora 侧栏按需展开）；folderId='' 表示根级 */
+export function apiWikiBranch(kbId: string, folderId = "", page = 1, pageSize = 50) {
+  const params = new URLSearchParams({
+    folder_id: folderId,
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  return request<WikiBranchData>(`/api/v1/kbs/${encodeURIComponent(kbId)}/wiki/branch?${params.toString()}`);
+}
+
+/** 全量目录元数据（轻量，深链定位父链用） */
+export function apiWikiFolders(kbId: string) {
+  return request<WikiFolderNode[]>(`/api/v1/kbs/${encodeURIComponent(kbId)}/wiki/folders`);
+}
+
 export interface WikiGraphNode {
   slug: string;
   title: string;
