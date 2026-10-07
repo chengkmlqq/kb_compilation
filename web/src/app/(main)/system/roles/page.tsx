@@ -1,23 +1,27 @@
 "use client";
 
-/** 角色管理（独立页，对齐 ds system/roles）。 */
-import { useCallback, useEffect, useState } from "react";
-import {
-  Alert,
-  App,
-  Button,
-  Card,
-  Drawer,
-  Empty,
-  Form,
-  Input,
-  Popconfirm,
-  Radio,
-  Space,
-  Transfer,
-  Tree,
-} from "antd";
-import type { DataNode } from "antd/es/tree";
+/**
+ * 角色管理（重写对齐 data-synth system/roles）：
+ * ModoPage 外壳 + PageFilter(角色名称/角色类型) + 工具栏「新建角色」
+ * + ModoTable(角色编码/角色名称/角色类型/角色描述/已分配菜单/状态/操作)
+ * + ModoPagination 吸底；新建/编辑 ModoDrawer、分配菜单 TreeSelect、用户配置 Transfer。
+ *
+ * 数据契约（kb 下划线风格，见 web/src/lib/api.ts）：
+ * - apiListRoles(page, pageSize) 分页；角色字段 role_id/role_name/role_type/role_descr/state
+ * - 角色类型 plat-mgr(平台管理) / team-role(团队角色)
+ * - apiGetRoleMenus -> {menuIds}；apiSaveRoleMenus(roleId, menuIds)
+ * - apiGetRoleUsers -> {userIds}；apiSaveRoleUsers(roleId, userIds)
+ * - apiListMenus() 构建菜单树（复用 _shared.menusToTreeData）
+ *
+ * 注意：kb 后端 GET /api/v1/system/roles 目前仅支持 page/page_size（list_roles 无
+ * keyword/role_type 入参），故筛选条按 data-synth 布局保留，查询仅重置到第 1 页刷新；
+ * 待后端支持后在此透传 searchParams 即可。
+ * 「已分配菜单」列：列表接口不返回汇总，对当前页逐行并行拉取 apiGetRoleMenus（页面小）。
+ */
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { App, Form, Spin, Tag, Tooltip, Transfer, TreeSelect } from "antd";
+import { PlusOutlined } from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
 import {
   apiCreateRole,
   apiDeleteRole,
@@ -29,351 +33,715 @@ import {
   apiSaveRoleMenus,
   apiSaveRoleUsers,
   apiUpdateRole,
+  SysMenuItem,
   SysRoleItem,
+  SysRoleWrite,
 } from "@/lib/api";
-import { menusToTreeData, StateTag } from "../_shared";
-import ModoTable from "@/components/biz/modo-table";
+import { menusToTreeData } from "../_shared";
+import { ModoPage } from "@/components/biz/modo-page";
+import { ModoButton } from "@/components/biz/modo-button";
+import { ModoActionGroup } from "@/components/biz/modo-action-group";
+import { ModoPagination } from "@/components/biz/modo-pagination";
+import { PageFilter } from "@/components/biz/page-filter";
+import { ModoDrawer } from "@/components/biz/modo-drawer";
+import { ModoModal } from "@/components/biz/modo-modal";
+import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
+import { ModoRadio } from "@/components/biz/modo-radio";
+import { ModoSelect } from "@/components/biz/modo-select";
+import { ModoTable } from "@/components/biz/modo-table";
 
-const ROLE_TYPE_LABEL: Record<string, string> = {
+/** 后端单页条数上限（Query le=100） */
+const USERS_PAGE_SIZE = 100;
+
+const ROLE_TYPE_OPTIONS = [
+  { label: "平台管理", value: "plat-mgr" },
+  { label: "团队角色", value: "team-role" },
+];
+
+const ROLE_TYPE_LABEL_MAP: Record<string, string> = {
   "plat-mgr": "平台管理",
   "team-role": "团队角色",
 };
 
+// 单元格文本截断（对齐 data-synth 的 block truncate）
+const truncateStyle: React.CSSProperties = {
+  display: "block",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
 export default function SystemRolesPage() {
-  const { message } = App.useApp();
-  const [rows, setRows] = useState<SysRoleItem[]>([]);
+  const { message, modal } = App.useApp();
   const [loading, setLoading] = useState(false);
 
-  // 角色新建/编辑
-  const [roleModalOpen, setRoleModalOpen] = useState(false);
-  const [editingRole, setEditingRole] = useState<SysRoleItem | null>(null);
-  const [savingRole, setSavingRole] = useState(false);
+  // Table State
+  const [data, setData] = useState<SysRoleItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // Filter State（同 data-synth：查询参数回显筛选标签；后端暂不支持过滤，仅驱动刷新）
+  const [searchForm] = Form.useForm();
+  const [searchParams, setSearchParams] = useState<any>({});
+
+  // Drawer State（新建/编辑）
+  const [drawerVisible, setDrawerVisible] = useState(false);
+  const [drawerMode, setDrawerMode] = useState<"create" | "edit">("create");
+  const [currentRole, setCurrentRole] = useState<SysRoleItem | null>(null);
   const [roleForm] = Form.useForm();
+  const [formKey, setFormKey] = useState(0);
+  const [savingRole, setSavingRole] = useState(false);
 
-  // 分配菜单
-  const [menuModalOpen, setMenuModalOpen] = useState(false);
-  const [menuModalRole, setMenuModalRole] = useState<SysRoleItem | null>(null);
-  const [menuTreeData, setMenuTreeData] = useState<DataNode[]>([]);
-  const [checkedMenuIds, setCheckedMenuIds] = useState<string[]>([]);
-  const [menuModalLoading, setMenuModalLoading] = useState(false);
+  // 菜单树（权限分配 + 已分配菜单列标签）
+  const [menuItems, setMenuItems] = useState<SysMenuItem[]>([]);
+
+  // Menu Modal State（分配菜单）
+  const [menuModalVisible, setMenuModalVisible] = useState(false);
+  const [currentRoleNodes, setCurrentRoleNodes] = useState<SysRoleItem | null>(null);
+  const [checkedKeys, setCheckedKeys] = useState<React.Key[]>([]);
+  const [treeLoading, setTreeLoading] = useState(false);
   const [savingMenus, setSavingMenus] = useState(false);
+  const menuRequestSeqRef = useRef(0);
 
-  // 用户配置
-  const [userModalOpen, setUserModalOpen] = useState(false);
-  const [userModalRole, setUserModalRole] = useState<SysRoleItem | null>(null);
-  const [allUserOptions, setAllUserOptions] = useState<{ key: string; title: string }[]>([]);
-  const [targetUserIds, setTargetUserIds] = useState<string[]>([]);
-  const [userModalLoading, setUserModalLoading] = useState(false);
-  const [savingUsers, setSavingUsers] = useState(false);
+  // 已分配菜单列（当前页逐行拉取）
+  const [roleMenusMap, setRoleMenusMap] = useState<Record<string, string[]>>({});
+  const roleMenusSeqRef = useRef(0);
 
-  const load = useCallback(async () => {
+  // User Configuration Modal State（用户配置）
+  const [userModalVisible, setUserModalVisible] = useState(false);
+  const [currentRoleForUsers, setCurrentRoleForUsers] = useState<SysRoleItem | null>(null);
+  const [allUsers, setAllUsers] = useState<{ key: string; title: string; description?: string }[]>([]);
+  const [targetUserKeys, setTargetUserKeys] = useState<string[]>([]);
+  const [userLoading, setUserLoading] = useState(false);
+  const [saveLoading, setSaveLoading] = useState(false);
+  const userConfigRequestSeqRef = useRef(0);
+
+  // 菜单树数据（TreeSelect 用）+ 菜单 id -> 名称 映射（已分配菜单列用）
+  const menuTreeData = useMemo(() => menusToTreeData(menuItems), [menuItems]);
+  const menuLabelMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const m of menuItems) {
+      const id = m.menu_id;
+      if (id) map[id] = m.menu_label || m.menu_name || id;
+    }
+    return map;
+  }, [menuItems]);
+
+  // 拉取角色列表（分页由 ModoPagination 驱动）
+  const fetchRoles = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiListRoles(1, 500);
-      if (res.success) setRows(res.data?.items || []);
+      // 注：kb /roles 仅支持 page/page_size；searchParams 参与依赖以便查询后触发刷新
+      const res = await apiListRoles(currentPage, pageSize);
+      if (res.success) {
+        setData(res.data?.items || []);
+        setTotal(res.data?.total ?? 0);
+      } else {
+        message.error(res.message || "获取角色列表失败");
+      }
     } finally {
       setLoading(false);
     }
+  }, [currentPage, pageSize, searchParams, message]);
+
+  // 菜单树数据（仅拉取一次）
+  const loadMenus = useCallback(async () => {
+    try {
+      const res = await apiListMenus();
+      if (res.success) setMenuItems(res.data?.items || []);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // 当前页每行已分配菜单（并行拉取，seq 防串页覆盖）
+  const refreshMenuMap = useCallback(async (rows: SysRoleItem[]) => {
+    const seq = ++roleMenusSeqRef.current;
+    const roleIds = rows.map((r) => r.role_id).filter(Boolean) as string[];
+    if (roleIds.length === 0) {
+      setRoleMenusMap({});
+      return;
+    }
+    const settled = await Promise.allSettled(roleIds.map((id) => apiGetRoleMenus(id)));
+    if (roleMenusSeqRef.current !== seq) return;
+    const next: Record<string, string[]> = {};
+    settled.forEach((s, i) => {
+      next[roleIds[i]] = s.status === "fulfilled" && s.value.success ? s.value.data?.menuIds || [] : [];
+    });
+    setRoleMenusMap(next);
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void fetchRoles();
+  }, [fetchRoles]);
 
-  const openCreate = () => {
-    setEditingRole(null);
+  useEffect(() => {
+    void loadMenus();
+  }, [loadMenus]);
+
+  useEffect(() => {
+    void refreshMenuMap(data);
+  }, [data, refreshMenuMap]);
+
+  // 抽屉打开后回填表单（ModoDrawer 默认 destroyOnClose，需挂载后再 setFieldsValue）
+  useEffect(() => {
+    if (!drawerVisible) return;
+    if (drawerMode === "edit" && currentRole) {
+      roleForm.setFieldsValue({
+        roleId: currentRole.role_id,
+        roleName: currentRole.role_name,
+        roleType: currentRole.role_type || "team-role",
+        roleDescr: currentRole.role_descr || "",
+        state: currentRole.state || "1",
+      });
+    } else if (drawerMode === "create") {
+      roleForm.resetFields();
+    }
+  }, [drawerVisible, drawerMode, currentRole, roleForm]);
+
+  // ---- 筛选 ----
+  const handleSearch = (values: any) => {
+    setSearchParams(values);
+    setCurrentPage(1);
+  };
+
+  const handleReset = () => {
+    setSearchParams({});
+    setCurrentPage(1);
+  };
+
+  // ---- 新建 / 编辑 ----
+  const handleCreate = () => {
+    setDrawerMode("create");
+    setCurrentRole(null);
+    setFormKey((prev) => prev + 1);
     roleForm.resetFields();
-    roleForm.setFieldsValue({ role_type: "team-role", state: "1" });
-    setRoleModalOpen(true);
+    setDrawerVisible(true);
   };
 
-  const openEdit = (r: SysRoleItem) => {
-    setEditingRole(r);
-    roleForm.setFieldsValue({
-      role_id: r.role_id,
-      role_name: r.role_name,
-      role_type: r.role_type || "team-role",
-      role_descr: r.role_descr,
-      state: r.state || "1",
-    });
-    setRoleModalOpen(true);
+  const handleEdit = (record: SysRoleItem) => {
+    setDrawerMode("edit");
+    setCurrentRole(record);
+    setFormKey((prev) => prev + 1);
+    roleForm.resetFields();
+    setDrawerVisible(true);
   };
 
-  const doSaveRole = async () => {
-    const values = await roleForm.validateFields();
-    setSavingRole(true);
+  const handleSave = async () => {
     try {
-      const payload = {
-        role_id: values.role_id,
-        role_name: values.role_name,
-        role_type: values.role_type,
-        role_descr: values.role_descr,
-        state: values.state,
+      const values = await roleForm.validateFields();
+      setSavingRole(true);
+      const payload: SysRoleWrite = {
+        role_id: values.roleId?.trim(),
+        role_name: values.roleName,
+        role_type: values.roleType,
+        role_descr: values.roleDescr || undefined,
+        state: values.state || "1",
       };
-      const res = editingRole
-        ? await apiUpdateRole(editingRole.role_id as string, payload)
-        : await apiCreateRole(payload);
+      const res =
+        drawerMode === "edit" && currentRole?.role_id
+          ? await apiUpdateRole(currentRole.role_id, payload)
+          : await apiCreateRole(payload);
       if (res.success) {
-        message.success(editingRole ? "角色已更新" : "角色已创建");
-        setRoleModalOpen(false);
-        await load();
+        message.success(drawerMode === "create" ? "角色已创建" : "角色已更新");
+        setDrawerVisible(false);
+        await fetchRoles();
       } else {
         message.error(res.message || "保存失败");
       }
+    } catch (error) {
+      // 表单校验失败
+      if (error && typeof error === "object" && "errorFields" in error) return;
+      console.error("Save role failed:", error);
+      message.error(error instanceof Error ? error.message : "保存失败，请稍后重试");
     } finally {
       setSavingRole(false);
     }
   };
 
-  const doDeleteRole = async (roleId: string) => {
-    const res = await apiDeleteRole(roleId);
-    if (res.success) {
-      message.success("角色已删除");
-      await load();
-    } else {
-      message.error(res.message || "删除失败");
-    }
+  // ---- 删除（modal.confirm） ----
+  const handleDelete = (record: SysRoleItem) => {
+    modal.confirm({
+      title: "确定删除该角色？",
+      content: `角色：${record.role_name}（${record.role_id}）`,
+      onOk: async () => {
+        const res = await apiDeleteRole(record.role_id as string);
+        if (res.success) {
+          message.success("角色已删除");
+          // 当前页删空则回退一页
+          if (data.length <= 1 && currentPage > 1) {
+            setCurrentPage(currentPage - 1);
+          } else {
+            await fetchRoles();
+          }
+        } else {
+          message.error(res.message || "删除失败");
+        }
+      },
+    });
   };
 
-  const openAssignMenu = async (r: SysRoleItem) => {
-    setMenuModalRole(r);
-    setMenuModalLoading(true);
-    setCheckedMenuIds([]);
-    setMenuModalOpen(true);
+  // ---- 分配菜单 ----
+  const fetchRoleMenus = async (roleId: string, requestSeq: number) => {
+    setTreeLoading(true);
     try {
-      const [menusRes, roleMenusRes] = await Promise.all([apiListMenus(), apiGetRoleMenus(r.role_id as string)]);
-      if (menusRes.success) setMenuTreeData(menusToTreeData(menusRes.data?.items || []));
-      if (roleMenusRes.success) setCheckedMenuIds(roleMenusRes.data?.menuIds || []);
+      const result = await apiGetRoleMenus(roleId);
+      if (menuRequestSeqRef.current !== requestSeq) return false;
+      if (result.success) {
+        setCheckedKeys((result.data?.menuIds || []).map(String) as React.Key[]);
+        return true;
+      }
+      setCheckedKeys([]);
+      message.error(result.message || "获取角色菜单权限失败");
+      return false;
+    } catch (error) {
+      if (menuRequestSeqRef.current === requestSeq) {
+        setCheckedKeys([]);
+        message.error(error instanceof Error ? error.message : "获取角色菜单权限失败");
+      }
+      return false;
     } finally {
-      setMenuModalLoading(false);
+      if (menuRequestSeqRef.current === requestSeq) setTreeLoading(false);
     }
   };
 
-  const doSaveRoleMenus = async () => {
-    if (!menuModalRole) return;
+  const handleAssignMenu = async (record: SysRoleItem) => {
+    const requestSeq = menuRequestSeqRef.current + 1;
+    menuRequestSeqRef.current = requestSeq;
+
+    setCurrentRoleNodes(record);
+    setCheckedKeys([]);
+    setMenuModalVisible(true);
+
+    if (menuItems.length === 0) void loadMenus();
+    const loaded = await fetchRoleMenus(record.role_id as string, requestSeq);
+    if (!loaded && menuRequestSeqRef.current === requestSeq) {
+      setMenuModalVisible(false);
+      setCurrentRoleNodes(null);
+    }
+  };
+
+  const handleSaveMenuPerm = async () => {
+    if (!currentRoleNodes) return;
     setSavingMenus(true);
     try {
-      const res = await apiSaveRoleMenus(menuModalRole.role_id as string, checkedMenuIds);
+      const res = await apiSaveRoleMenus(currentRoleNodes.role_id as string, checkedKeys.map(String));
       if (res.success) {
         message.success(res.message || "权限分配成功");
-        setMenuModalOpen(false);
+        setMenuModalVisible(false);
+        setCurrentRoleNodes(null);
+        setCheckedKeys([]);
+        // 刷新当前页「已分配菜单」列
+        void refreshMenuMap(data);
       } else {
         message.error(res.message || "权限保存失败");
       }
+    } catch (error) {
+      console.error(error);
     } finally {
       setSavingMenus(false);
     }
   };
 
-  const openUserConfig = async (r: SysRoleItem) => {
-    setUserModalRole(r);
-    setUserModalLoading(true);
-    setUserModalOpen(true);
+  // ---- 用户配置 ----
+  const handleCloseUserModal = () => {
+    userConfigRequestSeqRef.current += 1;
+    setUserModalVisible(false);
+    setUserLoading(false);
+    setCurrentRoleForUsers(null);
+    setAllUsers([]);
+    setTargetUserKeys([]);
+  };
+
+  const handleUserConfig = async (record: SysRoleItem) => {
+    if (record.role_type !== "plat-mgr") {
+      message.warning("仅平台管理角色支持用户配置");
+      return;
+    }
+
+    const requestSeq = userConfigRequestSeqRef.current + 1;
+    userConfigRequestSeqRef.current = requestSeq;
+
+    setCurrentRoleForUsers(record);
+    setAllUsers([]);
+    setTargetUserKeys([]);
+    setUserLoading(true);
+    setUserModalVisible(true);
+
     try {
-      const [usersRes, roleUsersRes] = await Promise.all([
-        apiListUsers(1, 500),
-        apiGetRoleUsers(r.role_id as string),
-      ]);
-      if (usersRes.success) {
-        setAllUserOptions(
-          (usersRes.data?.items || []).map((u) => ({
-            key: u.user_id || u.id || "",
-            title: `${u.user_id}${u.user_name ? `（${u.user_name}）` : ""}`,
+      // 分页拉取全部用户（后端单页上限 100），Transfer 内再按 pageSize 10 客户端分页
+      const allUserItems: { key: string; title: string; description?: string }[] = [];
+      let page = 1;
+      for (;;) {
+        if (userConfigRequestSeqRef.current !== requestSeq) return;
+        const usersRes = await apiListUsers(page, USERS_PAGE_SIZE);
+        if (userConfigRequestSeqRef.current !== requestSeq) return;
+        if (!usersRes.success) {
+          message.error(usersRes.message || "获取用户列表失败");
+          handleCloseUserModal();
+          return;
+        }
+        const users = usersRes.data?.items || [];
+        const totalUsers = usersRes.data?.total ?? 0;
+        allUserItems.push(
+          ...users.map((u) => ({
+            key: (u.user_id || u.id || "") as string,
+            title: u.user_name || (u.user_id as string) || "",
+            description: (u.user_id as string) || undefined,
           })),
         );
+        if (users.length < USERS_PAGE_SIZE || allUserItems.length >= totalUsers) break;
+        page += 1;
       }
-      if (roleUsersRes.success) setTargetUserIds(roleUsersRes.data?.userIds || []);
+
+      if (userConfigRequestSeqRef.current !== requestSeq) return;
+      setAllUsers(allUserItems);
+
+      // 回显该角色已配置的用户
+      const roleUsersRes = await apiGetRoleUsers(record.role_id as string);
+      if (userConfigRequestSeqRef.current !== requestSeq) return;
+      if (roleUsersRes.success) {
+        setTargetUserKeys(roleUsersRes.data?.userIds || []);
+        return;
+      }
+      message.error(roleUsersRes.message || "获取用户配置数据失败");
+      handleCloseUserModal();
+    } catch (error) {
+      console.error(error);
+      if (userConfigRequestSeqRef.current === requestSeq) {
+        message.error(error instanceof Error ? error.message : "获取用户配置数据失败");
+        handleCloseUserModal();
+      }
     } finally {
-      setUserModalLoading(false);
+      if (userConfigRequestSeqRef.current === requestSeq) {
+        setUserLoading(false);
+      }
     }
   };
 
-  const doSaveRoleUsers = async () => {
-    if (!userModalRole) return;
-    setSavingUsers(true);
+  const handleSaveUsers = async () => {
+    if (!currentRoleForUsers) return;
+    if (userLoading) {
+      message.warning("用户配置数据加载中，请稍后再试");
+      return;
+    }
+    setSaveLoading(true);
     try {
-      const res = await apiSaveRoleUsers(userModalRole.role_id as string, targetUserIds);
+      const res = await apiSaveRoleUsers(currentRoleForUsers.role_id as string, targetUserKeys);
       if (res.success) {
         message.success(res.message || "用户配置成功");
-        setUserModalOpen(false);
+        handleCloseUserModal();
       } else {
         message.error(res.message || "保存失败");
       }
+    } catch (error) {
+      console.error(error);
+      message.error(error instanceof Error ? error.message : "保存失败");
     } finally {
-      setSavingUsers(false);
+      setSaveLoading(false);
     }
   };
 
-  const onMenuCheck = (checked: React.Key[] | { checked: React.Key[]; halfChecked: React.Key[] }) => {
-    const keys = Array.isArray(checked) ? checked : checked.checked;
-    setCheckedMenuIds(keys.map(String));
-  };
+  // ---- 表格列 ----
+  const columns: ColumnsType<SysRoleItem> = [
+    {
+      title: "角色编码",
+      dataIndex: "role_id",
+      key: "role_id",
+      width: 150,
+      render: (text?: string) => (
+        <Tooltip title={text} mouseEnterDelay={0.3}>
+          <span style={truncateStyle}>{text}</span>
+        </Tooltip>
+      ),
+    },
+    {
+      title: "角色名称",
+      dataIndex: "role_name",
+      key: "role_name",
+      width: 200,
+      render: (text?: string) => (
+        <Tooltip title={text} mouseEnterDelay={0.3}>
+          <span style={truncateStyle}>{text}</span>
+        </Tooltip>
+      ),
+    },
+    {
+      title: "角色类型",
+      dataIndex: "role_type",
+      key: "role_type",
+      width: 140,
+      render: (value?: string) =>
+        ROLE_TYPE_LABEL_MAP[value || ""] || (
+          <span style={{ color: "#9aa4b2" }}>{value || "未设置"}</span>
+        ),
+    },
+    {
+      title: "角色描述",
+      dataIndex: "role_descr",
+      key: "role_descr",
+      width: 300,
+      render: (text?: string) => (
+        <Tooltip title={text} mouseEnterDelay={0.3}>
+          <span style={{ ...truncateStyle, color: text ? undefined : "#9aa4b2" }}>
+            {text || "-"}
+          </span>
+        </Tooltip>
+      ),
+    },
+    {
+      title: "已分配菜单",
+      key: "menus",
+      width: 250,
+      render: (_, record) => {
+        const labels = (roleMenusMap[record.role_id || ""] || []).map((id) => menuLabelMap[id] || id);
+        const text = labels.length > 0 ? labels.join("、") : "";
+        return (
+          <Tooltip title={text || ""} mouseEnterDelay={0.3}>
+            <span style={{ ...truncateStyle, color: text ? undefined : "#9aa4b2" }}>
+              {text || "未分配"}
+            </span>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: "状态",
+      dataIndex: "state",
+      key: "state",
+      width: 100,
+      render: (state?: string) => (
+        <Tag color={state === "1" ? "success" : "default"}>{state === "1" ? "有效" : "无效"}</Tag>
+      ),
+    },
+    {
+      title: "操作",
+      key: "action",
+      width: 160,
+      fixed: "right",
+      render: (_, record) => (
+        <ModoActionGroup
+          maxCount={2}
+          actions={[
+            { key: "edit", label: "编辑", onClick: () => handleEdit(record) },
+            {
+              key: "delete",
+              label: "删除",
+              danger: true,
+              onClick: () => handleDelete(record),
+            },
+            { key: "assign", label: "分配菜单", onClick: () => void handleAssignMenu(record) },
+            ...(record.role_type === "plat-mgr"
+              ? [{ key: "users", label: "用户配置", onClick: () => void handleUserConfig(record) }]
+              : []),
+          ]}
+        />
+      ),
+    },
+  ];
 
   return (
-    // 2026-10-07 一屏自适应（对齐 data-synth）：外层不滚动，卡片内表格占满剩余高度
-    <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      <Card
-        title="角色"
-        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
-        extra={
-          <Button type="primary" onClick={openCreate}>
-            新建角色
-          </Button>
-        }
+    <ModoPage>
+      {/* 筛选 */}
+      <PageFilter
+        form={searchForm}
+        onSearch={handleSearch}
+        onReset={handleReset}
+        searchParams={searchParams}
+        setSearchParams={setSearchParams}
+        labelMap={{
+          roleName: "角色名称",
+          roleType: "角色类型",
+        }}
+        valueMap={{
+          roleType: ROLE_TYPE_LABEL_MAP,
+        }}
       >
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 12, flexShrink: 0 }}
-          message="通过「分配菜单」为角色勾选可访问的页面菜单，勾选后该角色下用户的侧边栏与页面访问即受菜单授权控制。"
-        />
-        <ModoTable
-          rowKey="role_id"
-          size="small"
-          loading={loading}
-          dataSource={rows}
-          locale={{ emptyText: <Empty description="暂无角色" /> }}
-        columns={[
-          { title: "角色编码", dataIndex: "role_id", width: 140 },
-          { title: "角色名", dataIndex: "role_name", width: 160 },
-          {
-            title: "类型",
-            dataIndex: "role_type",
-            width: 110,
-            render: (v: string) => ROLE_TYPE_LABEL[v] || v || "-",
-          },
-          { title: "描述", dataIndex: "role_descr", ellipsis: true },
-          { title: "状态", dataIndex: "state", width: 80, render: (v) => <StateTag value={v} /> },
-          {
-            title: "操作",
-            width: 300,
-            render: (_: unknown, r: SysRoleItem) => (
-              <Space>
-                <Button size="small" onClick={() => openEdit(r)}>
-                  编辑
-                </Button>
-                <Popconfirm title={`确定删除角色 ${r.role_name}?`} onConfirm={() => void doDeleteRole(r.role_id as string)}>
-                  <Button size="small" danger>
-                    删除
-                  </Button>
-                </Popconfirm>
-                <Button size="small" onClick={() => void openAssignMenu(r)}>
-                  分配菜单
-                </Button>
-                {r.role_type === "plat-mgr" && (
-                  <Button size="small" onClick={() => void openUserConfig(r)}>
-                    用户配置
-                  </Button>
-                )}
-              </Space>
-            ),
-          },
-        ]}
-      />
+        <Form.Item name="roleName" label="角色名称">
+          <ModoInput placeholder="输入角色名称" allowClear />
+        </Form.Item>
+        <Form.Item name="roleType" label="角色类型">
+          <ModoSelect placeholder="请选择角色类型" allowClear options={ROLE_TYPE_OPTIONS} />
+        </Form.Item>
+      </PageFilter>
 
-      {/* 新建/编辑角色（对齐 ds Drawer 表单） */}
-            <Drawer
-              title={editingRole ? `编辑角色: ${editingRole.role_name}` : "新建角色"}
-              open={roleModalOpen}
-              onClose={() => setRoleModalOpen(false)}
-              width={480}
-              extra={
-                <Space>
-                  <Button onClick={() => setRoleModalOpen(false)}>取消</Button>
-                  <Button type="primary" loading={savingRole} onClick={() => void doSaveRole()}>
-                    保存
-                  </Button>
-                </Space>
-              }
-            >
-              <Form form={roleForm} layout="vertical" preserve={false} initialValues={{ role_type: "team-role", state: "1" }}>
-                <Form.Item
-                  name="role_id"
-                  label="角色编码"
-                  rules={[{ required: true, message: "请输入角色编码" }]}
-                >
-                  <Input placeholder="如 team-reader" disabled={!!editingRole} />
-                </Form.Item>
-                <Form.Item name="role_name" label="角色名称" rules={[{ required: true, message: "请输入角色名称" }]}>
-                  <Input placeholder="角色名称" />
-                </Form.Item>
-                <Form.Item name="role_type" label="角色类型" rules={[{ required: true }]}>
-                  <Radio.Group>
-                    <Radio value="plat-mgr">平台管理</Radio>
-                    <Radio value="team-role">团队角色</Radio>
-                  </Radio.Group>
-                </Form.Item>
-                <Form.Item name="role_descr" label="角色描述">
-                  <Input.TextArea rows={2} placeholder="角色描述（可选）" maxLength={50} />
-                </Form.Item>
-                <Form.Item name="state" label="状态">
-                  <Radio.Group>
-                    <Radio value="1">有效</Radio>
-                    <Radio value="0">无效</Radio>
-                  </Radio.Group>
-                </Form.Item>
-              </Form>
-            </Drawer>
-
-            {/* 分配菜单 */}
-            <Drawer
-              title={`分配菜单权限: ${menuModalRole?.role_name || ""}`}
-              open={menuModalOpen}
-              onClose={() => setMenuModalOpen(false)}
-              width={480}
-              extra={
-                <Space>
-                  <Button onClick={() => setMenuModalOpen(false)}>取消</Button>
-                  <Button type="primary" loading={savingMenus} onClick={() => void doSaveRoleMenus()}>
-                    保存
-                  </Button>
-                </Space>
-              }
-            >
-              <Tree
-                treeData={menuTreeData}
-                checkable
-                checkedKeys={checkedMenuIds}
-                onCheck={onMenuCheck}
-                defaultExpandAll
-                height={420}
-                selectable={false}
-              />
-            </Drawer>
-
-            {/* 用户配置（对齐 ds 角色用户分配 Drawer + Transfer） */}
-            <Drawer
-              title={`用户配置: ${userModalRole?.role_name || ""}`}
-              open={userModalOpen}
-              onClose={() => setUserModalOpen(false)}
-              width={760}
-              extra={
-                <Space>
-                  <Button onClick={() => setUserModalOpen(false)}>取消</Button>
-                  <Button
-                    type="primary"
-                    loading={savingUsers || userModalLoading}
-                    onClick={() => void doSaveRoleUsers()}
-                  >
-                    保存
-                  </Button>
-                </Space>
-              }
-            >
-              <Transfer
-                dataSource={allUserOptions}
-                titles={["全部用户", "已选用户"]}
-                targetKeys={targetUserIds}
-                onChange={(keys) => setTargetUserIds(keys as string[])}
-                render={(item) => item.title}
-                showSearch
-                pagination={{ pageSize: 10 }}
-                listStyle={{ width: 320, height: 400 }}
-                disabled={userModalLoading}
-              />
-            </Drawer>
-          </Card>
+      {/* 内容区：工具栏 + 表格 + 分页吸底（flex 链撑满一屏，无外层滚动） */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          minHeight: 0,
+          background: "#fff",
+        }}
+      >
+        <div style={{ flexShrink: 0, padding: "10px 16px 0 16px", marginBottom: 10 }}>
+          <ModoButton type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+            新建角色
+          </ModoButton>
         </div>
-      );
-    }
+
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+          <ModoTable
+            columns={columns}
+            dataSource={data}
+            rowKey="role_id"
+            loading={loading}
+            scroll={{ x: 1400 }}
+            sticky
+            style={{ width: "100%" }}
+            size="middle"
+          />
+        </div>
+
+        <ModoPagination
+          current={currentPage}
+          pageSize={pageSize}
+          total={total}
+          showSizeChanger
+          showQuickJumper
+          showTotal={(t: number) => `共 ${t} 条`}
+          onChange={(page: number, size: number) => {
+            setCurrentPage(page);
+            setPageSize(size);
+          }}
+        />
+      </div>
+
+      {/* 新建 / 编辑角色 Drawer */}
+      <ModoDrawer
+        title={drawerMode === "create" ? "新建角色" : "编辑角色"}
+        open={drawerVisible}
+        onCancel={() => setDrawerVisible(false)}
+        onOk={() => void handleSave()}
+        confirmLoading={savingRole}
+        width={480}
+      >
+        <Form
+          key={formKey}
+          form={roleForm}
+          layout="vertical"
+          initialValues={{ state: "1", roleType: "team-role" }}
+          validateTrigger={false}
+          autoComplete="off"
+        >
+          <Form.Item
+            name="roleId"
+            label="角色编码"
+            rules={[{ required: true, message: "请输入角色编码" }]}
+          >
+            <ModoInput placeholder="请输入角色编码" disabled={drawerMode === "edit"} />
+          </Form.Item>
+          <Form.Item
+            name="roleName"
+            label="角色名称"
+            rules={[{ required: true, message: "请输入角色名称" }]}
+          >
+            <ModoInput placeholder="请输入角色名称" />
+          </Form.Item>
+          <Form.Item
+            name="roleType"
+            label="角色类型"
+            rules={[{ required: true, message: "请选择角色类型" }]}
+          >
+            <ModoSelect placeholder="请选择角色类型" allowClear={false} options={ROLE_TYPE_OPTIONS} />
+          </Form.Item>
+          <Form.Item name="roleDescr" label="角色描述">
+            <ModoTextArea rows={2} placeholder="角色描述" variant="filled" maxLength={50} showCount />
+          </Form.Item>
+          <Form.Item name="state" label="状态">
+            <ModoRadio.Group>
+              <ModoRadio value="1">有效</ModoRadio>
+              <ModoRadio value="0">无效</ModoRadio>
+            </ModoRadio.Group>
+          </Form.Item>
+        </Form>
+      </ModoDrawer>
+
+      {/* 分配菜单权限 Modal（TreeSelect 勾选，回显角色已有菜单） */}
+      <ModoModal
+        title="分配菜单权限"
+        open={menuModalVisible}
+        onCancel={() => {
+          menuRequestSeqRef.current += 1;
+          setTreeLoading(false);
+          setMenuModalVisible(false);
+          setCurrentRoleNodes(null);
+          setCheckedKeys([]);
+        }}
+        onOk={() => void handleSaveMenuPerm()}
+        confirmLoading={savingMenus || treeLoading}
+        okButtonProps={{ disabled: treeLoading }}
+        width={520}
+      >
+        <div style={{ padding: "4px 0" }}>
+          <div style={{ marginBottom: 8, fontSize: 13, color: "#79879C" }}>
+            当前角色：{currentRoleNodes?.role_name || "-"}
+          </div>
+          <TreeSelect
+            style={{ width: "100%" }}
+            styles={{ popup: { root: { maxHeight: 400, overflow: "auto" } } }}
+            treeData={menuTreeData}
+            fieldNames={{ label: "title", value: "key", children: "children" }}
+            placeholder={treeLoading ? "正在加载菜单权限..." : "请选择菜单权限"}
+            treeCheckable
+            showCheckedStrategy={TreeSelect.SHOW_ALL}
+            maxTagCount={3}
+            value={checkedKeys as string[]}
+            onChange={(values: any) => setCheckedKeys(values as React.Key[])}
+            treeDefaultExpandAll
+            allowClear
+            multiple
+            disabled={treeLoading}
+            loading={treeLoading}
+          />
+        </div>
+      </ModoModal>
+
+      {/* 用户配置 Modal（Transfer：全部用户 -> 已选用户，回显 getRoleUsers） */}
+      <ModoModal
+        title="用户配置"
+        open={userModalVisible}
+        onCancel={handleCloseUserModal}
+        onOk={() => void handleSaveUsers()}
+        confirmLoading={saveLoading || userLoading}
+        width={800}
+      >
+        <Form layout="horizontal" labelCol={{ span: 3 }} wrapperCol={{ span: 21 }}>
+          <Form.Item label="角色名">
+            <ModoInput value={currentRoleForUsers?.role_name} disabled />
+          </Form.Item>
+          <Form.Item label="用户">
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                minHeight: 400,
+                alignItems: "center",
+              }}
+            >
+              {userLoading ? (
+                <Spin tip="正在加载角色用户配置..." />
+              ) : (
+                <Transfer
+                  dataSource={allUsers}
+                  titles={["全部用户", "已选用户"]}
+                  targetKeys={targetUserKeys}
+                  onChange={(keys) => setTargetUserKeys(keys as string[])}
+                  render={(item) => item.title}
+                  showSearch
+                  disabled={userLoading || saveLoading}
+                  pagination={{ pageSize: 10 }}
+                  styles={{ section: { width: 320, height: 400 } }}
+                  locale={{ searchPlaceholder: "输入用户名进行过滤" }}
+                />
+              )}
+            </div>
+          </Form.Item>
+        </Form>
+      </ModoModal>
+    </ModoPage>
+  );
+}

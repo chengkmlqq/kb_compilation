@@ -1,0 +1,19 @@
+.container-wrapper {
+  background: var(--color-gray-2, #eff4f9);
+  padding: 10px 12px;
+  box-sizing: border-box;
+  display: flex;
+}
+
+.container-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-white, #ffffff);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 2px 5px #242e431a;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}

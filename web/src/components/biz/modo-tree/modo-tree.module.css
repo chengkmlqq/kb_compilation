@@ -1,0 +1,96 @@
+.compact :global(.ant-tree-treenode) {
+  padding-bottom: 0 !important;
+  margin-bottom: 0 !important;
+  line-height: 28px !important;
+  min-height: 28px !important;
+}
+
+.compact :global(.ant-tree-switcher) {
+  width: 12px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-inline-end: 0 !important;
+  transition: none !important;
+}
+
+.compact :global(.ant-tree-checkbox) {
+  width: 12px !important;
+  height: 12px !important;
+  margin-inline-start: 4px !important;
+  margin-inline-end: 0 !important;
+  margin-block-start: 0 !important;
+  padding: 0 !important;
+  align-self: center;
+  margin-top: 0 !important;
+  line-height: 1 !important;
+}
+
+.compact :global(.ant-tree-checkbox .ant-tree-checkbox-inner) {
+  width: 12px !important;
+  height: 12px !important;
+  border-radius: 2px !important;
+}
+
+.compact :global(.ant-tree-checkbox-checked .ant-tree-checkbox-inner::after) {
+  width: 3px !important;
+  height: 6px !important;
+  border: 2px solid #fff !important;
+  border-top: 0 !important;
+  border-left: 0 !important;
+  transform: rotate(45deg) scale(1) translate(-50%, -50%) !important;
+  top: 45% !important;
+  left: 20% !important;
+  opacity: 1 !important;
+  transition: none !important;
+  display: table !important;
+  position: absolute !important;
+}
+
+.compact :global(.ant-tree-checkbox-indeterminate .ant-tree-checkbox-inner::after) {
+  top: 50% !important;
+  left: 50% !important;
+  width: 6px !important;
+  height: 6px !important;
+  transform: translate(-50%, -50%) !important;
+}
+
+.compact :global(.ant-tree-iconEle) {
+  width: 16px !important;
+  height: 28px !important;
+  line-height: 28px !important;
+  display: inline-block !important;
+  padding-left: 0 !important;
+  padding-right: 4px !important;
+  color: inherit !important;
+}
+
+.compact :global(.ant-tree-iconEle .anticon) {
+  font-size: 12px !important;
+}
+
+.compact :global(.ant-tree-switcher:hover:before) {
+  background: transparent !important;
+}
+
+.compact :global(.ant-tree-switcher),
+.compact :global(.ant-tree-switcher-icon),
+.compact :global(.ant-tree-switcher-icon svg) {
+  transform: none !important;
+}
+
+.compact :global(.ant-tree-indent-unit) {
+  width: 16px !important;
+  margin-inline-end: 0 !important;
+}
+
+.compact :global(.ant-tree-switcher-icon) {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 0 !important;
+}
+
+.compact :global(.ant-tree-node-content-wrapper) {
+  padding-inline-start: 4px !important;
+}

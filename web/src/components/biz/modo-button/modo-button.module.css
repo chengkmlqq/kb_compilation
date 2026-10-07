@@ -1,0 +1,9 @@
+.modoButton {
+  box-shadow: none !important;
+}
+
+.modoButton:focus-visible {
+  outline: 2px solid #3261ce !important;
+  outline-offset: 1px;
+  box-shadow: none !important;
+}

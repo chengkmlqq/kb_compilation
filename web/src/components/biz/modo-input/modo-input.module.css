@@ -1,0 +1,28 @@
+.modo-input {
+  background-color: #eff4f9 !important;
+  border: 1px solid transparent !important;
+  transition: all 0.2s cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+.modo-input:hover {
+  background-color: #e5ecf4 !important;
+  border-color: transparent !important;
+}
+
+.modo-input:focus,
+.modo-input:focus-within {
+  background-color: #ffffff !important;
+  border-color: #3261ce !important;
+  box-shadow: 0 0 0 2px rgba(50, 97, 206, 0.1);
+}
+
+.modo-input:disabled,
+.modo-input[disabled] {
+  background-color: #f5f5f5 !important;
+  border-color: transparent !important;
+  cursor: not-allowed;
+}
+
+.modo-input:global(.ant-input-textarea) textarea {
+  background-color: inherit !important;
+}

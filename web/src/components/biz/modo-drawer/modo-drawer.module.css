@@ -1,0 +1,14 @@
+.modo-drawer {
+  position: relative;
+}
+
+.close-icon {
+  font-size: 16px;
+  cursor: pointer;
+  color: rgba(0, 0, 0, 0.45);
+  transition: color 0.2s;
+}
+
+.close-icon:hover {
+  color: rgba(0, 0, 0, 0.88);
+}

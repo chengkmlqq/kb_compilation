@@ -1,0 +1,44 @@
+.modo-modal :global(.ant-modal-content) {
+  padding: 0 !important;
+  overflow: hidden;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1) !important;
+}
+
+.modo-modal :global(.ant-modal-header) {
+  border-bottom: 1px solid #e5e6eb !important;
+  padding: 11px 20px !important;
+  margin-bottom: 0 !important;
+  border-radius: 4px 4px 0 0 !important;
+}
+
+.modo-modal :global(.ant-modal-title) {
+  font-weight: 600 !important;
+  line-height: 22px !important;
+  font-size: 14px !important;
+}
+
+.modo-modal :global(.ant-modal-footer) {
+  border-top: 1px solid #e5e6eb !important;
+  padding: 11px 20px !important;
+  margin-top: 0 !important;
+  border-radius: 0 0 4px 4px !important;
+}
+
+.modo-modal :global(.ant-modal-body) {
+  padding: 16px 20px !important;
+}
+
+.modo-modal :global(.ant-modal-close) {
+  top: 11px !important;
+  right: 20px !important;
+  color: #1d2129 !important;
+  font-size: 14px !important;
+}
+
+.modo-modal :global(.ant-modal-close):hover {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+.modo-modal :global(.ant-modal-container) {
+  padding: 0 !important;
+}
