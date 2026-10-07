@@ -221,8 +221,156 @@ def _login():
     raise RuntimeError(f"kb 登录失败（重试 4 次）: {last_err}")
 
 
+
+# ---------------------------------------------------------------------------
+# 内部直连模式（KB_INTERNAL_DIRECT=1，worker 内置技能）：跳过 HTTP/登录认证，
+# 进程内直接调平台 services（api.services.kb_admin + DB）。返回结构与 REST 同构
+# （{"success": true, "data": ...}），技能侧 api_get/api_post 无感知。
+# ---------------------------------------------------------------------------
+_DIRECT = os.environ.get("KB_INTERNAL_DIRECT") == "1"
+
+
+def _direct_call(method, path, payload=None):
+    """进程内直连平台 services（无认证）。path 形如 /api/v1/kbs/{kb}/wiki/...。"""
+    import sys as _sys
+
+    if "/srv/kb" not in _sys.path:
+        _sys.path.insert(0, "/srv/kb")
+    from sqlalchemy import text as _text
+
+    from api.db import get_sessionmaker
+    from api.services import kb_admin
+
+    _qstr = path.split("?", 1)[1] if "?" in path else ""
+    parts = [p for p in path.split("?", 1)[0].strip("/").split("/") if p]
+    if len(parts) < 4 or parts[0] != "api" or parts[1] != "v1" or parts[2] != "kbs":
+        raise RuntimeError(f"内部直连不支持的路径: {path}")
+    kb = parts[3]
+    rest = parts[4:]
+    db = get_sessionmaker()()
+    try:
+        # ---- wiki 页面 ----
+        if rest[:2] == ["wiki", "pages"]:
+            slug = rest[2] if len(rest) > 2 else ""
+            if method == "GET" and slug:
+                r = kb_admin.get_wiki_page(db, kb, slug)
+                return {"success": True, "data": r} if r is not None else {"success": False, "error": "页面不存在"}
+            if method == "POST":
+                if slug == "batch":
+                    pages = payload or []
+                    created = 0
+                    for p in pages:
+                        try:
+                            kb_admin.wiki_create_page(db, kb, p or {})
+                            created += 1
+                        except Exception:  # noqa: BLE001
+                            pass
+                    return {"success": True, "data": {"created": created, "total": len(pages)}}
+                r = kb_admin.wiki_create_page(db, kb, payload or {})
+                return {"success": True, "data": r}
+            if method == "PUT" and slug:
+                r = kb_admin.wiki_update_page(db, kb, slug, payload or {})
+                return {"success": True, "data": r}
+            if method == "DELETE" and slug:
+                r = kb_admin.wiki_delete_page(db, kb, slug)
+                return {"success": True, "data": r}
+        # ---- wiki 目录 ----
+        if rest[:2] == ["wiki", "folders"]:
+            fid = rest[2] if len(rest) > 2 else ""
+            if method == "GET":
+                return {"success": True, "data": kb_admin.wiki_folders(db, kb)}
+            if method == "POST":
+                r = kb_admin.wiki_create_folder(db, kb, payload or {})
+                return {"success": True, "data": r}
+            if method == "PUT" and fid:
+                r = kb_admin.wiki_update_folder(db, kb, fid, payload or {})
+                return {"success": True, "data": r}
+            if method == "DELETE" and fid:
+                r = kb_admin.wiki_delete_folder(db, kb, fid)
+                return {"success": True, "data": r}
+        # ---- wiki 其他 ----
+        if rest[:2] == ["wiki", "rebuild-links"]:
+            return {"success": True, "data": kb_admin.wiki_rebuild_links(db, kb)}
+        if rest[:2] == ["wiki", "search"]:
+            q = ""
+            limit = 20
+            for seg in _qstr.split("&") if _qstr else []:
+                if seg.startswith("q="):
+                    q = seg[2:]
+                if seg.startswith("limit="):
+                    try:
+                        limit = int(seg.split("=")[1])
+                    except ValueError:
+                        pass
+            import urllib.parse as _up
+
+            q = _up.unquote(q)
+            return {"success": True, "data": kb_admin.wiki_search(db, kb, q, limit)}
+        if rest[:2] == ["wiki", "stats"]:
+            return {"success": True, "data": kb_admin.wiki_stats(db, kb)}
+        if rest[:2] == ["wiki", "lint"]:
+            return {"success": True, "data": kb_admin.wiki_lint(db, kb)}
+        if rest == ["wiki"]:
+            return {"success": True, "data": kb_admin.wiki_tree(db, kb)}
+        if rest == ["ontology-schema"]:
+            from api.models.ontology import KbOntologySchema, OntologySchema
+
+            b = db.execute(
+                _text("SELECT schema_name FROM kb_ontology_schema WHERE kb_id=:k"), {"k": kb}
+            ).fetchone()
+            name = str(b[0]) if b else ""
+            rows = []
+            if name:
+                rows = db.execute(
+                    _text("SELECT dimension, cat_no, cat_name, cat_label, prompt_hint, neo4j_edge "
+                          "FROM ontology_schema WHERE schema_name=:n ORDER BY dimension, cat_no"),
+                    {"n": name},
+                ).fetchall()
+            return {
+                "success": True,
+                "data": {
+                    "schema_name": name,
+                    "schemas": [
+                        {"dimension": r[0], "cat_no": r[1], "cat_name": r[2], "cat_label": r[3],
+                         "prompt_hint": r[4], "neo4j_edge": r[5]} for r in rows
+                    ],
+                },
+            }
+        # ---- 文档 ----
+        if rest[0] == "documents":
+            if len(rest) == 1:
+                page = 1
+                ps = 100
+                for seg in path.split("?")[1].split("&") if "?" in path else []:
+                    if seg.startswith("page="):
+                        page = int(seg.split("=")[1])
+                    if seg.startswith("page_size="):
+                        ps = int(seg.split("=")[1])
+                r = kb_admin.list_documents(db, kb, page=page, page_size=ps)
+                return {"success": True, "data": r}
+            if len(rest) == 3 and rest[2] == "chunks":
+                doc_id = rest[1]
+                rows = db.execute(
+                    _text("SELECT id, seq, content, meta FROM doc_chunk WHERE document_id=:d ORDER BY seq"),
+                    {"d": doc_id},
+                ).fetchall()
+                items = []
+                for rid, seq, content, meta in rows:
+                    items.append({"id": rid, "seq": seq, "content": content, "meta": meta or {}})
+                return {"success": True, "data": {"total": len(items), "items": items}}
+        # ---- 其他 ----
+        if rest == [] and method == "GET":
+            return {"success": True, "data": kb_admin.list_kbs(db)}
+        raise RuntimeError(f"内部直连未覆盖: {method} {path}")
+    finally:
+        db.close()
+
+
 def _request(method, path, payload=None, retries=3):
-    """统一 HTTP 请求。失败抛 RuntimeError（含状态码+响应体）。"""
+    """统一平台请求。KB_INTERNAL_DIRECT=1 时进程内直连 services（无认证）。"""
+    if _DIRECT:
+        return _direct_call(method, path, payload)
+    """HTTP 路径：统一请求。失败抛 RuntimeError（含状态码+响应体）。"""
     global _COOKIE
     url = f'{api_base_url()}{path}'
     last = None

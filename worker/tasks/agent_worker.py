@@ -521,6 +521,8 @@ def _inject_direct_env(config: dict[str, Any], job_id: str) -> None:
             os.environ[f"WEKNORA_LLM_{k.upper()}"] = str(config[k])
     if config.get("skill"):
         os.environ["WEKNORA_SKILL"] = str(config["skill"])
+    # 2026-10-07 内部直连模式：技能平台调用改进程内 services（跳过 HTTP 登录认证）
+    os.environ["KB_INTERNAL_DIRECT"] = "1"
     try:
         from api.config import get_settings
 
