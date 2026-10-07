@@ -256,3 +256,17 @@ body {
   display: flex;
   flex-direction: column;
 }
+
+/* ===== kb chat thinking 脉冲指示器（对齐 WeKnora deepThink） ===== */
+.kb-think-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fa8c16;
+  animation: kb-think-pulse 1.2s ease-in-out infinite;
+}
+@keyframes kb-think-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(250, 140, 22, 0.45); }
+  50% { box-shadow: 0 0 0 5px rgba(250, 140, 22, 0); }
+}

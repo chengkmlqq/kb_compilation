@@ -440,6 +440,7 @@ def answer_question(
     """
     from api.services.retrieval import config_from_kb, hybrid_search
 
+    yield {"type": "stage", "stage": "retrieval", "status": "running", "title": "正在检索知识库…"}
     cfg = config_from_kb(kb, retrieval_overrides)
     hits = hybrid_search(kb_db, kb.id, question, query_embedding, cfg)
     if chat_cfg is None:
@@ -447,6 +448,14 @@ def answer_question(
             kb_db, user_id=user_id or "", team_name=team_name or "", is_sys_admin=is_sys_admin
         )
 
+    yield {
+        "type": "stage",
+        "stage": "retrieval",
+        "status": "done",
+        "title": "检索完成",
+        "summary": f"命中 {len(hits)} 篇相关片段",
+        "hits_count": len(hits),
+    }
     yield {"type": "context", "hits": [h.__dict__ for h in hits]}
 
     if history:
@@ -467,12 +476,19 @@ def answer_question(
     client = ChatClient(chat_cfg)
     # 无工具：与接入前逐字一致的单轮流式
     if not tools:
+        yield {"type": "stage", "stage": "generation", "status": "running", "title": "正在生成回答…"}
         yield from _stream_once(client, messages)
         return
     max_rounds = max(1, int(max_tool_iterations or 1))
     for round_idx in range(max_rounds):
         tool_calls: list[dict] = []
         buffered: list[dict] = []  # 本轮流式文本（非最终轮不回传，避免前言污染答案）
+        yield {
+            "type": "stage",
+            "stage": "generation",
+            "status": "running",
+            "title": f"正在生成回答…（第 {round_idx + 1} 轮）" if round_idx > 0 else "正在生成回答…",
+        }
         for ev in client.stream_events(messages, tools=tools):
             etype = ev.get("type")
             if etype == "tool_call":

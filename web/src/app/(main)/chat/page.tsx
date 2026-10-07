@@ -64,6 +64,7 @@ import {
   ModelItem,
 } from "@/lib/api";
 import MarkdownViewer from "@/components/MarkdownViewer";
+import RagPipelineProgress, { RagStep } from "@/components/RagPipelineProgress";
 
 const { Text } = Typography;
 
@@ -73,6 +74,7 @@ interface UiMessage extends ChatMessageItem {
   followUpLoading?: boolean;
   followUpsDismissed?: boolean;
   error?: boolean;
+  steps?: RagStep[];
 }
 
 // 切页续传锚点：qa-resume:{sessionId} → {stream_id, offset}
@@ -92,6 +94,8 @@ export default function ChatPage() {
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
   const msgsRef = useRef<UiMessage[]>([]);
   // 保持 msgsRef 与 msgs 同步（供 tryResume 读最新列表）
   useEffect(() => {
@@ -325,6 +329,24 @@ export default function ChatPage() {
                 score: h.score || 0,
                 meta: h.meta || {},
               }));
+            } else if (ev.type === "stage") {
+              setMsgs((prev) =>
+                prev.map((m) => {
+                  if (m.id !== applyId) return m;
+                  const steps = [...(m.steps || [])];
+                  const idx = steps.findIndex((st) => st.stage === ev.stage);
+                  const step: RagStep = {
+                    stage: ev.stage || "",
+                    status: ev.status === "done" ? "done" : "running",
+                    title: ev.title || "",
+                    summary: ev.summary,
+                    hitsCount: ev.hits_count,
+                  };
+                  if (idx >= 0) steps[idx] = step;
+                  else steps.push(step);
+                  return { ...m, steps };
+                }),
+              );
             }
             evtCount += 1;
           } catch {
@@ -489,6 +511,24 @@ export default function ChatPage() {
                 score: h.score || 0,
                 meta: h.meta || {},
               }));
+            } else if (evt.type === "stage") {
+              setMsgs((prev) =>
+                prev.map((m) => {
+                  if (m.id !== placeholder.id) return m;
+                  const steps = [...(m.steps || [])];
+                  const idx = steps.findIndex((st) => st.stage === evt.stage);
+                  const step: RagStep = {
+                    stage: evt.stage || "",
+                    status: evt.status === "done" ? "done" : "running",
+                    title: evt.title || "",
+                    summary: evt.summary,
+                    hitsCount: evt.hits_count,
+                  };
+                  if (idx >= 0) steps[idx] = step;
+                  else steps.push(step);
+                  return { ...m, steps };
+                }),
+              );
             } else if (evt.type === "stream_meta") {
               streamId = evt.stream_id || "";
               // 记录续传锚点：切页回来时从已收事件数继续
@@ -911,7 +951,15 @@ export default function ChatPage() {
           )}
         </div>
 
-        <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
+        <div
+          ref={scrollRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+            setShowScrollBtn(!atBottom);
+          }}
+          style={{ flex: 1, overflow: "auto", padding: 16, position: "relative" }}
+        >
           {loadingMsgs ? (
             <div style={{ textAlign: "center", padding: 40 }}>
               <Spin />
@@ -972,6 +1020,9 @@ export default function ChatPage() {
                       wordBreak: "break-word",
                     }}
                   >
+                    {m.role === "assistant" && m.steps && m.steps.length > 0 && (
+                      <RagPipelineProgress steps={m.steps} />
+                    )}
                     {m.role === "assistant" && m.thinking && (
                       <ThinkingBlock thinking={m.thinking} streaming={!!m.streaming} />
                     )}
@@ -1113,6 +1164,20 @@ export default function ChatPage() {
                 )}
               </div>
             ))
+          )}
+          {streaming && (
+            <div style={{ textAlign: "center", padding: "8px 0 4px" }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                🤖 AI 正在回答…
+              </Text>
+            </div>
+          )}
+          {showScrollBtn && (
+            <div style={{ textAlign: "center", padding: 4 }}>
+              <Button size="small" shape="round" onClick={() => scrollBottom()}>
+                ↓ 回到最新
+              </Button>
+            </div>
           )}
           <div ref={bottomRef} />
         </div>
@@ -1352,10 +1417,15 @@ export default function ChatPage() {
 
 function ThinkingBlock({ thinking, streaming }: { thinking: string; streaming?: boolean }) {
   const [open, setOpen] = useState(false);
+  // 对齐 WeKnora deepThink：思考中强制展开跟随显示；完成后自动折叠
+  useEffect(() => {
+    if (!streaming) setOpen(false);
+  }, [streaming]);
+  const expanded = streaming || open;
   return (
     <div style={{ marginBottom: 8 }}>
       <div
-        onClick={() => setOpen(!open)}
+        onClick={() => setOpen((v) => !v)}
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -1363,17 +1433,18 @@ function ThinkingBlock({ thinking, streaming }: { thinking: string; streaming?: 
           cursor: "pointer",
           fontSize: 12,
           color: streaming ? "#fa8c16" : "#888",
-          background: "#fff7e6",
-          border: "1px solid #ffd591",
+          background: streaming ? "#fff7e6" : "#f5f5f5",
+          border: `1px solid ${streaming ? "#ffd591" : "#e8e8e8"}`,
           borderRadius: 6,
           padding: "2px 10px",
           userSelect: "none",
         }}
       >
-        <span>{streaming ? "💭 思考中…" : "💭 思考过程"}</span>
-        <span style={{ fontSize: 10 }}>{open ? "▾" : "▸"}</span>
+        {streaming && <span className="kb-think-indicator" />}
+        <span>{streaming ? "思考中…" : "💭 思考过程"}</span>
+        <span style={{ fontSize: 10 }}>{expanded ? "▾" : "▸"}</span>
       </div>
-      {open && (
+      {expanded && (
         <div
           style={{
             marginTop: 6,

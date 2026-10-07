@@ -1905,6 +1905,11 @@ export interface QaStreamEvent {
   hits?: ChatRefItem[];
   text?: string;
   message?: string;
+  stage?: string;
+  status?: "running" | "done";
+  title?: string;
+  summary?: string;
+  hits_count?: number;
 }
 
 export function apiCreateSession(kb_id?: string | null, title?: string) {
