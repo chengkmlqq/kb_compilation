@@ -21,9 +21,18 @@ QUEUE_BY_TASK_CLASS: dict[str, str] = {
     "KbDocumentProcessTask": "default",
     "KbGraphBuildTask": "default",
     "KbAgentWikiBuildTask": "agent",
+    "KbSkillDirectBuildTask": "agent",
     "KbAgentGatewayTask": "default",
 }
+
+# wiki 构建任务正常耗时 20-40 分钟（LLM 抽取），不能用通用 10min 阈值——
+# 否则长任务每 10 分钟被误判孤儿重复投递（同 job 双跑、状态错乱、超时传播）。
+# 按任务类区分：构建类 60min，其余维持 10min。
 _ORPHAN_AFTER_MINUTES = 10
+_ORPHAN_AFTER_MINUTES_BY_CLASS: dict[str, int] = {
+    "KbSkillDirectBuildTask": 60,
+    "KbAgentWikiBuildTask": 60,
+}
 
 
 def recover_orphan_running_jobs() -> dict:
@@ -37,19 +46,23 @@ def recover_orphan_running_jobs() -> dict:
 
     db = get_sessionmaker()()
     try:
-        cutoff = datetime.datetime.now() - datetime.timedelta(minutes=_ORPHAN_AFTER_MINUTES)
-        jobs = (
-            db.execute(
+        jobs = []
+        for task_class, after_min in (
+            (None, _ORPHAN_AFTER_MINUTES),
+            *[(tc, _ORPHAN_AFTER_MINUTES_BY_CLASS[tc]) for tc in _ORPHAN_AFTER_MINUTES_BY_CLASS],
+        ):
+            q = (
                 select(Job).where(
                     Job.state == "RUNNING",
                     Job.task_class.is_not(None),
                     Job.create_time.is_not(None),
-                    Job.create_time < cutoff,
+                    Job.create_time
+                    < datetime.datetime.now() - datetime.timedelta(minutes=after_min),
                 )
             )
-            .scalars()
-            .all()
-        )
+            if task_class is not None:
+                q = q.where(Job.task_class == task_class)
+            jobs.extend(db.execute(q).scalars().all())
         if not jobs:
             return {"recovered": 0, "skipped": 0}
         from worker.celery_app import celery_app
