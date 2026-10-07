@@ -29,6 +29,8 @@ from api.models.chat_session import MAX_ATTACHMENT_BYTES
 from api.services.chat_sessions import (
     batch_delete_sessions,
     clear_session_messages,
+    fork_session,
+    rewind_session,
     create_agent_session,
     create_attachment,
     create_session,
@@ -349,3 +351,34 @@ def api_delete_attachment(
 
 
 __all__ = ["router"]
+
+
+class ForkSessionRequest(BaseModel):
+    message_id: str | None = None
+    title: str | None = None
+
+
+@router.post("/{session_id}/fork")
+def api_fork_session(
+    session_id: str,
+    req: ForkSessionRequest,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(_require_user_id),
+) -> dict:
+    data = fork_session(db, user_id, session_id, req.message_id, req.title)
+    return {"success": True, "data": data}
+
+
+class RewindSessionRequest(BaseModel):
+    message_id: str
+
+
+@router.post("/{session_id}/rewind")
+def api_rewind_session(
+    session_id: str,
+    req: RewindSessionRequest,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(_require_user_id),
+) -> dict:
+    data = rewind_session(db, user_id, session_id, req.message_id)
+    return {"success": True, "data": data}

@@ -34,6 +34,8 @@ class ChatSession(Base):
     agent_id: Mapped[str | None] = mapped_column(String(64), index=True)
     title: Mapped[str] = mapped_column(String(256), default="新会话")
     pinned: Mapped[int] = mapped_column(Integer, default=0)  # 1 = 置顶
+    # 非空 = 由某会话分叉而来（WeKnora fork 分支树）
+    parent_session_id: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[str] = mapped_column(String(32), default=_now_iso)
     updated_at: Mapped[str] = mapped_column(String(32), default=_now_iso)
 

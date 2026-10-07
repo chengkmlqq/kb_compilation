@@ -598,3 +598,108 @@ def create_agent_session(db: Session, user_id: str, agent_id: str, kb_id: str | 
     db.add(session)
     db.commit()
     return _session_dict(session)
+
+
+def fork_session(
+    db: Session,
+    user_id: str,
+    session_id: str,
+    message_id: str | None = None,
+    title: str | None = None,
+) -> dict:
+    """Fork a session at a message boundary (WeKnora-style branching).
+
+    Copies the parent session and keeps messages up to `message_id`
+    (inclusive); the new session records parent_session_id so the UI can
+    render a branch tree. Default fork point = last message.
+    """
+    src = get_session(db, user_id, session_id)
+    msgs = (
+        db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.seq)
+        )
+        .scalars()
+        .all()
+    )
+    cut_seq = None
+    if message_id:
+        hit = next((m for m in msgs if m.id == message_id), None)
+        if not hit:
+            raise HTTPException(status_code=404, detail=f"消息不存在: {message_id}")
+        cut_seq = hit.seq
+    new_id = new_session_id()
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    db.add(
+        ChatSession(
+            id=new_id,
+            user_id=user_id,
+            kb_id=src.kb_id,
+            agent_id=src.agent_id,
+            title=(title or src.title) if msgs else (title or "新会话"),
+            pinned=0,
+            parent_session_id=session_id,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    copied = 0
+    for m in msgs:
+        if cut_seq is not None and m.seq > cut_seq:
+            break
+        db.add(
+            ChatMessage(
+                id=new_message_id(),
+                session_id=new_id,
+                seq=m.seq,
+                role=m.role,
+                content=m.content,
+                refs=m.refs,
+                thinking=m.thinking,
+                created_at=m.created_at,
+            )
+        )
+        copied += 1
+    db.commit()
+    return {
+        "id": new_id,
+        "title": (title or src.title) if msgs else (title or "新会话"),
+        "kb_id": src.kb_id,
+        "agent_id": src.agent_id,
+        "parent_session_id": session_id,
+        "message_count": copied,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def rewind_session(db: Session, user_id: str, session_id: str, message_id: str) -> dict:
+    """Truncate a session at `message_id`: messages after it are removed.
+
+    The anchor message itself is kept (WeKnora rewindToMessage semantics) —
+    the client then sends a new question from that point.
+    """
+    s = get_session(db, user_id, session_id)
+    msgs = (
+        db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.seq)
+        )
+        .scalars()
+        .all()
+    )
+    hit = next((m for m in msgs if m.id == message_id), None)
+    if not hit:
+        raise HTTPException(status_code=404, detail=f"消息不存在: {message_id}")
+    removed = (
+        db.execute(
+            delete(ChatMessage).where(
+                ChatMessage.session_id == session_id, ChatMessage.seq > hit.seq
+            )
+        ).rowcount or 0
+    )
+    s.updated_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    db.commit()
+    return {"session_id": session_id, "removed": removed, "remaining": hit.seq + 1}
