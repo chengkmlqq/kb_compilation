@@ -23,6 +23,7 @@ fire_params（cron 任务参数 JSON）::
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,11 @@ def cleanup_logs(task_params: dict | None = None) -> dict:
     from api.models.framework import Job, OperLog
 
     params = task_params or {}
+    if isinstance(params, str):
+        try:
+            params = json.loads(params)
+        except (TypeError, ValueError):
+            params = {}
     dry_run = bool(params.get("dry_run"))
     log_days = _pos_int(params.get("retention_days"), DEFAULT_RETENTION_DAYS)
     job_days = _pos_int(params.get("job_retention_days"), DEFAULT_RETENTION_DAYS)
