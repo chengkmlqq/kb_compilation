@@ -11,10 +11,18 @@ import {
   Table,
   Tag,
   Tooltip,
+  Tree,
   Typography,
 } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
-import { apiGetJob, apiGetJobTrace, AgentTraceData, AgentTraceSpan, JobItem } from "@/lib/api";
+import {
+  apiGetJob,
+  apiGetJobTrace,
+  AgentTraceData,
+  AgentTraceSpan,
+  JobItem,
+  TraceStepNode,
+} from "@/lib/api";
 import { resolveJobMonitorQueueLabel } from "./queue-label";
 
 interface JobLogDrawerProps {
@@ -25,6 +33,57 @@ interface JobLogDrawerProps {
 }
 
 const { Text } = Typography;
+
+// 直跑模式「执行轨迹」：把后端按 measure 嵌套还原的步骤树渲染成树
+// （build_full → 子步骤 → …），带状态、耗时与占比条（>40% 橙色高亮）。
+interface TraceTreeNode {
+  key: string;
+  title: React.ReactNode;
+  children?: TraceTreeNode[];
+}
+
+function buildTraceTree(nodes: TraceStepNode[], rootTotalMs: number): TraceTreeNode[] {
+  return nodes.map((n, i) => {
+    const done = n.status === "done" || n.status === "fail";
+    const pct = rootTotalMs > 0 ? Math.round(((n.ms || 0) / rootTotalMs) * 100) : 0;
+    const statusTag =
+      n.status === "done" ? (
+        <Tag color="green">完成</Tag>
+      ) : n.status === "fail" ? (
+        <Tag color="red">失败</Tag>
+      ) : n.status === "running" ? (
+        <Tag color="blue">进行中</Tag>
+      ) : (
+        <Tag>中断</Tag>
+      );
+    return {
+      key: `${n.step}-${n.start_ts ?? i}`,
+      title: (
+        <Space size={8} style={{ fontSize: 12 }}>
+          <span style={{ fontWeight: 500 }}>{n.step}</span>
+          {statusTag}
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {((n.ms || 0) / 1000).toFixed(1)}s
+          </Text>
+          {done ? (
+            <span style={{ background: "#f0f0f0", borderRadius: 4, height: 8, width: 120 }}>
+              <span
+                style={{
+                  display: "block",
+                  width: `${Math.min(100, pct)}%`,
+                  height: 8,
+                  borderRadius: 4,
+                  background: pct > 40 ? "#fa8c16" : "#1677ff",
+                }}
+              />
+            </span>
+          ) : null}
+        </Space>
+      ),
+      children: n.children?.length ? buildTraceTree(n.children, rootTotalMs) : undefined,
+    };
+  });
+}
 
 const STATE_COLOR: Record<string, string> = {
   PENDING: "purple",
@@ -464,10 +523,11 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
               )}
             </div>
 
-            {/* Agent Trace（span 明细：仅 agent 构建任务有） */}
+            {/* Agent Trace / 执行轨迹：agent 模式渲染 span 表格；
+                直跑模式渲染 measure 嵌套还原的步骤树（执行轨迹） */}
             <div>
               <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 8 }}>
-                Agent Trace
+                {trace?.trace_kind === "direct" ? "执行轨迹" : "Agent Trace"}
                 {trace?.has_trace && trace.summary ? (
                   <Space size={6} style={{ marginLeft: 8, fontWeight: 400, fontSize: 12 }}>
                     <Tag color="blue">{trace.summary.span_count} spans</Tag>
@@ -478,6 +538,25 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
                         {t}
                       </Tag>
                     ))}
+                  </Space>
+                ) : trace?.events?.tree?.length ? (
+                  <Space size={6} style={{ marginLeft: 8, fontWeight: 400, fontSize: 12 }}>
+                    <Tag color="blue">
+                      {(() => {
+                        const tot = (function sum(ns: TraceStepNode[]): number {
+                          return ns.reduce((a, n) => a + (n.ms || 0) + sum(n.children || []), 0);
+                        })(trace.events?.tree ?? []);
+                        return `${Math.round(tot / 1000)}s`;
+                      })()}
+                    </Tag>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      步骤{(() => {
+                        const cnt = (function count(ns: TraceStepNode[]): number {
+                          return ns.reduce((a, n) => a + 1 + count(n.children || []), 0);
+                        })(trace.events?.tree ?? []);
+                        return cnt;
+                      })()}
+                    </Text>
                   </Space>
                 ) : null}
               </div>
@@ -504,15 +583,26 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
                     },
                   ]}
                 />
+              ) : trace?.events?.tree?.length ? (
+                <Tree
+                  treeData={buildTraceTree(
+                    trace.events.tree,
+                    (function sum(ns: TraceStepNode[]): number {
+                      return ns.reduce((a, n) => a + (n.ms || 0) + sum(n.children || []), 0);
+                    })(trace.events.tree),
+                  )}
+                  defaultExpandAll
+                  showLine
+                />
               ) : (
                 <Text type="secondary" italic>
-                  该任务无 Agent Trace（仅内联 agent 构建任务产生）
+                  该任务无执行轨迹（仅 agent 构建 / 新版直跑任务会生成）
                 </Text>
               )}
             </div>
 
-            {/* LLM 构建明细（技能脚本埋点：逐次调用/重试/退避，定位慢在哪） */}
-            {trace?.events ? (
+            {/* 构建步骤时间线（flat 列表；直跑新模式用上方执行轨迹树，隐藏避免重复） */}
+            {trace?.events && !trace.events.tree?.length ? (
               <div>
                 <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 8 }}>
                   构建步骤时间线

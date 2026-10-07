@@ -293,7 +293,25 @@ def get_job_trace(
     """Agent 任务 span 明细：读 logs/traces/{job_id}.json（worker 落盘）。"""
     path = os.path.join(get_settings().kb_storage_dir, f"logs/traces/{job_id}.json")
     if not os.path.isfile(path):
-        return {"success": True, "data": {"spans": [], "has_trace": False}}
+        # 直跑任务无 agent span，但技能 LLM 事件摘要存在（steps/tree 执行轨迹）
+        ev_path = os.path.join(get_settings().kb_storage_dir, f"logs/events/{job_id}.summary.json")
+        events: dict | None = None
+        if os.path.isfile(ev_path):
+            try:
+                with open(ev_path, encoding="utf-8") as f:
+                    events = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                events = None
+        return {
+            "success": True,
+            "data": {
+                "spans": [],
+                "has_trace": False,
+                "trace_kind": "direct" if events else None,
+                "summary": {"span_count": 0, "duration_ms": 0, "llm_calls": 0, "tools": []},
+                "events": events,
+            },
+        }
     try:
         with open(path, encoding="utf-8") as f:
             spans = json.load(f)
@@ -357,6 +375,7 @@ def get_job_trace(
         "data": {
             "spans": enriched,
             "has_trace": True,
+            "trace_kind": "agent",
             "summary": summary,
             "events": events,
         },

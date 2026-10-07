@@ -483,18 +483,45 @@ def _aggregate_events(job_id: str) -> dict:
     step_evs = [e for e in evs if e.get("kind") == "step"]
     steps: list[dict] = []
     step_open: dict[str, dict] = {}
+    _ts = lambda s: int(__import__("time").mktime(__import__("time").strptime(s, "%Y-%m-%d %H:%M:%S"))) if s else 0
     for e in step_evs:
         st = str(e.get("step") or "?")
         status = str(e.get("status") or "")
+        ts = _ts(str(e.get("ts") or ""))
         if status == "start":
-            step_open[st] = {"step": st, "status": "running", "ms": 0}
+            step_open[st] = {"step": st, "status": "running", "ms": 0, "start_ts": ts}
         elif status in ("done", "fail"):
-            prev = step_open.pop(st, None) or {"step": st, "status": "running", "ms": 0}
+            prev = step_open.pop(st, None) or {"step": st, "status": "running", "ms": 0, "start_ts": ts}
             prev["status"] = "done" if status == "done" else "fail"
             prev["ms"] = int(e.get("ms") or 0)
+            prev["end_ts"] = ts
             steps.append(prev)
     for st, prev in step_open.items():
         steps.append({**prev, "status": "interrupted"})
+    steps.sort(key=lambda s: s.get("start_ts") or 0)
+
+    # 嵌套树：measure 按 start→(子 start/done...)→done 顺序写事件，用栈按
+    # (start_ts,end_ts) 区间包含关系恢复父子（build_full → 子步骤 → 孙步骤）。
+    def _treeify(items: list[dict]) -> list[dict]:
+        roots: list[dict] = []
+        stack: list[dict] = []
+        for s in items:
+            node = {
+                "step": s["step"], "status": s["status"], "ms": s.get("ms") or 0,
+                "start_ts": s.get("start_ts") or 0, "end_ts": s.get("end_ts") or 0,
+                "children": [],
+            }
+            while stack and (stack[-1]["end_ts"] or 0) and node["start_ts"] > (stack[-1]["end_ts"] or 0):
+                stack.pop()
+            if stack:
+                stack[-1]["children"].append(node)
+            else:
+                roots.append(node)
+            if node["status"] != "interrupted":
+                stack.append(node)
+        return roots
+
+    tree = _treeify(steps)
     retries = sum(len(e.get("retry_events") or []) for e in evs) + sum(
         1 for e in evs if e.get("kind") == "retry")
     retry_reasons: dict[str, int] = {}
@@ -518,6 +545,7 @@ def _aggregate_events(job_id: str) -> dict:
         "retries": retries, "retry_reasons": retry_reasons,
         "backoff_total_s": backoff_total, "wait_total_s": round(wait_total, 1),
         "llm_total_s": round(llm_total, 1), "phases": phases, "steps": steps,
+        "tree": tree,
     }
     (base / f"{job_id}.summary.json").write_text(
         json.dumps(summary, ensure_ascii=False), encoding="utf-8"

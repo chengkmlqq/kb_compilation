@@ -2009,9 +2009,20 @@ export interface AgentTraceSpan {
   span_data?: Record<string, unknown>;
 }
 
+export interface TraceStepNode {
+  step: string;
+  status: "done" | "fail" | "running" | "interrupted";
+  ms: number;
+  start_ts?: number;
+  end_ts?: number;
+  children?: TraceStepNode[];
+}
+
 export interface AgentTraceData {
   spans: AgentTraceSpan[];
   has_trace: boolean;
+  /** agent = 内联 agent span 轨迹；direct = 技能直跑（用执行轨迹 steps/tree 展示） */
+  trace_kind?: "agent" | "direct" | null;
   summary?: { span_count: number; duration_ms: number; llm_calls: number; tools: string[] };
   events?: {
     total: number;
@@ -2024,6 +2035,8 @@ export interface AgentTraceData {
     llm_total_s: number;
     phases: Record<string, number>;
     steps?: { step: string; status: string; ms: number }[];
+    /** 直跑模式：按 measure 嵌套还原的步骤树（build_full → 子步骤 → …） */
+    tree?: TraceStepNode[];
   } | null;
 }
 
