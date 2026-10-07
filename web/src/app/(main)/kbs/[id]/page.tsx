@@ -41,6 +41,7 @@ import WikiBrowseView from "@/components/WikiBrowseView";
 import WikiManagePanel from "@/components/WikiManagePanel";
 import DocCardView, { fileTypeIcon, formatSize } from "@/components/DocCardView";
 import DocDetailDrawer from "@/components/DocDetailDrawer";
+import DocBuildProcessDrawer from "@/components/DocBuildProcessDrawer";
 import UrlImportModal from "@/components/UrlImportModal";
 import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 import KBConfigModal from "@/components/KBConfigModal";
@@ -233,8 +234,11 @@ export default function KbDetailPage() {
     }
   };
 
+  const [buildDoc, setBuildDoc] = useState<DocItem | null>(null);
+
   const onViewTrace = (doc: DocItem) => {
-    router.push(`/jobs?keyword=DOC_${doc.id}`);
+    // 就地打开构建过程抽屉（优先 wiki 构建任务，否则回退解析任务）
+    setBuildDoc(doc);
   };
 
   const selectedList = docs.filter((d) => selectedDocs.has(d.id));
@@ -706,6 +710,16 @@ export default function KbDetailPage() {
           setConfigOpen(false);
           if (changed) void loadKb();
         }}
+      />
+
+      {/* 构建过程抽屉：文档列表就地查看 wiki 构建执行轨迹/LLM 明细/日志 */}
+      <DocBuildProcessDrawer
+        visible={!!buildDoc}
+        jobId={
+          buildDoc?.wiki_build?.job_id || (buildDoc ? `DOC_${buildDoc.id}` : null)
+        }
+        docTitle={buildDoc?.file_name}
+        onClose={() => setBuildDoc(null)}
       />
     </Space>
   );
