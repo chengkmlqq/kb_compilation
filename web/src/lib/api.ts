@@ -2715,3 +2715,34 @@ export function apiSetParserEngineEnabled(name: string, enabled: boolean) {
 export function apiSystemInfo() {
   return request<SystemInfoItem>("/api/v1/system/info");
 }
+
+
+// ---- 文档全流程处理时间线（对齐 WeKnora knowledge-processing-timeline） ----
+
+export interface ProcessingStage {
+  key: string;
+  label: string;
+  job_id?: string | null;
+  state: string;
+  duration_ms?: number | null;
+  error?: string | null;
+  detail?: string;
+  steps?: TraceStepNode[];
+}
+
+export interface ProcessingTimelineData {
+  file_name?: string;
+  parse_state?: string;
+  stages: ProcessingStage[];
+  wiki_job_id?: string | null;
+}
+
+export function apiProcessingTimeline(
+  kbId: string,
+  docId: string,
+): Promise<ApiEnvelope<ProcessingTimelineData>> {
+  return request<ProcessingTimelineData>(
+    `/api/v1/kbs/${encodeURIComponent(kbId)}/documents/${encodeURIComponent(docId)}/processing-timeline`,
+    { cache: "no-store" },
+  );
+}

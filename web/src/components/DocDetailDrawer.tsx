@@ -9,6 +9,7 @@ import { DeleteOutlined, DownloadOutlined, EyeOutlined, RedoOutlined, RobotOutli
 import { apiGenerateDocSummary, apiGetDocumentChunks, DocChunkItem, DocItem } from "@/lib/api";
 import { PARSE_STATE_COLOR, fileTypeIcon, formatSize } from "./DocCardView";
 import DocPreviewModal from "./DocPreviewModal";
+import ProcessingTimeline from "./ProcessingTimeline";
 
 interface Props {
   kbId: string;
@@ -125,6 +126,16 @@ export default function DocDetailDrawer({ kbId, doc, hasSummaryModel, onClose, o
               </Descriptions.Item>
             ) : null}
           </Descriptions>
+
+          {/* 处理时间线（对齐 WeKnora knowledge-processing-timeline：解析→向量化→Wiki 构建） */}
+          <div>
+            <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 8 }}>处理时间线</div>
+            <ProcessingTimeline
+              kbId={kbId}
+              docId={doc.id}
+              active={doc.parse_state === "PARSING" || doc.parse_state === "EMBEDDING"}
+            />
+          </div>
 
           {/* AI 摘要（对齐 WeKnora：知识库配了 LLM 后可生成/重新生成） */}
           {doc.parse_state === "READY" ? (
