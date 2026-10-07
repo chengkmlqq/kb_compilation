@@ -238,14 +238,16 @@ export default function SystemUsersPage() {
   };
 
   return (
-    <Card
-      title="用户"
-      extra={
-        <Button type="primary" onClick={openCreate}>
-          新增用户
-        </Button>
-      }
-    >
+    // 2026-10-07: 参考任务管理页，最外层容器加 8px padding（统一页面边距）
+    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
+      <Card
+        title="用户"
+        extra={
+          <Button type="primary" onClick={openCreate}>
+            新增用户
+          </Button>
+        }
+      >
       {/* 筛选表单（对齐 ds FilterForm：用户ID + 用户名） */}
       <Form
         layout="inline"
@@ -460,5 +462,6 @@ export default function SystemUsersPage() {
         </Form>
       </Modal>
     </Card>
+    </div>
   );
 }
