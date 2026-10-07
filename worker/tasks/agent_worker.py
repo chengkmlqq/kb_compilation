@@ -105,11 +105,30 @@ def _skill_name_for_kb(db, kb_id: str) -> str | None:
 
 
 def _builtin_skill_scripts(skill_name: str) -> str:
-    """内置技能目录（git skills/ 随镜像部署：/srv/kb/skills/<name>/scripts）。"""
+    """内置技能目录（git skills/ 随镜像部署：/srv/kb/skills/<name>/scripts）。
+
+    目录名 = 技能标识（market-regulation-policy-compiler），兼容显示名
+    （"监督管理制度文档转wiki"）——否则按显示名查目录永远落空回退 zip。
+    """
     import os
 
-    cand = os.path.join("/srv/kb/skills", skill_name, "scripts")
-    return cand if os.path.isdir(cand) else ""
+    aliases = {v: k for k, v in BUILTIN_SKILL_BY_SCHEMA.items()} | {
+        "市场监督管理文档转wiki": "market-regulation-policy-compiler",
+        "监督管理制度文档转wiki": "market-regulation-policy-compiler",
+    }
+    dir_name = aliases.get(skill_name, skill_name)
+    cand = os.path.join("/srv/kb/skills", dir_name, "scripts")
+    if os.path.isdir(cand):
+        return cand
+    # 兜底：遍历 /srv/kb/skills/*/scripts 找含入口脚本的技能
+    try:
+        for sub in os.listdir("/srv/kb/skills"):
+            p = os.path.join("/srv/kb/skills", sub, "scripts")
+            if os.path.isfile(os.path.join(p, "run_one.py")):
+                return p
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
 
 
 def _attach_skill_zip(config: dict[str, Any], kb_id: str = "") -> None:
