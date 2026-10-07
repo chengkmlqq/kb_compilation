@@ -18,14 +18,14 @@
   flex-direction: column;
 }
 
-/* Ant Design Table flex chain: Wrapper -> Spin -> Container -> Table -> Content
-   （外层 flex 撑满剩余区域；表体高度交由 antd 按 scroll.y 像素 max-height 封顶 + 内部滚动） */
+/* Ant Design Table flex chain: Wrapper -> Spin -> Container -> Table -> Container
+   antd v6 结构（SSR 实证）：wrapper > div > .ant-spin > .ant-spin-container > .ant-table > .ant-table-container > (.ant-table-header + .ant-table-body)
+   注意：v6 已无 .ant-spin-nested-loading 与 .ant-table-content 层（v5 有），须按 v6 实际层级打穿 */
 .modo-table :global(.ant-table-wrapper) > :global(div),
-.modo-table :global(.ant-table-wrapper) :global(.ant-spin-nested-loading),
+.modo-table :global(.ant-table-wrapper) :global(.ant-spin),
 .modo-table :global(.ant-table-wrapper) :global(.ant-spin-container),
 .modo-table :global(.ant-table-wrapper) :global(.ant-table),
-.modo-table :global(.ant-table-wrapper) :global(.ant-table-container),
-.modo-table :global(.ant-table-wrapper) :global(.ant-table-content) {
+.modo-table :global(.ant-table-wrapper) :global(.ant-table-container) {
   flex: 1;
   min-height: 0;
   display: flex;
