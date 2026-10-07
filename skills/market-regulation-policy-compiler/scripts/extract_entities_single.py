@@ -117,7 +117,9 @@ def _rebuild_prompts(ont):
     JOINT_PROMPT = JOIN
 
 # 联合抽取分批大小（句/批；大批易触发 finish_reason=length，25 句 + max_tokens 20000 稳定）
-JOINT_BATCH = 15  # 2026-09-25 限流优化：批量 15 句/批（prefill 已杜绝 reasoning 吃 token，响应稳定；单句批=调用次数爆炸+全撞 429 限流重试，实测拖慢 3-4 倍）
+JOINT_BATCH = 30  # 2026-10-07 批大小 15→30：调用次数减半（InferAI 账号限流 ~4 次/分，
+# 批越大总时长越短）；max_tokens=20000（build_full 传入）容纳 30 句批输出，
+# 25 句 + 20000 实测稳定（2026-09-25 注释），30 句同量级
 
 
 def extract_joint_llm(ls_all, args):
