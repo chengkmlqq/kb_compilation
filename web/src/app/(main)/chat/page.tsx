@@ -35,11 +35,13 @@ import {
   StopOutlined,
 } from "@ant-design/icons";
 import {
+  apiBatchDeleteSessions,
   apiCreateAgentSession,
   apiCreateSession,
   apiDeleteAttachment,
   apiDeleteSession,
   apiFollowUp,
+  apiForkSession,
   apiGenerateTitle,
   apiListAgents,
   apiListAttachments,
@@ -48,6 +50,7 @@ import {
   apiListSessions,
   apiLoadSessionMessages,
   apiRecommendQuestions,
+  apiRewindSession,
   apiSearchMessages,
   apiUpdateSession,
   apiUploadAttachment,
@@ -204,6 +207,47 @@ export default function ChatPage() {
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sessions],
+  );
+
+  // 2026-10-07 对齐 WeKnora 分支交互：从某条消息分叉出新会话
+  const forkFrom = useCallback(
+    async (msgId: string) => {
+      if (!activeSession) return;
+      try {
+        const res = await apiForkSession(activeSession, msgId);
+        if (!res.success || !res.data) {
+          void toast.error(res.message || "分叉失败");
+          return;
+        }
+        const sid = res.data.id;
+        await loadSessions();
+        await openSession(sid);
+        void toast.success(`已从该消息分叉出新会话（复制 ${res.data.message_count} 条消息）`);
+      } catch {
+        void toast.error("分叉失败，请稍后重试");
+      }
+    },
+    [activeSession, loadSessions, openSession, toast],
+  );
+
+  // 2026-10-07 对齐 WeKnora 分支交互：回溯到某条消息（删除其后消息）
+  const rewindTo = useCallback(
+    async (msgId: string) => {
+      if (!activeSession) return;
+      try {
+        const res = await apiRewindSession(activeSession, msgId);
+        if (!res.success || !res.data) {
+          void toast.error(res.message || "回溯失败");
+          return;
+        }
+        const msgsRes = await apiLoadSessionMessages(activeSession);
+        setMsgs((msgsRes.data?.items || []) as UiMessage[]);
+        void toast.success(`已回溯到该消息（清理 ${res.data.removed} 条后续消息）`);
+      } catch {
+        void toast.error("回溯失败，请稍后重试");
+      }
+    },
+    [activeSession, toast],
   );
 
   // 切页续传：读取 localStorage 锚点，从 offset 续拉后台仍在生成的流
@@ -641,6 +685,57 @@ export default function ChatPage() {
     return sessions.filter((s) => s.title.toLowerCase().includes(q));
   }, [sessions, sessionSearch]);
 
+  // 2026-10-07 对齐 WeKnora：批量删除模式
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+
+  const batchDelete = async () => {
+    if (selected.length === 0) return;
+    try {
+      const res = await apiBatchDeleteSessions(selected);
+      setSelected([]);
+      setBulkMode(false);
+      if (activeSession && selected.includes(activeSession)) {
+        setActiveSession(undefined);
+        setMsgs([]);
+        setRecommendations([]);
+        setAttachments([]);
+      }
+      await loadSessions();
+      void toast.success(`已删除 ${res.data?.deleted ?? selected.length} 个会话`);
+    } catch {
+      void toast.error("批量删除失败");
+    }
+  };
+
+  // 2026-10-07 对齐 WeKnora：会话按日期分组（今天 / 昨天 / 7 天内 / 更早）
+  const groupedSessions = useMemo(() => {
+    const now = new Date();
+    const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const today = startOfDay(now);
+    const labels: { label: string; key: string; items: ChatSessionItem[] }[] = [];
+    const buckets: Record<string, ChatSessionItem[]> = { today: [], yesterday: [], week: [], older: [] };
+    for (const s2 of filteredSessions) {
+      const t = startOfDay(new Date(s2.updated_at));
+      const diff = today - t;
+      const key = diff <= 0 ? "today" : diff <= 86400000 ? "yesterday" : diff <= 7 * 86400000 ? "week" : "older";
+      buckets[key].push(s2);
+    }
+    const order: [string, string][] = [
+      ["today", "今天"],
+      ["yesterday", "昨天"],
+      ["week", "7 天内"],
+      ["older", "更早"],
+    ];
+    for (const [k, label] of order) {
+      if (buckets[k].length > 0) labels.push({ label, key: k, items: buckets[k] });
+    }
+    return labels;
+  }, [filteredSessions]);
+
+  // 2026-10-07 对齐 WeKnora：当前会话流式生成中 → 侧栏指示
+  const activeStreaming = msgs.some((m) => m.streaming && m.role === "assistant");
+
   return (
     <div style={{ display: "flex", height: "calc(100vh - 64px - 48px)", gap: 16 }}>
       {/* 左：会话列表 */}
@@ -656,6 +751,25 @@ export default function ChatPage() {
           </Space>
         }
       >
+        {bulkMode ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              已选 {selected.length} 项
+            </Text>
+            <Popconfirm title={`删除所选 ${selected.length} 个会话？`} onConfirm={() => void batchDelete()}>
+              <Button size="small" danger disabled={selected.length === 0}>
+                删除所选
+              </Button>
+            </Popconfirm>
+            <Button size="small" onClick={() => { setBulkMode(false); setSelected([]); }}>
+              完成
+            </Button>
+          </div>
+        ) : (
+          <Button size="small" style={{ marginBottom: 8 }} onClick={() => setBulkMode(true)}>
+            多选
+          </Button>
+        )}
         <Input
           allowClear
           placeholder="搜索会话"
@@ -664,58 +778,91 @@ export default function ChatPage() {
           value={sessionSearch}
           onChange={(e) => setSessionSearch(e.target.value)}
         />
-        <List<ChatSessionItem>
-          dataSource={filteredSessions}
-          locale={{ emptyText: <Empty description="暂无会话" /> }}
-          renderItem={(s) => (
-            <List.Item
-              style={{
-                padding: "6px 8px",
-                borderRadius: 6,
-                cursor: "pointer",
-                background: activeSession === s.id ? "#e6f4ff" : "transparent",
-              }}
-              onClick={() => void openSession(s.id)}
-              actions={[
-                <Tooltip key="pin" title={s.pinned ? "取消置顶" : "置顶"}>
-                  <PushpinOutlined
-                    style={{ color: s.pinned ? "#1677ff" : "#999" }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void togglePin(s);
-                    }}
-                  />
-                </Tooltip>,
-                <Tooltip key="rename" title="重命名">
-                  <EditOutlined
-                    style={{ color: "#999" }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setRenameTarget(s);
-                      setRenameValue(s.title);
-                    }}
-                  />
-                </Tooltip>,
-                <Popconfirm
-                  key="del"
-                  title="删除该会话？"
-                  onConfirm={(e) => {
-                    e?.stopPropagation();
-                    void deleteSession(s.id);
-                  }}
-                >
-                  <DeleteOutlined style={{ color: "#ff4d4f" }} onClick={(e) => e.stopPropagation()} />
-                </Popconfirm>,
-              ]}
-            >
-              <List.Item.Meta
-                avatar={s.pinned ? <PushpinOutlined style={{ color: "#1677ff" }} /> : <MessageOutlined />}
-                title={<Text ellipsis style={{ maxWidth: 140 }}>{s.title}</Text>}
-                description={<Text type="secondary" style={{ fontSize: 12 }}>{s.updated_at.slice(5, 16).replace("T", " ")}</Text>}
+        {groupedSessions.length === 0 ? (
+          <Empty description="暂无会话" />
+        ) : (
+          groupedSessions.map((g) => (
+            <div key={g.key}>
+              <Text type="secondary" style={{ fontSize: 12, display: "block", margin: "8px 0 4px" }}>
+                {g.label}
+              </Text>
+              <List<ChatSessionItem>
+                dataSource={g.items}
+                locale={{ emptyText: null }}
+                renderItem={(s) => {
+                  const checked = selected.includes(s.id);
+                  return (
+                    <List.Item
+                      style={{
+                        padding: "6px 8px",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        background: activeSession === s.id ? "#e6f4ff" : "transparent",
+                      }}
+                      onClick={() => {
+                        if (bulkMode) {
+                          setSelected((prev) => (checked ? prev.filter((x) => x !== s.id) : [...prev, s.id]));
+                        } else {
+                          void openSession(s.id);
+                        }
+                      }}
+                      actions={[
+                        activeSession === s.id && activeStreaming ? (
+                          <Tag key="streaming" color="processing" style={{ fontSize: 11 }}>
+                            生成中…
+                          </Tag>
+                        ) : null,
+                        <Tooltip key="pin" title={s.pinned ? "取消置顶" : "置顶"}>
+                          <PushpinOutlined
+                            style={{ color: s.pinned ? "#1677ff" : "#999" }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void togglePin(s);
+                            }}
+                          />
+                        </Tooltip>,
+                        <Tooltip key="rename" title="重命名">
+                          <EditOutlined
+                            style={{ color: "#999" }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRenameTarget(s);
+                              setRenameValue(s.title);
+                            }}
+                          />
+                        </Tooltip>,
+                        <Popconfirm
+                          key="del"
+                          title="删除该会话？"
+                          onConfirm={(e) => {
+                            e?.stopPropagation();
+                            void deleteSession(s.id);
+                          }}
+                        >
+                          <DeleteOutlined style={{ color: "#ff4d4f" }} onClick={(e) => e.stopPropagation()} />
+                        </Popconfirm>,
+                      ].filter(Boolean)}
+                    >
+                      {bulkMode && (
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          readOnly
+                          style={{ marginRight: 6, pointerEvents: "none" }}
+                        />
+                      )}
+                      <List.Item.Meta
+                        avatar={s.pinned ? <PushpinOutlined style={{ color: "#1677ff" }} /> : <MessageOutlined />}
+                        title={<Text ellipsis style={{ maxWidth: bulkMode ? 110 : 140 }}>{s.title}</Text>}
+                        description={<Text type="secondary" style={{ fontSize: 12 }}>{s.updated_at.slice(5, 16).replace("T", " ")}</Text>}
+                      />
+                    </List.Item>
+                  );
+                }}
               />
-            </List.Item>
-          )}
-        />
+            </div>
+          ))
+        )}
       </Card>
 
       {/* 右：对话区 */}
@@ -852,6 +999,27 @@ export default function ChatPage() {
                     )}
                   </div>
                 </div>
+                {/* 2026-10-07 对齐 WeKnora 分支交互：用户消息 → 分叉 / 回溯 */}
+                {m.role === "user" && (
+                  <div style={{ marginTop: 4, display: "flex", gap: 2, justifyContent: "flex-end" }}>
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ padding: "0 4px", height: "auto", fontSize: 12 }}
+                      onClick={() => void forkFrom(m.id)}
+                    >
+                      分叉
+                    </Button>
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ padding: "0 4px", height: "auto", fontSize: 12 }}
+                      onClick={() => void rewindTo(m.id)}
+                    >
+                      回溯到此
+                    </Button>
+                  </div>
+                )}
                 {/* 引用 */}
                 {m.role === "assistant" && m.refs && m.refs.length > 0 && !m.streaming && (
                   <div style={{ marginTop: 6 }}>
@@ -908,6 +1076,14 @@ export default function ChatPage() {
                       onClick={() => regenerate(msgs, idx)}
                     >
                       重新生成
+                    </Button>
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ padding: 0, height: "auto", fontSize: 12, marginLeft: 8 }}
+                      onClick={() => void forkFrom(m.id)}
+                    >
+                      分叉
                     </Button>
                   </div>
                 )}

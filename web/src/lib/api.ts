@@ -1888,6 +1888,31 @@ export function apiClearSessionMessages(sessionId: string) {
   return request(`/api/v1/sessions/${sessionId}/messages`, { method: "DELETE" });
 }
 
+/** Fork a chat session at a message boundary (WeKnora-style branching). */
+export interface ChatForkResult {
+  id: string;
+  title: string;
+  kb_id?: string | null;
+  agent_id?: string | null;
+  parent_session_id?: string | null;
+  message_count: number;
+}
+
+export function apiForkSession(sessionId: string, messageId?: string, title?: string) {
+  return request<ChatForkResult>(`/api/v1/sessions/${sessionId}/fork`, {
+    method: "POST",
+    body: JSON.stringify({ message_id: messageId || null, title: title || null }),
+  });
+}
+
+/** Truncate a session after `messageId` (anchor message kept). */
+export function apiRewindSession(sessionId: string, messageId: string) {
+  return request<{ session_id: string; removed: number; remaining: number }>(
+    `/api/v1/sessions/${sessionId}/rewind`,
+    { method: "POST", body: JSON.stringify({ message_id: messageId }) },
+  );
+}
+
 export function apiGenerateTitle(sessionId: string) {
   return request<{ title: string }>(`/api/v1/sessions/${sessionId}/generate-title`, { method: "POST" });
 }
