@@ -184,7 +184,7 @@ export default function JobsPage() {
             border: "1px solid #E3E9EF",
           }}
         >
-          <div style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "0 16px" }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
             <div style={{ height: "100%", overflow: "auto" }}>
               <JobTable
                 loading={loading}
