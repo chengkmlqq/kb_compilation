@@ -237,7 +237,7 @@ def _agent_task_target() -> tuple[str, str]:
         return "KbAgentWikiBuildTask", "agent"
     if mode == "gateway":
         return "KbAgentGatewayTask", "default"
-    return "KbSkillDirectBuildTask", "agent"
+    return "KbSkillDirectBuildTask", "skill"  # 2026-10-07 独立构建 worker（-Q skill）
 
 
 def _enqueue_wiki_skill_task(

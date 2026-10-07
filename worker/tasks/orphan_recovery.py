@@ -21,7 +21,7 @@ QUEUE_BY_TASK_CLASS: dict[str, str] = {
     "KbDocumentProcessTask": "default",
     "KbGraphBuildTask": "default",
     "KbAgentWikiBuildTask": "agent",
-    "KbSkillDirectBuildTask": "agent",
+    "KbSkillDirectBuildTask": "skill",
     "KbAgentGatewayTask": "default",
 }
 

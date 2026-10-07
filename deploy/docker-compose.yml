@@ -159,6 +159,26 @@ services:
     networks:
       - kb-net
 
+  celery-skill-worker:
+    # 独立 wiki 构建 worker（2026-10-07 从 agent-worker 拆分）：只消费 skill 队列，
+    # 与 agent 编排/解析完全隔离、独立扩容。内置技能 + 内部直连（无认证）。
+    image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-agent-worker:${KB_IMAGE_TAG:-latest}
+    container_name: kb-celery-skill-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info", "--concurrency=4", "-Q", "skill"]
+    <<: *api-env
+    volumes:
+      - kb-docs:/data/kb_documents
+    depends_on:
+      redis:
+        condition: service_started
+      pg:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - kb-net
+
   celery-beat:
     image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-worker:${KB_IMAGE_TAG:-latest}
     container_name: kb-celery-beat
