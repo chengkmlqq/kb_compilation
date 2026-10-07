@@ -287,6 +287,7 @@ export default function SystemUsersPage() {
         size="small"
         loading={loading}
         dataSource={rows}
+        scroll={{ x: "100%" }}
         locale={{ emptyText: <Empty description="暂无用户" /> }}
         columns={[
           { title: "用户ID", dataIndex: "user_id", ellipsis: true },
