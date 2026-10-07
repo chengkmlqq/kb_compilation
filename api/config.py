@@ -101,6 +101,8 @@ class Settings:
     # 上传路径形如 minio://bucket/key 时走 MinIO，其余走 KB_STORAGE_DIR 本地磁盘
     # （历史数据零迁移）。MINIO_ENDPOINT 留空 = 不启用 MinIO。
     MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT", "")
+    # 应用版本号（构建时注入；页面 /system/info 展示）
+    APP_VERSION: str = os.getenv("APP_VERSION", "0.0.0")
     MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY", "")
     MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY", "")
     MINIO_SECURE: str = os.getenv("MINIO_SECURE", "false").lower() in ("1", "true", "yes")

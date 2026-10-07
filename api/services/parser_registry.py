@@ -17,6 +17,84 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+# --------------------------------------------------------------------------- #
+# admin enable/disable (modo_dim PARSER_ENGINES / ENGINE_ADMIN:<name>) —
+# WeKnora-style parser availability switches. True unless disabled; the
+# worker resolve_engine honours them so disabling here actually reroutes.
+# --------------------------------------------------------------------------- #
+
+_ENGINE_ADMIN_PREFIX = "ENGINE_ADMIN:"
+
+
+def _admin_enabled_map() -> dict[str, bool]:
+    """Read admin on/off switches for each engine (True unless disabled)."""
+    try:
+        from sqlalchemy import select
+
+        from api.db import get_sessionmaker
+        from api.models.framework import Dim
+
+        db = get_sessionmaker()()
+        try:
+            rows = db.execute(
+                select(Dim).where(Dim.dim_group == "PARSER_ENGINES", Dim.state == "1")
+            ).scalars().all()
+            return {
+                r.dim_code[len(_ENGINE_ADMIN_PREFIX):]: (r.dim_value.strip().lower() in ("true", "1"))
+                for r in rows
+                if r.dim_code.startswith(_ENGINE_ADMIN_PREFIX)
+            }
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 - worker without DB falls back to enabled
+        return {}
+
+
+def set_admin_enabled(name: str, enabled: bool) -> None:
+    """Upsert the admin switch for one engine."""
+    import uuid
+
+    from sqlalchemy import select
+
+    from api.db import get_sessionmaker
+    from api.models.framework import Dim
+
+    engine = normalize_engine(name)
+    code = f"{_ENGINE_ADMIN_PREFIX}{engine}"
+    db = get_sessionmaker()()
+    try:
+        row = db.execute(
+            select(Dim).where(Dim.dim_group == "PARSER_ENGINES", Dim.dim_code == code)
+        ).scalars().first()
+        if row:
+            row.dim_value = "true" if enabled else "false"
+            row.state = "1"
+        else:
+            db.add(Dim(
+                id=uuid.uuid4().hex,
+                dim_code=code,
+                dim_group="PARSER_ENGINES",
+                dim_value="true" if enabled else "false",
+                dim_desc=f"解析引擎 {engine} 管理员开关",
+                seq=0,
+                state="1",
+            ))
+        db.commit()
+    finally:
+        db.close()
+
+
+def _effective_available(info: dict) -> dict:
+    """Attach admin overlay: probed available AND admin enabled."""
+    admin = _admin_enabled_map()
+    out = dict(info)
+    enabled = admin.get(info["name"], True)
+    out["enabled"] = enabled
+    if not enabled:
+        out["available"] = False
+        out["reason"] = "管理员已禁用"
+    return out
+
 ENGINE_DOCREADER = "docreader"
 ENGINE_MINERU = "mineru"
 ENGINE_MINERU_CLOUD = "mineru_cloud"
@@ -148,11 +226,11 @@ def _engines() -> list[EngineInfo]:
 
 
 def list_engines() -> list[dict[str, Any]]:
-    return [e.to_dict() for e in _engines()]
+    return [_effective_available(e.to_dict()) for e in _engines()]
 
 
 def engine_available_map() -> dict[str, bool]:
-    return {e.name: e.available for e in _engines()}
+    return {e["name"]: e["available"] for e in list_engines()}
 
 
 def engine_endpoint(engine: str) -> str:

@@ -183,3 +183,79 @@ def write_retrieval_config(
 ) -> dict:
     items = [{"code": i.code, "value": i.value} for i in req.items]
     return {"success": True, "data": save_retrieval_config(db, items)}
+
+
+# ---------------------------------------------------------------------------
+# 引擎/存储类型元数据 + 解析引擎管理开关 + 系统信息
+# ---------------------------------------------------------------------------
+
+
+@router.get("/vector-store-types")
+def get_vector_store_types(db: Session = Depends(get_db)) -> dict:
+    settings = get_settings()
+    return {"success": True, "data": [
+        {
+            "code": "pg",
+            "label": "pgvector",
+            "description": "PostgreSQL pgvector（默认，HNSW 检索）",
+            "available": True,
+        },
+        {
+            "code": "es",
+            "label": "Elasticsearch",
+            "description": "Elasticsearch（预留后端，需 VECTOR_STORE_TYPE=es）",
+            "available": settings.VECTOR_STORE_TYPE == "es",
+        },
+    ]}
+
+
+@router.get("/storage-types")
+def get_storage_types(db: Session = Depends(get_db)) -> dict:
+    settings = get_settings()
+    return {"success": True, "data": [
+        {
+            "code": "local",
+            "label": "本地存储",
+            "description": "容器本地磁盘（默认）",
+            "available": True,
+        },
+        {
+            "code": "minio",
+            "label": "MinIO 对象存储",
+            "description": "对象存储（需配置 MINIO_ENDPOINT）",
+            "available": bool(settings.MINIO_ENDPOINT),
+        },
+    ]}
+
+
+class EngineEnabledRequest(BaseModel):
+    enabled: bool = True
+
+
+@router.put("/parsers/engines/{name}/enabled")
+def set_engine_enabled(
+    name: str, req: EngineEnabledRequest, db: Session = Depends(get_db)
+) -> dict:
+    from api.services.parser_registry import list_engines
+
+    known = {e["name"] for e in list_engines()}
+    if name not in known:
+        return {"success": False, "message": f"未知解析引擎: {name}"}
+    set_admin_enabled(name, req.enabled)
+    return {"success": True, "data": {"name": name, "enabled": req.enabled}}
+
+
+@router.get("/system/info")
+def get_system_info(db: Session = Depends(get_db)) -> dict:
+    settings = get_settings()
+    engines = list_engines()
+    now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    return {"success": True, "data": {
+        "version": settings.APP_VERSION,
+        "vector_store_type": settings.VECTOR_STORE_TYPE,
+        "minio_enabled": bool(settings.MINIO_ENDPOINT),
+        "engines_total": len(engines),
+        "engines_available": sum(1 for e in engines if e["available"]),
+        "engines": engines,
+        "server_time": now,
+    }}
