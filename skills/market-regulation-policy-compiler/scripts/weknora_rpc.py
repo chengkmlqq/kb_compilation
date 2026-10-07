@@ -1171,13 +1171,14 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
     base_url, api_key = llm_config()
     model = model or DEFAULT_MODEL
 
-    # inferaiapi group 限流 ~3 次/分：距上次调用不足 25s 则等待补齐（全局节流）
+    # inferaiapi group 限流 ~3 次/分：距上次调用不足 15s 则等待补齐（全局节流，
+    # 2026-10-07 25→15s 提速；限流由 llm_call 重试收敛兜底）
     _now = time.time()
     _gap = _now - _last_llm_ts[0]
     wait_ms = 0
-    if _gap < 25:
-        wait_ms = int((25 - _gap) * 1000)
-        time.sleep(25 - _gap)
+    if _gap < 15:
+        wait_ms = int((15 - _gap) * 1000)
+        time.sleep(15 - _gap)
         _now = time.time()
     _last_llm_ts[0] = _now
 

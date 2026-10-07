@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from api.db import get_sessionmaker
@@ -537,11 +538,68 @@ def _aggregate_events(job_id: str) -> dict:
     return summary
 
 
+
+class _CpuWatchdog:
+    """子进程 CPU 心跳：零增长超过 stall 秒即判定挂起并 killpg。
+
+    /proc/<pid>/stat 的 utime+stime 是进程累计 CPU 时钟数（无 syscall 开销）。
+    进程挂起（等永不返回的 I/O/线程 join/死锁）时 CPU 不再增长——用零增长
+    窗口识别 hang，比总超时早数小时发现（2026-10-07 extract_entities 8h hang）。
+    """
+
+    def __init__(self, proc: subprocess.Popen, stall_s: int) -> None:
+        self.proc = proc
+        self.stall_s = max(60, stall_s)
+        self.last_cpu: float = -1.0
+        self.last_seen = time.time()
+        self.stopped = False
+        self._t = threading.Thread(target=self._loop, daemon=True)
+        self._t.start()
+
+    def _read_cpu(self) -> float:
+        try:
+            with open(f"/proc/{self.proc.pid}/stat", encoding="utf-8") as f:
+                parts = f.read().split()
+            return (int(parts[13]) + int(parts[14])) / 100.0  # utime+stime → 秒
+        except Exception:  # noqa: BLE001 — 进程已退出
+            return -1.0
+
+    def _loop(self) -> None:
+        while not self.stopped:
+            time.sleep(30)
+            if self.stopped:
+                break
+            cpu = self._read_cpu()
+            if cpu < 0:
+                break  # 进程已结束
+            if self.last_cpu < 0:
+                self.last_cpu = cpu
+                self.last_seen = time.time()
+            elif cpu > self.last_cpu + 0.05:
+                self.last_cpu = cpu
+                self.last_seen = time.time()
+            elif time.time() - self.last_seen > self.stall_s:
+                # 挂起：广播到任务日志 + killpg
+                try:
+                    os.killpg(os.getpgid(self.proc.pid), 9)
+                except Exception:  # noqa: BLE001
+                    try:
+                        self.proc.kill()
+                    except Exception:  # noqa: BLE001
+                        pass
+                print(f"[stall] 子进程 CPU 零增长 {self.stall_s}s，判定挂起并杀进程组", flush=True)
+                break
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
 def _handle_skill_direct_build(job_id: str, task_params: str | None) -> dict[str, Any]:
     """技能直跑：解压技能 → subprocess 执行 run_one.py（无 agent 编排）。"""
     import os
     import subprocess
     import sys
+    import threading
     import time
 
     params = _params(task_params)
@@ -587,7 +645,13 @@ def _handle_skill_direct_build(job_id: str, task_params: str | None) -> dict[str
         direct_timeout = get_platform_int(
             "WIKI_DIRECT_TIMEOUT", env_name="WIKI_DIRECT_TIMEOUT", default=10800
         )
+        # CPU 心跳监控：extract_entities 阶段曾 8 小时无输出挂起（CPU 零增长、
+        # 非网络/非超时）——按总超时判死太晚。每 30s 检查子进程 CPU 时间，
+        # STALL 内零增长即判定挂起 → killpg 杀整组（早发现，任务可重投）。
+        stall_timeout = int(os.getenv("WIKI_DIRECT_STALL_TIMEOUT", "900"))
+        watchdog = _CpuWatchdog(proc, stall_timeout)
         stdout, stderr = proc.communicate(timeout=direct_timeout)
+        watchdog.stop()
         rc = proc.returncode
         out_tail = (stdout or "")[-3000:] + ("\n[stderr]\n" + (stderr or "")[-1500:] if stderr else "")
     except subprocess.TimeoutExpired:

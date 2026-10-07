@@ -187,7 +187,7 @@ def extract_joint_llm(ls_all, args):
         return (batch_idx, None, None)
 
     batch_results = {}
-    with ThreadPoolExecutor(max_workers=1) as pool:  # 2026-09-25 单 worker 降低端点并发压力，防 524
+    with ThreadPoolExecutor(max_workers=2) as pool:  # 2026-10-07 单→双 worker 提速（524 由 llm_call 重试兜底）
         futures = {pool.submit(_run_batch, i): i for i in range(total_batches)}
         for fut in as_completed(futures):
             bidx, ents, ruls = fut.result()
