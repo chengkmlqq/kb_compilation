@@ -96,207 +96,211 @@ export default function WebSearchManagePage() {
   };
 
   return (
-    <Card
-      title="联网搜索"
-      extra={
-        <Space>
-          <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-            刷新
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新增提供方
-          </Button>
-        </Space>
-      }
-    >
-      <Table
-        rowKey="id"
-        size="small"
-        loading={loading}
-        dataSource={items}
-        pagination={false}
-        locale={{ emptyText: <Text type="secondary">暂无搜索提供方</Text> }}
-        columns={[
-          {
-            title: "名称",
-            dataIndex: "name",
-            render: (v: string, r: WebSearchProviderItem) => (
-              <Space size={4}>
-                <Text strong>{v}</Text>
-                <Tag color={SCOPE_COLOR[r.scope]}>{SCOPE_LABEL[r.scope]}</Tag>
-                {r.enabled !== false && <Tag color="green">启用</Tag>}
-              </Space>
-            ),
-          },
-          {
-            title: "类型",
-            dataIndex: "provider_type",
-            width: 160,
-            render: (v: WebSearchProviderType) => <Tag>{v}</Tag>,
-          },
-          { title: "描述", dataIndex: "description", ellipsis: true },
-          { title: "端点", dataIndex: "base_url", ellipsis: true },
-          {
-            title: "API Key",
-            width: 120,
-            render: (_: unknown, r: WebSearchProviderItem) => (
-              <Text type={r.api_key ? "success" : "secondary"} style={{ fontSize: 12 }}>
-                {r.api_key ? "已配置" : "无"}
-              </Text>
-            ),
-          },
-          {
-            title: "操作",
-            width: 140,
-            render: (_: unknown, r: WebSearchProviderItem) => (
-              <Space size={4}>
-                <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>
-                  编辑
-                </Button>
-                <Popconfirm title={`删除 ${r.name}？`} onConfirm={() => void handleDelete(r)}>
-                  <Button size="small" danger icon={<DeleteOutlined />} />
-                </Popconfirm>
-              </Space>
-            ),
-          },
-        ]}
-      />
-      {editOpen && (
-        <WebSearchEditorModal
-          open={editOpen}
-          item={editing}
-          isAdmin={isAdmin}
-          onClose={() => setEditOpen(false)}
-          onSaved={() => {
-            setEditOpen(false);
-            void load();
-          }}
-          message={message}
+    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
+    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
+      <Card
+        title="联网搜索"
+        extra={
+          <Space>
+            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+              刷新
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              新增提供方
+            </Button>
+          </Space>
+        }
+      >
+        <Table
+          rowKey="id"
+          size="small"
+          loading={loading}
+          dataSource={items}
+          pagination={false}
+          locale={{ emptyText: <Text type="secondary">暂无搜索提供方</Text> }}
+          columns={[
+            {
+              title: "名称",
+              dataIndex: "name",
+              render: (v: string, r: WebSearchProviderItem) => (
+                <Space size={4}>
+                  <Text strong>{v}</Text>
+                  <Tag color={SCOPE_COLOR[r.scope]}>{SCOPE_LABEL[r.scope]}</Tag>
+                  {r.enabled !== false && <Tag color="green">启用</Tag>}
+                </Space>
+              ),
+            },
+            {
+              title: "类型",
+              dataIndex: "provider_type",
+              width: 160,
+              render: (v: WebSearchProviderType) => <Tag>{v}</Tag>,
+            },
+            { title: "描述", dataIndex: "description", ellipsis: true },
+            { title: "端点", dataIndex: "base_url", ellipsis: true },
+            {
+              title: "API Key",
+              width: 120,
+              render: (_: unknown, r: WebSearchProviderItem) => (
+                <Text type={r.api_key ? "success" : "secondary"} style={{ fontSize: 12 }}>
+                  {r.api_key ? "已配置" : "无"}
+                </Text>
+              ),
+            },
+            {
+              title: "操作",
+              width: 140,
+              render: (_: unknown, r: WebSearchProviderItem) => (
+                <Space size={4}>
+                  <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>
+                    编辑
+                  </Button>
+                  <Popconfirm title={`删除 ${r.name}？`} onConfirm={() => void handleDelete(r)}>
+                    <Button size="small" danger icon={<DeleteOutlined />} />
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
         />
-      )}
-    </Card>
-  );
-}
-
-function WebSearchEditorModal({
-  open,
-  item,
-  isAdmin,
-  onClose,
-  onSaved,
-  message,
-}: {
-  open: boolean;
-  item: WebSearchProviderItem | null;
-  isAdmin: boolean;
-  onClose: () => void;
-  onSaved: () => void;
-  message: ReturnType<typeof App.useApp>["message"];
-}) {
-  const [form] = Form.useForm();
-  const editing = !!item;
-  const [saving, setSaving] = useState(false);
-  const watchedType = Form.useWatch("provider_type", form);
-
-  useEffect(() => {
-    if (item) {
-      form.setFieldsValue({
-        scope: item.scope,
-        name: item.name,
-        provider_type: item.provider_type,
-        description: item.description,
-        api_key: item.api_key,
-        base_url: item.base_url,
-        enabled: item.enabled !== false,
-      });
-    } else {
-      form.setFieldsValue({ scope: "personal", provider_type: "tavily", enabled: true });
-    }
-  }, [item, form]);
-
-  const doSave = async () => {
-    const v = await form.validateFields();
-    setSaving(true);
-    try {
-      const payload = {
-        scope: v.scope ?? "personal",
-        name: v.name,
-        provider_type: v.provider_type || "tavily",
-        description: v.description || "",
-        // 编辑时后端回传的是脱敏值，原样提交即"保持不变"
-        api_key: v.api_key || "",
-        base_url: v.base_url || "",
-        enabled: v.enabled !== false,
-      };
-      const res = editing
-        ? await apiUpdateWebsearchProvider(item!.id, payload)
-        : await apiCreateWebsearchProvider(payload);
-      if (res.success) {
-        message.success(editing ? "已保存" : "已创建");
-        onSaved();
-      } else {
-        message.error(res.message || "保存失败");
-      }
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal
-      open={open}
-      title={editing ? `编辑搜索提供方: ${item?.name}` : "新增搜索提供方"}
-      width={560}
-      okText={editing ? "保存" : "创建"}
-      confirmLoading={saving}
-      onOk={() => void doSave()}
-      onCancel={onClose}
-      destroyOnClose
-    >
-      <Form form={form} layout="vertical" initialValues={{ scope: "personal", provider_type: "tavily", enabled: true }}>
-        <Form.Item name="scope" label="配置级别" style={{ maxWidth: 240 }}>
-          <Select
-            disabled={editing}
-            options={[
-              { label: "我的（仅自己）", value: "personal" },
-              { label: "团队（团队共用）", value: "team" },
-              ...(isAdmin ? [{ label: "系统（仅管理员）", value: "system" }] : []),
-            ]}
+        {editOpen && (
+          <WebSearchEditorModal
+            open={editOpen}
+            item={editing}
+            isAdmin={isAdmin}
+            onClose={() => setEditOpen(false)}
+            onSaved={() => {
+              setEditOpen(false);
+              void load();
+            }}
+            message={message}
           />
-        </Form.Item>
-        <Form.Item
-          name="name"
-          label="名称"
-          rules={[{ required: true, message: "请输入名称" }]}
-        >
-          <Input placeholder="如 tavily-主账号" />
-        </Form.Item>
-        <Form.Item name="provider_type" label="服务类型">
-          <Select options={TYPE_OPTIONS} />
-        </Form.Item>
-        <Form.Item name="description" label="描述">
-          <Input.TextArea rows={2} placeholder="选填，用于说明用途" />
-        </Form.Item>
-        <Form.Item
-          name="api_key"
-          label="API Key"
-          extra={editing ? "留空或保持脱敏值即不修改" : undefined}
-        >
-          <Input.Password placeholder="搜索服务 API Key" />
-        </Form.Item>
-        {watchedType === "generic" && (
-          <Form.Item
-            name="base_url"
-            label="端点地址"
-            rules={[{ required: true, message: "generic 类型必须填写端点地址" }]}
-          >
-            <Input placeholder="http://search.internal:9000/query" />
-          </Form.Item>
         )}
-        <Form.Item name="enabled" label="启用" valuePropName="checked">
-          <Switch />
-        </Form.Item>
-      </Form>
-    </Modal>
+      </Card>
+    );
+  }
+
+  function WebSearchEditorModal({
+    open,
+    item,
+    isAdmin,
+    onClose,
+    onSaved,
+    message,
+  }: {
+    open: boolean;
+    item: WebSearchProviderItem | null;
+    isAdmin: boolean;
+    onClose: () => void;
+    onSaved: () => void;
+    message: ReturnType<typeof App.useApp>["message"];
+  }) {
+    const [form] = Form.useForm();
+    const editing = !!item;
+    const [saving, setSaving] = useState(false);
+    const watchedType = Form.useWatch("provider_type", form);
+
+    useEffect(() => {
+      if (item) {
+        form.setFieldsValue({
+          scope: item.scope,
+          name: item.name,
+          provider_type: item.provider_type,
+          description: item.description,
+          api_key: item.api_key,
+          base_url: item.base_url,
+          enabled: item.enabled !== false,
+        });
+      } else {
+        form.setFieldsValue({ scope: "personal", provider_type: "tavily", enabled: true });
+      }
+    }, [item, form]);
+
+    const doSave = async () => {
+      const v = await form.validateFields();
+      setSaving(true);
+      try {
+        const payload = {
+          scope: v.scope ?? "personal",
+          name: v.name,
+          provider_type: v.provider_type || "tavily",
+          description: v.description || "",
+          // 编辑时后端回传的是脱敏值，原样提交即"保持不变"
+          api_key: v.api_key || "",
+          base_url: v.base_url || "",
+          enabled: v.enabled !== false,
+        };
+        const res = editing
+          ? await apiUpdateWebsearchProvider(item!.id, payload)
+          : await apiCreateWebsearchProvider(payload);
+        if (res.success) {
+          message.success(editing ? "已保存" : "已创建");
+          onSaved();
+        } else {
+          message.error(res.message || "保存失败");
+        }
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    return (
+      <Modal
+        open={open}
+        title={editing ? `编辑搜索提供方: ${item?.name}` : "新增搜索提供方"}
+        width={560}
+        okText={editing ? "保存" : "创建"}
+        confirmLoading={saving}
+        onOk={() => void doSave()}
+        onCancel={onClose}
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical" initialValues={{ scope: "personal", provider_type: "tavily", enabled: true }}>
+          <Form.Item name="scope" label="配置级别" style={{ maxWidth: 240 }}>
+            <Select
+              disabled={editing}
+              options={[
+                { label: "我的（仅自己）", value: "personal" },
+                { label: "团队（团队共用）", value: "team" },
+                ...(isAdmin ? [{ label: "系统（仅管理员）", value: "system" }] : []),
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            name="name"
+            label="名称"
+            rules={[{ required: true, message: "请输入名称" }]}
+          >
+            <Input placeholder="如 tavily-主账号" />
+          </Form.Item>
+          <Form.Item name="provider_type" label="服务类型">
+            <Select options={TYPE_OPTIONS} />
+          </Form.Item>
+          <Form.Item name="description" label="描述">
+            <Input.TextArea rows={2} placeholder="选填，用于说明用途" />
+          </Form.Item>
+          <Form.Item
+            name="api_key"
+            label="API Key"
+            extra={editing ? "留空或保持脱敏值即不修改" : undefined}
+          >
+            <Input.Password placeholder="搜索服务 API Key" />
+          </Form.Item>
+          {watchedType === "generic" && (
+            <Form.Item
+              name="base_url"
+              label="端点地址"
+              rules={[{ required: true, message: "generic 类型必须填写端点地址" }]}
+            >
+              <Input placeholder="http://search.internal:9000/query" />
+            </Form.Item>
+          )}
+          <Form.Item name="enabled" label="启用" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+        </Form>
+      </Modal>
+    );
+    </div>
   );
 }

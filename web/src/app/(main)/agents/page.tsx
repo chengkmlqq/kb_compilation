@@ -166,114 +166,117 @@ export default function AgentsPage() {
   };
 
   return (
-    <Card
-      title="智能体配置"
-      extra={
-        <Space wrap>
-          <Input.Search
-            allowClear
-            placeholder="搜索智能体名称/描述"
-            style={{ width: 220 }}
-            onSearch={(v) => setSearch(v)}
-          />
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => {
-              setEditing(null);
-              setEditorOpen(true);
-            }}
-          >
-            新建智能体
-          </Button>
-        </Space>
-      }
-    >
-      {visible.length === 0 ? (
-        <Empty description="暂无智能体">
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => {
-              setEditing(null);
-              setEditorOpen(true);
-            }}
-          >
-            新建智能体
-          </Button>
-        </Empty>
-      ) : (
-        <Row gutter={[16, 16]}>
-          {visible.map((agent) => {
-            const disabled = Boolean(agent.config?.disabled);
-            return (
-              <Col key={agent.id} xs={24} sm={12} lg={8} xl={6}>
-                <Card
-                  size="small"
-                  hoverable
-                  style={{ height: "100%", opacity: disabled ? 0.55 : 1 }}
-                  title={
-                    <Space>
-                      {modeIcon(agent.config, agent.is_builtin)}
-                      <Typography.Text strong ellipsis style={{ maxWidth: 120 }}>
-                        {agent.name}
-                      </Typography.Text>
-                    </Space>
-                  }
-                  extra={
-                    <Dropdown
-                      menu={{
-                        items: menuItems(agent),
-                        onClick: ({ key }) => {
-                          if (key === "edit") {
-                            setEditing(agent);
-                            setEditorOpen(true);
-                          } else if (key === "copy") void onCopy(agent);
-                          else if (key === "enable" || key === "disable")
-                            void onToggleDisabled(agent);
-                          else if (key === "delete") onDelete(agent);
-                        },
-                      }}
-                    >
-                      <Button type="text" size="small" icon={<MoreOutlined />} />
-                    </Dropdown>
-                  }
-                >
-                  <Typography.Paragraph
-                    type="secondary"
-                    ellipsis={{ rows: 2 }}
-                    style={{ minHeight: 44, marginBottom: 8 }}
-                  >
-                    {agent.description || "（无描述）"}
-                  </Typography.Paragraph>
-                  <Space wrap size={4}>
-                    {agent.is_builtin && <Tag color="blue">内置</Tag>}
-                    <Tag>{modeLabel(agent.config)}</Tag>
-                    {disabled && <Tag color="red">已停用</Tag>}
-                    {featureBadges(agent.config)}
-                  </Space>
-                </Card>
-              </Col>
-            );
-          })}
-        </Row>
-      )}
-
-      <AgentEditorModal
-        mode={editing ? "edit" : "create"}
-        open={editorOpen}
-        initial={
-          editing
-            ? { name: editing.name, description: editing.description ?? "", config: editing.config }
-            : undefined
+    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
+    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
+      <Card
+        title="智能体配置"
+        extra={
+          <Space wrap>
+            <Input.Search
+              allowClear
+              placeholder="搜索智能体名称/描述"
+              style={{ width: 220 }}
+              onSearch={(v) => setSearch(v)}
+            />
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => {
+                setEditing(null);
+                setEditorOpen(true);
+              }}
+            >
+              新建智能体
+            </Button>
+          </Space>
         }
-        onClose={(changed) => {
-          setEditorOpen(false);
-          setEditing(null);
-          if (changed) void load();
-        }}
-        onSubmit={handleSubmit}
-      />
-    </Card>
+      >
+        {visible.length === 0 ? (
+          <Empty description="暂无智能体">
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => {
+                setEditing(null);
+                setEditorOpen(true);
+              }}
+            >
+              新建智能体
+            </Button>
+          </Empty>
+        ) : (
+          <Row gutter={[16, 16]}>
+            {visible.map((agent) => {
+              const disabled = Boolean(agent.config?.disabled);
+              return (
+                <Col key={agent.id} xs={24} sm={12} lg={8} xl={6}>
+                  <Card
+                    size="small"
+                    hoverable
+                    style={{ height: "100%", opacity: disabled ? 0.55 : 1 }}
+                    title={
+                      <Space>
+                        {modeIcon(agent.config, agent.is_builtin)}
+                        <Typography.Text strong ellipsis style={{ maxWidth: 120 }}>
+                          {agent.name}
+                        </Typography.Text>
+                      </Space>
+                    }
+                    extra={
+                      <Dropdown
+                        menu={{
+                          items: menuItems(agent),
+                          onClick: ({ key }) => {
+                            if (key === "edit") {
+                              setEditing(agent);
+                              setEditorOpen(true);
+                            } else if (key === "copy") void onCopy(agent);
+                            else if (key === "enable" || key === "disable")
+                              void onToggleDisabled(agent);
+                            else if (key === "delete") onDelete(agent);
+                          },
+                        }}
+                      >
+                        <Button type="text" size="small" icon={<MoreOutlined />} />
+                      </Dropdown>
+                    }
+                  >
+                    <Typography.Paragraph
+                      type="secondary"
+                      ellipsis={{ rows: 2 }}
+                      style={{ minHeight: 44, marginBottom: 8 }}
+                    >
+                      {agent.description || "（无描述）"}
+                    </Typography.Paragraph>
+                    <Space wrap size={4}>
+                      {agent.is_builtin && <Tag color="blue">内置</Tag>}
+                      <Tag>{modeLabel(agent.config)}</Tag>
+                      {disabled && <Tag color="red">已停用</Tag>}
+                      {featureBadges(agent.config)}
+                    </Space>
+                  </Card>
+                </Col>
+              );
+            })}
+          </Row>
+        )}
+
+        <AgentEditorModal
+          mode={editing ? "edit" : "create"}
+          open={editorOpen}
+          initial={
+            editing
+              ? { name: editing.name, description: editing.description ?? "", config: editing.config }
+              : undefined
+          }
+          onClose={(changed) => {
+            setEditorOpen(false);
+            setEditing(null);
+            if (changed) void load();
+          }}
+          onSubmit={handleSubmit}
+        />
+      </Card>
+    </div>
   );
 }
