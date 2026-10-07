@@ -227,3 +227,32 @@ body {
   background: #f6f8fb !important;
 }
 .kb-markdown a { color: #3261ce; }
+/* ===== 一屏自适应表格（data-synth 模式）辅助类 ===== */
+.kb-flex-col {
+  display: flex;
+  flex-direction: column;
+}
+.kb-fill {
+  flex: 1;
+  min-height: 0;
+}
+/* antd Tabs 内容区 flex 链路打穿：Tabs 内嵌表格时占满剩余高度 */
+.kb-flex-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.kb-flex-tabs .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.kb-flex-tabs .ant-tabs-content,
+.kb-flex-tabs .ant-tabs-tabpane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}

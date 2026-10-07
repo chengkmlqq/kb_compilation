@@ -15,7 +15,6 @@ import {
   Select,
   Space,
   Spin,
-  Table,
   Tabs,
   Tag,
   Typography,
@@ -40,6 +39,8 @@ import Neo4jGraphView from "@/components/Neo4jGraphView";
 import WikiBrowseView from "@/components/WikiBrowseView";
 import WikiManagePanel from "@/components/WikiManagePanel";
 import DocCardView, { fileTypeIcon, formatSize } from "@/components/DocCardView";
+import ModoTable from "@/components/biz/modo-table";
+import ModoPagination from "@/components/biz/modo-pagination";
 import DocDetailDrawer from "@/components/DocDetailDrawer";
 import DocBuildProcessDrawer from "@/components/DocBuildProcessDrawer";
 import UrlImportModal from "@/components/UrlImportModal";
@@ -342,7 +343,7 @@ export default function KbDetailPage() {
   }, [kbId, kb?.name, load]);
 
   return (
-    <Space direction="vertical" size="large" style={{ display: "flex" }}>
+    <Space direction="vertical" size="large" style={{ display: "flex", flex: 1, minHeight: 0, width: "100%" }}>
       {/* KB 概览条：对齐 WeKnora 详情顶部（类型/归属/向量库/统计/索引开关） */}
       {kb && (
         <Card size="small">
@@ -362,7 +363,7 @@ export default function KbDetailPage() {
           </Descriptions>
         </Card>
       )}
-      <Tabs
+      <Tabs className="kb-flex-tabs"
         activeKey={activeTab}
         onChange={setActiveTab}
         items={[
@@ -372,6 +373,8 @@ export default function KbDetailPage() {
             children: (
               <Card
                 title={`知识库文档（${docTotal}）`}
+                style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+                styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
                 extra={
                   <Space wrap>
                     <Input
@@ -532,7 +535,8 @@ export default function KbDetailPage() {
                     </div>
                   </>
                 ) : (
-                <Table<DocItem>
+                <>
+                <ModoTable<DocItem>
                   rowKey="id"
                   size="small"
                   loading={docsLoading}
@@ -542,17 +546,6 @@ export default function KbDetailPage() {
                     onChange: (keys) => setSelectedDocs(new Set(keys as string[])),
                   }}
                   onRow={(doc) => ({ onClick: () => setDetailDoc(doc) })}
-                  pagination={{
-                    current: docPage,
-                    pageSize: docPageSize,
-                    total: docTotal,
-                    showSizeChanger: true,
-                    showTotal: (t) => `共 ${t} 个文档`,
-                    onChange: (p, ps) => {
-                      setDocPage(p);
-                      setDocPageSize(ps);
-                    },
-                  }}
                   locale={{ emptyText: <Empty description="暂无文档，拖拽文件到右上角上传" /> }}
                   columns={[
                     {
@@ -656,6 +649,17 @@ export default function KbDetailPage() {
                     },
                   ]}
                 />
+                <ModoPagination
+                  current={docPage}
+                  pageSize={docPageSize}
+                  total={docTotal}
+                  showTotal={(t) => `共 ${t} 个文档`}
+                  onChange={(p, ps) => {
+                    setDocPage(p);
+                    setDocPageSize(ps);
+                  }}
+                />
+                </>
                 )}
               </Card>
             ),
