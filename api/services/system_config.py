@@ -51,11 +51,11 @@ MODEL_CONFIG_FIELDS: list[tuple[str, str, bool, str]] = [
 ]
 
 
-def _dim_map(db: Session, codes: list[str]) -> dict[str, str]:
+def _dim_map(db: Session, codes: list[str], group: str = MODEL_CONFIG_GROUP) -> dict[str, str]:
     rows = (
         db.execute(
             select(Dim.dim_code, Dim.dim_value).where(
-                Dim.dim_group == MODEL_CONFIG_GROUP,
+                Dim.dim_group == group,
                 Dim.dim_code.in_(codes),
                 Dim.state == "1",
             )
@@ -306,3 +306,119 @@ __all__ = [
     "delete_skill",
     "MODEL_CONFIG_FIELDS",
 ]
+
+
+# ---------------------------------------------------------------------------
+# 平台运行参数（modo_dim, dim_group=PLATFORM_CONFIG）
+#
+# wiki 构建执行方式（直跑 / agent 编排 / 外部网关）与 agent 编排回合上限等
+# 平台级运行参数，页面上可改、即时生效（worker 侧读取带 15s TTL 缓存）。
+# 优先级：DB 参数 > 容器 env > 代码默认值。
+# ---------------------------------------------------------------------------
+
+PLATFORM_CONFIG_GROUP = "PLATFORM_CONFIG"
+
+# dim_code -> (label, 类型, 默认值, 选项, 说明)
+PLATFORM_CONFIG_FIELDS: dict[str, tuple[str, str, str, list[str], str]] = {
+    "WIKI_BUILD_MODE": (
+        "wiki 构建模式",
+        "enum",
+        "direct",
+        ["direct", "agent", "gateway"],
+        "direct=直跑（worker 直接执行技能脚本，推荐，速度与稳定性最好）｜"
+        "agent=内联 agent 编排（LLM 逐步决策工具调用）｜"
+        "gateway=外部 agent-gateway 网关（回退路径）",
+    ),
+    "AGENT_MAX_TURNS": (
+        "agent 编排最大回合数",
+        "int",
+        "60",
+        [],
+        "仅 agent 模式生效：单次构建任务的 LLM 回合上限"
+        "（openai-agents max_turns），超限报 MaxTurnsExceeded；直跑模式无此限制",
+    ),
+}
+
+
+def get_platform_config(db: Session) -> dict:
+    """平台运行参数列表（DB 值 > env 现值 > 默认值）。"""
+    env = get_settings()
+    db_map = _dim_map(db, list(PLATFORM_CONFIG_FIELDS), group=PLATFORM_CONFIG_GROUP)
+    out = []
+    for code, (label, vtype, default, options, desc) in PLATFORM_CONFIG_FIELDS.items():
+        value = db_map.get(code, "")
+        source = "db" if value else "default"
+        if not value:
+            # env 优先于代码默认值（容器 env 可能是部署方显式设置）
+            env_name = "WIKI_AGENT_MODE" if code == "WIKI_BUILD_MODE" else "WORKER_AGENT_MAX_TURNS"
+            raw = str(getattr(env, env_name, "") or "").strip()
+            if raw:
+                value = "direct" if (code == "WIKI_BUILD_MODE" and raw.lower() == "inline") else raw
+                source = "env"
+            else:
+                value = default
+        out.append({
+            "code": code,
+            "label": label,
+            "value_type": vtype,
+            "value": value,
+            "default": default,
+            "options": options,
+            "description": desc,
+            "source": source,
+        })
+    return {"items": out}
+
+
+def save_platform_config(db: Session, items: list[dict]) -> dict:
+    """Upsert 平台运行参数到 modo_dim（校验类型/枚举）。"""
+    saved: list[str] = []
+    for item in items:
+        code = normalize_value(str(item.get("code", "")))
+        spec = PLATFORM_CONFIG_FIELDS.get(code)
+        if not spec:
+            continue
+        label, vtype, default, options, desc = spec
+        value = normalize_value(str(item.get("value") if item.get("value") is not None else ""))
+        if code == "WIKI_BUILD_MODE":
+            value = "direct" if value.lower() == "inline" else value.lower()
+            if value not in options:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{label} 取值非法：{value}（可选 {options}）",
+                )
+        elif code == "AGENT_MAX_TURNS":
+            try:
+                n = int(value)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"{label} 必须是整数")
+            if n < 1 or n > 1000:
+                raise HTTPException(status_code=400, detail=f"{label} 取值范围 1-1000")
+            value = str(n)
+        existing = (
+            db.execute(
+                select(Dim).where(
+                    Dim.dim_group == PLATFORM_CONFIG_GROUP, Dim.dim_code == code
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if existing:
+            existing.dim_value = value
+            existing.state = "1"
+        else:
+            db.add(
+                Dim(
+                    id=uuid.uuid4().hex,
+                    dim_code=code,
+                    dim_group=PLATFORM_CONFIG_GROUP,
+                    dim_value=value,
+                    dim_desc=f"{label}｜{desc}",
+                    seq=len(saved),
+                    state="1",
+                )
+            )
+        saved.append(code)
+    db.commit()
+    return {"saved": saved, "count": len(saved)}

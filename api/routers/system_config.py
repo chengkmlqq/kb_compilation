@@ -17,12 +17,14 @@ from api.services.system_config import (
     delete_mcp_server,
     delete_skill,
     get_model_config,
+    get_platform_config,
     get_skill_detail,
     install_skill,
     list_mcp_servers,
     list_skills,
     save_mcp_servers,
     save_model_config,
+    save_platform_config,
     test_mcp_server,
     test_model_endpoint,
 )
@@ -53,6 +55,33 @@ def read_model_config(db: Session = Depends(get_db)) -> dict:
 def write_model_config(req: ModelConfigSaveRequest, db: Session = Depends(get_db)) -> dict:
     items = [{"code": i.code, "value": i.value} for i in req.items]
     result = save_model_config(db, items)
+    return {"success": True, "data": result}
+
+
+
+
+# ---------------------------------------------------------------------------
+# 平台运行参数（wiki 构建模式 / agent 回合上限等，modo_dim=PLATFORM_CONFIG）
+# ---------------------------------------------------------------------------
+
+
+class PlatformConfigItem(BaseModel):
+    code: str
+    value: str | None = None
+
+
+class PlatformConfigSaveRequest(BaseModel):
+    items: list[PlatformConfigItem]
+
+
+@router.get("/platform-config")
+def read_platform_config(db: Session = Depends(get_db)) -> dict:
+    return {"success": True, "data": get_platform_config(db)}
+
+
+@router.put("/platform-config")
+def write_platform_config(req: PlatformConfigSaveRequest, db: Session = Depends(get_db)) -> dict:
+    result = save_platform_config(db, [{"code": i.code, "value": i.value} for i in req.items])
     return {"success": True, "data": result}
 
 

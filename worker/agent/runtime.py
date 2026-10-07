@@ -215,7 +215,7 @@ async def run_agent(payload: dict[str, Any], task_id: str = "") -> dict[str, Any
                 str(payload.get("input") or ""),
                 mcp_servers,
                 tools if tools else None,
-                config.AGENT_MAX_TURNS,
+                config.agent_max_turns(),
             )
             trace_task.cancel()
             try:

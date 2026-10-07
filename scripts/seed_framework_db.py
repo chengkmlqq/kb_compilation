@@ -81,6 +81,7 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "system", "ApiOutlined", 8),
     ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "system", "ToolOutlined", 9),
     ("ont_schemas", "ont_schemas", "本体Schema", "/ontology-schemas", "system", "ApartmentOutlined", 10),
+    ("sys_config", "sys_config", "平台参数", "/system/config", "system", "ControlOutlined", 11),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，

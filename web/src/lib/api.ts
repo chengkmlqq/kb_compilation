@@ -2505,3 +2505,30 @@ export function apiDatagridExportSql(dsName: string, sql: string, tableName = "e
     body: JSON.stringify({ dsName, sql, tableName }),
   }) as unknown as Promise<DatagridExportResult>;
 }
+
+
+// ---- 平台运行参数（系统 → 平台参数，modo_dim=PLATFORM_CONFIG） ----
+
+export interface PlatformConfigItem {
+  code: string;
+  label: string;
+  value_type: "string" | "int" | "bool" | "enum";
+  value: string;
+  default: string;
+  options: string[];
+  description: string;
+  source: "db" | "env" | "default";
+}
+
+export function apiPlatformConfig(): Promise<ApiEnvelope<{ items: PlatformConfigItem[] }>> {
+  return request<{ items: PlatformConfigItem[] }>("/api/v1/system/platform-config");
+}
+
+export function apiSavePlatformConfig(
+  items: { code: string; value: string }[],
+): Promise<ApiEnvelope<{ saved: string[]; count: number }>> {
+  return request<{ saved: string[]; count: number }>("/api/v1/system/platform-config", {
+    method: "PUT",
+    body: JSON.stringify({ items }),
+  });
+}

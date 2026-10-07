@@ -57,4 +57,17 @@ LLM_MAX_RETRIES: int = _int("LLM_MAX_RETRIES", 5)
 # --------------------------------------------------------------------------- #
 # 单任务最大 agent 回合数（openai-agents Runner max_turns）。技能类任务
 # （读操作指引 + 跑脚本）远超 SDK 默认 10 回合。
-AGENT_MAX_TURNS: int = _int("WORKER_AGENT_MAX_TURNS", 60)
+AGENT_MAX_TURNS: int = _int("WORKER_AGENT_MAX_TURNS", 60)  # env/默认（DB 覆盖见 agent_max_turns()）
+
+
+def agent_max_turns() -> int:
+    """agent 编排回合上限：平台参数（页面可改） > env > 默认 60。
+
+    平台参数存 modo_dim（PLATFORM_CONFIG.AGENT_MAX_TURNS），由「系统 → 平台
+    参数」页面维护；worker 侧 15s TTL 缓存，改动即时生效（无需重启）。
+    """
+    from worker.platform_params import get_platform_int
+
+    return get_platform_int(
+        "AGENT_MAX_TURNS", env_name="WORKER_AGENT_MAX_TURNS", default=AGENT_MAX_TURNS
+    )
