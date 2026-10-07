@@ -82,6 +82,13 @@ const JobTable: React.FC<JobTableProps> = ({
   onDelete,
 }) => {
   const { modal } = App.useApp();
+  // 2026-10-07: 运行中任务耗时实时累加——本地时钟每秒 tick，RUNNING 行
+  // 用 now - start_time 渲染（后端 duration_ms 是快照值，不刷新页面不增长）
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   const columns: ColumnsType<JobItem> = [
     {
@@ -149,6 +156,12 @@ const JobTable: React.FC<JobTableProps> = ({
       key: "duration_ms",
       width: 100,
       render: (ms: number | null, record) => {
+        // RUNNING：实时累加（now - start_time），其余用后端快照 duration_ms
+        if (record.state === "RUNNING" && record.start_time) {
+          const st = new Date(record.start_time).getTime();
+          const text = Number.isNaN(st) ? fmtDur(ms) : fmtDur(now - st);
+          return <span className="modo-running-duration">{text}</span>;
+        }
         const text = fmtDur(ms);
         if (record.state === "RUNNING") {
           return <span className="modo-running-duration">{text}</span>;
