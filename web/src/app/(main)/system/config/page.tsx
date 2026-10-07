@@ -101,8 +101,8 @@ export default function PlatformConfigPage() {
                 ) : (
                   <InputNumber
                     min={1}
-                    max={1000}
-                    step={5}
+                    max={86400}
+                    step={100}
                     style={{ width: 240 }}
                     value={Number(values[it.code])}
                     onChange={(v) => setValues((prev) => ({ ...prev, [it.code]: String(v ?? it.default) }))}

@@ -99,7 +99,7 @@ def _build_task_model(cfg: dict):
         client = AsyncOpenAI(
             base_url=base_url,
             api_key=api_key,
-            max_retries=config.LLM_MAX_RETRIES,
+            max_retries=config.agent_llm_max_retries(),
             timeout=httpx.Timeout(connect=30.0, read=120.0, write=60.0, pool=30.0),
         )
         return OpenAIChatCompletionsModel(model=model, openai_client=client), model

@@ -582,7 +582,12 @@ def _handle_skill_direct_build(job_id: str, task_params: str | None) -> dict[str
         text=True, env=env, start_new_session=True,
     )
     try:
-        stdout, stderr = proc.communicate(timeout=int(os.getenv("WIKI_DIRECT_TIMEOUT", "10800")))
+        from worker.platform_params import get_platform_int
+
+        direct_timeout = get_platform_int(
+            "WIKI_DIRECT_TIMEOUT", env_name="WIKI_DIRECT_TIMEOUT", default=10800
+        )
+        stdout, stderr = proc.communicate(timeout=direct_timeout)
         rc = proc.returncode
         out_tail = (stdout or "")[-3000:] + ("\n[stderr]\n" + (stderr or "")[-1500:] if stderr else "")
     except subprocess.TimeoutExpired:

@@ -60,6 +60,26 @@ LLM_MAX_RETRIES: int = _int("LLM_MAX_RETRIES", 5)
 AGENT_MAX_TURNS: int = _int("WORKER_AGENT_MAX_TURNS", 60)  # env/默认（DB 覆盖见 agent_max_turns()）
 
 
+def skill_script_timeout_s() -> float:
+    """技能脚本/命令执行超时（秒）：平台参数 > env > 默认 1800。"""
+    from worker.platform_params import get_platform_int
+
+    return float(
+        get_platform_int(
+            "AGENT_SKILL_SCRIPT_TIMEOUT", env_name="WORKER_AGENT_SKILL_SCRIPT_TIMEOUT_S", default=1800
+        )
+    )
+
+
+def agent_llm_max_retries() -> int:
+    """OpenAI SDK 的 429/5xx 重试次数：平台参数 > env > 默认 5。"""
+    from worker.platform_params import get_platform_int
+
+    return get_platform_int(
+        "AGENT_LLM_MAX_RETRIES", env_name="LLM_MAX_RETRIES", default=LLM_MAX_RETRIES
+    )
+
+
 def agent_max_turns() -> int:
     """agent 编排回合上限：平台参数（页面可改） > env > 默认 60。
 

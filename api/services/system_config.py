@@ -335,8 +335,52 @@ PLATFORM_CONFIG_FIELDS: dict[str, tuple[str, str, str, list[str], str]] = {
         "60",
         [],
         "仅 agent 模式生效：单次构建任务的 LLM 回合上限"
-        "（openai-agents max_turns），超限报 MaxTurnsExceeded；直跑模式无此限制",
+        "（openai-agents max_turns），超限报 MaxTurnsExceeded；直跑模式无此限制。"
+        "取值 1-1000",
     ),
+    "AGENT_SKILL_SCRIPT_TIMEOUT": (
+        "agent 技能脚本超时(秒)",
+        "int",
+        "1800",
+        [],
+        "agent 模式下单次技能脚本/命令的执行超时，默认 1800 秒（30 分钟）；"
+        "wiki 构建脚本较长时可放宽。取值 60-86400",
+    ),
+    "AGENT_LLM_MAX_RETRIES": (
+        "agent LLM 调用重试次数",
+        "int",
+        "5",
+        [],
+        "agent 模式下 OpenAI SDK 对 429/5xx 的自动重试次数（InferAI 限流时兜底）；"
+        "过大会拉长失败等待。取值 0-10",
+    ),
+    "WIKI_DIRECT_TIMEOUT": (
+        "wiki 直跑总超时(秒)",
+        "int",
+        "10800",
+        [],
+        "直跑模式下单篇文档构建的整体超时，超时杀进程组并标记失败；"
+        "长文档/大模型限流时需要放宽。取值 600-86400",
+    ),
+}
+
+
+# int 型参数的取值范围（保存校验）
+PLATFORM_INT_RANGES: dict[str, tuple[int, int]] = {
+    "AGENT_MAX_TURNS": (1, 1000),
+    "AGENT_SKILL_SCRIPT_TIMEOUT": (60, 86400),
+    "AGENT_LLM_MAX_RETRIES": (0, 10),
+    "WIKI_DIRECT_TIMEOUT": (600, 86400),
+}
+
+
+# 参数 → 容器 env 名（DB 未配置时回落到 env，再回落默认值）
+PLATFORM_ENV_NAMES: dict[str, str] = {
+    "WIKI_BUILD_MODE": "WIKI_AGENT_MODE",
+    "AGENT_MAX_TURNS": "WORKER_AGENT_MAX_TURNS",
+    "AGENT_SKILL_SCRIPT_TIMEOUT": "WORKER_AGENT_SKILL_SCRIPT_TIMEOUT_S",
+    "AGENT_LLM_MAX_RETRIES": "LLM_MAX_RETRIES",
+    "WIKI_DIRECT_TIMEOUT": "WIKI_DIRECT_TIMEOUT",
 }
 
 
@@ -350,7 +394,7 @@ def get_platform_config(db: Session) -> dict:
         source = "db" if value else "default"
         if not value:
             # env 优先于代码默认值（容器 env 可能是部署方显式设置）
-            env_name = "WIKI_AGENT_MODE" if code == "WIKI_BUILD_MODE" else "WORKER_AGENT_MAX_TURNS"
+            env_name = PLATFORM_ENV_NAMES.get(code, "")
             raw = str(getattr(env, env_name, "") or "").strip()
             if raw:
                 value = "direct" if (code == "WIKI_BUILD_MODE" and raw.lower() == "inline") else raw
@@ -387,13 +431,16 @@ def save_platform_config(db: Session, items: list[dict]) -> dict:
                     status_code=400,
                     detail=f"{label} 取值非法：{value}（可选 {options}）",
                 )
-        elif code == "AGENT_MAX_TURNS":
+        else:
             try:
                 n = int(value)
             except ValueError:
                 raise HTTPException(status_code=400, detail=f"{label} 必须是整数")
-            if n < 1 or n > 1000:
-                raise HTTPException(status_code=400, detail=f"{label} 取值范围 1-1000")
+            lo, hi = PLATFORM_INT_RANGES.get(code, (1, 1000))
+            if n < lo or n > hi:
+                raise HTTPException(
+                    status_code=400, detail=f"{label} 取值范围 {lo}-{hi}"
+                )
             value = str(n)
         existing = (
             db.execute(

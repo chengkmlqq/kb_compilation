@@ -360,10 +360,10 @@ def build_skill_tools() -> list[Any]:
         argv = [sys_executable(), str(script_path), *(args or [])]
         try:
             proc = subprocess.run(
-                argv, capture_output=True, text=True, timeout=config.SKILL_SCRIPT_TIMEOUT_S
+                argv, capture_output=True, text=True, timeout=config.skill_script_timeout_s()
             )
         except subprocess.TimeoutExpired:
-            return f"脚本超时(>{config.SKILL_SCRIPT_TIMEOUT_S}s): {script}"
+            return f"脚本超时(>{config.skill_script_timeout_s()}s): {script}"
         except Exception as e:  # noqa: BLE001
             return f"脚本执行出错: {e!r}"
         out = proc.stdout.strip()
@@ -383,10 +383,10 @@ def build_skill_tools() -> list[Any]:
         try:
             proc = subprocess.run(
                 command, shell=True, capture_output=True, text=True,
-                timeout=config.SKILL_SCRIPT_TIMEOUT_S,
+                timeout=config.skill_script_timeout_s(),
             )
         except subprocess.TimeoutExpired:
-            return f"命令超时(>{config.SKILL_SCRIPT_TIMEOUT_S}s): {command[:200]}"
+            return f"命令超时(>{config.skill_script_timeout_s()}s): {command[:200]}"
         except Exception as e:  # noqa: BLE001
             return f"命令执行出错: {e!r}"
         out = proc.stdout.strip()
