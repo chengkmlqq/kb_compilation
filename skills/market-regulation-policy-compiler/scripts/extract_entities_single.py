@@ -189,11 +189,19 @@ def extract_joint_llm(ls_all, args):
         return (batch_idx, None, None)
 
     batch_results = {}
+    # 2026-10-07 防挂起批永等：as_completed 900s 无任何批次完成即超时（某批
+    # llm_call 真 hang 时不再无限等待——之前 extract_entities 反复 hang 8h 占槽）。
+    # 超时后取消剩余 futures，未完成批标记失败（任务整体可重投）。
     with ThreadPoolExecutor(max_workers=2) as pool:  # 2026-10-07 单→双 worker 提速（524 由 llm_call 重试兜底）
         futures = {pool.submit(_run_batch, i): i for i in range(total_batches)}
-        for fut in as_completed(futures):
-            bidx, ents, ruls = fut.result()
-            batch_results[bidx] = (ents, ruls)
+        try:
+            for fut in as_completed(futures, timeout=900):
+                bidx, ents, ruls = fut.result()
+                batch_results[bidx] = (ents, ruls)
+        except TimeoutError:
+            print(f'  [超时] 联合抽取 900s 无完成（{len(futures)} 批），取消剩余批——任务可重投')
+            for fut in futures:
+                fut.cancel()
 
     # 按原始批次序聚合（去重语义与原串行一致）
     for bidx in range(total_batches):
