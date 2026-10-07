@@ -23,6 +23,7 @@ import {
   Upload,
 } from "antd";
 import {
+  AimOutlined,
   DeleteOutlined,
   EditOutlined,
   MessageOutlined,
@@ -378,7 +379,10 @@ export default function ChatPage() {
   const send = async (textOverride?: string) => {
     const question = (textOverride ?? input).trim();
     if (!question || streaming) return;
-    if (!kbId) {
+    // @提及：本条消息级目标覆盖（kb / agent），未提及则沿用顶部选择
+    const effectiveKbId = atTarget?.kind === "kb" ? atTarget.id : kbId;
+    const effectiveAgent = atTarget?.kind === "agent" ? atTarget.id : agentMode;
+    if (!effectiveKbId && !effectiveAgent) {
       toast.warning("请先选择知识库");
       return;
     }
@@ -400,6 +404,7 @@ export default function ChatPage() {
     setInput("");
     setRecommendations([]);
     setStreaming(true);
+    if (atTarget) setAtTarget(null);
     scrollBottom();
 
     const controller = new AbortController();
@@ -408,9 +413,9 @@ export default function ChatPage() {
     // 若还没有会话，先建一个（用第一条问题当会话）
     let sessionId = activeSession;
     if (!sessionId) {
-      const created = agentMode
-        ? await apiCreateAgentSession(agentMode, kbId, question.slice(0, 30))
-        : await apiCreateSession(kbId, question.slice(0, 30));
+      const created = effectiveAgent
+        ? await apiCreateAgentSession(effectiveAgent, effectiveKbId, question.slice(0, 30))
+        : await apiCreateSession(effectiveKbId ?? "", question.slice(0, 30));
       if (created.success && created.data) {
         sessionId = created.data.id;
         setActiveSession(sessionId);
@@ -424,14 +429,14 @@ export default function ChatPage() {
     }
 
     try {
-      const endpoint = agentMode
-        ? `/api/v1/agents/${agentMode}/qa/stream`
+      const endpoint = effectiveAgent
+        ? `/api/v1/agents/${effectiveAgent}/qa/stream`
         : "/api/v1/qa/stream";
       const resp = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          kb_id: kbId,
+          kb_id: effectiveKbId,
           question,
           session_id: sessionId,
           top_k: 8, // 2026-10-07: 5→8——多主题综合提问时 top_k 太小会漏召回(实测跨文档综合题)
@@ -735,6 +740,10 @@ export default function ChatPage() {
 
   // 2026-10-07 对齐 WeKnora：当前会话流式生成中 → 侧栏指示
   const activeStreaming = msgs.some((m) => m.streaming && m.role === "assistant");
+
+  // 2026-10-07 对齐 WeKnora：@提及多资源（消息级目标覆盖：知识库 / 智能体）
+  const [atTarget, setAtTarget] = useState<{ kind: "kb" | "agent"; id: string; name: string } | null>(null);
+  const [atOpen, setAtOpen] = useState(false);
 
   return (
     <div style={{ display: "flex", height: "calc(100vh - 64px - 48px)", gap: 16 }}>
@@ -1161,7 +1170,17 @@ export default function ChatPage() {
               )}
             </div>
           )}
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+            {atTarget && (
+              <Tag
+                closable
+                color={atTarget.kind === "kb" ? "blue" : "purple"}
+                onClose={() => setAtTarget(null)}
+                style={{ marginBottom: 8 }}
+              >
+                @{atTarget.name}
+              </Tag>
+            )}
             <Input.TextArea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -1176,10 +1195,60 @@ export default function ChatPage() {
               }}
               style={{ flex: 1 }}
             />
-            <Button type="primary" icon={<SendOutlined />} loading={streaming} disabled={!kbId} onClick={() => void send()}>
+            <Button
+              type="default"
+              icon={<AimOutlined />}
+              title="@提及知识库 / 智能体"
+              style={{ marginBottom: 0 }}
+              onClick={() => setAtOpen(true)}
+            />
+            <Button type="primary" icon={<SendOutlined />} loading={streaming} disabled={!kbId && !agentMode} onClick={() => void send()}>
               发送
             </Button>
           </div>
+          {/* 2026-10-07 @提及多资源：选择本次消息的目标知识库 / 智能体 */}
+          <Modal
+            title="@ 提及目标"
+            open={atOpen}
+            onCancel={() => setAtOpen(false)}
+            footer={null}
+            width={360}
+          >
+            <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
+              选择后本条消息将针对该资源问答（不改变会话绑定）
+            </Text>
+            <div style={{ marginBottom: 8 }}>
+              <Text strong style={{ fontSize: 13 }}>知识库</Text>
+              <Select
+                style={{ width: "100%", marginTop: 4 }}
+                placeholder="选择知识库"
+                value={atTarget?.kind === "kb" ? atTarget.id : undefined}
+                onChange={(id) => {
+                  const kb = kbs.find((k) => k.id === id);
+                  if (kb) setAtTarget({ kind: "kb", id, name: kb.name });
+                }}
+                options={kbs.map((k) => ({ value: k.id, label: k.name }))}
+              />
+            </div>
+            <div>
+              <Text strong style={{ fontSize: 13 }}>智能体</Text>
+              <Select
+                style={{ width: "100%", marginTop: 4 }}
+                placeholder="选择智能体"
+                value={atTarget?.kind === "agent" ? atTarget.id : undefined}
+                onChange={(id) => {
+                  const a = agents.find((x) => x.id === id);
+                  if (a) setAtTarget({ kind: "agent", id, name: `🤖 ${a.name}` });
+                }}
+                options={agents.map((a) => ({ value: a.id, label: `🤖 ${a.name}` }))}
+              />
+            </div>
+            <div style={{ textAlign: "right", marginTop: 12 }}>
+              <Button type="primary" onClick={() => setAtOpen(false)}>
+                确定
+              </Button>
+            </div>
+          </Modal>
         </div>
       </Card>
 
