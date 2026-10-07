@@ -574,17 +574,28 @@ def _handle_skill_direct_build(job_id: str, task_params: str | None) -> dict[str
         f"kid={kid[:12]} 入口={os.path.basename(entry)}",
     )
     t0 = time.time()
+    # 进程组执行：超时时 killpg 杀整组（run_one → build_full → extract_entities
+    # 是父子链，subprocess.run 超时只杀直接子 run_one，孙进程 build_full 变孤儿
+    # 继续 hang——2026-10-07 实测孤儿进程存活 8 小时占槽）
+    proc = subprocess.Popen(
+        cmd, cwd=scripts_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, env=env, start_new_session=True,
+    )
     try:
-        proc = subprocess.run(
-            cmd, cwd=scripts_dir, capture_output=True, text=True,
-            timeout=int(os.getenv("WIKI_DIRECT_TIMEOUT", "10800")), env=env,
-        )
+        stdout, stderr = proc.communicate(timeout=int(os.getenv("WIKI_DIRECT_TIMEOUT", "10800")))
         rc = proc.returncode
-        out_tail = (proc.stdout or "")[-3000:] + ("\n[stderr]\n" + (proc.stderr or "")[-1500:] if proc.stderr else "")
-    except subprocess.TimeoutExpired as exc:
+        out_tail = (stdout or "")[-3000:] + ("\n[stderr]\n" + (stderr or "")[-1500:] if stderr else "")
+    except subprocess.TimeoutExpired:
         rc = -1
-        out_tail = (exc.stdout or b"").decode("utf-8", "replace")[-2000:] if isinstance(exc.stdout, bytes) else str(exc.stdout or "")[-2000:]
-        out_tail += "\n[超时] 技能直跑超过 WIKI_DIRECT_TIMEOUT"
+        try:
+            os.killpg(os.getpgid(proc.pid), 9)  # SIGKILL 整个进程组
+        except Exception:  # noqa: BLE001
+            proc.kill()
+        try:
+            stdout, stderr = proc.communicate(timeout=15)
+        except Exception:  # noqa: BLE001
+            stdout, stderr = "", ""
+        out_tail = ((stdout or "")[-2000:] if isinstance(stdout, str) else "") + "\n[超时] 技能直跑超过 WIKI_DIRECT_TIMEOUT，已杀进程组"
     duration_ms = int((time.time() - t0) * 1000)
 
     result: dict[str, Any] = {
