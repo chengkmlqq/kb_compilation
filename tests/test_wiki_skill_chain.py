@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from api.db import Base
-from api.models.framework import Job
+from api.models.framework import Dim, Job
 import worker.tasks.doc_process as dp
 
 
@@ -82,9 +82,28 @@ def test_enqueue_wiki_skill_task_broker_failure_returns_false(chain_env, monkeyp
 
 
 def test_enqueue_wiki_skill_task_gateway_mode_fallback(chain_env, monkeypatch) -> None:
-    """WIKI_AGENT_MODE=gateway → 回退外部 agent-gateway（KbAgentGatewayTask + default 队列）。"""
+    """WIKI_BUILD_MODE=gateway → 回退外部 agent-gateway（KbAgentGatewayTask + default 队列）。
+
+    2026-10-07: 平台参数入库后读取顺序为 DB(PLATFORM_CONFIG) > env，
+    setenv 不再生效 —— 改写 modo_dim 行（这正是 CI test job 红灯的成因）。
+    """
     Session, sent = chain_env
-    monkeypatch.setenv("WIKI_AGENT_MODE", "gateway")
+    import worker.platform_params as pp
+
+    monkeypatch.setattr(pp, "_cache", {})
+    db = Session()
+    db.add(
+        Dim(
+            id="dim-wiki-build-mode",
+            dim_group="PLATFORM_CONFIG",
+            dim_code="WIKI_BUILD_MODE",
+            dim_value="gateway",
+            state="1",
+        )
+    )
+    db.commit()
+    db.close()
+
     ok = dp._enqueue_wiki_skill_task("kb-1", "doc-1")
     assert ok is True
     assert sent["queue"] == "default"
