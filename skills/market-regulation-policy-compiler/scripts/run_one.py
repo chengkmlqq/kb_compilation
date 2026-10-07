@@ -93,7 +93,7 @@ def main():
         rc = run([sys.executable, os.path.join(SCRIPT_DIR, 'build_full.py'),
                   kid, family, version, fname, '--format', ftype, '--kb', kb]
                  + (['--skip-final'] if args.skip_final else [])
-                 + (['--no-graph'] if args.no_graph else []), timeout=3600)
+                 + (['--no-graph'] if args.no_graph else []), timeout=7200)
     if rc != 0:
         print("build_full 失败")
         return rc
