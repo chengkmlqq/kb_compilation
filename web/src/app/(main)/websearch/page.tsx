@@ -10,12 +10,11 @@ import {
   Modal,
   Popconfirm,
   Select,
-  Space,
-  Switch,
-  Table,
-  Tag,
-  Typography,
-} from "antd";
+    Space,
+    Switch,
+    Tag,
+    Typography,
+  } from "antd";
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
   apiCreateWebsearchProvider,
@@ -26,6 +25,7 @@ import {
   WebSearchProviderItem,
   WebSearchProviderType,
 } from "@/lib/api";
+import ModoTable from "@/components/biz/modo-table";
 
 const { Text } = Typography;
 
@@ -96,90 +96,91 @@ export default function WebSearchManagePage() {
   };
 
   return (
-    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
-    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
-      <Card
-        title="联网搜索"
-        extra={
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-              刷新
-            </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新增提供方
-            </Button>
-          </Space>
-        }
-      >
-        <Table
-          rowKey="id"
-          size="small"
-          loading={loading}
-          dataSource={items}
-          pagination={false}
-          locale={{ emptyText: <Text type="secondary">暂无搜索提供方</Text> }}
-          columns={[
-            {
-              title: "名称",
-              dataIndex: "name",
-              render: (v: string, r: WebSearchProviderItem) => (
-                <Space size={4}>
-                  <Text strong>{v}</Text>
-                  <Tag color={SCOPE_COLOR[r.scope]}>{SCOPE_LABEL[r.scope]}</Tag>
-                  {r.enabled !== false && <Tag color="green">启用</Tag>}
-                </Space>
-              ),
-            },
-            {
-              title: "类型",
-              dataIndex: "provider_type",
-              width: 160,
-              render: (v: WebSearchProviderType) => <Tag>{v}</Tag>,
-            },
-            { title: "描述", dataIndex: "description", ellipsis: true },
-            { title: "端点", dataIndex: "base_url", ellipsis: true },
-            {
-              title: "API Key",
-              width: 120,
-              render: (_: unknown, r: WebSearchProviderItem) => (
-                <Text type={r.api_key ? "success" : "secondary"} style={{ fontSize: 12 }}>
-                  {r.api_key ? "已配置" : "无"}
-                </Text>
-              ),
-            },
-            {
-              title: "操作",
-              width: 140,
-              render: (_: unknown, r: WebSearchProviderItem) => (
-                <Space size={4}>
-                  <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>
-                    编辑
-                  </Button>
-                  <Popconfirm title={`删除 ${r.name}？`} onConfirm={() => void handleDelete(r)}>
-                    <Button size="small" danger icon={<DeleteOutlined />} />
-                  </Popconfirm>
-                </Space>
-              ),
-            },
-          ]}
-        />
-        {editOpen && (
-          <WebSearchEditorModal
-            open={editOpen}
-            item={editing}
-            isAdmin={isAdmin}
-            onClose={() => setEditOpen(false)}
-            onSaved={() => {
-              setEditOpen(false);
-              void load();
-            }}
-            message={message}
-          />
-        )}
-      </Card>
-    </div>
-  );
-}
+      // 2026-10-07 一屏自适应（对齐 data-synth）：外层不滚动，卡片内表格占满剩余高度
+      <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+        <Card
+          title="联网搜索"
+          style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+          styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+          extra={
+            <Space>
+              <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+                刷新
+              </Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+                新增提供方
+              </Button>
+            </Space>
+          }
+        >
+          <ModoTable
+            rowKey="id"
+            size="small"
+            loading={loading}
+            dataSource={items}
+            locale={{ emptyText: <Text type="secondary">暂无搜索提供方</Text> }}
+        columns={[
+          {
+            title: "名称",
+            dataIndex: "name",
+            render: (v: string, r: WebSearchProviderItem) => (
+              <Space size={4}>
+                <Text strong>{v}</Text>
+                <Tag color={SCOPE_COLOR[r.scope]}>{SCOPE_LABEL[r.scope]}</Tag>
+                {r.enabled !== false && <Tag color="green">启用</Tag>}
+              </Space>
+            ),
+          },
+          {
+            title: "类型",
+            dataIndex: "provider_type",
+            width: 160,
+            render: (v: WebSearchProviderType) => <Tag>{v}</Tag>,
+          },
+          { title: "描述", dataIndex: "description", ellipsis: true },
+          { title: "端点", dataIndex: "base_url", ellipsis: true },
+          {
+            title: "API Key",
+            width: 120,
+            render: (_: unknown, r: WebSearchProviderItem) => (
+              <Text type={r.api_key ? "success" : "secondary"} style={{ fontSize: 12 }}>
+                {r.api_key ? "已配置" : "无"}
+              </Text>
+            ),
+          },
+          {
+            title: "操作",
+            width: 140,
+            render: (_: unknown, r: WebSearchProviderItem) => (
+              <Space size={4}>
+                <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>
+                  编辑
+                </Button>
+                <Popconfirm title={`删除 ${r.name}？`} onConfirm={() => void handleDelete(r)}>
+                  <Button size="small" danger icon={<DeleteOutlined />} />
+                </Popconfirm>
+              </Space>
+            ),
+          },
+        ]}
+      />
+      {editOpen && (
+        <WebSearchEditorModal
+          open={editOpen}
+          item={editing}
+          isAdmin={isAdmin}
+          onClose={() => setEditOpen(false)}
+          onSaved={() => {
+            setEditOpen(false);
+            void load();
+          }}
+          message={message}
+                  />
+                )}
+                </Card>
+              </div>
+            );
+          }
 
 function WebSearchEditorModal({
   open,

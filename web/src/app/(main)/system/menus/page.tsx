@@ -251,25 +251,27 @@ export default function SystemMenusPage() {
     };
 
   return (
-    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
-    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
-      <Card
-      title="菜单"
-      extra={
-        <Space>
-          <Button disabled={!selectedMenuId} onClick={() => openCreate(selectedMenuId || undefined)}>
-            新增子菜单
-          </Button>
-          <Button type="primary" onClick={() => openCreate()}>
-            新增根菜单
-          </Button>
-        </Space>
-      }
-    >
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 12 }}
+      // 2026-10-07 一屏自适应（对齐 data-synth）：外层不滚动，卡片内树区占满剩余高度
+      <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+        <Card
+          title="菜单"
+          style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+          styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+          extra={
+          <Space>
+            <Button disabled={!selectedMenuId} onClick={() => openCreate(selectedMenuId || undefined)}>
+              新增子菜单
+            </Button>
+            <Button type="primary" onClick={() => openCreate()}>
+              新增根菜单
+            </Button>
+          </Space>
+        }
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12, flexShrink: 0 }}
         message="菜单 route 填写前端页面路径（如 /kbs、/chat），勾选到角色后即成为该角色的可访问页面。已发布（state=1）且被角色引用的菜单才会出现在侧边栏与权限校验中。"
       />
       <Tree
@@ -278,8 +280,8 @@ export default function SystemMenusPage() {
         blockNode
         showLine
         selectedKeys={selectedMenuId ? [selectedMenuId] : []}
-        onSelect={(keys) => setSelectedMenuId((keys[0] as string) || null)}
-        style={{ maxHeight: 380, overflow: "auto" }}
+                onSelect={(keys) => setSelectedMenuId((keys[0] as string) || null)}
+                style={{ flex: 1, minHeight: 0, overflow: "auto" }}
         titleRender={(node) => {
           const m = items.find((x) => x.menu_id === node.key);
           return (
@@ -388,6 +390,6 @@ export default function SystemMenusPage() {
                   <ApiPermEditor value={apiPerms} onChange={setApiPerms} />
                 </Modal>
               </Card>
-    </div>
+            </div>
             );
 }

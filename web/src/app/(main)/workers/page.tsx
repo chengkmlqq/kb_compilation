@@ -34,7 +34,9 @@ import {
   FlowerWorkerTaskOverview,
   FlowerWorkersOverview,
   WorkerRegisteredTaskConfigOverview,
-} from "@/lib/api";
+  } from "@/lib/api";
+  import ModoTable from "@/components/biz/modo-table";
+  import ModoPagination from "@/components/biz/modo-pagination";
 
 const { Text } = Typography;
 
@@ -477,30 +479,28 @@ export default function WorkersPage() {
           flexDirection: "column",
         }}
       >
-        <div style={{ flex: 1, overflow: "auto", padding: "0 16px" }}>
-          <Table<FlowerWorkerOverview>
-            rowKey="workerName"
-            size="middle"
-            loading={loading}
-            dataSource={pagedWorkers}
-            columns={columns}
-            scroll={{ x: 1500 }}
-            pagination={false}
-          />
-        </div>
-        <div
-          style={{
-            borderTop: "1px solid #E3E9EF",
-            padding: "10px 16px",
-            display: "flex",
-            justifyContent: "flex-end",
-          }}
-        >
-          <span style={{ fontSize: 13, color: "#79879C" }}>
-            共 {filteredWorkers.length} 个 Worker
-          </span>
-        </div>
-      </div>
+        <ModoTable<FlowerWorkerOverview>
+                  containerStyle={{ padding: "0 16px" }}
+                  rowKey="workerName"
+                  size="middle"
+                  loading={loading}
+                  dataSource={pagedWorkers}
+                  columns={columns}
+                  scroll={{ x: 1500 }}
+                />
+                <div style={{ borderTop: "1px solid #E3E9EF", flexShrink: 0 }}>
+                  <ModoPagination
+                    current={currentPage}
+                    pageSize={pageSize}
+                    total={filteredWorkers.length}
+                    showTotal={(t) => `共 ${t} 个 Worker`}
+                    onChange={(p, ps) => {
+                      setCurrentPage(p);
+                      setPageSize(ps);
+                    }}
+                  />
+                </div>
+              </div>
 
       {/* 任务快照抽屉 */}
       <Drawer

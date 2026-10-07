@@ -15,13 +15,14 @@ import {
   Space,
   Spin,
   Switch,
-  Table,
   Tabs,
   Tag,
   Typography,
 } from "antd";
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import CodeViewer from "@/components/CodeViewer";
+import ModoTable from "@/components/biz/modo-table";
+import ModoPagination from "@/components/biz/modo-pagination";
 import {
   apiCreateMcp,
   apiDeleteMcp,
@@ -55,6 +56,8 @@ export default function McpManagePage() {
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<McpRegistryItem | null>(null);
   const [testTarget, setTestTarget] = useState<McpRegistryItem | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -79,6 +82,10 @@ export default function McpManagePage() {
     if (typeFilter === "all") return items;
     return items.filter((it) => it.type === typeFilter);
   }, [items, typeFilter]);
+  // 客户端分页（对齐 data-synth 常驻底栏分页；切换类型 Tab 时回退到第 1 页）
+  const totalRows = filtered.length;
+  const safePage = Math.min(page, Math.max(1, Math.ceil(totalRows / pageSize)));
+  const pagedItems = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   const countByType = useCallback(
     (t: string) => items.filter((it) => it.type === t).length,
@@ -106,100 +113,114 @@ export default function McpManagePage() {
   };
 
   return (
-    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
-    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
-      <Card
-        title="MCP 管理"
-        extra={
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-              刷新
-            </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新增服务器
-            </Button>
-          </Space>
-        }
-      >
-        <Tabs
-          activeKey={typeFilter}
-          onChange={setTypeFilter}
-          style={{ marginBottom: 8 }}
-          items={[
-            { key: "all", label: `全部 (${items.length})` },
-            { key: "streamable_http", label: `streamable_http (${countByType("streamable_http")})` },
-            { key: "stdio", label: `stdio (${countByType("stdio")})` },
-          ]}
+      // 一屏自适应（对齐 data-synth）：外层不滚动，卡片内表格占满剩余高度，分页常驻底栏
+      <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+        <Card
+          title="MCP 管理"
+          style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+          styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+          extra={
+        <Space>
+          <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+            刷新
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            新增服务器
+          </Button>
+        </Space>
+      }
+    >
+      <Tabs
+              activeKey={typeFilter}
+              onChange={(k) => {
+                setTypeFilter(k);
+                setPage(1);
+              }}
+              style={{ marginBottom: 8, flexShrink: 0 }}
+        items={[
+          { key: "all", label: `全部 (${items.length})` },
+          { key: "streamable_http", label: `streamable_http (${countByType("streamable_http")})` },
+          { key: "stdio", label: `stdio (${countByType("stdio")})` },
+        ]}
+      />
+      <ModoTable
+              rowKey="id"
+              size="small"
+              loading={loading}
+              dataSource={pagedItems}
+              locale={{ emptyText: <Text type="secondary">暂无 MCP 服务器</Text> }}
+        columns={[
+          {
+            title: "名称",
+            dataIndex: "name",
+            render: (v: string, r: McpRegistryItem) => (
+              <Space size={4}>
+                <Text strong>{v}</Text>
+                <Tag color={SCOPE_COLOR[r.scope]}>{SCOPE_LABEL[r.scope]}</Tag>
+                {r.enabled !== false && <Tag color="green">启用</Tag>}
+              </Space>
+            ),
+          },
+          {
+            title: "类型",
+            dataIndex: "type",
+            width: 130,
+            render: (v: string) => <Tag>{v === "stdio" ? "stdio" : "streamable_http"}</Tag>,
+          },
+          { title: "URL", dataIndex: "url", ellipsis: true },
+          {
+            title: "密钥",
+            width: 150,
+            render: (_: unknown, r: McpRegistryItem) => (
+              <Text type={r.headers && Object.keys(r.headers).length ? "success" : "secondary"} style={{ fontSize: 12 }}>
+                {r.headers && Object.keys(r.headers).length ? "已配置" : "无"}
+              </Text>
+            ),
+          },
+          {
+            title: "操作",
+            width: 200,
+            render: (_: unknown, r: McpRegistryItem) => (
+              <Space size={4}>
+                <Button size="small" icon={<ThunderboltOutlined />} onClick={() => setTestTarget(r)}>
+                  测试
+                </Button>
+                <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>
+                  编辑
+                </Button>
+                <Popconfirm title={`删除 ${r.name}？`} onConfirm={() => void handleDelete(r)}>
+                  <Button size="small" danger icon={<DeleteOutlined />} />
+                </Popconfirm>
+              </Space>
+            ),
+          },
+        ]}
+      />
+      <ModoPagination
+        current={safePage}
+        pageSize={pageSize}
+        total={totalRows}
+        showTotal={(t) => `共 ${t} 条`}
+        onChange={(p, ps) => {
+          setPage(p);
+          setPageSize(ps);
+        }}
+      />
+      {editOpen && (
+        <McpEditorModal
+          open={editOpen}
+          item={editing}
+          scope="personal"
+          isAdmin={isAdmin}
+          onClose={() => setEditOpen(false)}
+          onSaved={() => {
+            setEditOpen(false);
+            void load();
+          }}
+          message={message}
         />
-        <Table
-          rowKey="id"
-          size="small"
-          loading={loading}
-          dataSource={filtered}
-          pagination={false}
-          locale={{ emptyText: <Text type="secondary">暂无 MCP 服务器</Text> }}
-          columns={[
-            {
-              title: "名称",
-              dataIndex: "name",
-              render: (v: string, r: McpRegistryItem) => (
-                <Space size={4}>
-                  <Text strong>{v}</Text>
-                  <Tag color={SCOPE_COLOR[r.scope]}>{SCOPE_LABEL[r.scope]}</Tag>
-                  {r.enabled !== false && <Tag color="green">启用</Tag>}
-                </Space>
-              ),
-            },
-            {
-              title: "类型",
-              dataIndex: "type",
-              width: 130,
-              render: (v: string) => <Tag>{v === "stdio" ? "stdio" : "streamable_http"}</Tag>,
-            },
-            { title: "URL", dataIndex: "url", ellipsis: true },
-            {
-              title: "密钥",
-              width: 150,
-              render: (_: unknown, r: McpRegistryItem) => (
-                <Text type={r.headers && Object.keys(r.headers).length ? "success" : "secondary"} style={{ fontSize: 12 }}>
-                  {r.headers && Object.keys(r.headers).length ? "已配置" : "无"}
-                </Text>
-              ),
-            },
-            {
-              title: "操作",
-              width: 200,
-              render: (_: unknown, r: McpRegistryItem) => (
-                <Space size={4}>
-                  <Button size="small" icon={<ThunderboltOutlined />} onClick={() => setTestTarget(r)}>
-                    测试
-                  </Button>
-                  <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>
-                    编辑
-                  </Button>
-                  <Popconfirm title={`删除 ${r.name}？`} onConfirm={() => void handleDelete(r)}>
-                    <Button size="small" danger icon={<DeleteOutlined />} />
-                  </Popconfirm>
-                </Space>
-              ),
-            },
-          ]}
-        />
-        {editOpen && (
-          <McpEditorModal
-            open={editOpen}
-            item={editing}
-            scope="personal"
-            isAdmin={isAdmin}
-            onClose={() => setEditOpen(false)}
-            onSaved={() => {
-              setEditOpen(false);
-              void load();
-            }}
-            message={message}
-          />
-        )}
-        <McpTestDrawer target={testTarget} onClose={() => setTestTarget(null)} message={message} />
+      )}
+      <McpTestDrawer target={testTarget} onClose={() => setTestTarget(null)} message={message} />
       </Card>
     </div>
   );

@@ -14,7 +14,6 @@ import {
   Popconfirm,
   Radio,
   Space,
-  Table,
   Transfer,
   Tree,
 } from "antd";
@@ -33,6 +32,7 @@ import {
   SysRoleItem,
 } from "@/lib/api";
 import { menusToTreeData, StateTag } from "../_shared";
+import ModoTable from "@/components/biz/modo-table";
 
 const ROLE_TYPE_LABEL: Record<string, string> = {
   "plat-mgr": "平台管理",
@@ -210,29 +210,30 @@ export default function SystemRolesPage() {
   };
 
   return (
-    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
-    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
+    // 2026-10-07 一屏自适应（对齐 data-synth）：外层不滚动，卡片内表格占满剩余高度
+    <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-      title="角色"
-      extra={
-        <Button type="primary" onClick={openCreate}>
-          新建角色
-        </Button>
-      }
-    >
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 12 }}
-        message="通过「分配菜单」为角色勾选可访问的页面菜单，勾选后该角色下用户的侧边栏与页面访问即受菜单授权控制。"
-      />
-      <Table
-        rowKey="role_id"
-        size="small"
-        loading={loading}
-        dataSource={rows}
-        pagination={false}
-        locale={{ emptyText: <Empty description="暂无角色" /> }}
+        title="角色"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+        extra={
+          <Button type="primary" onClick={openCreate}>
+            新建角色
+          </Button>
+        }
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12, flexShrink: 0 }}
+          message="通过「分配菜单」为角色勾选可访问的页面菜单，勾选后该角色下用户的侧边栏与页面访问即受菜单授权控制。"
+        />
+        <ModoTable
+          rowKey="role_id"
+          size="small"
+          loading={loading}
+          dataSource={rows}
+          locale={{ emptyText: <Empty description="暂无角色" /> }}
         columns={[
           { title: "角色编码", dataIndex: "role_id", width: 140 },
           { title: "角色名", dataIndex: "role_name", width: 160 },
@@ -373,6 +374,6 @@ export default function SystemRolesPage() {
               />
             </Drawer>
           </Card>
-    </div>
-        );
-      }
+        </div>
+      );
+    }
