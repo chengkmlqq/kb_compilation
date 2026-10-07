@@ -1021,24 +1021,25 @@ def download_document(
                 headers={"Content-Disposition": _content_disposition(f.file_name)},
             )
     # 兜底：按文档 storage_path 读取（storage 层统一处理本地/MinIO；
-        # 修复 MinIO 上传未建 SysFile 行时 download「物理文件缺失」404）
-        if doc.storage_path:
-            from api.services import storage as storage_svc
+    # 修复 MinIO 上传未建 SysFile 行时 download「物理文件缺失」404，
+    # 以及此前缩进落在 sys_file_id 分支内、sys_file_id 为空时隐式返回 null 的问题）
+    if doc.storage_path:
+        from api.services import storage as storage_svc
 
-            try:
-                data = storage_svc.get_bytes(doc.storage_path)
-            except Exception:  # noqa: BLE001
-                raise HTTPException(status_code=404, detail="物理文件缺失") from None
-            return StreamingResponse(
-                io.BytesIO(data),
-                media_type="application/octet-stream",
-                headers={
-                    "Content-Disposition": _content_disposition(
-                        doc.file_name or "document.bin"
-                    )
-                },
-            )
-        raise HTTPException(status_code=404, detail="物理文件缺失")
+        try:
+            data = storage_svc.get_bytes(doc.storage_path)
+        except Exception:  # noqa: BLE001
+            raise HTTPException(status_code=404, detail="物理文件缺失") from None
+        return StreamingResponse(
+            io.BytesIO(data),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": _content_disposition(
+                    doc.file_name or "document.bin"
+                )
+            },
+        )
+    raise HTTPException(status_code=404, detail="物理文件缺失")
 
 
 @router.post("/{kb_id}/documents/{document_id}/reparse")
