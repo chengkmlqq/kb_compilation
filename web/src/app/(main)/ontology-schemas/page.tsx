@@ -220,152 +220,149 @@ export default function OntologySchemasPage() {
   ];
 
   return (
-    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
-    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
-      <Card
-        title="本体 Schema"
-        extra={
-          <Space>
-            <Button icon={<ApiOutlined />} onClick={() => { void loadKbs(); bindForm.setFieldsValue({ schema_name: current?.schema_name }); setBindOpen(true); }}>
-              绑定知识库
-            </Button>
-            <Button icon={<CopyOutlined />} onClick={() => { copyForm.setFieldsValue({ source_schema: current?.schema_name }); setCopyOpen(true); }}>
-              复制为新的领域
-            </Button>
-            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-              刷新
-            </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新增分类
-            </Button>
-          </Space>
-        }
-      >
-        <Space direction="vertical" style={{ width: "100%" }} size="middle">
-          {current && (
-            <Descriptions size="small" column={4} bordered>
-              <Descriptions.Item label="Schema 名称">{current.schema_name}</Descriptions.Item>
-              <Descriptions.Item label="标签">{current.schema_label}</Descriptions.Item>
-              <Descriptions.Item label="业务本体">{current.business.length} 类</Descriptions.Item>
-              <Descriptions.Item label="规则本体">{current.rule.length} 类</Descriptions.Item>
-              <Descriptions.Item label="描述" span={4}>
-                {current.schema_desc || "-"}
-              </Descriptions.Item>
-            </Descriptions>
-          )}
-          <Select
-            style={{ width: 320 }}
-            placeholder="切换 Schema（领域）"
-            value={current?.schema_name}
-            onChange={(v: string) => setCurrent(groups.find((g) => g.schema_name === v) ?? null)}
-            options={groups.map((g) => ({
-              value: g.schema_name,
-              label: `${g.schema_label}（${g.schema_name}）`,
-            }))}
-          />
-          <Tabs
-            activeKey={dimTab}
-            onChange={(k) => setDimTab(k as "business" | "rule")}
-            items={[
-              { key: "business", label: `业务本体 (${current?.business.length ?? 0})` },
-              { key: "rule", label: `规则本体 (${current?.rule.length ?? 0})` },
-            ]}
-          />
-          <Table
-            rowKey="id"
-            size="small"
-            dataSource={cats}
-            columns={columns}
-            pagination={{ pageSize: 20, hideOnSinglePage: true }}
-          />
-          <div style={{ color: "#999", fontSize: 12 }}>
-            提示：每个领域一套 Schema（业务本体 + 规则本体双维度）。分类的 LLM 提示词段决定抽取识别要点；
-            规则类的 Neo4j 边类型决定图谱关系动词。构建技能运行时按知识库绑定动态读取。
-            {isRule ? "" : ""}
-          </div>
+    <Card
+      title="本体 Schema"
+      extra={
+        <Space>
+          <Button icon={<ApiOutlined />} onClick={() => { void loadKbs(); bindForm.setFieldsValue({ schema_name: current?.schema_name }); setBindOpen(true); }}>
+            绑定知识库
+          </Button>
+          <Button icon={<CopyOutlined />} onClick={() => { copyForm.setFieldsValue({ source_schema: current?.schema_name }); setCopyOpen(true); }}>
+            复制为新的领域
+          </Button>
+          <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+            刷新
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            新增分类
+          </Button>
         </Space>
+      }
+    >
+      <Space direction="vertical" style={{ width: "100%" }} size="middle">
+        {current && (
+          <Descriptions size="small" column={4} bordered>
+            <Descriptions.Item label="Schema 名称">{current.schema_name}</Descriptions.Item>
+            <Descriptions.Item label="标签">{current.schema_label}</Descriptions.Item>
+            <Descriptions.Item label="业务本体">{current.business.length} 类</Descriptions.Item>
+            <Descriptions.Item label="规则本体">{current.rule.length} 类</Descriptions.Item>
+            <Descriptions.Item label="描述" span={4}>
+              {current.schema_desc || "-"}
+            </Descriptions.Item>
+          </Descriptions>
+        )}
+        <Select
+          style={{ width: 320 }}
+          placeholder="切换 Schema（领域）"
+          value={current?.schema_name}
+          onChange={(v: string) => setCurrent(groups.find((g) => g.schema_name === v) ?? null)}
+          options={groups.map((g) => ({
+            value: g.schema_name,
+            label: `${g.schema_label}（${g.schema_name}）`,
+          }))}
+        />
+        <Tabs
+          activeKey={dimTab}
+          onChange={(k) => setDimTab(k as "business" | "rule")}
+          items={[
+            { key: "business", label: `业务本体 (${current?.business.length ?? 0})` },
+            { key: "rule", label: `规则本体 (${current?.rule.length ?? 0})` },
+          ]}
+        />
+        <Table
+          rowKey="id"
+          size="small"
+          dataSource={cats}
+          columns={columns}
+          pagination={{ pageSize: 20, hideOnSinglePage: true }}
+        />
+        <div style={{ color: "#999", fontSize: 12 }}>
+          提示：每个领域一套 Schema（业务本体 + 规则本体双维度）。分类的 LLM 提示词段决定抽取识别要点；
+          规则类的 Neo4j 边类型决定图谱关系动词。构建技能运行时按知识库绑定动态读取。
+          {isRule ? "" : ""}
+        </div>
+      </Space>
 
-        <Modal
-          title={editing ? `编辑分类（${DIM_LABEL[editing.dimension]}）` : `新增分类（${DIM_LABEL[dimTab]}）`}
-          open={modalOpen}
-          onOk={() => void submit()}
-          onCancel={() => setModalOpen(false)}
-          width={560}
-        >
-          <Form form={form} layout="vertical" initialValues={{ cat_no: 1 }}>
-            <Form.Item name="schema_name" label="Schema" rules={[{ required: true }]}>
-              <Input disabled />
+      <Modal
+        title={editing ? `编辑分类（${DIM_LABEL[editing.dimension]}）` : `新增分类（${DIM_LABEL[dimTab]}）`}
+        open={modalOpen}
+        onOk={() => void submit()}
+        onCancel={() => setModalOpen(false)}
+        width={560}
+      >
+        <Form form={form} layout="vertical" initialValues={{ cat_no: 1 }}>
+          <Form.Item name="schema_name" label="Schema" rules={[{ required: true }]}>
+            <Input disabled />
+          </Form.Item>
+          <Form.Item name="dimension" label="维度" hidden>
+            <Input />
+          </Form.Item>
+          <Space>
+            <Form.Item name="cat_no" label="序号（目录前缀）" rules={[{ required: true }]}>
+              <Input type="number" style={{ width: 150 }} />
             </Form.Item>
-            <Form.Item name="dimension" label="维度" hidden>
-              <Input />
+            <Form.Item name="cat_name" label="类别名" rules={[{ required: true, message: "必填" }]}>
+              <Input style={{ width: 220 }} placeholder="如：处罚规则" />
             </Form.Item>
-            <Space>
-              <Form.Item name="cat_no" label="序号（目录前缀）" rules={[{ required: true }]}>
-                <Input type="number" style={{ width: 150 }} />
-              </Form.Item>
-              <Form.Item name="cat_name" label="类别名" rules={[{ required: true, message: "必填" }]}>
-                <Input style={{ width: 220 }} placeholder="如：处罚规则" />
-              </Form.Item>
-            </Space>
-            <Form.Item name="cat_label" label="目录名（留空自动 = 序号-类别名）">
-              <Input placeholder="如：9-处罚规则" />
-            </Form.Item>
-            <Form.Item name="prompt_hint" label="LLM 提示词段（该类的识别要点，领域适配关键）">
-              <Input.TextArea rows={3} placeholder='如：行政处罚规定（责令改正、罚款、没收、吊销等）' />
-            </Form.Item>
-            <Form.Item name="neo4j_edge" label="Neo4j 边类型（仅规则维度）">
-              <Input placeholder="如：处罚 / 约束 / 定义 / 时限" />
-            </Form.Item>
-          </Form>
-        </Modal>
+          </Space>
+          <Form.Item name="cat_label" label="目录名（留空自动 = 序号-类别名）">
+            <Input placeholder="如：9-处罚规则" />
+          </Form.Item>
+          <Form.Item name="prompt_hint" label="LLM 提示词段（该类的识别要点，领域适配关键）">
+            <Input.TextArea rows={3} placeholder='如：行政处罚规定（责令改正、罚款、没收、吊销等）' />
+          </Form.Item>
+          <Form.Item name="neo4j_edge" label="Neo4j 边类型（仅规则维度）">
+            <Input placeholder="如：处罚 / 约束 / 定义 / 时限" />
+          </Form.Item>
+        </Form>
+      </Modal>
 
-        <Modal
-          title="复制为新的领域 Schema"
-          open={copyOpen}
-          onOk={() => void doCopy()}
-          onCancel={() => setCopyOpen(false)}
-        >
-          <Form form={copyForm} layout="vertical">
-            <Form.Item name="source_schema" label="源 Schema" rules={[{ required: true }]}>
-              <Select
-                options={groups.map((g) => ({ value: g.schema_name, label: g.schema_name }))}
-                placeholder="选择要复制的源领域"
-              />
-            </Form.Item>
-            <Form.Item name="new_schema_name" label="新 Schema 名称（领域名，如：供管制度）" rules={[{ required: true }]}>
-              <Input placeholder="新领域名" />
-            </Form.Item>
-            <Form.Item name="new_schema_label" label="标签（如：供管制度域）">
-              <Input />
-            </Form.Item>
-          </Form>
-        </Modal>
+      <Modal
+        title="复制为新的领域 Schema"
+        open={copyOpen}
+        onOk={() => void doCopy()}
+        onCancel={() => setCopyOpen(false)}
+      >
+        <Form form={copyForm} layout="vertical">
+          <Form.Item name="source_schema" label="源 Schema" rules={[{ required: true }]}>
+            <Select
+              options={groups.map((g) => ({ value: g.schema_name, label: g.schema_name }))}
+              placeholder="选择要复制的源领域"
+            />
+          </Form.Item>
+          <Form.Item name="new_schema_name" label="新 Schema 名称（领域名，如：供管制度）" rules={[{ required: true }]}>
+            <Input placeholder="新领域名" />
+          </Form.Item>
+          <Form.Item name="new_schema_label" label="标签（如：供管制度域）">
+            <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
 
-        <Modal
-          title="绑定知识库 → Schema"
-          open={bindOpen}
-          onOk={() => void doBind()}
-          onCancel={() => setBindOpen(false)}
-        >
-          <Form form={bindForm} layout="vertical">
-            <Form.Item name="kb_id" label="知识库" rules={[{ required: true }]}>
-              <Select
-                showSearch
-                optionFilterProp="label"
-                placeholder="选择知识库"
-                options={kbList.map((k) => ({ value: k.id, label: k.name }))}
-              />
-            </Form.Item>
-            <Form.Item name="schema_name" label="Schema">
-              <Select
-                allowClear
-                placeholder="选择本体 Schema（留空 = 解绑）"
-                options={groups.map((g) => ({ value: g.schema_name, label: g.schema_name }))}
-              />
-            </Form.Item>
-          </Form>
-        </Modal>
-      </Card>
-    </div>
+      <Modal
+        title="绑定知识库 → Schema"
+        open={bindOpen}
+        onOk={() => void doBind()}
+        onCancel={() => setBindOpen(false)}
+      >
+        <Form form={bindForm} layout="vertical">
+          <Form.Item name="kb_id" label="知识库" rules={[{ required: true }]}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              placeholder="选择知识库"
+              options={kbList.map((k) => ({ value: k.id, label: k.name }))}
+            />
+          </Form.Item>
+          <Form.Item name="schema_name" label="Schema">
+            <Select
+              allowClear
+              placeholder="选择本体 Schema（留空 = 解绑）"
+              options={groups.map((g) => ({ value: g.schema_name, label: g.schema_name }))}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </Card>
   );
 }

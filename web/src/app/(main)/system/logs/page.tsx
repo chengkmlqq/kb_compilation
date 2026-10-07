@@ -31,54 +31,51 @@ export default function SystemLogsPage() {
   }, [load]);
 
   return (
-    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
-    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
-      <Card
-        title="操作日志"
-        extra={
-          <Input.Search
-            placeholder="按用户/类型/内容搜索"
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            onSearch={() => {
-              setPage(1);
-              void load();
-            }}
-            style={{ width: 240 }}
-          />
-        }
-      >
-        <Table
-          rowKey="id"
-          size="small"
-          loading={loading}
-          dataSource={rows}
-          pagination={{
-            current: page,
-            pageSize,
-            total,
-            showSizeChanger: true,
-            showTotal: (t) => `共 ${t} 条日志`,
-            onChange: (p, ps) => {
-              setPage(p);
-              setPageSize(ps);
-            },
+    <Card
+      title="操作日志"
+      extra={
+        <Input.Search
+          placeholder="按用户/类型/内容搜索"
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          onSearch={() => {
+            setPage(1);
+            void load();
           }}
-          locale={{ emptyText: <Empty description="暂无日志" /> }}
-          columns={[
-            { title: "用户", dataIndex: "user_name" },
-            {
-              title: "类型",
-              dataIndex: "oper_type",
-              width: 110,
-              render: (v: string) => <Tag color={v === "LOGIN" ? "blue" : "default"}>{v}</Tag>,
-            },
-            { title: "内容", dataIndex: "oper_content", ellipsis: true },
-            { title: "URL", dataIndex: "oper_url", width: 160, ellipsis: true },
-            { title: "时间", dataIndex: "oper_time", width: 170 },
-          ]}
+          style={{ width: 240 }}
         />
-      </Card>
-    </div>
+      }
+    >
+      <Table
+        rowKey="id"
+        size="small"
+        loading={loading}
+        dataSource={rows}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 条日志`,
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
+        }}
+        locale={{ emptyText: <Empty description="暂无日志" /> }}
+        columns={[
+          { title: "用户", dataIndex: "user_name" },
+          {
+            title: "类型",
+            dataIndex: "oper_type",
+            width: 110,
+            render: (v: string) => <Tag color={v === "LOGIN" ? "blue" : "default"}>{v}</Tag>,
+          },
+          { title: "内容", dataIndex: "oper_content", ellipsis: true },
+          { title: "URL", dataIndex: "oper_url", width: 160, ellipsis: true },
+          { title: "时间", dataIndex: "oper_time", width: 170 },
+        ]}
+      />
+    </Card>
   );
 }

@@ -324,209 +324,206 @@ export default function SkillManagePage() {
   };
 
   return (
-    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
-    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
-      <Card
-        title="技能管理"
-        extra={
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-              刷新
+    <Card
+      title="技能管理"
+      extra={
+        <Space>
+          <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+            刷新
+          </Button>
+          <Upload accept=".zip" showUploadList={false} beforeUpload={handleInstall}>
+            <Button type="primary" icon={<UploadOutlined />}>
+              安装技能 (ZIP)
             </Button>
-            <Upload accept=".zip" showUploadList={false} beforeUpload={handleInstall}>
-              <Button type="primary" icon={<UploadOutlined />}>
-                安装技能 (ZIP)
-              </Button>
-            </Upload>
-          </Space>
-        }
+          </Upload>
+        </Space>
+      }
+    >
+      {/* 拖放安装区（支持拖入文件夹：全局拖放会递归展开并统计文件数） */}
+      <div
+        onDragEnter={(e) => {
+          e.preventDefault();
+          zoneCounter.current += 1;
+          setZoneActive(true);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          zoneCounter.current = Math.max(0, zoneCounter.current - 1);
+          if (zoneCounter.current === 0) setZoneActive(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          zoneCounter.current = 0;
+          setZoneActive(false);
+          // 不阻止冒泡：交由 window 级 GlobalDropZone 统一收集（含目录递归）并路由
+        }}
+        style={{
+          border: zoneActive ? "2px dashed #1677ff" : "2px dashed #d9d9d9",
+          background: zoneActive ? "rgba(22, 119, 255, 0.05)" : "#fafafa",
+          borderRadius: 8,
+          padding: "16px 12px",
+          marginBottom: 12,
+          textAlign: "center",
+          cursor: "pointer",
+          transition: "all 0.2s",
+        }}
       >
-        {/* 拖放安装区（支持拖入文件夹：全局拖放会递归展开并统计文件数） */}
-        <div
-          onDragEnter={(e) => {
-            e.preventDefault();
-            zoneCounter.current += 1;
-            setZoneActive(true);
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-          }}
-          onDragLeave={(e) => {
-            e.preventDefault();
-            zoneCounter.current = Math.max(0, zoneCounter.current - 1);
-            if (zoneCounter.current === 0) setZoneActive(false);
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            zoneCounter.current = 0;
-            setZoneActive(false);
-            // 不阻止冒泡：交由 window 级 GlobalDropZone 统一收集（含目录递归）并路由
-          }}
-          style={{
-            border: zoneActive ? "2px dashed #1677ff" : "2px dashed #d9d9d9",
-            background: zoneActive ? "rgba(22, 119, 255, 0.05)" : "#fafafa",
-            borderRadius: 8,
-            padding: "16px 12px",
-            marginBottom: 12,
-            textAlign: "center",
-            cursor: "pointer",
-            transition: "all 0.2s",
-          }}
-        >
-          <InboxOutlined style={{ fontSize: 26, color: zoneActive ? "#1677ff" : "#999", marginRight: 8 }} />
-          <span style={{ fontSize: 13, color: zoneActive ? "#1677ff" : "#666" }}>
-            将技能包（.zip）拖到这里安装，支持拖入文件夹（自动展开并统计文件数）
-          </span>
-        </div>
-        <Table
-          rowKey="id"
-          size="small"
-          loading={loading}
-          dataSource={filtered}
-          pagination={false}
-          locale={{ emptyText: <Text type="secondary">暂无技能，点击右上角「安装技能 (ZIP)」上传</Text> }}
-          columns={[
-            {
-              title: "名称",
-              dataIndex: "name",
-              render: (v: string, r: SkillRegistryItem) => (
-                <Space size={4}>
-                  <Text strong>{v}</Text>
-                  <Tag color={SCOPE_COLOR[r.scope]}>{SCOPE_LABEL[r.scope]}</Tag>
-                </Space>
-              ),
-            },
-            { title: "描述", dataIndex: "description", ellipsis: true },
-            { title: "版本", dataIndex: "version", width: 90, render: (v: string) => v || "-" },
-            {
-              title: "大小",
-              dataIndex: "package_size",
-              width: 100,
-              render: (v: number) => fmtSize(v),
-            },
-            {
-              title: "操作",
-              width: 200,
-              render: (_: unknown, r: SkillRegistryItem) => (
-                <Space size={4}>
-                  <Button size="small" onClick={() => void openDetail(r)}>
-                    详情
-                  </Button>
-                  <Button size="small" icon={<DownloadOutlined />} onClick={() => handleExport(r)}>
-                    导出
-                  </Button>
-                  <Popconfirm title={`删除技能 ${r.name}？`} onConfirm={() => void handleDelete(r)}>
-                    <Button size="small" danger icon={<DeleteOutlined />} />
-                  </Popconfirm>
-                </Space>
-              ),
-            },
-          ]}
-        />
-        <Drawer
-          title={detailTarget ? `技能详情：${detailTarget.name}` : "技能详情"}
-          width={840}
-          open={!!detailTarget}
-          onClose={() => setDetailTarget(null)}
-          destroyOnClose
-        >
-          {detailTarget && (
-            <div style={{ display: "flex", gap: 16, minHeight: 480 }}>
-              {/* 左侧：元信息 + 文件树 */}
-              <div
-                style={{
-                  width: 250,
-                  flex: "0 0 250px",
-                  borderRight: "1px solid rgba(0,0,0,0.06)",
-                  paddingRight: 12,
-                  overflow: "auto",
-                  maxHeight: 620,
-                }}
-              >
-                <Space wrap size={4} style={{ marginBottom: 10 }}>
-                  <Tag color={SCOPE_COLOR[detailTarget.scope]}>{SCOPE_LABEL[detailTarget.scope]}</Tag>
-                  <Tag>v{detailTarget.version || "-"}</Tag>
-                  <Text type="secondary" style={{ fontSize: 12 }}>{fmtSize(detailTarget.package_size)}</Text>
-                </Space>
-                {detailLoading ? (
+        <InboxOutlined style={{ fontSize: 26, color: zoneActive ? "#1677ff" : "#999", marginRight: 8 }} />
+        <span style={{ fontSize: 13, color: zoneActive ? "#1677ff" : "#666" }}>
+          将技能包（.zip）拖到这里安装，支持拖入文件夹（自动展开并统计文件数）
+        </span>
+      </div>
+      <Table
+        rowKey="id"
+        size="small"
+        loading={loading}
+        dataSource={filtered}
+        pagination={false}
+        locale={{ emptyText: <Text type="secondary">暂无技能，点击右上角「安装技能 (ZIP)」上传</Text> }}
+        columns={[
+          {
+            title: "名称",
+            dataIndex: "name",
+            render: (v: string, r: SkillRegistryItem) => (
+              <Space size={4}>
+                <Text strong>{v}</Text>
+                <Tag color={SCOPE_COLOR[r.scope]}>{SCOPE_LABEL[r.scope]}</Tag>
+              </Space>
+            ),
+          },
+          { title: "描述", dataIndex: "description", ellipsis: true },
+          { title: "版本", dataIndex: "version", width: 90, render: (v: string) => v || "-" },
+          {
+            title: "大小",
+            dataIndex: "package_size",
+            width: 100,
+            render: (v: number) => fmtSize(v),
+          },
+          {
+            title: "操作",
+            width: 200,
+            render: (_: unknown, r: SkillRegistryItem) => (
+              <Space size={4}>
+                <Button size="small" onClick={() => void openDetail(r)}>
+                  详情
+                </Button>
+                <Button size="small" icon={<DownloadOutlined />} onClick={() => handleExport(r)}>
+                  导出
+                </Button>
+                <Popconfirm title={`删除技能 ${r.name}？`} onConfirm={() => void handleDelete(r)}>
+                  <Button size="small" danger icon={<DeleteOutlined />} />
+                </Popconfirm>
+              </Space>
+            ),
+          },
+        ]}
+      />
+      <Drawer
+        title={detailTarget ? `技能详情：${detailTarget.name}` : "技能详情"}
+        width={840}
+        open={!!detailTarget}
+        onClose={() => setDetailTarget(null)}
+        destroyOnClose
+      >
+        {detailTarget && (
+          <div style={{ display: "flex", gap: 16, minHeight: 480 }}>
+            {/* 左侧：元信息 + 文件树 */}
+            <div
+              style={{
+                width: 250,
+                flex: "0 0 250px",
+                borderRight: "1px solid rgba(0,0,0,0.06)",
+                paddingRight: 12,
+                overflow: "auto",
+                maxHeight: 620,
+              }}
+            >
+              <Space wrap size={4} style={{ marginBottom: 10 }}>
+                <Tag color={SCOPE_COLOR[detailTarget.scope]}>{SCOPE_LABEL[detailTarget.scope]}</Tag>
+                <Tag>v{detailTarget.version || "-"}</Tag>
+                <Text type="secondary" style={{ fontSize: 12 }}>{fmtSize(detailTarget.package_size)}</Text>
+              </Space>
+              {detailLoading ? (
+                <Spin />
+              ) : detailFiles.length === 0 ? (
+                <Empty description="包内无文件" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              ) : (
+                <Tree
+                  treeData={buildFileTree(detailFiles)}
+                  selectedKeys={selectedPath ? [selectedPath] : []}
+                  defaultExpandAll
+                  onSelect={(keys) => {
+                    const k = keys[0] as string | undefined;
+                    if (k && detailTarget) void loadFile(detailTarget.id, k);
+                  }}
+                  showIcon={false}
+                  blockNode
+                />
+              )}
+            </div>
+            {/* 右侧：文件预览 */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {fileLoading ? (
+                <div style={{ textAlign: "center", paddingTop: 120 }}>
                   <Spin />
-                ) : detailFiles.length === 0 ? (
-                  <Empty description="包内无文件" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                ) : (
-                  <Tree
-                    treeData={buildFileTree(detailFiles)}
-                    selectedKeys={selectedPath ? [selectedPath] : []}
-                    defaultExpandAll
-                    onSelect={(keys) => {
-                      const k = keys[0] as string | undefined;
-                      if (k && detailTarget) void loadFile(detailTarget.id, k);
-                    }}
-                    showIcon={false}
-                    blockNode
-                  />
-                )}
-              </div>
-              {/* 右侧：文件预览 */}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                {fileLoading ? (
-                  <div style={{ textAlign: "center", paddingTop: 120 }}>
-                    <Spin />
-                  </div>
-                ) : !fileData ? (
-                  <Empty description="从左侧选择文件预览" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                ) : fileData.binary ? (
-                  <Empty description={`${fileData.path} 为二进制文件（${fmtSize(fileData.size)}），不支持内联预览，可「导出」整包`} />
-                ) : fileData.truncated ? (
-                  <Empty description={`${fileData.path} 超过 512KB（${fmtSize(fileData.size)}），仅展示元信息`} />
-                ) : isMarkdown(fileData.path) ? (
-                  <div
-                    style={{
-                      maxHeight: 620,
-                      overflow: "auto",
-                      padding: "0 10px",
-                      fontSize: 13,
-                      lineHeight: 1.7,
-                    }}
-                  >
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{fileData.content}</ReactMarkdown>
-                  </div>
-                ) : (
-                  <CodeViewer value={fileData.content} fileName={fileData.path} height={620} />
-                )}
-              </div>
+                </div>
+              ) : !fileData ? (
+                <Empty description="从左侧选择文件预览" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              ) : fileData.binary ? (
+                <Empty description={`${fileData.path} 为二进制文件（${fmtSize(fileData.size)}），不支持内联预览，可「导出」整包`} />
+              ) : fileData.truncated ? (
+                <Empty description={`${fileData.path} 超过 512KB（${fmtSize(fileData.size)}），仅展示元信息`} />
+              ) : isMarkdown(fileData.path) ? (
+                <div
+                  style={{
+                    maxHeight: 620,
+                    overflow: "auto",
+                    padding: "0 10px",
+                    fontSize: 13,
+                    lineHeight: 1.7,
+                  }}
+                >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{fileData.content}</ReactMarkdown>
+                </div>
+              ) : (
+                <CodeViewer value={fileData.content} fileName={fileData.path} height={620} />
+              )}
             </div>
-          )}
-        </Drawer>
-        <Modal
-          title="安装技能"
-          open={installOpen}
-          onCancel={() => {
-            setInstallOpen(false);
-            setPendingFile(null);
-          }}
-          onOk={() => void confirmInstall()}
-          okText="安装"
-        >
-          <Space direction="vertical" style={{ display: "flex" }} size={12}>
-            <Text type="secondary">文件：{pendingFile?.name}</Text>
-            <div>
-              <Text>安装到</Text>
-              <Radio.Group
-                value={installScope}
-                onChange={(e) => setInstallScope(e.target.value)}
-                optionType="button"
-                buttonStyle="solid"
-                style={{ marginLeft: 8 }}
-                options={[
-                  { label: "我的（仅自己）", value: "personal" },
-                  { label: "团队（团队共用）", value: "team" },
-                  ...(isAdmin ? [{ label: "系统（仅管理员）", value: "system" }] : []),
-                ]}
-              />
-            </div>
-          </Space>
-        </Modal>
-      </Card>
-    </div>
+          </div>
+        )}
+      </Drawer>
+      <Modal
+        title="安装技能"
+        open={installOpen}
+        onCancel={() => {
+          setInstallOpen(false);
+          setPendingFile(null);
+        }}
+        onOk={() => void confirmInstall()}
+        okText="安装"
+      >
+        <Space direction="vertical" style={{ display: "flex" }} size={12}>
+          <Text type="secondary">文件：{pendingFile?.name}</Text>
+          <div>
+            <Text>安装到</Text>
+            <Radio.Group
+              value={installScope}
+              onChange={(e) => setInstallScope(e.target.value)}
+              optionType="button"
+              buttonStyle="solid"
+              style={{ marginLeft: 8 }}
+              options={[
+                { label: "我的（仅自己）", value: "personal" },
+                { label: "团队（团队共用）", value: "team" },
+                ...(isAdmin ? [{ label: "系统（仅管理员）", value: "system" }] : []),
+              ]}
+            />
+          </div>
+        </Space>
+      </Modal>
+    </Card>
   );
 }
