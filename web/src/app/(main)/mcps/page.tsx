@@ -106,99 +106,102 @@ export default function McpManagePage() {
   };
 
   return (
-    <Card
-      title="MCP 管理"
-      extra={
-        <Space>
-          <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-            刷新
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新增服务器
-          </Button>
-        </Space>
-      }
-    >
-      <Tabs
-        activeKey={typeFilter}
-        onChange={setTypeFilter}
-        style={{ marginBottom: 8 }}
-        items={[
-          { key: "all", label: `全部 (${items.length})` },
-          { key: "streamable_http", label: `streamable_http (${countByType("streamable_http")})` },
-          { key: "stdio", label: `stdio (${countByType("stdio")})` },
-        ]}
-      />
-      <Table
-        rowKey="id"
-        size="small"
-        loading={loading}
-        dataSource={filtered}
-        pagination={false}
-        locale={{ emptyText: <Text type="secondary">暂无 MCP 服务器</Text> }}
-        columns={[
-          {
-            title: "名称",
-            dataIndex: "name",
-            render: (v: string, r: McpRegistryItem) => (
-              <Space size={4}>
-                <Text strong>{v}</Text>
-                <Tag color={SCOPE_COLOR[r.scope]}>{SCOPE_LABEL[r.scope]}</Tag>
-                {r.enabled !== false && <Tag color="green">启用</Tag>}
-              </Space>
-            ),
-          },
-          {
-            title: "类型",
-            dataIndex: "type",
-            width: 130,
-            render: (v: string) => <Tag>{v === "stdio" ? "stdio" : "streamable_http"}</Tag>,
-          },
-          { title: "URL", dataIndex: "url", ellipsis: true },
-          {
-            title: "密钥",
-            width: 150,
-            render: (_: unknown, r: McpRegistryItem) => (
-              <Text type={r.headers && Object.keys(r.headers).length ? "success" : "secondary"} style={{ fontSize: 12 }}>
-                {r.headers && Object.keys(r.headers).length ? "已配置" : "无"}
-              </Text>
-            ),
-          },
-          {
-            title: "操作",
-            width: 200,
-            render: (_: unknown, r: McpRegistryItem) => (
-              <Space size={4}>
-                <Button size="small" icon={<ThunderboltOutlined />} onClick={() => setTestTarget(r)}>
-                  测试
-                </Button>
-                <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>
-                  编辑
-                </Button>
-                <Popconfirm title={`删除 ${r.name}？`} onConfirm={() => void handleDelete(r)}>
-                  <Button size="small" danger icon={<DeleteOutlined />} />
-                </Popconfirm>
-              </Space>
-            ),
-          },
-        ]}
-      />
-      {editOpen && (
-        <McpEditorModal
-          open={editOpen}
-          item={editing}
-          scope="personal"
-          isAdmin={isAdmin}
-          onClose={() => setEditOpen(false)}
-          onSaved={() => {
-            setEditOpen(false);
-            void load();
-          }}
-          message={message}
+    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
+    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
+      <Card
+        title="MCP 管理"
+        extra={
+          <Space>
+            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+              刷新
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              新增服务器
+            </Button>
+          </Space>
+        }
+      >
+        <Tabs
+          activeKey={typeFilter}
+          onChange={setTypeFilter}
+          style={{ marginBottom: 8 }}
+          items={[
+            { key: "all", label: `全部 (${items.length})` },
+            { key: "streamable_http", label: `streamable_http (${countByType("streamable_http")})` },
+            { key: "stdio", label: `stdio (${countByType("stdio")})` },
+          ]}
         />
-      )}
-      <McpTestDrawer target={testTarget} onClose={() => setTestTarget(null)} message={message} />
-    </Card>
+        <Table
+          rowKey="id"
+          size="small"
+          loading={loading}
+          dataSource={filtered}
+          pagination={false}
+          locale={{ emptyText: <Text type="secondary">暂无 MCP 服务器</Text> }}
+          columns={[
+            {
+              title: "名称",
+              dataIndex: "name",
+              render: (v: string, r: McpRegistryItem) => (
+                <Space size={4}>
+                  <Text strong>{v}</Text>
+                  <Tag color={SCOPE_COLOR[r.scope]}>{SCOPE_LABEL[r.scope]}</Tag>
+                  {r.enabled !== false && <Tag color="green">启用</Tag>}
+                </Space>
+              ),
+            },
+            {
+              title: "类型",
+              dataIndex: "type",
+              width: 130,
+              render: (v: string) => <Tag>{v === "stdio" ? "stdio" : "streamable_http"}</Tag>,
+            },
+            { title: "URL", dataIndex: "url", ellipsis: true },
+            {
+              title: "密钥",
+              width: 150,
+              render: (_: unknown, r: McpRegistryItem) => (
+                <Text type={r.headers && Object.keys(r.headers).length ? "success" : "secondary"} style={{ fontSize: 12 }}>
+                  {r.headers && Object.keys(r.headers).length ? "已配置" : "无"}
+                </Text>
+              ),
+            },
+            {
+              title: "操作",
+              width: 200,
+              render: (_: unknown, r: McpRegistryItem) => (
+                <Space size={4}>
+                  <Button size="small" icon={<ThunderboltOutlined />} onClick={() => setTestTarget(r)}>
+                    测试
+                  </Button>
+                  <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>
+                    编辑
+                  </Button>
+                  <Popconfirm title={`删除 ${r.name}？`} onConfirm={() => void handleDelete(r)}>
+                    <Button size="small" danger icon={<DeleteOutlined />} />
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
+        {editOpen && (
+          <McpEditorModal
+            open={editOpen}
+            item={editing}
+            scope="personal"
+            isAdmin={isAdmin}
+            onClose={() => setEditOpen(false)}
+            onSaved={() => {
+              setEditOpen(false);
+              void load();
+            }}
+            message={message}
+          />
+        )}
+        <McpTestDrawer target={testTarget} onClose={() => setTestTarget(null)} message={message} />
+      </Card>
+    </div>
   );
 }
 

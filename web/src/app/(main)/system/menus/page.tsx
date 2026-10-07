@@ -251,7 +251,9 @@ export default function SystemMenusPage() {
     };
 
   return (
-    <Card
+    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
+    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
+      <Card
       title="菜单"
       extra={
         <Space>
@@ -386,5 +388,6 @@ export default function SystemMenusPage() {
                   <ApiPermEditor value={apiPerms} onChange={setApiPerms} />
                 </Modal>
               </Card>
+    </div>
             );
 }

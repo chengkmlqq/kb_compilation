@@ -255,164 +255,167 @@ export default function ModelRegistryPage() {
   }
 
   return (
-    <Card
-      title="模型配置"
-      extra={
-        <Space>
-          <Button icon={<DownloadOutlined />} onClick={handleExport}>
-            导出
-          </Button>
-          <Upload
-            accept=".json,application/json"
-            showUploadList={false}
-            beforeUpload={handleImportFile}
-          >
-            <Button icon={<UploadOutlined />}>导入</Button>
-          </Upload>
-          <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-            刷新
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新建模型
-          </Button>
-        </Space>
-      }
-    >
-      <Tabs
-        activeKey={typeFilter}
-        onChange={setTypeFilter}
-        items={[
-          { key: "all", label: `全部 (${items.length})` },
-          ...ALL_TYPES.map((t) => ({
-            key: t,
-            label: `${TYPE_LABEL[t]} (${countByType(t)})`,
-          })),
-        ]}
-      />
-
-      {filtered.length === 0 ? null : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
-            gap: 16,
-          }}
-        >
-          {filtered.map((item) => (
-            <Card
-              key={item.id}
-              size="small"
-              hoverable
-              onClick={() => openEdit(item)}
-              style={{ borderColor: item.is_default ? "#52c41a" : undefined, cursor: "pointer" }}
-              title={
-                <Space>
-                  <span style={{ color: TYPE_COLOR[item.type as ModelType] }}>
-                    {TYPE_ICON[item.type as ModelType]}
-                  </span>
-                  <Text strong>{item.display_name || item.name}</Text>
-                  <Tag color={SCOPE_COLOR[item.scope]}>{SCOPE_LABEL[item.scope]}</Tag>
-                  <Tag color={TYPE_COLOR[item.type as ModelType]}>{TYPE_LABEL[item.type as ModelType]}</Tag>
-                  {item.is_default && (
-                    <Tag color="success" icon={<StarFilled />}>
-                      默认
-                    </Tag>
-                  )}
-                </Space>
-              }
-              extra={
-                <Space size={0} onClick={(e) => e.stopPropagation()}>
-                  {!item.is_default && (
-                    <Tooltip title="设为默认">
-                      <Button
-                        size="small"
-                        type="text"
-                        icon={<StarOutlined />}
-                        onClick={() => void handleSetDefault(item)}
-                      />
-                    </Tooltip>
-                  )}
-                  <Dropdown
-                    menu={{
-                      items: [
-                        { key: "edit", icon: <EditOutlined />, label: "编辑" },
-                        { key: "copy", icon: <CopyOutlined />, label: "复制" },
-                      ],
-                      onClick: ({ key }) => {
-                        if (key === "edit") openEdit(item);
-                        else if (key === "copy") void handleCopy(item);
-                      },
-                    }}
-                  >
-                    <Button size="small" type="text" icon={<EllipsisOutlined />} />
-                  </Dropdown>
-                  <Popconfirm
-                    title={`删除模型 ${item.name}？`}
-                    description="删除后不可恢复"
-                    onConfirm={() => void handleDelete(item)}
-                  >
-                    <Button size="small" type="text" danger icon={<DeleteOutlined />} />
-                  </Popconfirm>
-                </Space>
-              }
+    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
+    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
+      <Card
+        title="模型配置"
+        extra={
+          <Space>
+            <Button icon={<DownloadOutlined />} onClick={handleExport}>
+              导出
+            </Button>
+            <Upload
+              accept=".json,application/json"
+              showUploadList={false}
+              beforeUpload={handleImportFile}
             >
-              <Space direction="vertical" size={2}>
-                <Text type="secondary" code>
-                  {item.name}
-                  {item.provider ? ` · ${item.provider}` : ""}
-                </Text>
-                {item.base_url ? <Text type="secondary" style={{ fontSize: 12 }}>{item.base_url}</Text> : null}
-                <Space size={4} wrap>
-                  {item.type === "embedding" && item.dimension ? (
-                    <Tag>维度 {item.dimension}</Tag>
-                  ) : null}
-                  {item.supports_vision && item.type === "chat" ? <Tag>视觉</Tag> : null}
-                  {item.max_concurrency ? <Tag>并发 {item.max_concurrency}</Tag> : null}
-                  {item.thinking_control ? <Tag>思考 {item.thinking_control}</Tag> : null}
-                </Space>
-                {item.description ? (
-                  <Text type="secondary" style={{ fontSize: 12 }} ellipsis={{ tooltip: item.description }}>
-                    {item.description}
-                  </Text>
-                ) : null}
-                <Text type={item.api_key_configured ? "success" : "danger"} style={{ fontSize: 12 }}>
-                  {item.api_key_configured ? `密钥已配置 ${item.api_key_masked}` : "未配置密钥"}
-                </Text>
-                <Button size="small" icon={<ExperimentOutlined />} onClick={(e) => {
-                  e.stopPropagation();
-                  setDebugTarget(item);
-                }}>
-                  调试
-                </Button>
-              </Space>
-            </Card>
-          ))}
-        </div>
-      )}
+              <Button icon={<UploadOutlined />}>导入</Button>
+            </Upload>
+            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+              刷新
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              新建模型
+            </Button>
+          </Space>
+        }
+      >
+        <Tabs
+          activeKey={typeFilter}
+          onChange={setTypeFilter}
+          items={[
+            { key: "all", label: `全部 (${items.length})` },
+            ...ALL_TYPES.map((t) => ({
+              key: t,
+              label: `${TYPE_LABEL[t]} (${countByType(t)})`,
+            })),
+          ]}
+        />
 
-      {modalOpen && (
-        <ModelEditorModal
-          open={modalOpen}
-          item={editing}
-          scope="personal"
-          isAdmin={isAdmin}
-          providers={providers}
-          onClose={() => setModalOpen(false)}
-          onSaved={() => {
-            setModalOpen(false);
-            void load();
-          }}
+        {filtered.length === 0 ? null : (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+              gap: 16,
+            }}
+          >
+            {filtered.map((item) => (
+              <Card
+                key={item.id}
+                size="small"
+                hoverable
+                onClick={() => openEdit(item)}
+                style={{ borderColor: item.is_default ? "#52c41a" : undefined, cursor: "pointer" }}
+                title={
+                  <Space>
+                    <span style={{ color: TYPE_COLOR[item.type as ModelType] }}>
+                      {TYPE_ICON[item.type as ModelType]}
+                    </span>
+                    <Text strong>{item.display_name || item.name}</Text>
+                    <Tag color={SCOPE_COLOR[item.scope]}>{SCOPE_LABEL[item.scope]}</Tag>
+                    <Tag color={TYPE_COLOR[item.type as ModelType]}>{TYPE_LABEL[item.type as ModelType]}</Tag>
+                    {item.is_default && (
+                      <Tag color="success" icon={<StarFilled />}>
+                        默认
+                      </Tag>
+                    )}
+                  </Space>
+                }
+                extra={
+                  <Space size={0} onClick={(e) => e.stopPropagation()}>
+                    {!item.is_default && (
+                      <Tooltip title="设为默认">
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={<StarOutlined />}
+                          onClick={() => void handleSetDefault(item)}
+                        />
+                      </Tooltip>
+                    )}
+                    <Dropdown
+                      menu={{
+                        items: [
+                          { key: "edit", icon: <EditOutlined />, label: "编辑" },
+                          { key: "copy", icon: <CopyOutlined />, label: "复制" },
+                        ],
+                        onClick: ({ key }) => {
+                          if (key === "edit") openEdit(item);
+                          else if (key === "copy") void handleCopy(item);
+                        },
+                      }}
+                    >
+                      <Button size="small" type="text" icon={<EllipsisOutlined />} />
+                    </Dropdown>
+                    <Popconfirm
+                      title={`删除模型 ${item.name}？`}
+                      description="删除后不可恢复"
+                      onConfirm={() => void handleDelete(item)}
+                    >
+                      <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                    </Popconfirm>
+                  </Space>
+                }
+              >
+                <Space direction="vertical" size={2}>
+                  <Text type="secondary" code>
+                    {item.name}
+                    {item.provider ? ` · ${item.provider}` : ""}
+                  </Text>
+                  {item.base_url ? <Text type="secondary" style={{ fontSize: 12 }}>{item.base_url}</Text> : null}
+                  <Space size={4} wrap>
+                    {item.type === "embedding" && item.dimension ? (
+                      <Tag>维度 {item.dimension}</Tag>
+                    ) : null}
+                    {item.supports_vision && item.type === "chat" ? <Tag>视觉</Tag> : null}
+                    {item.max_concurrency ? <Tag>并发 {item.max_concurrency}</Tag> : null}
+                    {item.thinking_control ? <Tag>思考 {item.thinking_control}</Tag> : null}
+                  </Space>
+                  {item.description ? (
+                    <Text type="secondary" style={{ fontSize: 12 }} ellipsis={{ tooltip: item.description }}>
+                      {item.description}
+                    </Text>
+                  ) : null}
+                  <Text type={item.api_key_configured ? "success" : "danger"} style={{ fontSize: 12 }}>
+                    {item.api_key_configured ? `密钥已配置 ${item.api_key_masked}` : "未配置密钥"}
+                  </Text>
+                  <Button size="small" icon={<ExperimentOutlined />} onClick={(e) => {
+                    e.stopPropagation();
+                    setDebugTarget(item);
+                  }}>
+                    调试
+                  </Button>
+                </Space>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {modalOpen && (
+          <ModelEditorModal
+            open={modalOpen}
+            item={editing}
+            scope="personal"
+            isAdmin={isAdmin}
+            providers={providers}
+            onClose={() => setModalOpen(false)}
+            onSaved={() => {
+              setModalOpen(false);
+              void load();
+            }}
+            message={message}
+          />
+        )}
+
+        <ModelDebugDrawer
+          target={debugTarget}
+          models={items}
+          onClose={() => setDebugTarget(null)}
           message={message}
         />
-      )}
-
-      <ModelDebugDrawer
-        target={debugTarget}
-        models={items}
-        onClose={() => setDebugTarget(null)}
-        message={message}
-      />
-    </Card>
+      </Card>
+    </div>
   );
 }
 

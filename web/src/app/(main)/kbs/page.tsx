@@ -268,280 +268,283 @@ export default function KbsPage() {
   };
 
   return (
-    <Card
-      title="知识库管理"
-      extra={
-        <Space wrap>
-          <Input.Search
-            allowClear
-            placeholder="搜索知识库名称/标签"
-            style={{ width: 240 }}
-            onSearch={(v) => setSearch(v)}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-            新建知识库
-          </Button>
-        </Space>
-      }
-    >
-      {visibleKbs.length === 0 ? (
-        <Empty description="暂无知识库，点击右上角「新建知识库」创建">
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-            新建知识库
-          </Button>
-        </Empty>
-      ) : (
-        <Row gutter={[16, 16]}>
-          {visibleKbs.map((kb) => {
-            const isFaq = kb.type === "faq";
-            const graphOn = Boolean(kb.indexing_strategy?.graph_enabled);
-            const vlmOn = kb.vlm_config && Object.keys(kb.vlm_config).length > 0;
-            const pinnedNow = pinned.has(kb.id);
-            return (
-              <Col key={kb.id} xs={24} sm={12} lg={8} xl={6}>
-                <Card
-                  size="small"
-                  hoverable
-                  style={{ height: "100%" }}
-                  onClick={() => router.push(`/kbs/${kb.id}`)}
-                  title={
-                    <Space>
-                      <span
-                        style={{
-                          fontSize: 20,
-                          color: isFaq ? "#52c41a" : "#1677ff",
+    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
+    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
+      <Card
+        title="知识库管理"
+        extra={
+          <Space wrap>
+            <Input.Search
+              allowClear
+              placeholder="搜索知识库名称/标签"
+              style={{ width: 240 }}
+              onSearch={(v) => setSearch(v)}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              新建知识库
+            </Button>
+          </Space>
+        }
+      >
+        {visibleKbs.length === 0 ? (
+          <Empty description="暂无知识库，点击右上角「新建知识库」创建">
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              新建知识库
+            </Button>
+          </Empty>
+        ) : (
+          <Row gutter={[16, 16]}>
+            {visibleKbs.map((kb) => {
+              const isFaq = kb.type === "faq";
+              const graphOn = Boolean(kb.indexing_strategy?.graph_enabled);
+              const vlmOn = kb.vlm_config && Object.keys(kb.vlm_config).length > 0;
+              const pinnedNow = pinned.has(kb.id);
+              return (
+                <Col key={kb.id} xs={24} sm={12} lg={8} xl={6}>
+                  <Card
+                    size="small"
+                    hoverable
+                    style={{ height: "100%" }}
+                    onClick={() => router.push(`/kbs/${kb.id}`)}
+                    title={
+                      <Space>
+                        <span
+                          style={{
+                            fontSize: 20,
+                            color: isFaq ? "#52c41a" : "#1677ff",
+                          }}
+                        >
+                          {isFaq ? <MessageOutlined /> : <FileTextOutlined />}
+                        </span>
+                        <Typography.Text strong ellipsis style={{ maxWidth: 140 }}>
+                          {kb.name}
+                        </Typography.Text>
+                      </Space>
+                    }
+                    extra={
+                      <Dropdown
+                        menu={{
+                          items: [
+                            { key: "open", label: "打开知识库" },
+                            { key: "config", label: "知识库配置" },
+                            { key: "chunking", label: "切片配置" },
+                            { type: "divider" },
+                            pinnedNow
+                              ? { key: "unpin", label: "取消置顶" }
+                              : { key: "pin", label: "置顶", icon: <PushpinOutlined /> },
+                            { type: "divider" },
+                            { key: "delete", label: "删除", danger: true },
+                          ],
+                          onClick: ({ key, domEvent }) => {
+                            domEvent.stopPropagation();
+                            if (key === "open") router.push(`/kbs/${kb.id}`);
+                            else if (key === "config") setConfigKb(kb);
+                            else if (key === "chunking") setChunkingKbId(kb.id);
+                            else if (key === "pin") togglePin(kb.id);
+                            else if (key === "unpin") togglePin(kb.id);
+                            else if (key === "delete") onDelete(kb);
+                          },
                         }}
                       >
-                        {isFaq ? <MessageOutlined /> : <FileTextOutlined />}
-                      </span>
-                      <Typography.Text strong ellipsis style={{ maxWidth: 140 }}>
-                        {kb.name}
-                      </Typography.Text>
-                    </Space>
-                  }
-                  extra={
-                    <Dropdown
-                      menu={{
-                        items: [
-                          { key: "open", label: "打开知识库" },
-                          { key: "config", label: "知识库配置" },
-                          { key: "chunking", label: "切片配置" },
-                          { type: "divider" },
-                          pinnedNow
-                            ? { key: "unpin", label: "取消置顶" }
-                            : { key: "pin", label: "置顶", icon: <PushpinOutlined /> },
-                          { type: "divider" },
-                          { key: "delete", label: "删除", danger: true },
-                        ],
-                        onClick: ({ key, domEvent }) => {
-                          domEvent.stopPropagation();
-                          if (key === "open") router.push(`/kbs/${kb.id}`);
-                          else if (key === "config") setConfigKb(kb);
-                          else if (key === "chunking") setChunkingKbId(kb.id);
-                          else if (key === "pin") togglePin(kb.id);
-                          else if (key === "unpin") togglePin(kb.id);
-                          else if (key === "delete") onDelete(kb);
-                        },
-                      }}
-                    >
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<MoreOutlined />}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </Dropdown>
-                  }
-                >
-                  <Typography.Paragraph
-                    type="secondary"
-                    ellipsis={{ rows: 2 }}
-                    style={{ minHeight: 44, marginBottom: 8 }}
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<MoreOutlined />}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </Dropdown>
+                    }
                   >
-                    {kb.description || "（无描述）"}
-                  </Typography.Paragraph>
-                  <Space wrap size={4}>
-                    <Tag color="blue">
-                      <FileTextOutlined /> 文档 {kb.doc_count ?? 0}
-                    </Tag>
-                    <Tag color="green">
-                      <BookOutlined /> Wiki {kb.page_count ?? 0}
-                    </Tag>
-                    {kb.label && <Tag>{kb.label}</Tag>}
-                    {graphOn && (
-                      <Tag icon={<ApartmentOutlined />} color="purple">
-                        图谱
+                    <Typography.Paragraph
+                      type="secondary"
+                      ellipsis={{ rows: 2 }}
+                      style={{ minHeight: 44, marginBottom: 8 }}
+                    >
+                      {kb.description || "（无描述）"}
+                    </Typography.Paragraph>
+                    <Space wrap size={4}>
+                      <Tag color="blue">
+                        <FileTextOutlined /> 文档 {kb.doc_count ?? 0}
                       </Tag>
-                    )}
-                    {vlmOn && (
-                      <Tag icon={<PictureOutlined />} color="orange">
-                        多模态
+                      <Tag color="green">
+                        <BookOutlined /> Wiki {kb.page_count ?? 0}
                       </Tag>
-                    )}
-                    {isFaq && <Tag color="cyan">FAQ</Tag>}
-                    {pinnedNow && (
-                      <Tag icon={<PushpinOutlined />} color="gold">
-                        置顶
-                      </Tag>
-                    )}
-                  </Space>
-                </Card>
-              </Col>
-            );
-          })}
-        </Row>
-      )}
+                      {kb.label && <Tag>{kb.label}</Tag>}
+                      {graphOn && (
+                        <Tag icon={<ApartmentOutlined />} color="purple">
+                          图谱
+                        </Tag>
+                      )}
+                      {vlmOn && (
+                        <Tag icon={<PictureOutlined />} color="orange">
+                          多模态
+                        </Tag>
+                      )}
+                      {isFaq && <Tag color="cyan">FAQ</Tag>}
+                      {pinnedNow && (
+                        <Tag icon={<PushpinOutlined />} color="gold">
+                          置顶
+                        </Tag>
+                      )}
+                    </Space>
+                  </Card>
+                </Col>
+              );
+            })}
+          </Row>
+        )}
 
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
-        <Pagination
-          current={page}
-          pageSize={pageSize}
-          total={total}
-          showSizeChanger
-          showTotal={(t) => `共 ${t} 个知识库`}
-          onChange={(p, ps) => {
-            setPage(p);
-            setPageSize(ps);
-          }}
-        />
-      </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+          <Pagination
+            current={page}
+            pageSize={pageSize}
+            total={total}
+            showSizeChanger
+            showTotal={(t) => `共 ${t} 个知识库`}
+            onChange={(p, ps) => {
+              setPage(p);
+              setPageSize(ps);
+            }}
+          />
+        </div>
 
-      <Modal
-        title="新建知识库"
-        open={createOpen}
-        onOk={onCreate}
-        onCancel={() => setCreateOpen(false)}
-        okText="创建"
-        cancelText="取消"
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            name="name"
-            label="知识库名称"
-            rules={[{ required: true, message: "请输入知识库名称" }]}
-          >
-            <Input placeholder="如：监管制度知识库" />
-          </Form.Item>
-          <Form.Item name="label" label="标签（可选）">
-            <Input placeholder="如：制度 / 技术" />
-          </Form.Item>
-          <Form.Item name="description" label="描述（可选）">
-            <Input.TextArea rows={2} placeholder="知识库用途说明" />
-          </Form.Item>
-          <Form.Item name="type" label="知识库类型" initialValue="document">
-            <Radio.Group optionType="button" buttonStyle="solid">
-              <Radio.Button value="document">文档型</Radio.Button>
-              <Radio.Button value="faq">问答对型</Radio.Button>
-            </Radio.Group>
-          </Form.Item>
-          <Form.Item
-            name="scope"
-            label="归属"
-            initialValue="personal"
-            extra="个人知识库仅自己可见，团队知识库团队成员可见，系统知识库所有用户可见（仅管理员可建）"
-          >
-            <Select
-              options={[
-                { label: "个人", value: "personal" },
-                { label: "团队", value: "team" },
-                { label: "系统", value: "system" },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item
-            name="pipelines"
-            label="索引流水线"
-            initialValue={["vector", "keyword"]}
-            extra="向量/关键词检索默认开启；Wiki 构建与知识图谱需显式开启（上传文档后才会自动构建）"
-          >
-            <Checkbox.Group options={PIPELINE_OPTIONS.map((o) => ({ label: o.label, value: o.value }))} />
-          </Form.Item>
-          <Form.Item
-            name="ontology_schema_name"
-            label="本体 Schema（抽取分类结构）"
-            rules={[{ required: true, message: "请选择本体 Schema" }]}
-            extra="定义文档抽取的业务/规则分类结构与提示词，支持多领域（市场监管法规、供管制度等）"
-          >
-            <Select
-              placeholder="选择 Schema"
-              options={ontologySchemas.map((s) => ({
-                label: `${s.schema_label}（业务${s.business.length}类/规则${s.rule.length}类）`,
-                value: s.schema_name,
-              }))}
-            />
-          </Form.Item>
-          <Form.Item
-            name="embedding_model_id"
-            label="向量模型（Embedding）"
-            extra="知识向量化用；留空 = 系统默认"
-          >
-            <Select allowClear options={embeddingOptions} placeholder="选择向量模型" />
-          </Form.Item>
-          <Form.Item
-            name="vector_store_id"
-            label="向量数据库"
-            initialValue=""
-            extra="选择该知识库使用的向量库来源（数据源管理中配置的 ES / PostgreSQL 资源）；创建后不可切换，留空 = 系统默认（pgvector）"
-          >
-            <Select
-              options={[
-                { label: "默认（系统配置 pgvector）", value: "" },
-                ...vectorStores.map((s) => ({
-                  label: `${s.dsLabel || s.dsName || s.id}（${s.dsType}）`,
-                  value: s.id as string,
-                })),
-              ]}
-              placeholder="选择向量数据库"
-            />
-          </Form.Item>
-          <Form.Item
-            name="summary_model_id"
-            label="大语言模型（LLM）"
-            extra="Wiki 合成/文档理解用；留空 = 系统默认"
-          >
-            <Select allowClear options={chatOptions} placeholder="选择大语言模型" />
-          </Form.Item>
-          <Form.Item
-            name="custom_wiki_generation"
-            label="自定义 Wiki 生成"
-            valuePropName="checked"
-            extra="开启后上传文档不会自动构建 Wiki，需手动触发（可在开启时指定构建技能）"
-          >
-            <Switch />
-          </Form.Item>
-          {customWiki && (
+        <Modal
+          title="新建知识库"
+          open={createOpen}
+          onOk={onCreate}
+          onCancel={() => setCreateOpen(false)}
+          okText="创建"
+          cancelText="取消"
+        >
+          <Form form={form} layout="vertical">
             <Form.Item
-              name="wiki_skill"
-              label="构建技能"
-              extra="选择 Wiki 构建使用的技能（留空则使用系统默认技能）。技能由 agent worker 内联执行"
+              name="name"
+              label="知识库名称"
+              rules={[{ required: true, message: "请输入知识库名称" }]}
+            >
+              <Input placeholder="如：监管制度知识库" />
+            </Form.Item>
+            <Form.Item name="label" label="标签（可选）">
+              <Input placeholder="如：制度 / 技术" />
+            </Form.Item>
+            <Form.Item name="description" label="描述（可选）">
+              <Input.TextArea rows={2} placeholder="知识库用途说明" />
+            </Form.Item>
+            <Form.Item name="type" label="知识库类型" initialValue="document">
+              <Radio.Group optionType="button" buttonStyle="solid">
+                <Radio.Button value="document">文档型</Radio.Button>
+                <Radio.Button value="faq">问答对型</Radio.Button>
+              </Radio.Group>
+            </Form.Item>
+            <Form.Item
+              name="scope"
+              label="归属"
+              initialValue="personal"
+              extra="个人知识库仅自己可见，团队知识库团队成员可见，系统知识库所有用户可见（仅管理员可建）"
             >
               <Select
-                allowClear
-                placeholder="留空 = 系统默认技能"
-                options={skills.map((s) => ({
-                  label: s.description ? `${s.name}（${s.description}）` : s.name,
-                  value: s.name,
+                options={[
+                  { label: "个人", value: "personal" },
+                  { label: "团队", value: "team" },
+                  { label: "系统", value: "system" },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item
+              name="pipelines"
+              label="索引流水线"
+              initialValue={["vector", "keyword"]}
+              extra="向量/关键词检索默认开启；Wiki 构建与知识图谱需显式开启（上传文档后才会自动构建）"
+            >
+              <Checkbox.Group options={PIPELINE_OPTIONS.map((o) => ({ label: o.label, value: o.value }))} />
+            </Form.Item>
+            <Form.Item
+              name="ontology_schema_name"
+              label="本体 Schema（抽取分类结构）"
+              rules={[{ required: true, message: "请选择本体 Schema" }]}
+              extra="定义文档抽取的业务/规则分类结构与提示词，支持多领域（市场监管法规、供管制度等）"
+            >
+              <Select
+                placeholder="选择 Schema"
+                options={ontologySchemas.map((s) => ({
+                  label: `${s.schema_label}（业务${s.business.length}类/规则${s.rule.length}类）`,
+                  value: s.schema_name,
                 }))}
               />
             </Form.Item>
-          )}
-        </Form>
-      </Modal>
+            <Form.Item
+              name="embedding_model_id"
+              label="向量模型（Embedding）"
+              extra="知识向量化用；留空 = 系统默认"
+            >
+              <Select allowClear options={embeddingOptions} placeholder="选择向量模型" />
+            </Form.Item>
+            <Form.Item
+              name="vector_store_id"
+              label="向量数据库"
+              initialValue=""
+              extra="选择该知识库使用的向量库来源（数据源管理中配置的 ES / PostgreSQL 资源）；创建后不可切换，留空 = 系统默认（pgvector）"
+            >
+              <Select
+                options={[
+                  { label: "默认（系统配置 pgvector）", value: "" },
+                  ...vectorStores.map((s) => ({
+                    label: `${s.dsLabel || s.dsName || s.id}（${s.dsType}）`,
+                    value: s.id as string,
+                  })),
+                ]}
+                placeholder="选择向量数据库"
+              />
+            </Form.Item>
+            <Form.Item
+              name="summary_model_id"
+              label="大语言模型（LLM）"
+              extra="Wiki 合成/文档理解用；留空 = 系统默认"
+            >
+              <Select allowClear options={chatOptions} placeholder="选择大语言模型" />
+            </Form.Item>
+            <Form.Item
+              name="custom_wiki_generation"
+              label="自定义 Wiki 生成"
+              valuePropName="checked"
+              extra="开启后上传文档不会自动构建 Wiki，需手动触发（可在开启时指定构建技能）"
+            >
+              <Switch />
+            </Form.Item>
+            {customWiki && (
+              <Form.Item
+                name="wiki_skill"
+                label="构建技能"
+                extra="选择 Wiki 构建使用的技能（留空则使用系统默认技能）。技能由 agent worker 内联执行"
+              >
+                <Select
+                  allowClear
+                  placeholder="留空 = 系统默认技能"
+                  options={skills.map((s) => ({
+                    label: s.description ? `${s.name}（${s.description}）` : s.name,
+                    value: s.name,
+                  }))}
+                />
+              </Form.Item>
+            )}
+          </Form>
+        </Modal>
 
-      <ChunkingConfigModal
-        open={chunkingKbId !== null}
-        kbId={chunkingKbId ?? ""}
-        onClose={() => setChunkingKbId(null)}
-      />
-      <KBConfigModal
-        kb={configKb}
-        open={configKb !== null}
-        onClose={(changed) => {
-          setConfigKb(null);
-          if (changed) void load();
-        }}
-      />
-    </Card>
+        <ChunkingConfigModal
+          open={chunkingKbId !== null}
+          kbId={chunkingKbId ?? ""}
+          onClose={() => setChunkingKbId(null)}
+        />
+        <KBConfigModal
+          kb={configKb}
+          open={configKb !== null}
+          onClose={(changed) => {
+            setConfigKb(null);
+            if (changed) void load();
+          }}
+        />
+      </Card>
+    </div>
   );
 }

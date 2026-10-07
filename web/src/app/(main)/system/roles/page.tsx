@@ -210,7 +210,9 @@ export default function SystemRolesPage() {
   };
 
   return (
-    <Card
+    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
+    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
+      <Card
       title="角色"
       extra={
         <Button type="primary" onClick={openCreate}>
@@ -371,5 +373,6 @@ export default function SystemRolesPage() {
               />
             </Drawer>
           </Card>
+    </div>
         );
       }
