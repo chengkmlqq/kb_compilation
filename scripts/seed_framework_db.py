@@ -42,7 +42,7 @@ SEED_TEAM = os.getenv("KB_SEED_TEAM", "默认团队")
 # 可用环境变量 KB_SEED_ROLE 覆盖。
 SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 
-# KB 菜单树（4 顶级分组 + 13 页面 = 17 项；sort_num 决定同级顺序）
+# KB 菜单树（4 顶级分组 + 21 页面 = 25 项；sort_num 决定同级顺序）
 # (menu_id, menu_name, menu_label, route, parent_id, menu_icon, sort_num)
 # menu_id 用固定值（workers/mcps/skills/cron 用生产环境已验证的 UUID），
 # 保证多次初始化幂等、且与已部署环境完全一致。
@@ -82,6 +82,8 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "system", "ToolOutlined", 9),
     ("ont_schemas", "ont_schemas", "本体Schema", "/ontology-schemas", "system", "ApartmentOutlined", 10),
     ("sys_config", "sys_config", "平台参数", "/system/config", "system", "ControlOutlined", 11),
+    ("system_retrieval", "system_retrieval", "检索参数", "/system/retrieval", "system", "SlidersOutlined", 12),
+    ("sys_engines", "sys_engines", "引擎与存储", "/system/engines", "system", "CloudServerOutlined", 13),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   App,
   Button,
@@ -19,17 +19,18 @@ import {
   Typography,
   Upload,
 } from "antd";
-import { DeleteOutlined, DownloadOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from "@ant-design/icons";
+import { DeleteOutlined, DownloadOutlined, InboxOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import CodeViewer from "@/components/CodeViewer";
 import {
   apiDeleteSkillRegistry,
-  apiInstallSkillRegistry,
+  apiInstallSkillRegistryWithProgress,
   apiListSkillsRegistry,
   SkillRegistryItem,
   ModelScope,
 } from "@/lib/api";
+import { emitUploadTask, makeUploadTaskId, onFileDrop, setFileDropTarget } from "@/lib/upload-bus";
 
 const { Text } = Typography;
 
@@ -114,6 +115,8 @@ export default function SkillManagePage() {
   } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [fileLoading, setFileLoading] = useState(false);
+  const [zoneActive, setZoneActive] = useState(false);
+  const zoneCounter = useRef(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,18 +160,86 @@ export default function SkillManagePage() {
     return false;
   };
 
-  const confirmInstall = async () => {
-    if (!pendingFile) return;
-    const res = await apiInstallSkillRegistry(pendingFile, installScope);
-    if (res.success) {
-      message.success(`技能已安装：${res.data?.item.name ?? pendingFile.name}`);
-      setInstallOpen(false);
-      setPendingFile(null);
-      void load();
-    } else {
-      message.error(res.message || "安装失败");
-    }
+  // 带进度上报的技能安装（经 uploadTask 事件驱动任务浮层，支持重试）
+  const installSkill = (file: File, scope: ModelScope, taskId: string) => {
+    emitUploadTask({
+      id: taskId,
+      name: file.name,
+      size: file.size,
+      status: "uploading",
+      progress: 0,
+      retry: () => installSkill(file, scope, taskId),
+    });
+    void (async () => {
+      try {
+        const res = await apiInstallSkillRegistryWithProgress(file, scope, (pct) => {
+          emitUploadTask({ id: taskId, name: file.name, size: file.size, status: "uploading", progress: pct });
+        });
+        if (res.success) {
+          emitUploadTask({ id: taskId, name: file.name, size: file.size, status: "success", progress: 100 });
+          message.success(`技能已安装：${res.data?.item.name ?? file.name}`);
+          setInstallOpen(false);
+          setPendingFile(null);
+          void load();
+        } else {
+          emitUploadTask({
+            id: taskId,
+            name: file.name,
+            size: file.size,
+            status: "error",
+            progress: 100,
+            error: res.message || "安装失败",
+          });
+          message.error(res.message || "安装失败");
+        }
+      } catch (e) {
+        emitUploadTask({
+          id: taskId,
+          name: file.name,
+          size: file.size,
+          status: "error",
+          progress: 100,
+          error: e instanceof Error ? e.message : "安装失败",
+        });
+      }
+    })();
   };
+
+  const confirmInstall = () => {
+    if (!pendingFile) return;
+    installSkill(pendingFile, installScope, makeUploadTaskId("skill-install"));
+  };
+
+  // 全局拖放落点：仅接受单个 .zip 技能包（目录拖入会被递归展开并统计文件数）
+  const handleGlobalSkillFiles = useCallback(
+    (files: File[]) => {
+      if (files.length === 0) return;
+      const zips = files.filter((f) => f.name.toLowerCase().endsWith(".zip"));
+      if (files.length === 1 && zips.length === 1) {
+        handleInstall(zips[0]);
+        return;
+      }
+      if (zips.length === 1) {
+        message.info(`拖入了 ${files.length} 个文件（含目录展开），将安装其中的 ${zips[0].name}`);
+        handleInstall(zips[0]);
+        return;
+      }
+      message.warning(
+        `拖入了 ${files.length} 个文件（含目录展开）；技能安装仅支持单个 .zip 包${zips.length > 1 ? `（收到 ${zips.length} 个 .zip）` : ""}`,
+      );
+    },
+    [message],
+  );
+
+  // 全局拖放：注册目标（遮罩文案「技能管理」）+ 监听 kbFileDrop 兜底事件
+  useEffect(() => {
+    setFileDropTarget({ label: "技能管理" });
+    const off = onFileDrop(handleGlobalSkillFiles);
+    return () => {
+      off();
+      setFileDropTarget(null);
+    };
+  }, [handleGlobalSkillFiles]);
 
   const openDetail = async (item: SkillRegistryItem) => {
       setDetailTarget(item);
@@ -268,6 +339,43 @@ export default function SkillManagePage() {
         </Space>
       }
     >
+      {/* 拖放安装区（支持拖入文件夹：全局拖放会递归展开并统计文件数） */}
+      <div
+        onDragEnter={(e) => {
+          e.preventDefault();
+          zoneCounter.current += 1;
+          setZoneActive(true);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          zoneCounter.current = Math.max(0, zoneCounter.current - 1);
+          if (zoneCounter.current === 0) setZoneActive(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          zoneCounter.current = 0;
+          setZoneActive(false);
+          // 不阻止冒泡：交由 window 级 GlobalDropZone 统一收集（含目录递归）并路由
+        }}
+        style={{
+          border: zoneActive ? "2px dashed #1677ff" : "2px dashed #d9d9d9",
+          background: zoneActive ? "rgba(22, 119, 255, 0.05)" : "#fafafa",
+          borderRadius: 8,
+          padding: "16px 12px",
+          marginBottom: 12,
+          textAlign: "center",
+          cursor: "pointer",
+          transition: "all 0.2s",
+        }}
+      >
+        <InboxOutlined style={{ fontSize: 26, color: zoneActive ? "#1677ff" : "#999", marginRight: 8 }} />
+        <span style={{ fontSize: 13, color: zoneActive ? "#1677ff" : "#666" }}>
+          将技能包（.zip）拖到这里安装，支持拖入文件夹（自动展开并统计文件数）
+        </span>
+      </div>
       <Table
         rowKey="id"
         size="small"

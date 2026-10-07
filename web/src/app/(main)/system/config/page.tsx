@@ -4,6 +4,8 @@
  * 参数存 modo_dim（PLATFORM_CONFIG 组），worker 侧 15s 内生效，无需重启。
  */
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ArrowRightOutlined } from "@ant-design/icons";
 import { App, Button, Form, InputNumber, Select, Space, Spin, Tag, Typography } from "antd";
 import { apiPlatformConfig, apiSavePlatformConfig, PlatformConfigItem } from "@/lib/api";
 
@@ -20,6 +22,7 @@ const SOURCE_TAGS: Record<string, { color: string; text: string }> = {
 };
 
 export default function PlatformConfigPage() {
+  const router = useRouter();
   const { message } = App.useApp();
   const [items, setItems] = useState<PlatformConfigItem[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -71,6 +74,14 @@ export default function PlatformConfigPage() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
+      <Space style={{ width: "100%", justifyContent: "space-between", alignItems: "center" }}>
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          平台运行参数
+        </Typography.Title>
+        <Button type="text" icon={<ArrowRightOutlined />} onClick={() => router.push("/system/retrieval")}>
+          检索参数
+        </Button>
+      </Space>
       <Form layout="vertical" style={{ maxWidth: 720 }}>
         <Spin spinning={loading}>
           {items.map((it) => {

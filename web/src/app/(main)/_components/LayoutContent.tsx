@@ -7,6 +7,8 @@ import { AppHeader } from "./AppHeader";
 import { AppSider } from "./AppSider";
 import { MenuProvider } from "./MenuContext";
 import { GlobalWatermark } from "@/components/GlobalWatermark";
+import GlobalDropZone from "@/components/GlobalDropZone";
+import UploadTaskPanel from "@/components/UploadTaskPanel";
 import { apiMe } from "@/lib/api";
 
 const { Content } = Layout;
@@ -38,6 +40,9 @@ export function LayoutContent({ children }: { children: React.ReactNode }) {
   return (
     <MenuProvider>
       <App>
+        {/* 全局拖放上传遮罩 + 上传任务浮层（仅登录后主区域渲染） */}
+        <GlobalDropZone />
+        <UploadTaskPanel />
         <Layout style={{ height: "100vh", flexDirection: "column", overflow: "hidden" }}>
           <AppHeader />
           <Layout style={{ flex: 1 }} hasSider>

@@ -53,13 +53,14 @@ import {
   apiListDocuments,
   apiReparseDocument,
   apiSearch,
-  apiUploadDocument,
   apiUploadDocumentByUrl,
+  apiUploadDocumentWithProgress,
   apiWikiPage,
   DocItem,
   KbItem,
   SearchHit,
 } from "@/lib/api";
+import { emitUploadTask, makeUploadTaskId, setFileDropTarget } from "@/lib/upload-bus";
 
 const PARSE_STATE_COLOR: Record<string, string> = {
   PENDING: "default",
@@ -283,6 +284,63 @@ export default function KbDetailPage() {
     }
   };
 
+  // 带进度上报的知识库文档上传（本地上传 & 全局拖放复用；经 uploadTask 事件驱动任务浮层）
+  const startDocUpload = (file: File, taskId?: string) => {
+    const id = taskId ?? makeUploadTaskId("kb-upload");
+    emitUploadTask({
+      id,
+      name: file.name,
+      size: file.size,
+      status: "uploading",
+      progress: 0,
+      retry: () => startDocUpload(file, id),
+    });
+    void (async () => {
+      try {
+        const res = await apiUploadDocumentWithProgress(kbId, file, (pct) => {
+          emitUploadTask({ id, name: file.name, size: file.size, status: "uploading", progress: pct });
+        });
+        if (res.success) {
+          emitUploadTask({ id, name: file.name, size: file.size, status: "success", progress: 100 });
+          message.success(`「${file.name}」已上传，后台解析中`);
+        } else {
+          emitUploadTask({
+            id,
+            name: file.name,
+            size: file.size,
+            status: "error",
+            progress: 100,
+            error: res.message || "上传失败",
+          });
+          message.error(res.message || `「${file.name}」上传失败`);
+        }
+      } catch (e) {
+        emitUploadTask({
+          id,
+          name: file.name,
+          size: file.size,
+          status: "error",
+          progress: 100,
+          error: e instanceof Error ? e.message : "上传失败",
+        });
+        message.error(`「${file.name}」上传失败`);
+      }
+    })();
+  };
+
+  // 注册为全局拖放目标：drop 时由 GlobalDropZone 直接上传到本 KB，完成后刷新列表
+  useEffect(() => {
+    setFileDropTarget({
+      kbId,
+      label: kb?.name ? `知识库：${kb.name}` : "当前知识库",
+      onUploaded: () => {
+        setDocPage(1);
+        void load();
+      },
+    });
+    return () => setFileDropTarget(null);
+  }, [kbId, kb?.name, load]);
+
   return (
     <Space direction="vertical" size="large" style={{ display: "flex" }}>
       {/* KB 概览条：对齐 WeKnora 详情顶部（类型/归属/向量库/统计/索引开关） */}
@@ -413,11 +471,7 @@ export default function KbDetailPage() {
                         const files = e.target.files;
                         if (files) {
                           for (const f of Array.from(files)) {
-                            void (async () => {
-                              const res = await apiUploadDocument(kbId, f);
-                              if (res.success) message.success(`「${f.name}」已上传，后台解析中`);
-                              else message.error(res.message || `「${f.name}」上传失败`);
-                            })();
+                            startDocUpload(f);
                           }
                           setDocPage(1);
                           void load();

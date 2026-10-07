@@ -41,6 +41,40 @@ async function request<T = unknown>(path: string, init?: RequestInit): Promise<A
   }
 }
 
+/**
+ * 带进度回调的上传（XHR + upload.onprogress，fetch 无法上报进度）。
+ * 契约与 request 一致（同源代理 / 同 envelope 解析），仅用于文件上传场景。
+ */
+function requestUpload<T = unknown>(
+  path: string,
+  form: FormData,
+  onProgress?: (percent: number) => void,
+): Promise<ApiEnvelope<T>> {
+  return new Promise<ApiEnvelope<T>>((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", path);
+    xhr.upload.onprogress = (ev: ProgressEvent) => {
+      if (ev.lengthComputable && onProgress) {
+        onProgress(Math.round((ev.loaded / ev.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      const text = xhr.responseText;
+      if (!text) {
+        resolve({ success: xhr.status >= 200 && xhr.status < 300, message: `HTTP ${xhr.status}` });
+        return;
+      }
+      try {
+        resolve(JSON.parse(text) as ApiEnvelope<T>);
+      } catch {
+        resolve({ success: false, message: text.slice(0, 200) });
+      }
+    };
+    xhr.onerror = () => resolve({ success: false, message: "网络错误，上传失败" });
+    xhr.send(form);
+  });
+}
+
 export interface LoginResult {
   success: boolean;
   message?: string;
@@ -223,6 +257,17 @@ export function apiUploadDocument(kbId: string, file: File) {
     method: "POST",
     body: form,
   });
+}
+
+/** 带进度回调的 KB 文档上传（全局拖放/上传任务面板使用，端点与 apiUploadDocument 相同） */
+export function apiUploadDocumentWithProgress(
+  kbId: string,
+  file: File,
+  onProgress?: (percent: number) => void,
+) {
+  const form = new FormData();
+  form.append("file", file);
+  return requestUpload<DocItem>(`/api/v1/kbs/${kbId}/documents/upload`, form, onProgress);
 }
 
 export function apiUploadDocumentByUrl(kbId: string, url: string, fileName?: string) {
@@ -1806,6 +1851,18 @@ export function apiInstallSkillRegistry(file: File, scope: string) {
   });
 }
 
+/** 带进度回调的技能安装（技能页拖放/安装弹窗使用，端点与 apiInstallSkillRegistry 相同） */
+export function apiInstallSkillRegistryWithProgress(
+  file: File,
+  scope: string,
+  onProgress?: (percent: number) => void,
+) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("scope", scope);
+  return requestUpload<{ item: SkillRegistryItem }>("/api/v1/skills/install", form, onProgress);
+}
+
 export function apiDeleteSkillRegistry(id: string) {
   return request<{ deleted: boolean }>(`/api/v1/skills/${id}`, { method: "DELETE" });
 }
@@ -2569,4 +2626,92 @@ export function apiSavePlatformConfig(
     method: "PUT",
     body: JSON.stringify({ items }),
   });
+}
+
+// ---- 全局检索参数（系统管理 → 检索参数，modo_dim=RETRIEVAL_CONFIG，对齐 WeKnora RetrievalSettings） ----
+
+export interface RetrievalConfigItem {
+  code: string;
+  label: string;
+  value_type: "int" | "float" | "bool";
+  value: string;
+  default: string;
+  range: string[]; // [min, max, step]（bool 项为 []）
+  description: string;
+  source: "db" | "default";
+}
+
+export function apiRetrievalConfig(): Promise<ApiEnvelope<{ items: RetrievalConfigItem[] }>> {
+  return request<{ items: RetrievalConfigItem[] }>("/api/v1/system/retrieval-config");
+}
+
+export function apiSaveRetrievalConfig(
+  items: { code: string; value: string }[],
+): Promise<ApiEnvelope<{ saved: string[]; count: number }>> {
+  return request<{ saved: string[]; count: number }>("/api/v1/system/retrieval-config", {
+    method: "PUT",
+    body: JSON.stringify({ items }),
+  });
+}
+
+
+// ---------------------------------------------------------------------------
+// 系统 → 引擎与存储（b2 对齐 WeKnora：引擎/存储类型元数据 + parser 开关 + 系统信息）
+// ---------------------------------------------------------------------------
+
+export interface VectorStoreTypeItem {
+  code: string;
+  label: string;
+  description: string;
+  available: boolean;
+}
+
+export interface StorageTypeItem {
+  code: string;
+  label: string;
+  description: string;
+  available: boolean;
+}
+
+export interface EngineInfoItem {
+  name: string;
+  display_name: string;
+  description: string;
+  file_types: string[];
+  available: boolean;
+  reason?: string;
+  endpoint?: string;
+  enabled?: boolean;
+}
+
+export interface SystemInfoItem {
+  version: string;
+  vector_store_type: string;
+  minio_enabled: boolean;
+  engines_total: number;
+  engines_available: number;
+  server_time: string;
+}
+
+export function apiVectorStoreTypes() {
+  return request<VectorStoreTypeItem[]>("/api/v1/system/vector-store-types");
+}
+
+export function apiStorageTypes() {
+  return request<StorageTypeItem[]>("/api/v1/system/storage-types");
+}
+
+export function apiParserEngines() {
+  return request<EngineInfoItem[]>("/api/v1/parsers/engines");
+}
+
+export function apiSetParserEngineEnabled(name: string, enabled: boolean) {
+  return request<{ name: string; enabled: boolean }>(
+    `/api/v1/parsers/engines/${encodeURIComponent(name)}/enabled`,
+    { method: "PUT", body: JSON.stringify({ enabled }) },
+  );
+}
+
+export function apiSystemInfo() {
+  return request<SystemInfoItem>("/api/v1/system/info");
 }
