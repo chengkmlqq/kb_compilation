@@ -1364,9 +1364,36 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
     last_err = None
     t_start = time.time()
     retry_events = []
+
+    def _llm_raw(req, sock_to):
+        """单次 HTTP 请求：返回响应体文本。socket 超时只作用于单次 recv 等待——
+        服务器慢流持续发字节时 recv 永不超时（2026-10-07 实测 8h+ hang）。
+        """
+        with urllib.request.urlopen(req, timeout=sock_to) as r:
+            return r.read().decode()
+
     for attempt in range(retries):
+        # 总时长守卫：daemon 线程执行 + Queue.get(总超时)——无论 read 怎么挂起
+        # （慢流/死连接），到点抛 TimeoutError 走网络重试；挂起线程成为 daemon
+        # 孤儿无害回收。__import__ 幂等，避免重复 import。
+        q = __import__("queue").Queue()
+        wt = __import__("threading").Thread(
+            target=lambda: q.put(_llm_raw(req, timeout)), daemon=True)
+        wt.start()
+        total_to = min(timeout + 60, 900)
         try:
-            resp = json.loads(urllib.request.urlopen(req, timeout=timeout).read().decode())
+            raw = q.get(timeout=total_to)
+            resp = json.loads(raw)
+        except Exception as e:
+            if isinstance(e, __import__("queue").Empty):
+                _log_llm_event(kind="retry", model=model, attempt=attempt + 1,
+                               reason="slow_stream_timeout", backoff_s=15)
+                print(f"  ⏳ LLM 总时长超限 {total_to}s（慢流挂起），重试 ({attempt + 1}/{retries})")
+                time.sleep(15)
+                retry_events.append({"reason": "slow_stream_timeout", "backoff_s": 15})
+                last_err = TimeoutError(f"LLM 响应超过 {total_to}s 未完整")
+                continue
+            raise e
             choice = resp['choices'][0]
             content = (choice['message'].get('content') or '').strip()
             finish = choice.get('finish_reason', '')
