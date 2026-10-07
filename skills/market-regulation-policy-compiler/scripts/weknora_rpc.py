@@ -187,25 +187,38 @@ def api_credentials():
 # HTTP 客户端（登录 cookie + 401 重登 + 5xx 退避；失败带状态码+响应体）
 # ---------------------------------------------------------------------------
 def _login():
-    """登录 kb_compilation 平台，返回 identity cookie。"""
+    """登录 kb_compilation 平台，返回 identity cookie。
+
+    并发 4 构建时 api-server 偶发过载（登录读超时）——2026-10-07 实证 9 篇
+    任务因单次登录超时整篇失败。这里做 4 次重试 + 递增退避（3/6/12s），
+    过载是瞬时的，重试即可恢复；4 次仍失败才抛（真故障）。
+    """
     user, pwd = api_credentials()
     body = json.dumps({'userId': user, 'pwd': pwd}).encode()
-    req = urllib.request.Request(
-        f'{api_base_url()}/api/v1/auth/login', data=body, method='POST',
-        headers={'Content-Type': 'application/json', 'Accept': 'application/json'})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"kb 登录失败: HTTP {e.code} {e.read().decode('utf-8', 'replace')[:300]}")
-    except Exception as e:
-        raise RuntimeError(f"kb 登录失败: {e}")
-    if not data.get('success'):
-        raise RuntimeError(f"kb 登录失败: {data.get('message') or data}")
-    ck = (data.get('identity_cookie') or '').strip()
-    if not ck:
-        raise RuntimeError(f'kb 登录失败: 响应无 identity_cookie（{json.dumps(data, ensure_ascii=False)[:200]}）')
-    return ck
+    last_err = None
+    for attempt in range(4):
+        if attempt:
+            time.sleep(3 * (2 ** (attempt - 1)))
+        req = urllib.request.Request(
+            f'{api_base_url()}/api/v1/auth/login', data=body, method='POST',
+            headers={'Content-Type': 'application/json', 'Accept': 'application/json'})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            last_err = f"HTTP {e.code} {e.read().decode('utf-8', 'replace')[:300]}"
+            continue
+        except Exception as e:
+            last_err = str(e)
+            continue
+        if not data.get('success'):
+            last_err = str(data.get('message') or data)
+            continue
+        ck = (data.get('identity_cookie') or '').strip()
+        if ck:
+            return ck
+        last_err = f'响应无 identity_cookie（{json.dumps(data, ensure_ascii=False)[:200]}）'
+    raise RuntimeError(f"kb 登录失败（重试 4 次）: {last_err}")
 
 
 def _request(method, path, payload=None, retries=3):
@@ -432,7 +445,10 @@ def ontology_cat_map(schema):
 
 
 def mcp_init():
-    """平台适配版：等价于「确保已登录」（预热 cookie，失败早抛便于排查）。"""
+    """（历史命名）登录平台并初始化 HTTP 会话——**不走 MCP**。
+    技能与平台交互 = HTTP 直调 + Neo4j 直连（无 MCP 服务）。
+    平台适配版：等价于「确保已登录」（预热 cookie，失败早抛便于排查）。
+    """
     global _COOKIE
     if not _COOKIE:
         _COOKIE = _login()
