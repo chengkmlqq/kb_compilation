@@ -14,14 +14,12 @@ import {
   Dropdown,
   Empty,
   Input,
-  Modal,
-  Pagination,
-  Space,
-  Table,
-  Tag,
-  Typography,
-  Upload,
-} from "antd";
+    Modal,
+    Space,
+    Tag,
+    Typography,
+    Upload,
+  } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
   CloudUploadOutlined,
@@ -43,6 +41,8 @@ import {
   apiFileZipUrl,
   SysFileItem,
 } from "@/lib/api";
+import ModoTable from "@/components/biz/modo-table";
+import ModoPagination from "@/components/biz/modo-pagination";
 
 const { Text } = Typography;
 
@@ -391,48 +391,34 @@ export default function FilesPage() {
           flexDirection: "column",
         }}
       >
-        <div style={{ flex: 1, overflow: "auto", padding: "0 16px" }}>
-          <Table<SysFileItem>
-            rowKey={(r) => (r.isFolder ? `dir:${r.name}` : r.id)}
-            size="middle"
-            loading={loading}
-            dataSource={list}
-            columns={columns}
-            scroll={{ x: 900 }}
-            pagination={false}
-            locale={{ emptyText: <Empty description="暂无文件" /> }}
-            onRow={(record) =>
-              record.isFolder
-                ? { onDoubleClick: () => enterFolder(record.name || "") }
-                : {}
-            }
-          />
-        </div>
-        <div
-          style={{
-            borderTop: "1px solid #E3E9EF",
-            padding: "10px 16px",
-            display: "flex",
-            justifyContent: "flex-end",
-            alignItems: "center",
-            gap: 12,
-          }}
-        >
-          <Text type="secondary" style={{ fontSize: 13 }}>
-            共 {total} 项{search ? "（搜索结果）" : ""}
-          </Text>
-          <Pagination
-            current={page}
-            pageSize={pageSize}
-            total={total}
-            showSizeChanger
-            showTotal={(t) => `共 ${t} 项`}
-            onChange={(p, ps) => {
-              setPage(p);
-              setPageSize(ps);
-            }}
-          />
-        </div>
+        <ModoTable<SysFileItem>
+                  containerStyle={{ padding: "0 16px" }}
+                  rowKey={(r) => (r.isFolder ? `dir:${r.name}` : r.id)}
+                  size="middle"
+                  loading={loading}
+                  dataSource={list}
+                  columns={columns}
+                  scroll={{ x: 900 }}
+                  locale={{ emptyText: <Empty description="暂无文件" /> }}
+                  onRow={(record) =>
+                    record.isFolder
+                      ? { onDoubleClick: () => enterFolder(record.name || "") }
+                      : {}
+                  }
+                />
+                <div style={{ borderTop: "1px solid #E3E9EF", flexShrink: 0 }}>
+                  <ModoPagination
+                    current={page}
+                    pageSize={pageSize}
+                    total={total}
+                    showSizeChanger
+                    showTotal={(t) => `共 ${t} 项${search ? "（搜索结果）" : ""}`}
+                    onChange={(p, ps) => {
+                      setPage(p);
+                      setPageSize(ps);
+                    }}
+                  />
+                </div>
       </div>
     </div>
   );

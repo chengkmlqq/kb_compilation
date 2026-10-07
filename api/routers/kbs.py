@@ -617,6 +617,127 @@ def get_document_chunks(
     }
 
 
+
+@router.get("/{kb_id}/documents/{document_id}/processing-timeline")
+def document_processing_timeline(kb_id: str, document_id: str, db: Session = Depends(get_db)) -> dict:
+    """文档全流程处理时间线（对齐 WeKnora knowledge-processing-timeline）。
+
+    stages: 解析（DOC_ 任务）→ 向量化（kb_embedding 计数）→ Wiki 构建
+    （WIKI_SKILL 任务 + 技能步骤树）。wiki 步骤树复用 /jobs/{id}/trace 的
+    events.summary.json（measure 嵌套还原的执行轨迹）。
+    """
+    from api.models.framework import Job
+    from sqlalchemy import func, select, text
+
+    doc = db.execute(
+        text("SELECT file_name, file_size, parse_state, parse_error, chunk_count "
+             "FROM kb_document WHERE id=:d"), {"d": document_id}
+    ).fetchone()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    # ---- 解析任务（DOC_<doc_id>，任务链上唯一的解析+嵌入任务） ----
+    parse_job = db.execute(
+        select(Job.state, Job.duration_ms, Job.error_message, Job.start_time, Job.end_time)
+        .where(Job.id == f"DOC_{document_id}")
+    ).fetchone()
+
+    # ---- wiki 构建任务（WIKI_SKILL_*，task_params.config.knowledge_id 关联） ----
+    wiki_state = wiki_job_id = wiki_dur = wiki_err = None
+    wiki_jobs = db.execute(
+        select(Job.id, Job.task_params, Job.state, Job.duration_ms, Job.error_message)
+        .where(Job.id.like("WIKI%"))
+        .order_by(Job.create_time.desc())
+    ).all()
+    for jid, tp, st, dur, err in wiki_jobs:
+        try:
+            p = json.loads(tp or "{}")
+            cfg = p.get("config") or {}
+            if str(cfg.get("kb_id") or "") != kb_id:
+                continue
+            kid = str(cfg.get("knowledge_id") or cfg.get("kid") or cfg.get("doc_name") or "")
+            if kid == document_id:
+                wiki_state, wiki_job_id, wiki_dur, wiki_err = st, str(jid), dur, err
+                break
+        except Exception:  # noqa: BLE001
+            continue
+
+    # ---- 向量化进度（PG kb_embedding vs doc_chunk 数，两步查跨库关联） ----
+    embed_cnt = 0
+    try:
+        # ① MySQL：该文档的 chunk id 列表（doc_chunk.document_id）
+        chunk_rows = db.execute(
+            text("SELECT id FROM doc_chunk WHERE document_id=:d LIMIT 2000"), {"d": document_id}
+        ).fetchall()
+        chunk_ids = [r[0] for r in chunk_rows]
+        # ② PG：kb_embedding 中这些 chunk 的命中数
+        if chunk_ids:
+            from api.db import get_knowledge_sessionmaker
+            from api.models.knowledge import KbEmbedding
+
+            kdb = get_knowledge_sessionmaker()()
+            try:
+                embed_cnt = (
+                    kdb.execute(
+                        select(func.count()).select_from(KbEmbedding).where(
+                            KbEmbedding.chunk_id.in_(chunk_ids)
+                        )
+                    ).scalar()
+                ) or 0
+            finally:
+                kdb.close()
+    except Exception:  # noqa: BLE001 — 向量库不可达时进度显示 0
+        pass
+
+    # ---- wiki 步骤树（events summary，measure 嵌套还原的执行轨迹） ----
+    steps_tree: list = []
+    if wiki_job_id:
+        try:
+            import json as _json
+            from api.config import get_settings
+
+            ev_path = os.path.join(
+                get_settings().kb_storage_dir, f"logs/events/{wiki_job_id}.summary.json"
+            )
+            if os.path.isfile(ev_path):
+                with open(ev_path, encoding="utf-8") as f:
+                    ev = _json.load(f)
+                steps_tree = ev.get("tree") or []
+        except Exception:  # noqa: BLE001
+            steps_tree = []
+
+    chunk_total = int(doc[4] or 0)
+    embed_state = "SUCCESS" if (chunk_total > 0 and embed_cnt >= chunk_total) else (
+        "RUNNING" if embed_cnt > 0 else "PENDING" if chunk_total > 0 else "NONE"
+    )
+    stages = [
+        {
+            "key": "parse", "label": "文档解析", "job_id": f"DOC_{document_id}",
+            "state": parse_job[0] if parse_job else "NONE",
+            "duration_ms": parse_job[1] if parse_job else None,
+            "error": parse_job[2] if parse_job else None,
+            "detail": f"{chunk_total} 分块" if chunk_total else "",
+        },
+        {
+            "key": "embedding", "label": "向量化",
+            "state": embed_state,
+            "detail": f"已嵌入 {embed_cnt}/{chunk_total}" if chunk_total else "",
+        },
+        {
+            "key": "wiki", "label": "Wiki 构建",
+            "job_id": wiki_job_id, "state": wiki_state or "NONE",
+            "duration_ms": wiki_dur, "error": wiki_err,
+            "steps": steps_tree,
+        },
+    ]
+    return {
+        "success": True,
+        "data": {
+            "file_name": doc[0], "parse_state": doc[2],
+            "stages": stages, "wiki_job_id": wiki_job_id,
+        },
+    }
+
 @router.get("/{kb_id}/wiki")
 def get_wiki(kb_id: str, caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db)) -> dict:

@@ -12,15 +12,15 @@ import {
   Drawer,
   Form,
   Input,
-  Pagination,
   Radio,
   Select,
   Space,
-  Table,
   Tag,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { PlusOutlined, ReloadOutlined, SearchOutlined } from "@ant-design/icons";
+import ModoTable from "@/components/biz/modo-table";
+import ModoPagination from "@/components/biz/modo-pagination";
 import {
   apiCreateCronTask,
   apiCronQueues,
@@ -257,7 +257,7 @@ export default function CronPage() {
         height: "100%",
         minHeight: 0,
         background: "#F5F7FA",
-        padding: 4,
+        padding: 8,
         overflow: "hidden",
       }}
     >
@@ -265,11 +265,10 @@ export default function CronPage() {
         style={{
           display: "flex",
           flexDirection: "column",
-          height: "100%",
+          flex: 1,
           minHeight: 0,
-          overflow: "auto",
+          overflow: "hidden",
           background: "#F5F7FA",
-          padding: 8,
         }}
       >
         {/* Filter + New Button Area */}
@@ -325,39 +324,24 @@ export default function CronPage() {
             border: "1px solid #E3E9EF",
           }}
         >
-          <div style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "0 16px" }}>
-            <div style={{ height: "100%", overflow: "auto" }}>
-              <Table<CronTaskItem>
-                columns={columns}
-                dataSource={items}
-                rowKey="id"
-                loading={loading}
-                size="middle"
-                scroll={{ x: 1100, y: "100%" }}
-                pagination={false}
-              />
-            </div>
-          </div>
-          <div
-            style={{
-              borderTop: "1px solid #E3E9EF",
-              padding: "10px 16px",
-              display: "flex",
-              justifyContent: "flex-end",
+          <ModoTable
+            columns={columns}
+            dataSource={items}
+            rowKey="id"
+            loading={loading}
+            size="middle"
+            scroll={{ x: 1100 }}
+          />
+          <ModoPagination
+            current={page}
+            pageSize={pageSize}
+            total={total}
+            showTotal={(t) => `共 ${t} 条`}
+            onChange={(p, ps) => {
+              setPage(p);
+              setPageSize(ps);
             }}
-          >
-            <Pagination
-              current={page}
-              pageSize={pageSize}
-              total={total}
-              showSizeChanger
-              showTotal={(t) => `共 ${t} 条`}
-              onChange={(p, ps) => {
-                setPage(p);
-                setPageSize(ps);
-              }}
-            />
-          </div>
+          />
         </div>
       </div>
 

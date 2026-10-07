@@ -20,19 +20,17 @@ import {
   Empty,
   Form,
   Input,
-  InputNumber,
-  Pagination,
-  Radio,
-  Select,
-  Space,
-  Spin,
-  Steps,
-  Switch,
-  Table,
-  Tabs,
-  Tag,
-  Tooltip,
-} from "antd";
+    InputNumber,
+    Radio,
+    Select,
+    Space,
+    Spin,
+    Steps,
+    Switch,
+    Tabs,
+    Tag,
+    Tooltip,
+  } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
   ApiOutlined,
@@ -63,7 +61,9 @@ import {
   DsTypeItem,
   DatasourceItem,
   TeamDsMapItem,
-} from "@/lib/api";
+  } from "@/lib/api";
+  import ModoTable from "@/components/biz/modo-table";
+  import ModoPagination from "@/components/biz/modo-pagination";
 
 type EditTab = {
   key: string;
@@ -679,8 +679,8 @@ export default function DatasourcesPage() {
   };
 
   const listPane = (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <Space wrap style={{ justifyContent: "space-between", width: "100%" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, flex: 1, minHeight: 0 }}>
+        <Space wrap style={{ justifyContent: "space-between", width: "100%", flexShrink: 0 }}>
         <Space wrap>
           <Input
             placeholder="输入英文名"
@@ -731,35 +731,32 @@ export default function DatasourcesPage() {
           新增数据源
         </Button>
       </Space>
-      <Table<DatasourceItem>
-        rowKey="id"
-        size="middle"
-        loading={loading}
-        dataSource={rows}
-        columns={columns}
-        scroll={{ x: 900 }}
-        pagination={false}
-        locale={{ emptyText: <Empty description="暂无数据源" /> }}
-      />
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <Pagination
-          current={page}
-          pageSize={pageSize}
-          total={total}
-          showSizeChanger
-          showTotal={(t) => `共 ${t} 条`}
-          onChange={(p, ps) => {
-            setPage(p);
-            setPageSize(ps);
-          }}
-        />
-      </div>
-    </div>
-  );
+      <ModoTable<DatasourceItem>
+              rowKey="id"
+              size="middle"
+              loading={loading}
+              dataSource={rows}
+              columns={columns}
+              scroll={{ x: 900 }}
+              locale={{ emptyText: <Empty description="暂无数据源" /> }}
+            />
+            <ModoPagination
+              current={page}
+              pageSize={pageSize}
+              total={total}
+              showSizeChanger
+              showTotal={(t) => `共 ${t} 条`}
+              onChange={(p, ps) => {
+                setPage(p);
+                setPageSize(ps);
+              }}
+            />
+          </div>
+        );
 
   const authPane = (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <Space wrap>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, flex: 1, minHeight: 0 }}>
+        <Space wrap style={{ flexShrink: 0 }}>
         <span>团队：</span>
         <Select
           value={authTeam}
@@ -775,10 +772,10 @@ export default function DatasourcesPage() {
         </Button>
         <Button onClick={() => void loadAuth(authTeam)}>刷新</Button>
       </Space>
-      <Table<{ key: string; dsName: string; label: string }>
-        rowKey="dsName"
-        size="middle"
-        dataSource={authRows.map((r) => ({
+      <ModoTable<{ key: string; dsName: string; label: string }>
+              rowKey="dsName"
+              size="middle"
+              dataSource={authRows.map((r) => ({
           key: String(r.dsName),
           dsName: String(r.dsName),
           label: String(r.dsLabel || r.dsName),
@@ -830,18 +827,23 @@ export default function DatasourcesPage() {
             ),
           },
         ]}
-        pagination={false}
       />
     </div>
   );
 
   return (
-    <div className="modo-page" style={{ padding: 8, height: "100%", overflow: "auto" }}>
+    <div className="modo-page" style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Tabs
         type="editable-card"
         hideAdd
         activeKey={activeTab}
         onChange={setActiveTab}
+        style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+        styles={{
+          header: { flexShrink: 0 },
+          body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" },
+          content: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" },
+        }}
         onEdit={(key, action) => {
           if (action === "remove") closeTab(String(key));
         }}

@@ -1,13 +1,14 @@
 "use client";
 
 import React from "react";
-import { App, Button, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { App, Button, Space, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
   DeleteOutlined,
   EyeOutlined,
   PauseCircleOutlined,
 } from "@ant-design/icons";
+import ModoTable from "@/components/biz/modo-table";
 import { JobItem } from "@/lib/api";
 
 interface JobTableProps {
@@ -268,18 +269,17 @@ const JobTable: React.FC<JobTableProps> = ({
   ];
 
   return (
-    <Table<JobItem>
-      rowKey="id"
-      size="middle"
-      loading={loading}
-      dataSource={data}
-      columns={columns}
-      scroll={{ x: 1200 }}
-      pagination={false}
-      rowClassName={(record) =>
-        record.state === "RUNNING" ? "modo-running-row" : ""
-      }
-    />
+    <ModoTable<JobItem>
+          rowKey="id"
+          size="middle"
+          loading={loading}
+          dataSource={data}
+          columns={columns}
+          scroll={{ x: 1200 }}
+          rowClassName={(record) =>
+            record.state === "RUNNING" ? "modo-running-row" : ""
+          }
+        />
   );
 };
 

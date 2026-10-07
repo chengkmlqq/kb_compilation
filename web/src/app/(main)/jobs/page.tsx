@@ -6,11 +6,12 @@
  * 数据源 modo_job（list/statistics/queues/stop/delete）。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { App, Pagination, Table } from "antd";
+import { App } from "antd";
 import JobStats from "./job-stats";
 import JobFilter from "./job-filter";
 import JobTable from "./job-table";
 import JobLogDrawer from "./job-log-drawer";
+import ModoPagination from "@/components/biz/modo-pagination";
 import {
   apiDeleteJob,
   apiJobStatistics,
@@ -146,7 +147,7 @@ export default function JobsPage() {
         height: "100%",
         minHeight: 0,
         background: "#F5F7FA",
-        padding: 4,
+        padding: 8,
         overflow: "hidden",
       }}
     >
@@ -154,11 +155,10 @@ export default function JobsPage() {
         style={{
           display: "flex",
           flexDirection: "column",
-          height: "100%",
+          flex: 1,
           minHeight: 0,
-          overflow: "auto",
+          overflow: "hidden",
           background: "#F5F7FA",
-          padding: 8,
         }}
       >
         {/* Stats Area */}
@@ -184,38 +184,24 @@ export default function JobsPage() {
             border: "1px solid #E3E9EF",
           }}
         >
-          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-            <div style={{ height: "100%", overflow: "auto" }}>
-              <JobTable
-                loading={loading}
-                data={items}
-                onViewLog={handleViewLog}
-                onStop={handleStop}
-                onDelete={handleDelete}
-              />
-            </div>
-          </div>
-          <div
-            style={{
-              borderTop: "1px solid #E3E9EF",
-              padding: "10px 16px",
-              display: "flex",
-              justifyContent: "flex-end",
+          <JobTable
+            loading={loading}
+            data={items}
+            onViewLog={handleViewLog}
+            onStop={handleStop}
+            onDelete={handleDelete}
+          />
+          <ModoPagination
+            current={page}
+            pageSize={pageSize}
+            total={total}
+            showTotal={(t) => `共 ${t} 条`}
+            onChange={(p, ps) => {
+              setPage(p);
+              setPageSize(ps);
+              void load(p, ps, filters);
             }}
-          >
-            <Pagination
-              current={page}
-              pageSize={pageSize}
-              total={total}
-              showSizeChanger
-              showTotal={(t) => `共 ${t} 条`}
-              onChange={(p, ps) => {
-                setPage(p);
-                setPageSize(ps);
-                void load(p, ps, filters);
-              }}
-            />
-          </div>
+          />
         </div>
       </div>
 
