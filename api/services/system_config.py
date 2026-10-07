@@ -305,6 +305,10 @@ __all__ = [
     "get_skill_detail",
     "delete_skill",
     "MODEL_CONFIG_FIELDS",
+    "RETRIEVAL_CONFIG_FIELDS",
+    "get_retrieval_config",
+    "save_retrieval_config",
+    "retrieval_config_dict",
 ]
 
 
@@ -469,3 +473,184 @@ def save_platform_config(db: Session, items: list[dict]) -> dict:
         saved.append(code)
     db.commit()
     return {"saved": saved, "count": len(saved)}
+
+
+# ---------------------------------------------------------------------------
+# 全局检索参数（modo_dim, dim_group=RETRIEVAL_CONFIG）
+#
+# 对齐 WeKnora 租户级 RetrievalSettings：top_k / threshold / RRF / 双路权重 /
+# 向量·关键词·wiki 开关。页面可改、检索即时生效（config_from_kb 读此组）。
+# 优先级：KB 策略 > 全局参数 > overrides（config_from_kb 内实现）。
+# ---------------------------------------------------------------------------
+
+RETRIEVAL_CONFIG_GROUP = "RETRIEVAL_CONFIG"
+
+# dim_code -> (label, 类型, 默认值, [min,max,step] 或 [], 说明)
+RETRIEVAL_CONFIG_FIELDS: dict[str, tuple[str, str, str, list[str], str]] = {
+    "TOP_K": (
+        "向量召回条数 top_k",
+        "int",
+        "10",
+        ["1", "100", "1"],
+        "每次检索从向量库召回的最大条数（WeKnora 默认 10）",
+    ),
+    "THRESHOLD": (
+        "相似度阈值 threshold",
+        "float",
+        "0.2",
+        ["0.0", "1.0", "0.05"],
+        "相似度低于该值的分块不进入回答（0-1）",
+    ),
+    "RRF_K": (
+        "RRF 融合常数 k",
+        "int",
+        "60",
+        ["1", "1000", "1"],
+        "向量/关键词混合排序的 Reciprocal Rank Fusion 常数",
+    ),
+    "VECTOR_WEIGHT": (
+        "向量路权重",
+        "float",
+        "0.7",
+        ["0.0", "1.0", "0.05"],
+        "RRF 融合时向量排名的权重（与关键词权重之和建议=1）",
+    ),
+    "KEYWORD_WEIGHT": (
+        "关键词路权重",
+        "float",
+        "0.3",
+        ["0.0", "1.0", "0.05"],
+        "RRF 融合时关键词排名的权重（与向量权重之和建议=1）",
+    ),
+    "VECTOR_ENABLED": (
+        "启用向量检索",
+        "bool",
+        "true",
+        [],
+        "关闭后只走关键词与 wiki 检索",
+    ),
+    "KEYWORD_ENABLED": (
+        "启用关键词检索",
+        "bool",
+        "true",
+        [],
+        "关闭后只走向量与 wiki 检索",
+    ),
+    "WIKI_ENABLED": (
+        "启用 wiki 检索",
+        "bool",
+        "false",
+        [],
+        "是否把 wiki 页面纳入检索（新建知识库默认关闭）",
+    ),
+}
+
+
+def get_retrieval_config(db: Session) -> dict:
+    """全局检索参数（DB 值 > 默认值），返回字段元数据 + 当前值。"""
+    db_map = _dim_map(db, list(RETRIEVAL_CONFIG_FIELDS), group=RETRIEVAL_CONFIG_GROUP)
+    out = []
+    for code, (label, vtype, default, range_, desc) in RETRIEVAL_CONFIG_FIELDS.items():
+        value = db_map.get(code, "")
+        source = "db" if value else "default"
+        if not value:
+            value = default
+        out.append({
+            "code": code,
+            "label": label,
+            "value_type": vtype,
+            "value": value,
+            "default": default,
+            "range": range_,
+            "description": desc,
+            "source": source,
+        })
+    return {"items": out}
+
+
+def _coerce_retrieval_value(code: str, spec: tuple, value: str) -> str:
+    """类型化校验：int / float / bool（非法抛 HTTPException 400）。"""
+    label, vtype, default, range_, desc = spec
+    raw = str(value).strip()
+    if vtype == "int":
+        try:
+            n = int(raw)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"{label} 必须是整数") from None
+        lo, hi, _step = (int(x) for x in range_)
+        if n < lo or n > hi:
+            raise HTTPException(status_code=400, detail=f"{label} 取值范围 {lo}-{hi}") from None
+        return str(n)
+    if vtype == "float":
+        try:
+            f = float(raw)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"{label} 必须是数字") from None
+        lo, hi, _step = (float(x) for x in range_)
+        if f < lo or f > hi:
+            raise HTTPException(status_code=400, detail=f"{label} 取值范围 {lo}-{hi}") from None
+        return f"{f:.4f}".rstrip("0").rstrip(".")
+    if vtype == "bool":
+        low = raw.lower()
+        if low in ("true", "1", "yes", "on"):
+            return "true"
+        if low in ("false", "0", "no", "off"):
+            return "false"
+        raise HTTPException(status_code=400, detail=f"{label} 必须是 true/false") from None
+    return raw
+
+
+def save_retrieval_config(db: Session, items: list[dict]) -> dict:
+    """Upsert 全局检索参数到 modo_dim（RETRIEVAL_CONFIG 组，类型校验）。"""
+    saved: list[str] = []
+    for item in items:
+        code = normalize_value(str(item.get("code", "")))
+        spec = RETRIEVAL_CONFIG_FIELDS.get(code)
+        if not spec:
+            continue
+        raw = item.get("value")
+        value = _coerce_retrieval_value(code, spec, "" if raw is None else str(raw))
+        existing = (
+            db.execute(
+                select(Dim).where(
+                    Dim.dim_group == RETRIEVAL_CONFIG_GROUP, Dim.dim_code == code
+                )
+            )
+            .scalars()
+            .first()
+        )
+        label, vtype, default, range_, desc = spec
+        if existing:
+            existing.dim_value = value
+            existing.state = "1"
+        else:
+            db.add(
+                Dim(
+                    id=uuid.uuid4().hex,
+                    dim_code=code,
+                    dim_group=RETRIEVAL_CONFIG_GROUP,
+                    dim_value=value,
+                    dim_desc=f"{label}｜{desc}",
+                    seq=len(saved),
+                    state="1",
+                )
+            )
+        saved.append(code)
+    db.commit()
+    return {"saved": saved, "count": len(saved)}
+
+
+def retrieval_config_dict(db: Session) -> dict:
+    """读取为纯配置 dict（检索服务用）：code -> 类型化值。"""
+    out: dict = {}
+    for item in get_retrieval_config(db)["items"]:
+        v = item["value"]
+        if item["value_type"] == "int":
+            out[item["code"].lower()] = int(v)
+        elif item["value_type"] == "float":
+            out[item["code"].lower()] = float(v)
+        elif item["value_type"] == "bool":
+            out[item["code"].lower()] = v == "true"
+        else:
+            out[item["code"].lower()] = v
+    return out

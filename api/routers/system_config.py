@@ -18,6 +18,7 @@ from api.services.system_config import (
     delete_skill,
     get_model_config,
     get_platform_config,
+    get_retrieval_config,
     get_skill_detail,
     install_skill,
     list_mcp_servers,
@@ -25,6 +26,7 @@ from api.services.system_config import (
     save_mcp_servers,
     save_model_config,
     save_platform_config,
+    save_retrieval_config,
     test_mcp_server,
     test_model_endpoint,
 )
@@ -163,3 +165,21 @@ def remove_skill(skill_name: str) -> dict:
 
 
 __all__ = ["router"]
+
+
+# ---------------------------------------------------------------------------
+# 全局检索参数（modo_dim=RETRIEVAL_CONFIG，对齐 WeKnora RetrievalSettings）
+# ---------------------------------------------------------------------------
+
+
+@router.get("/retrieval-config")
+def read_retrieval_config(db: Session = Depends(get_db)) -> dict:
+    return {"success": True, "data": get_retrieval_config(db)}
+
+
+@router.put("/retrieval-config")
+def write_retrieval_config(
+    req: ModelConfigSaveRequest, db: Session = Depends(get_db)
+) -> dict:
+    items = [{"code": i.code, "value": i.value} for i in req.items]
+    return {"success": True, "data": save_retrieval_config(db, items)}

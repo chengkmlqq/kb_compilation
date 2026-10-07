@@ -76,20 +76,47 @@ class RetrievalConfig:
         return v, k
 
 
-def config_from_kb(kb: KbDatasource, overrides: dict | None = None) -> RetrievalConfig:
-    """Build a RetrievalConfig from the KB's indexing_strategy + overrides.
+def _global_retrieval_overrides() -> dict:
+    """Global retrieval defaults from modo_dim RETRIEVAL_CONFIG (best-effort).
 
-    Defaults come from kb_config.normalize_indexing_strategy — the same
-    WeKnora defaults used on create (wiki_enabled=False), so a KB whose
-    strategy predates the key behaves identically everywhere.
+    Mirrors WeKnora tenant-level RetrievalSettings: platform-wide defaults
+    live in the DB and every KB inherits them unless it overrides them.
+    """
+    try:
+        from api.db import get_sessionmaker
+        from api.services.system_config import retrieval_config_dict
+
+        db = get_sessionmaker()()
+        try:
+            return retrieval_config_dict(db)
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 - fall back to dataclass defaults
+        return {}
+
+
+def config_from_kb(kb: KbDatasource, overrides: dict | None = None) -> RetrievalConfig:
+    """Build a RetrievalConfig: global defaults < KB strategy < overrides.
+
+    The global layer is the tenant-level config stored in
+    modo_dim(RETRIEVAL_CONFIG), aligned with WeKnora's RetrievalSettings.
     """
     from api.services.kb_config import normalize_indexing_strategy
 
     strategy = normalize_indexing_strategy((kb.indexing_strategy or {}) if kb else {})
+    glob = _global_retrieval_overrides()
+    base = RetrievalConfig(**{
+        k: v for k, v in glob.items() if k in RetrievalConfig.__dataclass_fields__
+    })
     cfg = RetrievalConfig(
-        vector_enabled=bool(strategy.get("vector_enabled", True)),
-        keyword_enabled=bool(strategy.get("keyword_enabled", True)),
-        wiki_enabled=bool(strategy.get("wiki_enabled", False)),
+        top_k=base.top_k,
+        threshold=base.threshold,
+        rrf_k=base.rrf_k,
+        vector_weight=base.vector_weight,
+        keyword_weight=base.keyword_weight,
+        vector_enabled=bool(strategy.get("vector_enabled", base.vector_enabled)),
+        keyword_enabled=bool(strategy.get("keyword_enabled", base.keyword_enabled)),
+        wiki_enabled=bool(strategy.get("wiki_enabled", base.wiki_enabled)),
     )
     for key, value in (overrides or {}).items():
         if hasattr(cfg, key):
