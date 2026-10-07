@@ -262,6 +262,14 @@ export async function apiDownloadDocument(kbId: string, docId: string, fileName:
   URL.revokeObjectURL(url);
 }
 
+/** 拉取文档原始文件（预览用）：返回 {blob, contentType, size}；失败抛错。 */
+export async function apiFetchDocumentBlob(kbId: string, docId: string) {
+  const res = await fetch(`/api/v1/kbs/${kbId}/documents/${docId}/download`);
+  if (!res.ok) throw new Error(`获取文件失败 (${res.status})`);
+  const blob = await res.blob();
+  return { blob, contentType: res.headers.get("content-type") || "", size: res.headers.get("content-length") || blob.size };
+}
+
 // ---- wiki ----
 
 export interface WikiFolderItem {

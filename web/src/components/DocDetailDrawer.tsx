@@ -5,9 +5,10 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { App, Button, Descriptions, Drawer, Empty, List, Pagination, Space, Spin, Tag, Typography } from "antd";
-import { DeleteOutlined, DownloadOutlined, RedoOutlined, RobotOutlined } from "@ant-design/icons";
+import { DeleteOutlined, DownloadOutlined, EyeOutlined, RedoOutlined, RobotOutlined } from "@ant-design/icons";
 import { apiGenerateDocSummary, apiGetDocumentChunks, DocChunkItem, DocItem } from "@/lib/api";
 import { PARSE_STATE_COLOR, fileTypeIcon, formatSize } from "./DocCardView";
+import DocPreviewModal from "./DocPreviewModal";
 
 interface Props {
   kbId: string;
@@ -27,6 +28,7 @@ export default function DocDetailDrawer({ kbId, doc, hasSummaryModel, onClose, o
   const [chunkPage, setChunkPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     if (!doc) return;
@@ -76,6 +78,7 @@ export default function DocDetailDrawer({ kbId, doc, hasSummaryModel, onClose, o
   const summaryFailed = doc?.summary_status === "FAILED";
 
   return (
+    <>
     <Drawer
       title={
         <Space>
@@ -89,6 +92,9 @@ export default function DocDetailDrawer({ kbId, doc, hasSummaryModel, onClose, o
       extra={
         doc ? (
           <Space>
+            <Button icon={<EyeOutlined />} onClick={() => setPreviewOpen(true)}>
+              预览
+            </Button>
             <Button icon={<DownloadOutlined />} onClick={() => onDownload(doc)}>
               下载
             </Button>
@@ -220,5 +226,9 @@ export default function DocDetailDrawer({ kbId, doc, hasSummaryModel, onClose, o
         </Space>
       ) : null}
     </Drawer>
+
+    {/* 文档内容预览（对齐 WeKnora document-preview） */}
+    <DocPreviewModal kbId={kbId} doc={previewOpen ? doc : null} onClose={() => setPreviewOpen(false)} />
+    </>
   );
 }
