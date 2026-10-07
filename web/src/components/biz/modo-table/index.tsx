@@ -17,7 +17,8 @@ export interface ModoTableProps<T> extends Omit<TableProps<T>, "pagination"> {
  *
  * 特性：
  * - flex 布局占满父容器剩余高度，数据少时表体撑满（底部无空白），数据多时表体内滚动（页面不滚动）
- * - 默认 scroll.y='100.1%'：antd 的百分比 hack，强制走滚动容器分支
+ * - scroll.y 用大像素占位值：仅为激活 antd 的「表头 + 表体」分离滚动分支；
+ *   高度不靠 scroll.y 限制，而由 modo-table.module.css 的 flex 链撑满/收缩（表体 overflow 滚动）
  * - 分页交由配套的 <ModoPagination /> 常驻底栏（table 内置分页会随内容浮动）
  */
 export function ModoTable<T extends object>({
@@ -26,7 +27,7 @@ export function ModoTable<T extends object>({
   containerStyle,
   ...tableProps
 }: ModoTableProps<T>) {
-  const defaultScroll = { x: 1000, y: "100.1%" };
+  const defaultScroll = { x: 1000, y: 99999 };
   const mergedScroll = scroll ? { ...defaultScroll, ...scroll } : defaultScroll;
 
   return (

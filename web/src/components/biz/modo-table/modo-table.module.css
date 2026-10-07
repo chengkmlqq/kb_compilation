@@ -38,10 +38,12 @@
 }
 
 /* Body - 数据少时 flex 拉伸撑满剩余空间（底部无空白）；
-   数据多时 antd 的 inline max-height(scroll.y) 封顶，内部滚动，分页常驻底部 */
+   数据多时下方 overflow 滚动实现表体内滚动，分页常驻底部。
+   max-height:none 覆盖 scroll.y 的 inline max-height，使高度完全由 flex 链决定 */
 .modo-table :global(.ant-table-wrapper .ant-table-body) {
   flex: 1 1 0px !important;
   min-height: 0;
+  max-height: none !important;
   overflow-y: auto !important;
   overflow-x: auto !important;
 }
