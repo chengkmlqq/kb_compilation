@@ -65,7 +65,14 @@ celery_app.conf.beat_schedule = {
 }
 # Force import all task modules to register handlers in TASK_CLASS_REGISTRY
 try:
-    from worker.tasks import doc_process, wiki_graph, wiki_build, agent_gateway, orphan_recovery
+    from worker.tasks import (
+        agent_gateway,
+        doc_process,
+        log_cleanup,
+        orphan_recovery,
+        wiki_build,
+        wiki_graph,
+    )
     from worker.tasks.scheduler import TASK_CLASS_REGISTRY
     print(f"Tasks registered: {list(TASK_CLASS_REGISTRY.keys())}")
 except Exception as e:
