@@ -213,9 +213,8 @@ def build(kid, family, version, source_file, file_format=None, skip_final=False,
     try:
         mf = 2 if len(ls_all) < 30 else 3  # 短文档自动降频次门槛
         with wr.measure('discover_terms'):
-                with wr.measure('discover_terms'):
-                    rc = subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, 'discover_terms.py'), ls_path,
-                                    '-o', terms_path, '--min-freq', str(mf), '--top', '50'], check=True)
+            rc = subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, 'discover_terms.py'), ls_path,
+                            '-o', terms_path, '--min-freq', str(mf), '--top', '50'], check=True)
         with open(terms_path) as f:
             terms = json.load(f)
         # 分词通道补充（并存）：2 字高频词未入 terms 的追加
@@ -237,10 +236,9 @@ def build(kid, family, version, source_file, file_format=None, skip_final=False,
         try:
             filtered_path = f'/tmp/terms_filtered_{kid[:8]}.json'
             with wr.measure('filter_terms'):
-                    with wr.measure('filter_terms'):
-                        proc = subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, 'filter_terms_llm.py'),
-                                           '--terms-file', terms_path, '--ls-file', ls_path,
-                                           '-o', filtered_path, '--kb', KB], check=False, timeout=600)
+                proc = subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, 'filter_terms_llm.py'),
+                                   '--terms-file', terms_path, '--ls-file', ls_path,
+                                   '-o', filtered_path, '--kb', KB], check=False, timeout=600)
             if os.path.exists(filtered_path):
                 with open(filtered_path) as f:
                     filtered = json.load(f)
@@ -370,12 +368,11 @@ def build(kid, family, version, source_file, file_format=None, skip_final=False,
     if not os.path.exists(terms_ref):
         terms_ref = terms_path
     with wr.measure('extract_entities'):
-            with wr.measure('extract_entities'):
-                rc = subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, 'extract_entities_single.py'),
-                            '--ls-file', ls_path, '--cat-ids', f'/tmp/catids_{kid[:8]}.json',
-                            '--kid', kid, '--kb', KB, '--source-file', source_file,
-                            '-o', f'/tmp/esm_{kid[:8]}.json',
-                            '--max-tokens', '16000', '--terms-file', terms_ref], check=False)
+        rc = subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, 'extract_entities_single.py'),
+        '--ls-file', ls_path, '--cat-ids', f'/tmp/catids_{kid[:8]}.json',
+        '--kid', kid, '--kb', KB, '--source-file', source_file,
+        '-o', f'/tmp/esm_{kid[:8]}.json',
+        '--max-tokens', '16000', '--terms-file', terms_ref], check=False)
     # 检查规则实体是否抽取成功，失败则分批补抽
     esm_path = f'/tmp/esm_{kid[:8]}.json'
     if os.path.exists(esm_path):
@@ -389,11 +386,10 @@ def build(kid, family, version, source_file, file_format=None, skip_final=False,
     if rule_count == 0:
         print("    规则实体为0，分批补抽...")
         with wr.measure('extract_rules'):
-            with wr.measure('extract_rules'):
-                rc = subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, 'extract_rules_batch.py'),
-                            '--ls-file', ls_path, '--cat-ids', f'/tmp/catids_{kid[:8]}.json',
-                            '--kid', kid, '--kb', KB, '--source-file', source_file,
-                            '--max-tokens', '16000'], check=False)
+            rc = subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, 'extract_rules_batch.py'),
+            '--ls-file', ls_path, '--cat-ids', f'/tmp/catids_{kid[:8]}.json',
+            '--kid', kid, '--kb', KB, '--source-file', source_file,
+            '--max-tokens', '16000'], check=False)
     print("    实体完成")
 
     # 9.5 Neo4j 图谱写入（2026-09-08 移植自供管版，默认开启；--no-graph 跳过）
