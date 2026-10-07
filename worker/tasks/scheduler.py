@@ -316,6 +316,22 @@ def execute_modo_job(job_id: str) -> dict:
             return {"success": False, "error": f"job not found: {normalized}"}
         if job.state not in ("PENDING", "RUNNING", None, ""):
             return {"success": False, "error": f"job not executable: state={job.state}"}
+        # RUNNING 重入守卫（2026-10-07）：同一 job 的重复投递（如批量重投未去重）
+        # 会起两个实例并行构建同一文档——页面竞态 + LLM 双倍消耗。RUNNING 且活跃
+        # （start_time 距今 <30min）则拒绝重入；孤儿恢复阈值 60min，重投时已超 30min
+        # 不受影响（RUNNING 重入续跑语义保留）。
+        if job.state == "RUNNING" and job.start_time:
+            try:
+                age_min = (
+                    dt.datetime.now(dt.timezone.utc) - job.start_time
+                ).total_seconds() / 60
+                if age_min < 30:
+                    return {
+                        "success": False,
+                        "error": f"job already running ({round(age_min)}min)，拒绝重复执行",
+                    }
+            except TypeError:  # naive/aware 混用时跳过守卫
+                pass
         task_class = job.task_class
         task_params = job.task_params
         job.state = "RUNNING"
