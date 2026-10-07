@@ -16,8 +16,8 @@
   flex-direction: column;
 }
 
-/* Ant Design Table flex chain: Wrapper -> Spin -> Container -> Table -> Content -> Body */
-.modo-table :global(.ant-table-wrapper),
+/* Ant Design Table flex chain: Wrapper -> Spin -> Container -> Table -> Content
+   （表体高度交由 antd 按 scroll.y 像素控制，这里只保证外层撑满剩余空间） */
 .modo-table :global(.ant-table-wrapper) > :global(div),
 .modo-table :global(.ant-table-wrapper) :global(.ant-spin-nested-loading),
 .modo-table :global(.ant-table-wrapper) :global(.ant-spin-container),
@@ -37,23 +37,11 @@
   flex: 0 0 auto !important;
 }
 
-/* Content Area - grow to fill height */
-.modo-table :global(.ant-table-wrapper .ant-table-content),
+/* Body - leave the sizing entirely to antd's scroll.y max-height so that the
+   table scrolls internally and the pagination bar stays pinned at the bottom. */
 .modo-table :global(.ant-table-wrapper .ant-table-body) {
-  flex: 1;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Table body - the scrollable heart: fills remaining space, scrolls internally.
-   max-height:none is required because antd sets an inline max-height from scroll.y */
-.modo-table :global(.ant-table-wrapper .ant-table-body) {
-  flex: 1 1 0% !important;
-  overflow-y: auto !important;
-  overflow-x: auto !important;
-  min-height: 0;
-  max-height: none !important;
+  overflow: auto;
 }
 
 .modo-table :global(.ant-table-wrapper .ant-table-body > table) {

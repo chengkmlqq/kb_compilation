@@ -2,7 +2,7 @@
 
 /** 用户管理（对齐 ds UserManagerNeo：筛选表单 + 表格 + Drawer 编辑 +
  * 角色配置弹窗 + 重置密码；用户ID/用户名/手机/邮箱/状态/操作列）。 */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   App,
   Button,
@@ -55,6 +55,27 @@ export default function SystemUsersPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
+
+  // 表格区域容器 ref + 动态可视高度（ResizeObserver 实时测量，撑满剩余空间，分页常驻底部）
+  const tableAreaRef = useRef<HTMLDivElement>(null);
+  const [tableScrollY, setTableScrollY] = useState<number>(0);
+
+  useLayoutEffect(() => {
+    const el = tableAreaRef.current;
+    if (!el) return;
+    const update = () => {
+      // scroll.y 只作用于表体（body），需扣除固定表头高度，避免底部被裁掉一截
+      const header = el.querySelector<HTMLElement>(
+        ".ant-table-header, .ant-table-thead-wrapper, thead.ant-table-thead",
+      );
+      const headerH = header ? Math.ceil(header.getBoundingClientRect().height) : 0;
+      setTableScrollY(Math.max(0, el.clientHeight - headerH));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // 团队（默认团队下拉）
   const [teams, setTeams] = useState<SysTeamItem[]>([]);
@@ -282,13 +303,15 @@ export default function SystemUsersPage() {
         </Form.Item>
       </Form>
 
-      <ModoTable
-        rowKey="user_id"
-        size="small"
-        loading={loading}
-        dataSource={rows}
-        locale={{ emptyText: <Empty description="暂无用户" /> }}
-        columns={[
+      <div ref={tableAreaRef} style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <ModoTable
+          rowKey="user_id"
+          size="small"
+          loading={loading}
+          dataSource={rows}
+          scroll={{ x: 1200, y: tableScrollY || undefined }}
+          locale={{ emptyText: <Empty description="暂无用户" /> }}
+          columns={[
           { title: "用户ID", dataIndex: "user_id", ellipsis: true },
           {
             title: "用户名",
@@ -345,16 +368,19 @@ export default function SystemUsersPage() {
           },
         ]}
       />
-      <ModoPagination
-        current={page}
-        pageSize={pageSize}
-        total={total}
-        showTotal={(t) => `共 ${t} 个用户`}
-        onChange={(p, ps) => {
-          setPage(p);
-          setPageSize(ps);
-        }}
-      />
+      </div>
+      <div style={{ flexShrink: 0 }}>
+        <ModoPagination
+          current={page}
+          pageSize={pageSize}
+          total={total}
+          showTotal={(t) => `共 ${t} 个用户`}
+          onChange={(p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          }}
+        />
+      </div>
 
       {/* 新增 / 编辑用户（对齐 ds Drawer 表单） */}
       <Drawer
