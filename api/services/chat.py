@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator
 
@@ -275,8 +276,36 @@ class ChatClient:
             tool_acc.clear()
 
         with httpx.Client(timeout=self.cfg.timeout) as client:
-            with client.stream("POST", endpoint, json=payload, headers=headers) as resp:
-                resp.raise_for_status()
+            # 2026-10-07: 上游 LLM 服务偶发 5xx/403/超时（Infer AI 瞬时故障）——
+            # 在流建立阶段（尚未 yield 任何内容）自动重试，避免整轮问答失败。
+            # 一旦开始迭代输出则不再重试（避免重复内容）。
+            # httpx client.stream 是 contextmanager 不能手动退出后重入，
+            # 故用 build_request + send(stream=True)（原生 Response，可自管关闭）。
+            resp = None
+            last_exc: Exception | None = None
+            for attempt in range(3):  # 最多 3 次尝试（2 次重试）
+                try:
+                    req = client.build_request("POST", endpoint, json=payload, headers=headers)
+                    resp = client.send(req, stream=True)
+                    resp.raise_for_status()
+                    break
+                except (httpx.HTTPStatusError, httpx.TransportError, httpx.HTTPError) as exc:
+                    last_exc = exc
+                    if resp is not None:
+                        try:
+                            resp.close()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        resp = None
+                    status = getattr(getattr(exc, "response", None), "status_code", None)
+                    # 4xx（除 408/429）视为不可重试：鉴权/参数问题重试无意义
+                    if status and 400 <= status < 500 and status not in (408, 429):
+                        raise
+                    if attempt < 2:
+                        time.sleep(1.5 * (attempt + 1))
+            if resp is None:
+                raise last_exc or RuntimeError("chat stream failed")
+            try:
                 for line in resp.iter_lines():
                     if not line:
                         continue
@@ -316,6 +345,8 @@ class ChatClient:
                     # finish_reason=tool_calls：本响应只发工具调用，无正文
                     if choice.get("finish_reason") == "tool_calls":
                         yield from _flush_tool_calls()
+            finally:
+                resp.close()
         # 流结束兜底：部分实现不发 finish_reason=tool_calls，已累积调用照常吐出
         yield from _flush_tool_calls()
         yield {"type": "done"}

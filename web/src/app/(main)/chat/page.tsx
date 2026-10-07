@@ -390,7 +390,7 @@ export default function ChatPage() {
           kb_id: kbId,
           question,
           session_id: sessionId,
-          top_k: 5,
+          top_k: 8, // 2026-10-07: 5→8——多主题综合提问时 top_k 太小会漏召回(实测跨文档综合题)
           threshold: 0.2,
           embed_query: true,
           model_id: modelId || undefined, // 2026-10-06: 模型切换（空=默认模型）
