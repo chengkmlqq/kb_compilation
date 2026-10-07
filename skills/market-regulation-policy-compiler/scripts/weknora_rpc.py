@@ -1160,7 +1160,7 @@ def measure(step):
 
 
 def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
-             retries=8, base_delay=3, timeout=600):
+             retries=5, base_delay=3, timeout=600):
     """调用 LLM API 的通用函数，带重试和 JSON 截断处理。
 
     返回 content 文本；全部重试失败抛 RuntimeError。
@@ -1223,7 +1223,11 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
         except urllib.error.HTTPError as e:
             code = e.code
             if code in (403, 429, 500, 502, 503, 520, 521, 522, 524):
-                delay = min(max(30, base_delay * (2 ** attempt)), 90)
+                # 退避上限 45s + 重试次数 5：最长退避 ~3 分钟 < run_one 阶段超时，
+                # 避免 LLM 限流重试耗尽 450s 被判 gen_summary 超时（2026-10-07 实证）
+                delay = min(max(15, base_delay * (2 ** attempt)), 45)
+                _log_llm_event(kind="retry", model=model, attempt=attempt + 1,
+                               reason=f"http_{code}", backoff_s=delay)
                 print(f'  ⏳ LLM {code} (rate limit), 等待 {delay}s 重试 ({attempt + 1}/{retries})')
                 time.sleep(delay)
                 retry_events.append({"reason": f"http_{code}", "backoff_s": delay})

@@ -494,10 +494,15 @@ def _aggregate_events(job_id: str) -> dict:
             steps.append(prev)
     for st, prev in step_open.items():
         steps.append({**prev, "status": "interrupted"})
-    retries = sum(len(e.get("retry_events") or []) for e in evs)
+    retries = sum(len(e.get("retry_events") or []) for e in evs) + sum(
+        1 for e in evs if e.get("kind") == "retry")
     retry_reasons: dict[str, int] = {}
     backoff_total = 0
     for e in evs:
+        if e.get("kind") == "retry":
+            rr = str(e.get("reason") or "?")
+            retry_reasons[rr] = retry_reasons.get(rr, 0) + 1
+            backoff_total += int(e.get("backoff_s") or 0)
         for r in e.get("retry_events") or []:
             retry_reasons[r.get("reason", "?")] = retry_reasons.get(r.get("reason", "?"), 0) + 1
             backoff_total += int(r.get("backoff_s") or 0)
