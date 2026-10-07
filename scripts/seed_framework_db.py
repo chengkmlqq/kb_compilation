@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import uuid
@@ -25,6 +26,7 @@ from api.db import get_sessionmaker
 from api.lib.crypto import aes_encrypt
 from api.models.framework import (
     Base,
+    CronTask,
     Menu,
     RoleMenuRela,
     Team,
@@ -261,10 +263,34 @@ def main() -> None:
                     granted += 1
         db.commit()
         print(
-            f"[5/5] KB 菜单树种子 OK: 共 {len(KB_MENUS)} 项 "
+            f"[5/6] KB 菜单树种子 OK: 共 {len(KB_MENUS)} 项 "
             f"(顶级分组 {sum(1 for _, _, _, _, p, *_ in KB_MENUS if not p)} 个 + 页面 {sum(1 for _, _, _, _, p, *_ in KB_MENUS if p)} 个) "
             f"[新建 {created} / 修正 {updated} / 新增授权 {granted}]"
         )
+
+        # 6) 日志清理定时任务（幂等）：每天 03:00 清理过期操作日志与任务记录
+        existing_cron = db.execute(
+            select(CronTask).where(CronTask.task_class == "KbLogCleanupTask")
+        ).scalars().first()
+        if existing_cron:
+            print("[6/6] 日志清理 cron 已存在 (skip)")
+        else:
+            db.add(
+                CronTask(
+                    id=uuid.uuid4().hex,
+                    name="每日日志清理",
+                    label="清理过期操作日志与任务记录",
+                    cron_expression="0 3 * * *",
+                    state="1",
+                    task_class="KbLogCleanupTask",
+                    fire_params=json.dumps(
+                        {"retention_days": 90, "job_retention_days": 90}, ensure_ascii=False
+                    ),
+                    queue_name="default",
+                )
+            )
+            db.commit()
+            print("[6/6] 日志清理 cron 种子 OK: 每天 03:00, 保留 90 天")
 
         print("\nDONE — 登录: " + SEED_USER_ID + "/" + SEED_PASSWORD)
     finally:
