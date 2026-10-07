@@ -80,15 +80,65 @@ def _kb_owner_context(db, kb_id: str) -> dict:
     return {"user_id": owner_uid, "team_name": owner_team, "is_admin": admin}
 
 
+BUILTIN_SKILL_BY_SCHEMA: dict[str, str] = {
+    # ontology_schema.schema_name → 内置技能目录名（git skills/ 下，随镜像部署）
+    "市场监管法规": "market-regulation-policy-compiler",
+    "监督管理制度文档转wiki": "market-regulation-policy-compiler",
+}
+
+
+def _skill_name_for_kb(db, kb_id: str) -> str | None:
+    """KB 未显式绑技能时，按 ontology_schema.schema_name 映射内置技能名。"""
+    try:
+        from api.models.ontology import KbOntologySchema
+
+        row = db.execute(
+            select(KbOntologySchema.schema_name).where(
+                KbOntologySchema.kb_id == kb_id
+            )
+        ).scalars().first()
+        if row:
+            return BUILTIN_SKILL_BY_SCHEMA.get(str(row))
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _builtin_skill_scripts(skill_name: str) -> str:
+    """内置技能目录（git skills/ 随镜像部署：/srv/kb/skills/<name>/scripts）。"""
+    import os
+
+    cand = os.path.join("/srv/kb/skills", skill_name, "scripts")
+    return cand if os.path.isdir(cand) else ""
+
+
 def _attach_skill_zip(config: dict[str, Any], kb_id: str = "") -> None:
-    """1A：从 kb_skill 表取知识库绑定技能的 ZIP（bytes）。
+    """1A：技能来源——① 内置目录（git skills/ 随镜像）优先；② 否则 kb_skill 表 + MinIO zip 回退。
+
+    无显式 config.skill 时按 KB 的 ontology_schema 映射内置技能（KB 只选 schema
+    不选技能的新形态）；存量 KB 带 config.skill 仍按原逻辑走。
 
     可见性按 **知识库创建者的个人/团队/系统权限** 过滤（owner_uid/owner_team
     由 _kb_owner_context 提供）——不是空上下文+sys_admin（那只能拿到系统级
     技能，个人/团队的技能会被漏掉）。
     """
     skill_name = _first_str(config, "skill")
+    if not skill_name and kb_id:
+        # 新形态：KB 只选 schema → 按 schema 映射内置技能
+        db0 = get_sessionmaker()()
+        try:
+            skill_name = _skill_name_for_kb(db0, kb_id) or ""
+        finally:
+            db0.close()
+        if skill_name:
+            config["skill"] = skill_name
     if not skill_name:
+        return
+    # 内置目录优先（无下载/解压；镜像内 git 同源版本）
+    builtin = _builtin_skill_scripts(skill_name)
+    if builtin:
+        config["skill_builtin_dir"] = builtin
+        config["skill"] = skill_name
         return
     try:
         from api.services.skills import get_skill_package, list_skills, read_skill_zip
@@ -410,12 +460,31 @@ TASK_CLASS_SKILL_DIRECT = "KbSkillDirectBuildTask"
 
 
 def _extract_skill_scripts(config: dict[str, Any]) -> str:
-    """解压技能 zip → 返回含 run_one.py 的 scripts 目录（空串=失败）。"""
+    """技能脚本目录：① 内置目录（git skills/）复制到 per-task 目录；② 否则解压 zip。
+
+    内置分支仍复制到 per-task 临时目录——多任务并发时技能目录内会写事件
+    日志（WIKI_EVENTS_LOG）与临时产物，共用目录会互相覆盖。
+    """
     import base64
     import io
+    import os as _os
+    import shutil as _shutil
     import tempfile
     import zipfile
     from pathlib import Path
+
+    builtin = str(config.get("skill_builtin_dir") or "")
+    if builtin and _os.path.isdir(builtin):
+        tmp = tempfile.mkdtemp(prefix="skill_builtin_")
+        try:
+            dst = _os.path.join(tmp, "scripts")
+            _shutil.copytree(builtin, dst, dirs_exist_ok=True)
+            for pat in ("run_one.py", "build_wiki.py", "build_full.py"):
+                if _os.path.isfile(_os.path.join(dst, pat)):
+                    return dst
+            logger.warning("内置技能目录缺入口脚本: %s", builtin)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("内置技能目录复制失败（回落 zip）: %s", exc)
 
     raw = config.get("skill_zip") or config.get("skill_zip_base64")
     if not raw:

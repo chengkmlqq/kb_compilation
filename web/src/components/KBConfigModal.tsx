@@ -158,12 +158,8 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
         </Form.Item>
         {customWiki && (
           <>
-            <Form.Item name="wiki_skill" label="构建技能">
-              <Select
-                allowClear
-                placeholder="留空 = 系统默认技能"
-                options={skills.map((s) => ({ label: s.name, value: s.name }))}
-              />
+            <Form.Item name="wiki_skill" hidden>
+              <Select />
             </Form.Item>
             <Form.Item name="extraction_granularity" label="抽取粒度">
               <Select

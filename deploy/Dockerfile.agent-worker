@@ -57,6 +57,8 @@ COPY api/ ./api/
 COPY worker/ ./worker/
 COPY docreader/ ./docreader/
 COPY scripts/ ./scripts/
+# 内置技能（git skills/ 随镜像部署，wiki 构建优先用内置目录，MinIO zip 仅回退）
+COPY skills/ ./skills/
 # 技能扫描/安装目录（任务级 ZIP 走临时目录，这里是可写安装目录）
 RUN mkdir -p /data/kb_documents /srv/kb/data/agent-skills /srv/kb/agent-skills
 

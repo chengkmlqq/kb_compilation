@@ -226,7 +226,6 @@ export default function KbsPage() {
       embedding_model_id: values.embedding_model_id || undefined,
       summary_model_id: values.summary_model_id || undefined,
       vector_store_id: values.vector_store_id || undefined,
-      configs: values.wiki_skill ? { wiki_config: { skill: values.wiki_skill } } : undefined,
       ontology_schema_name: values.ontology_schema_name,
     };
     const res = await apiCreateKb(payload);
@@ -508,24 +507,13 @@ export default function KbsPage() {
               name="custom_wiki_generation"
               label="自定义 Wiki 生成"
               valuePropName="checked"
-              extra="开启后上传文档不会自动构建 Wiki，需手动触发（可在开启时指定构建技能）"
+              extra="开启后上传文档不会自动构建 Wiki，需手动触发（构建引擎由所选本体 Schema 决定）"
             >
               <Switch />
             </Form.Item>
             {customWiki && (
-              <Form.Item
-                name="wiki_skill"
-                label="构建技能"
-                extra="选择 Wiki 构建使用的技能（留空则使用系统默认技能）。技能由 agent worker 内联执行"
-              >
-                <Select
-                  allowClear
-                  placeholder="留空 = 系统默认技能"
-                  options={skills.map((s) => ({
-                    label: s.description ? `${s.name}（${s.description}）` : s.name,
-                    value: s.name,
-                  }))}
-                />
+              <Form.Item name="wiki_skill" hidden>
+                <Select />
               </Form.Item>
             )}
           </Form>
