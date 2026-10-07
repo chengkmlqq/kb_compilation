@@ -52,8 +52,13 @@ def graph_health() -> dict:
     reader = get_graph_reader()
     if reader is None:
         return {"success": True, "data": {"enabled": False, "available": False}}
-    data = reader.health()
-    return {"success": True, "data": {"enabled": True, **data}}
+    # GraphReader 无 health() 方法（原代码 AttributeError 致 500）——
+    # 用最小查询 RETURN 1 探测连通性，失败报告不可用而非抛错。
+    try:
+        rows = reader._run("RETURN 1 AS ok", {})
+        return {"success": True, "data": {"enabled": True, "available": rows is not None}}
+    except Exception as exc:  # noqa: BLE001 - 探活端点不应自身抛 500（Neo4j 未部署/不可达时报告不可用）
+        return {"success": True, "data": {"enabled": True, "available": False, "error": str(exc)[:200]}}
 
 
 @router.get("/graph/engines")
