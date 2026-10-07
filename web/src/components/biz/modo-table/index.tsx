@@ -27,7 +27,7 @@ export function ModoTable<T extends object>({
   containerStyle,
   ...tableProps
 }: ModoTableProps<T>) {
-  const defaultScroll = { x: 1000, y: 99999 };
+  const defaultScroll = { x: 1000, y: "100.1%" };
   const mergedScroll = scroll ? { ...defaultScroll, ...scroll } : defaultScroll;
 
   return (
