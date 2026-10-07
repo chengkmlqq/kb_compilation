@@ -1910,6 +1910,8 @@ export interface QaStreamEvent {
   title?: string;
   summary?: string;
   hits_count?: number;
+  tool_calls?: Array<{ id?: string; name?: string; arguments?: string }>;
+  results?: Array<{ id?: string; name?: string; result?: string }>;
 }
 
 export function apiCreateSession(kb_id?: string | null, title?: string) {

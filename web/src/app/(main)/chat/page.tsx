@@ -24,6 +24,7 @@ import {
 } from "antd";
 import {
   AimOutlined,
+  CopyOutlined,
   DeleteOutlined,
   EditOutlined,
   MessageOutlined,
@@ -347,6 +348,28 @@ export default function ChatPage() {
                   return { ...m, steps };
                 }),
               );
+            } else if (ev.type === "tool") {
+              const toolSteps: RagStep[] = ((ev.tool_calls || []) as Array<{ id?: string; name?: string }>).map(
+                (tc, i) => {
+                  const res = ((ev.results || []) as Array<{ result?: string }>)[i];
+                  const brief = res?.result ? String(res.result) : "";
+                  return {
+                    stage: `tool:${tc.name || "unknown"}`,
+                    status: "done" as const,
+                    title: `调用工具 ${tc.name || "unknown"}`,
+                    summary: brief
+                      ? brief.slice(0, 60) + (brief.length > 60 ? "…" : "")
+                      : undefined,
+                  };
+                },
+              );
+              setMsgs((prev) =>
+                prev.map((m) =>
+                  m.id === applyId
+                    ? { ...m, steps: [...(m.steps || []), ...toolSteps] }
+                    : m,
+                ),
+              );
             }
             evtCount += 1;
           } catch {
@@ -528,6 +551,28 @@ export default function ChatPage() {
                   else steps.push(step);
                   return { ...m, steps };
                 }),
+              );
+            } else if (evt.type === "tool") {
+              const toolSteps: RagStep[] = ((evt.tool_calls || []) as Array<{ id?: string; name?: string }>).map(
+                (tc, i) => {
+                  const res = ((evt.results || []) as Array<{ result?: string }>)[i];
+                  const brief = res?.result ? String(res.result) : "";
+                  return {
+                    stage: `tool:${tc.name || "unknown"}`,
+                    status: "done" as const,
+                    title: `调用工具 ${tc.name || "unknown"}`,
+                    summary: brief
+                      ? brief.slice(0, 60) + (brief.length > 60 ? "…" : "")
+                      : undefined,
+                  };
+                },
+              );
+              setMsgs((prev) =>
+                prev.map((m) =>
+                  m.id === placeholder.id
+                    ? { ...m, steps: [...(m.steps || []), ...toolSteps] }
+                    : m,
+                ),
               );
             } else if (evt.type === "stream_meta") {
               streamId = evt.stream_id || "";
@@ -1077,6 +1122,27 @@ export default function ChatPage() {
                       onClick={() => void rewindTo(m.id)}
                     >
                       回溯到此
+                    </Button>
+                  </div>
+                )}
+                {/* 答案工具栏：复制 */}
+                {m.role === "assistant" && !m.streaming && m.content && (
+                  <div style={{ marginTop: 2, display: "flex", gap: 4 }}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<CopyOutlined />}
+                      style={{ fontSize: 12, padding: "0 4px", height: "auto", color: "#999" }}
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(m.content);
+                          toast.success("已复制回答");
+                        } catch {
+                          toast.error("复制失败");
+                        }
+                      }}
+                    >
+                      复制
                     </Button>
                   </div>
                 )}
