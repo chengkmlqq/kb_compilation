@@ -159,8 +159,8 @@ class WikiFeedbackStatusUpdate(BaseModel):
 
 @router.get("")
 def get_kbs(
-    page: int = 1,
-    page_size: int = 10,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
     keyword: str = "",
     scope: str | None = None,
     db: Session = Depends(get_db),
@@ -371,7 +371,7 @@ def del_kb(
 def get_documents(
     kb_id: str,
     caller: dict = Depends(_require_kb_caller),
-    page: int = 1,
+    page: int = Query(1, ge=1),
     page_size: int = 20,
     keyword: str = "",
     file_type: str = "",
@@ -652,7 +652,7 @@ def get_wiki_graph_route(
 def get_wiki_branch(
     kb_id: str,
     folder_id: str = "",
-    page: int = 1,
+    page: int = Query(1, ge=1),
     page_size: int = 50,
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),

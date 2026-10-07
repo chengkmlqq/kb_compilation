@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
@@ -63,7 +63,7 @@ def create(req: AgentCreateRequest, db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("")
-def list_agents_route(page: int = 1, page_size: int = 10, db: Session = Depends(get_db)) -> dict:
+def list_agents_route(page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100), db: Session = Depends(get_db)) -> dict:
     return {"success": True, "data": list_agents(db, page=page, page_size=page_size)}
 
 

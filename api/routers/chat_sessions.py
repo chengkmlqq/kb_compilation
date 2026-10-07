@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Cookie, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Cookie, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -114,7 +114,7 @@ def api_create_session(
 
 @router.get("")
 def api_list_sessions(
-    page: int = 1,
+    page: int = Query(1, ge=1),
     page_size: int = 50,
     db: Session = Depends(get_db),
     user_id: str = Depends(_require_user_id),

@@ -9,7 +9,7 @@ team-actions), and the menu-icon catalog (aligned with icon-actions).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Cookie, Depends
+from fastapi import APIRouter, Cookie, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -94,8 +94,8 @@ def _current_identity(x_next_identity: str | None) -> str | None:
 
 @router.get("/users")
 def get_users(
-    page: int = 1,
-    page_size: int = 10,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
     keyword: str = "",
     db: Session = Depends(get_db),
 ) -> dict:
@@ -103,7 +103,7 @@ def get_users(
 
 
 @router.get("/roles")
-def get_roles(page: int = 1, page_size: int = 10, db: Session = Depends(get_db)) -> dict:
+def get_roles(page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100), db: Session = Depends(get_db)) -> dict:
     return {"success": True, "data": list_roles(db, page, page_size)}
 
 
@@ -145,7 +145,7 @@ def assign_role_users(role_id: str, req: RoleUsersRequest, db: Session = Depends
 
 
 @router.get("/teams")
-def get_teams(page: int = 1, page_size: int = 10, db: Session = Depends(get_db)) -> dict:
+def get_teams(page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100), db: Session = Depends(get_db)) -> dict:
     return {"success": True, "data": list_teams(db, page, page_size)}
 
 
@@ -188,7 +188,7 @@ def get_my_menus(
 
 @router.get("/operation-logs")
 def get_operation_logs(
-    page: int = 1,
+    page: int = Query(1, ge=1),
     page_size: int = 20,
     keyword: str = "",
     db: Session = Depends(get_db),

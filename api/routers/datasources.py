@@ -67,8 +67,8 @@ class TestDatasourceRequest(BaseModel):
 
 @router.get("")
 def get_datasources(
-    page: int = 1,
-    page_size: int = 10,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
     keyword: str = "",
     name: str = "",
     label: str = "",
