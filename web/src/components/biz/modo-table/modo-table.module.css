@@ -1,0 +1,68 @@
+.modo-table {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Ensure the wrapper fills its parent flex container */
+.modo-table :global(.ant-table-wrapper) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Ant Design Table flex chain: Wrapper -> Spin -> Container -> Table -> Content -> Body */
+.modo-table :global(.ant-table-wrapper),
+.modo-table :global(.ant-table-wrapper) > :global(div),
+.modo-table :global(.ant-table-wrapper) :global(.ant-spin-nested-loading),
+.modo-table :global(.ant-table-wrapper) :global(.ant-spin-container),
+.modo-table :global(.ant-table-wrapper) :global(.ant-table),
+.modo-table :global(.ant-table-wrapper) :global(.ant-table-container),
+.modo-table :global(.ant-table-wrapper) :global(.ant-table-content) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Header - should NOT grow or shrink */
+.modo-table :global(.ant-table-wrapper .ant-table-header),
+.modo-table :global(.ant-table-wrapper .ant-table-thead-wrapper) {
+  flex: 0 0 auto !important;
+}
+
+/* Content Area - grow to fill height */
+.modo-table :global(.ant-table-wrapper .ant-table-content),
+.modo-table :global(.ant-table-wrapper .ant-table-body) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Table body - the scrollable heart: fills remaining space, scrolls internally.
+   max-height:none is required because antd sets an inline max-height from scroll.y */
+.modo-table :global(.ant-table-wrapper .ant-table-body) {
+  flex: 1 1 0% !important;
+  overflow-y: auto !important;
+  overflow-x: auto !important;
+  min-height: 0;
+  max-height: none !important;
+}
+
+.modo-table :global(.ant-table-wrapper .ant-table-body > table) {
+  width: 100%;
+  min-width: 100%;
+  table-layout: fixed;
+}
+
+/* Compact rows (default) */
+.modo-table :global(.ant-table-tbody > tr > td) {
+  padding: 6px 8px !important;
+}

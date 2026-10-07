@@ -1,0 +1,7 @@
+.pagination-container {
+  width: 100%;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-start;
+  padding: 10px 0;
+}

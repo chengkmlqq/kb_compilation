@@ -16,7 +16,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
 } from "antd";
 import {
@@ -34,6 +33,8 @@ import {
   SysUserItem,
 } from "@/lib/api";
 import { StateTag } from "../_shared";
+import ModoTable from "@/components/biz/modo-table";
+import ModoPagination from "@/components/biz/modo-pagination";
 
 type FormValues = {
   userId: string;
@@ -239,9 +240,12 @@ export default function SystemUsersPage() {
 
   return (
     // 2026-10-07: 参考任务管理页，最外层容器加 8px padding（统一页面边距）
-    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
+    // 2026-10-07 一屏自适应（对齐 data-synth）：外层不滚动，卡片内表格占满剩余高度，分页常驻底栏
+    <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
         title="用户"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
         extra={
           <Button type="primary" onClick={openCreate}>
             新增用户
@@ -251,7 +255,7 @@ export default function SystemUsersPage() {
       {/* 筛选表单（对齐 ds FilterForm：用户ID + 用户名） */}
       <Form
         layout="inline"
-        style={{ marginBottom: 12 }}
+        style={{ marginBottom: 12, flexShrink: 0 }}
         onFinish={doSearch}
         initialValues={{ userId: "", userName: "" }}
       >
@@ -278,22 +282,11 @@ export default function SystemUsersPage() {
         </Form.Item>
       </Form>
 
-      <Table
+      <ModoTable
         rowKey="user_id"
         size="small"
         loading={loading}
         dataSource={rows}
-        pagination={{
-          current: page,
-          pageSize,
-          total,
-          showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 个用户`,
-          onChange: (p, ps) => {
-            setPage(p);
-            setPageSize(ps);
-          },
-        }}
         locale={{ emptyText: <Empty description="暂无用户" /> }}
         columns={[
           { title: "用户ID", dataIndex: "user_id", ellipsis: true },
@@ -351,6 +344,16 @@ export default function SystemUsersPage() {
             ),
           },
         ]}
+      />
+      <ModoPagination
+        current={page}
+        pageSize={pageSize}
+        total={total}
+        showTotal={(t) => `共 ${t} 个用户`}
+        onChange={(p, ps) => {
+          setPage(p);
+          setPageSize(ps);
+        }}
       />
 
       {/* 新增 / 编辑用户（对齐 ds Drawer 表单） */}
