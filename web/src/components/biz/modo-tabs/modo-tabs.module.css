@@ -1,0 +1,158 @@
+.modo-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Ant Design Tabs Stretch */
+.modo-tabs :global(.ant-tabs-content-holder) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modo-tabs :global(.ant-tabs-content) {
+  height: 100%;
+  min-height: 0;
+}
+
+.modo-tabs :global(.ant-tabs-tabpane) {
+  height: 100%;
+  min-height: 0;
+}
+
+/* Ant Design Tabs Card Theme Override (Figma Match) */
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav) {
+  margin-bottom: 0 !important;
+  background: #ffffff !important;
+  padding: 0 16px !important;
+  height: 44px !important;
+  border-bottom: 1px solid #eff4f9 !important;
+}
+
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-nav-wrap) {
+  height: 44px !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+/* --- Commmon Tab Basic Style --- */
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab) {
+  border: none !important;
+  margin-right: 8px !important;
+  border-radius: 4px !important;
+  transition: all 0.2s;
+  padding: 0 8px !important;
+  height: 24px !important;
+  line-height: 20px !important;
+  font-size: 12px !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+/* --- Dynamic Tabs (non-first) styling - Figma Match --- */
+
+/* Default State */
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab:not(:first-child)) {
+  background: #e3e9ef !important;
+  /* fill-3 */
+  color: #4d5e7d !important;
+  /* text-2 */
+}
+
+/* Hover State */
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab:not(:first-child):hover) {
+  background: #cfd6de !important;
+  color: #242e43 !important;
+}
+
+/* Selected (Active) State */
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab-active:not(:first-child)) {
+  background: #3261ce !important;
+}
+
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab-active:not(:first-child) .ant-tabs-tab-btn) {
+  color: #ffffff !important;
+}
+
+/* Selected + Hover State */
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab-active:not(:first-child):hover) {
+  background: #2b52b1 !important;
+}
+
+/* --- Close Button (x) styling --- */
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab .ant-tabs-tab-remove) {
+  margin-left: 4px !important;
+  margin-right: -4px !important;
+  font-size: 10px !important;
+  transition: all 0.2s;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  padding: 2px !important;
+  opacity: 0;
+  /* Hidden by default */
+}
+
+/* Show on hover for any dynamic tab (active or inactive) */
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab:not(:first-child):hover .ant-tabs-tab-remove) {
+  opacity: 1 !important;
+}
+
+/* Color for inactive tab hover */
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab:not(:first-child):not(.ant-tabs-tab-active):hover .ant-tabs-tab-remove) {
+  color: #242e43 !important;
+}
+
+/* Color for active tab hover */
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab-active:not(:first-child):hover .ant-tabs-tab-remove) {
+  color: #ffffff !important;
+}
+
+/* --- First Tab (Page Title) styling --- */
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab:first-child) {
+  background: #ffffff !important;
+  border-radius: 0 !important;
+  margin-right: 0 !important;
+  padding: 0 16px 0 0 !important;
+  cursor: default !important;
+}
+
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab:first-child .ant-tabs-tab-btn) {
+  color: #242e43 !important;
+  font-weight: 600 !important;
+  font-size: 14px !important;
+  pointer-events: none !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+
+/* Icon support in first tab */
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab:first-child .anticon),
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab:first-child span[role="img"]),
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab:first-child .ant-tabs-tab-icon) {
+  color: #4e5969 !important;
+  font-size: 16px !important;
+  margin-right: 0 !important;
+}
+
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav .ant-tabs-tab:first-child .anticon svg) {
+  margin-right: 0 !important;
+}
+
+/* Remove default bottom line & extra borders */
+.modo-tabs:global(.ant-tabs-card) > :global(.ant-tabs-nav::before) {
+  display: none !important;
+}
+
+/* Truncated label helper */
+.tab-label-truncated {
+  display: inline-block;
+  max-width: 100%;
+}

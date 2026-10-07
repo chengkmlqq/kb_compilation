@@ -14,32 +14,24 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   App,
-  Button,
   Card,
   Checkbox,
   Empty,
   Form,
-  Input,
-    InputNumber,
-    Radio,
-    Select,
-    Space,
-    Spin,
-    Steps,
-    Switch,
-    Tabs,
-    Tag,
-    Tooltip,
-  } from "antd";
+  InputNumber,
+  Radio,
+  Space,
+  Spin,
+  Steps,
+  Switch,
+  Tag,
+  Tooltip,
+} from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
-  ApiOutlined,
-  DeleteOutlined,
-  EditOutlined,
+  DatabaseOutlined,
   PlusOutlined,
   QuestionCircleOutlined,
-  ReloadOutlined,
-  SearchOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
 import {
@@ -61,9 +53,16 @@ import {
   DsTypeItem,
   DatasourceItem,
   TeamDsMapItem,
-  } from "@/lib/api";
-  import ModoTable from "@/components/biz/modo-table";
-  import ModoPagination from "@/components/biz/modo-pagination";
+} from "@/lib/api";
+import ModoTable from "@/components/biz/modo-table";
+import ModoPagination from "@/components/biz/modo-pagination";
+import { ModoTabs } from "@/components/biz/modo-tabs";
+import { ModoButton } from "@/components/biz/modo-button";
+import { ModoInput, ModoPassword, ModoTextArea, ModoSearch } from "@/components/biz/modo-input";
+import { ModoSelect } from "@/components/biz/modo-select";
+import { ModoRadio } from "@/components/biz/modo-radio";
+import { ModoActionGroup } from "@/components/biz/modo-action-group";
+import { PageFilter } from "@/components/biz/page-filter";
 
 type EditTab = {
   key: string;
@@ -128,7 +127,8 @@ function parseFieldOptions(options?: string | null): Array<{ label: string; valu
 
 export default function DatasourcesPage() {
   const { message, modal } = App.useApp();
-  const [form] = Form.useForm();
+    const [form] = Form.useForm();
+    const [filterForm] = Form.useForm();
 
   // ---- 列表 ----
   const [rows, setRows] = useState<DatasourceItem[]>([]);
@@ -137,6 +137,7 @@ export default function DatasourcesPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [filters, setFilters] = useState<{ name?: string; label?: string; dsType?: string }>({});
+  const [searchParams, setSearchParams] = useState<Record<string, unknown>>({});
 
   // ---- 元数据 ----
   const [categories, setCategories] = useState<DsCategoryItem[]>([]);
@@ -418,25 +419,21 @@ export default function DatasourcesPage() {
     {
       title: "操作",
       key: "action",
-      width: 170,
-      align: "center",
+      width: 140,
       fixed: "right",
       render: (_, row) => (
-        <Space size="small">
-          <Button type="link" size="small" icon={<EditOutlined />} onClick={() => void openEdit(row)}>
-            编辑
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            danger
-            icon={<DeleteOutlined />}
-            disabled={row.dsType === "vector_es"} // 对齐 ds：向量库数据源前端禁用删除
-            onClick={() => handleDelete(row)}
-          >
-            删除
-          </Button>
-        </Space>
+        <ModoActionGroup
+          actions={[
+            { key: "edit", label: "编辑", onClick: () => void openEdit(row) },
+            {
+              key: "delete",
+              label: "删除",
+              danger: true,
+              disabled: row.dsType === "vector_es", // 对齐 ds：向量库数据源前端禁用删除
+              onClick: () => handleDelete(row),
+            },
+          ]}
+        />
       ),
     },
   ];
@@ -450,33 +447,32 @@ export default function DatasourcesPage() {
       widget === "switch" || widget === "kerberos" || (widget === "checkbox" && options.length === 0);
 
     let node: ReactNode;
-    if (widget === "password") {
-      node = <Input.Password autoComplete="new-password" placeholder={f.placeHold || "请输入"} />;
-    } else if (widget === "kerberos" || widget === "switch") {
-      node = <Switch />;
-    } else if (widget === "textarea" || widget === "textareawithcopy") {
-      node = <Input.TextArea rows={4} placeholder={f.placeHold || "请输入"} />;
-    } else if (widget === "select") {
-      node = (
-        <Select
-          placeholder={f.placeHold || "请选择"}
-          options={options}
-          allowClear
-          showSearch
-          optionFilterProp="label"
-        />
-      );
-    } else if (widget === "radio") {
-      node = <Radio.Group options={options} />;
-    } else if (widget === "checkbox") {
-      node = options.length > 0 ? <Checkbox.Group options={options} /> : <Checkbox />;
-    } else if (widget === "inputtag") {
-      node = <Select mode="tags" placeholder={f.placeHold || "可输入多个值后回车"} options={[]} />;
-    } else if (widget === "integer" || widget === "number" || widget === "inputnumber") {
-      node = <InputNumber style={{ width: "100%" }} placeholder={f.placeHold || "请输入"} />;
-    } else {
-      node = <Input placeholder={f.placeHold || "请输入"} />;
-    }
+        if (widget === "password") {
+          node = <ModoPassword autoComplete="new-password" placeholder={f.placeHold || "请输入"} />;
+        } else if (widget === "kerberos" || widget === "switch") {
+          node = <Switch />;
+        } else if (widget === "textarea" || widget === "textareawithcopy") {
+          node = <ModoTextArea rows={4} placeholder={f.placeHold || "请输入"} />;
+        } else if (widget === "select") {
+          node = (
+            <ModoSelect
+              placeholder={f.placeHold || "请选择"}
+              options={options}
+              showSearch
+              optionFilterProp="label"
+            />
+          );
+        } else if (widget === "radio") {
+          node = <ModoRadio.Group options={options} />;
+        } else if (widget === "checkbox") {
+          node = options.length > 0 ? <Checkbox.Group options={options} /> : <Checkbox />;
+        } else if (widget === "inputtag") {
+          node = <ModoSelect mode="tags" placeholder={f.placeHold || "可输入多个值后回车"} options={[]} />;
+        } else if (widget === "integer" || widget === "number" || widget === "inputnumber") {
+          node = <InputNumber style={{ width: "100%" }} placeholder={f.placeHold || "请输入"} />;
+        } else {
+          node = <ModoInput placeholder={f.placeHold || "请输入"} />;
+        }
 
     const labelNode = (
       <span>
@@ -515,13 +511,13 @@ export default function DatasourcesPage() {
           <Spin spinning={formFields.length === 0 && !selectedType}>
             <Form form={form} layout="horizontal" labelCol={{ span: 5 }} wrapperCol={{ span: 19 }}>
               <Form.Item label="数据源类型" style={{ marginBottom: 16 }}>
-                <Input value={selectedType?.dsTypeLabel || selectedType?.dsType || ""} disabled />
+                <ModoInput value={selectedType?.dsTypeLabel || selectedType?.dsType || ""} disabled />
               </Form.Item>
               <Form.Item name="dsType" hidden>
-                <Input />
+                <ModoInput />
               </Form.Item>
               <Form.Item name="dsCategory" hidden>
-                <Input />
+                <ModoInput />
               </Form.Item>
               <Form.Item
                 name="name"
@@ -529,7 +525,7 @@ export default function DatasourcesPage() {
                 rules={[{ required: true, message: "请输入数据源名称" }]}
                 style={{ marginBottom: 16 }}
               >
-                <Input placeholder="唯一英文标识" disabled={isEditMode} />
+                <ModoInput placeholder="唯一英文标识" disabled={isEditMode} />
               </Form.Item>
               <Form.Item
                 name="label"
@@ -537,7 +533,7 @@ export default function DatasourcesPage() {
                 rules={[{ required: true, message: "请输入数据源中文名" }]}
                 style={{ marginBottom: 16 }}
               >
-                <Input placeholder="显示名称" />
+                <ModoInput placeholder="显示名称" />
               </Form.Item>
               {FIXED_FIELDS.map((name) => (
                 <Form.Item
@@ -555,20 +551,20 @@ export default function DatasourcesPage() {
                   style={{ marginBottom: 16 }}
                 >
                   {name === "dsAuth" ? (
-                    <Input.Password placeholder="连接口令" autoComplete="new-password" />
+                    <ModoPassword placeholder="连接口令" autoComplete="new-password" />
                   ) : name === "dsVersion" ? (
-                    <Input placeholder="如 8.0" />
+                    <ModoInput placeholder="如 8.0" />
                   ) : (
-                    <Input placeholder={name === "url" ? "jdbc:mysql://host:3306/db" : "请输入"} />
+                    <ModoInput placeholder={name === "url" ? "jdbc:mysql://host:3306/db" : "请输入"} />
                   )}
                 </Form.Item>
               ))}
               {formFields.filter((f) => !FIXED_FIELDS.includes(f.name) && f.name !== "name" && f.name !== "label").map(renderFormItem)}
               <Form.Item name="state" label="状态" initialValue="1" style={{ marginBottom: 16 }}>
-                <Radio.Group>
-                  <Radio value="1">生效</Radio>
-                  <Radio value="0">停用</Radio>
-                </Radio.Group>
+                <ModoRadio.Group>
+                  <ModoRadio value="1">生效</ModoRadio>
+                  <ModoRadio value="0">停用</ModoRadio>
+                </ModoRadio.Group>
               </Form.Item>
             </Form>
           </Spin>
@@ -587,16 +583,19 @@ export default function DatasourcesPage() {
         }}
       >
         {onPrev ? (
-          <Button onClick={onPrev} style={{ background: "#eff4f9", color: "#242e43" }}>
+          <ModoButton
+            onClick={onPrev}
+            style={{ background: "#eff4f9", color: "#242e43" }}
+          >
             上一步
-          </Button>
+          </ModoButton>
         ) : null}
-        <Button onClick={() => void handleTest()} loading={testing}>
+        <ModoButton loading={testing} onClick={() => void handleTest()}>
           测试连通性
-        </Button>
-        <Button type="primary" loading={saving} onClick={() => void handleSave(dsId)}>
+        </ModoButton>
+        <ModoButton type="primary" loading={saving} onClick={() => void handleSave(dsId)}>
           保存
-        </Button>
+        </ModoButton>
       </div>
     </div>
   );
@@ -606,65 +605,122 @@ export default function DatasourcesPage() {
     return (
       <div style={{ padding: "8px 4px", display: "flex", flexDirection: "column", height: "100%" }}>
         <Steps
-          current={step}
-          style={{ marginBottom: 16 }}
-          items={[{ title: "选择类型" }, { title: "信息配置" }]}
-        />
-        {step === 0 ? (
-          <div style={{ display: "flex", gap: 16, minHeight: 420 }}>
-            <div style={{ width: 180, flexShrink: 0 }}>
-              <Input.Search
-                placeholder="搜索类型"
-                allowClear
-                onChange={(e) => setTypeSearch(e.target.value)}
-                style={{ marginBottom: 8 }}
-              />
-              {categories.map((c) => (
-                <div
-                  key={c.id}
-                  onClick={() => {
-                    setCategory(c.categoryName);
-                    setTypeSearch("");
-                  }}
-                  style={{
-                    padding: "8px 12px",
-                    cursor: "pointer",
-                    borderRadius: 6,
-                    background: category === c.categoryName && !typeSearch ? "#EFF4F9" : undefined,
-                    color: category === c.categoryName && !typeSearch ? "#1E5EFF" : undefined,
-                  }}
-                >
-                  {c.categoryLabel || c.categoryName}
-                </div>
-              ))}
-            </div>
-            <div style={{ flex: 1 }}>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-                  gap: 12,
-                }}
-              >
-                {typeList.map((t) => (
-                  <Card key={t.id || t.dsType} hoverable size="small" onClick={() => void pickType(t)} style={{ textAlign: "center" }}>
-                    <div style={{ margin: "0 auto 8px", width: 56, height: 56, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", overflow: "hidden", background: "#F0F2F5" }}>
-                      {t.img ? (
-                        <img src={t.img} alt={t.dsTypeLabel || t.dsType} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-                      ) : (
-                        <span style={{ fontSize: 20, fontWeight: 600, color: "#999" }}>
-                          {(t.dsType || "").substring(0, 2).toUpperCase()}
-                        </span>
-                      )}
+                  current={step}
+                  style={{ marginBottom: 16 }}
+                  items={[
+                    {
+                      title: (
+                        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.2 }}>
+                          <span>选择类型</span>
+                          <span style={{ fontSize: 12, color: "#999", fontWeight: 400, marginTop: 4 }}>
+                            选择数据源类型
+                          </span>
+                        </div>
+                      ),
+                    },
+                    {
+                      title: (
+                        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.2 }}>
+                          <span>信息配置</span>
+                          <span style={{ fontSize: 12, color: "#999", fontWeight: 400, marginTop: 4 }}>
+                            配置连接信息
+                          </span>
+                        </div>
+                      ),
+                    },
+                  ]}
+                />
+                {step === 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 400, overflow: "hidden", background: "#fff", borderRadius: 6 }}>
+                    {/* 顶栏全局搜索（对齐 ds SelectSource） */}
+                    <div style={{ padding: 12, borderBottom: "1px solid #eff4f9" }}>
+                      <ModoSearch
+                        placeholder="搜索全部数据源类型"
+                        allowClear
+                        value={typeSearch}
+                        onChange={(e) => setTypeSearch(e.target.value)}
+                        style={{ width: 320 }}
+                      />
                     </div>
-                    <div>{t.dsTypeLabel || t.dsType}</div>
-                  </Card>
-                ))}
-                {typeList.length === 0 && <Empty description="该分类下暂无类型" />}
-              </div>
-            </div>
-          </div>
-        ) : (
+                    <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+                      <div style={{ width: 192, flexShrink: 0, borderRight: "1px solid #eff4f9", overflowY: "auto" }}>
+                        {categories.map((c) => (
+                          <div
+                            key={c.id}
+                            onClick={() => {
+                              setCategory(c.categoryName);
+                              setTypeSearch("");
+                            }}
+                            style={{
+                              padding: "12px 16px",
+                              cursor: "pointer",
+                              transition: "background 0.2s",
+                              background: category === c.categoryName && !typeSearch ? "#EFF4F9" : undefined,
+                              color: category === c.categoryName && !typeSearch ? "#3261CE" : undefined,
+                              fontWeight: category === c.categoryName && !typeSearch ? 500 : undefined,
+                            }}
+                          >
+                            {c.categoryLabel || c.categoryName}
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ flex: 1, padding: 24, overflowY: "auto" }}>
+                        {typeList.length > 0 ? (
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+                              gap: 16,
+                            }}
+                          >
+                            {typeList.map((t) => (
+                              <Card
+                                key={t.id || t.dsType}
+                                hoverable
+                                onClick={() => void pickType(t)}
+                                style={{ textAlign: "center", borderRadius: 8 }}
+                                styles={{ body: { padding: 16 } }}
+                              >
+                                <div
+                                  style={{
+                                    margin: "0 auto 12px",
+                                    width: 96,
+                                    height: 96,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    borderRadius: "50%",
+                                    overflow: "hidden",
+                                    background: "#F0F2F5",
+                                  }}
+                                >
+                                  {t.img ? (
+                                    <img
+                                      src={t.img}
+                                      alt={t.dsTypeLabel || t.dsType}
+                                      style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                                    />
+                                  ) : (
+                                    <span style={{ fontSize: 20, fontWeight: 600, color: "#999" }}>
+                                      {(t.dsType || "").substring(0, 2).toUpperCase()}
+                                    </span>
+                                  )}
+                                </div>
+                                <div style={{ fontWeight: 500, color: "#4d5e7d" }}>
+                                  {t.dsTypeLabel || t.dsType}
+                                </div>
+                              </Card>
+                            ))}
+                          </div>
+                        ) : (
+                          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <Empty description="暂无数据" />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
           <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <div style={{ padding: "0 12px 8px" }}>
               <div style={{ padding: "6px 12px", background: "#F0F5FF", borderRadius: 4, color: "#4D5E7D", fontSize: 12 }}>
@@ -679,59 +735,50 @@ export default function DatasourcesPage() {
   };
 
   const listPane = (
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, flex: 1, minHeight: 0 }}>
-        <Space wrap style={{ justifyContent: "space-between", width: "100%", flexShrink: 0 }}>
-        <Space wrap>
-          <Input
-            placeholder="输入英文名"
-            allowClear
-            style={{ width: 180 }}
-            value={filters.name || ""}
-            onChange={(e) => setFilters((p) => ({ ...p, name: e.target.value }))}
-          />
-          <Input
-            placeholder="输入中文名"
-            allowClear
-            style={{ width: 180 }}
-            value={filters.label || ""}
-            onChange={(e) => setFilters((p) => ({ ...p, label: e.target.value }))}
-          />
-          <Select
-            placeholder="类型"
-            allowClear
-            showSearch
-            optionFilterProp="label"
-            style={{ width: 160 }}
-            value={filters.dsType || undefined}
-            onChange={(v) => setFilters((p) => ({ ...p, dsType: v }))}
-            options={allTypes.map((t) => ({ label: t.dsTypeLabel || t.dsType, value: t.dsType }))}
-          />
-          <Button
-            type="primary"
-            icon={<SearchOutlined />}
-            onClick={() => {
-              setPage(1);
-              void loadList(1, pageSize, filters);
-            }}
-          >
-            查询
-          </Button>
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={() => {
-              setPage(1);
-              setFilters({});
-              void loadList(1, pageSize, {});
-            }}
-          >
-            重置
-          </Button>
-        </Space>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新增数据源
-        </Button>
-      </Space>
-      <ModoTable<DatasourceItem>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, flex: 1, minHeight: 0 }}>
+          <div style={{ flexShrink: 0 }}>
+            <PageFilter
+              form={filterForm}
+              onSearch={(vals) => {
+                setSearchParams(vals);
+                setFilters(vals as { name?: string; label?: string; dsType?: string });
+                setPage(1);
+                void loadList(1, pageSize, vals as { name?: string; label?: string; dsType?: string });
+              }}
+              onReset={() => {
+                setSearchParams({});
+                setFilters({});
+                setPage(1);
+                void loadList(1, pageSize, {});
+              }}
+              searchParams={searchParams}
+              setSearchParams={setSearchParams}
+              labelMap={{ name: "英文名", label: "中文名", dsType: "类型" }}
+              valueMap={{}}
+            >
+              <Form.Item name="name" label="英文名">
+                <ModoInput placeholder="输入英文名" allowClear />
+              </Form.Item>
+              <Form.Item name="label" label="中文名">
+                <ModoInput placeholder="输入中文名" allowClear />
+              </Form.Item>
+              <Form.Item name="dsType" label="类型">
+                <ModoSelect
+                  placeholder="请选择类型"
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  options={allTypes.map((t) => ({ label: t.dsTypeLabel || t.dsType, value: t.dsType }))}
+                />
+              </Form.Item>
+            </PageFilter>
+          </div>
+          <div style={{ flexShrink: 0, display: "flex", justifyContent: "flex-start", alignItems: "center", padding: "0 2px 10px" }}>
+            <ModoButton type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              新增数据源
+            </ModoButton>
+          </div>
+        <ModoTable<DatasourceItem>
               rowKey="id"
               size="middle"
               loading={loading}
@@ -757,21 +804,21 @@ export default function DatasourcesPage() {
   const authPane = (
       <div style={{ display: "flex", flexDirection: "column", gap: 12, flex: 1, minHeight: 0 }}>
         <Space wrap style={{ flexShrink: 0 }}>
-        <span>团队：</span>
-        <Select
-          value={authTeam}
-          style={{ width: 200 }}
-          onChange={setAuthTeam}
-          options={[
-            { value: "ROOT", label: "ROOT" },
-            { value: "test", label: "test" },
-          ]}
-        />
-        <Button type="primary" icon={<TeamOutlined />} onClick={() => void saveAuth()}>
-          保存授权
-        </Button>
-        <Button onClick={() => void loadAuth(authTeam)}>刷新</Button>
-      </Space>
+                <span>团队：</span>
+                <ModoSelect
+                  value={authTeam}
+                  style={{ width: 200 }}
+                  onChange={setAuthTeam}
+                  options={[
+                    { value: "ROOT", label: "ROOT" },
+                    { value: "test", label: "test" },
+                  ]}
+                />
+                <ModoButton type="primary" icon={<TeamOutlined />} onClick={() => void saveAuth()}>
+                  保存授权
+                </ModoButton>
+                <ModoButton onClick={() => void loadAuth(authTeam)}>刷新</ModoButton>
+              </Space>
       <ModoTable<{ key: string; dsName: string; label: string }>
               rowKey="dsName"
               size="middle"
@@ -833,31 +880,25 @@ export default function DatasourcesPage() {
 
   return (
     <div className="modo-page" style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      <Tabs
-        type="editable-card"
-        hideAdd
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
-        styles={{
-          header: { flexShrink: 0 },
-          body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" },
-          content: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" },
-        }}
-        onEdit={(key, action) => {
-          if (action === "remove") closeTab(String(key));
-        }}
-        items={[
-          { key: "home", label: "🏠 数据源管理", children: listPane },
-          ...tabs.map((t) => ({
-            key: t.key,
-            label: t.title,
-            closable: true,
-            children: renderEditTab(t),
-          })),
-          { key: "auth", label: "团队授权", children: authPane },
-        ]}
-      />
-    </div>
-  );
+          <ModoTabs
+            type="editable-card"
+            hideAdd
+            activeKey={activeTab}
+            onChange={setActiveTab}
+            onEdit={(key, action) => {
+              if (action === "remove") closeTab(String(key));
+            }}
+            items={[
+              { key: "home", label: "数据源管理", icon: <DatabaseOutlined />, children: listPane },
+              ...tabs.map((t) => ({
+                key: t.key,
+                label: t.title,
+                closable: true,
+                children: renderEditTab(t),
+              })),
+              { key: "auth", label: "团队授权", children: authPane },
+            ]}
+          />
+        </div>
+      );
 }
