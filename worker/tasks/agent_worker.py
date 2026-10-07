@@ -81,10 +81,14 @@ def _kb_owner_context(db, kb_id: str) -> dict:
 
 
 BUILTIN_SKILL_BY_SCHEMA: dict[str, str] = {
-    # ontology_schema.schema_name → 内置技能目录名（git skills/ 下，随镜像部署）
-    "市场监管法规": "market-regulation-policy-compiler",
-    "监督管理制度文档转wiki": "market-regulation-policy-compiler",
+    # ontology_schema.schema_name → 内化引擎标识（worker/builtin_engine/ 随镜像部署）。
+    # 2026-10-07 技能逻辑已内化到 worker：不再是外部「技能管理」资产。
+    "市场监管法规": "builtin_engine",
+    "监督管理制度文档转wiki": "builtin_engine",
 }
+
+# 内化引擎固定路径（worker/builtin_engine/scripts，git 随镜像；无需复制/下载）
+BUILTIN_ENGINE_DIR: str = "/srv/kb/worker/builtin_engine/scripts"
 
 
 def _skill_name_for_kb(db, kb_id: str) -> str | None:
@@ -105,30 +109,10 @@ def _skill_name_for_kb(db, kb_id: str) -> str | None:
 
 
 def _builtin_skill_scripts(skill_name: str) -> str:
-    """内置技能目录（git skills/ 随镜像部署：/srv/kb/skills/<name>/scripts）。
-
-    目录名 = 技能标识（market-regulation-policy-compiler），兼容显示名
-    （"监督管理制度文档转wiki"）——否则按显示名查目录永远落空回退 zip。
-    """
+    """内化引擎目录（worker/builtin_engine/scripts，git 随镜像，固定路径）。"""
     import os
 
-    aliases = {v: k for k, v in BUILTIN_SKILL_BY_SCHEMA.items()} | {
-        "市场监督管理文档转wiki": "market-regulation-policy-compiler",
-        "监督管理制度文档转wiki": "market-regulation-policy-compiler",
-    }
-    dir_name = aliases.get(skill_name, skill_name)
-    cand = os.path.join("/srv/kb/skills", dir_name, "scripts")
-    if os.path.isdir(cand):
-        return cand
-    # 兜底：遍历 /srv/kb/skills/*/scripts 找含入口脚本的技能
-    try:
-        for sub in os.listdir("/srv/kb/skills"):
-            p = os.path.join("/srv/kb/skills", sub, "scripts")
-            if os.path.isfile(os.path.join(p, "run_one.py")):
-                return p
-    except Exception:  # noqa: BLE001
-        pass
-    return ""
+    return BUILTIN_ENGINE_DIR if os.path.isdir(BUILTIN_ENGINE_DIR) else ""
 
 
 def _attach_skill_zip(config: dict[str, Any], kb_id: str = "") -> None:
@@ -479,51 +463,19 @@ TASK_CLASS_SKILL_DIRECT = "KbSkillDirectBuildTask"
 
 
 def _extract_skill_scripts(config: dict[str, Any]) -> str:
-    """技能脚本目录：① 内置目录（git skills/）复制到 per-task 目录；② 否则解压 zip。
+    """内化引擎脚本目录：固定 /srv/kb/worker/builtin_engine/scripts（git 随镜像）。
 
-    内置分支仍复制到 per-task 临时目录——多任务并发时技能目录内会写事件
-    日志（WIKI_EVENTS_LOG）与临时产物，共用目录会互相覆盖。
+    不再复制到 per-task 目录——脚本不写自身目录（事件日志按 WIKI_EVENTS_LOG
+    注入的 per-task 路径、临时产物按绝对路径），多任务并发共用只读目录安全。
     """
-    import base64
-    import io
-    import os as _os
-    import shutil as _shutil
-    import tempfile
-    import zipfile
-    from pathlib import Path
+    import os
 
-    builtin = str(config.get("skill_builtin_dir") or "")
-    if builtin and _os.path.isdir(builtin):
-        tmp = tempfile.mkdtemp(prefix="skill_builtin_")
-        try:
-            dst = _os.path.join(tmp, "scripts")
-            _shutil.copytree(builtin, dst, dirs_exist_ok=True)
-            for pat in ("run_one.py", "build_wiki.py", "build_full.py"):
-                if _os.path.isfile(_os.path.join(dst, pat)):
-                    return dst
-            logger.warning("内置技能目录缺入口脚本: %s", builtin)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("内置技能目录复制失败（回落 zip）: %s", exc)
-
-    raw = config.get("skill_zip") or config.get("skill_zip_base64")
-    if not raw:
-        return ""
-    if isinstance(raw, str):
-        try:
-            raw = base64.b64decode(raw)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("skill_zip base64 解码失败: %s", exc)
-            return ""
-    tmp = tempfile.mkdtemp(prefix="skill_direct_")
-    try:
-        zipfile.ZipFile(io.BytesIO(raw)).extractall(tmp)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("技能 zip 解压失败: %s", exc)
-        return ""
-    for pat in ("run_one.py", "build_wiki.py", "build_full.py"):
-        for cand in Path(tmp).rglob(pat):
-            if cand.parent.name == "scripts":
-                return str(cand.parent)
+    engine = str(config.get("skill_builtin_dir") or BUILTIN_ENGINE_DIR)
+    if os.path.isdir(engine) and any(
+        os.path.isfile(os.path.join(engine, p)) for p in ("run_one.py", "build_wiki.py", "build_full.py")
+    ):
+        return engine
+    logger.warning("内化引擎目录缺失: %s", engine)
     return ""
 
 
