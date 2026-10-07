@@ -298,8 +298,10 @@ class ChatClient:
                             pass
                         resp = None
                     status = getattr(getattr(exc, "response", None), "status_code", None)
-                    # 4xx（除 408/429）视为不可重试：鉴权/参数问题重试无意义
-                    if status and 400 <= status < 500 and status not in (408, 429):
+                    # 4xx 视为不可重试（401 鉴权失败/参数问题重试无意义）；
+                    # 例外：403/408/429 —— 部分服务(Infer AI)用 403 表达限流，
+                    # 实测高峰期会瞬时 403 后自行恢复，故纳入重试。
+                    if status and 400 <= status < 500 and status not in (403, 408, 429):
                         raise
                     if attempt < 2:
                         time.sleep(1.5 * (attempt + 1))
