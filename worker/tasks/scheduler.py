@@ -337,6 +337,9 @@ def execute_modo_job(job_id: str) -> dict:
         job.state = "RUNNING"
         if job.start_time is None:
             job.start_time = dt.datetime.now(dt.timezone.utc)
+        # 状态立即落库（2026-10-07：此前 RUNNING 从未 commit，任务页/监控
+        # 一直显示 PENDING 直至收尾——状态漂移）
+        db.commit()
         # 记录日志文件路径（jobs 页日志抽屉读取）
         job.log_path = _job_log_path(normalized)
         _append_job_log(normalized, f"任务开始 task_class={task_class} params={str(task_params)[:160]}")
