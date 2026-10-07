@@ -53,9 +53,18 @@ function fmtDur(ms?: number | null): string {
 
 function fmtTime(iso?: string | null): string {
   if (!iso) return "-";
-  const d = new Date(iso);
+  const d = parseIsoUtc(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString("zh-CN", { hour12: false });
+}
+
+// 2026-10-07: 后端 datetime 为 UTC 且序列化不带时区标记（'2026-10-07T01:25:20'），
+// 直接 new Date() 会按浏览器本地时区解析导致偏差 8 小时——无时区后缀时按 UTC 处理。
+function parseIsoUtc(iso: string): Date {
+  if (/Z$|[+-]\d{2}:\d{2}$/.test(iso.trim())) {
+    return new Date(iso);
+  }
+  return new Date(iso.endsWith("Z") ? iso : iso + "Z");
 }
 
 function renderStateTag(state: string) {
@@ -158,7 +167,7 @@ const JobTable: React.FC<JobTableProps> = ({
       render: (ms: number | null, record) => {
         // RUNNING：实时累加（now - start_time），其余用后端快照 duration_ms
         if (record.state === "RUNNING" && record.start_time) {
-          const st = new Date(record.start_time).getTime();
+          const st = parseIsoUtc(record.start_time).getTime();
           const text = Number.isNaN(st) ? fmtDur(ms) : fmtDur(now - st);
           return <span className="modo-running-duration">{text}</span>;
         }
