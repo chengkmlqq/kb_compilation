@@ -50,6 +50,15 @@
   overflow-x: auto !important;
 }
 
+/* 无 scroll.y 时 antd v6 为一体化结构：container > table（无 .ant-table-body 分离）。
+   表格高度默认=内容高度，行数不足时底部留空 → 须让 table 撑满 container，
+   使表格白底整体覆盖到容器底部（底部无空白） */
+.modo-table :global(.ant-table-wrapper .ant-table-container > table) {
+  flex: 1 1 0px;
+  min-height: 0;
+  height: 100%;
+}
+
 .modo-table :global(.ant-table-wrapper .ant-table-body > table) {
   width: 100%;
   min-width: 100%;
