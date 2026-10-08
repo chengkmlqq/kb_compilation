@@ -77,10 +77,17 @@ body {
   background: #f9fbfd !important;
 }
 
-/* 用户管理：表体滚动条「按需出现」。
+/* 用户管理 / 角色管理 / 参数管理 / MCP 管理 / 技能管理 / 任务管理 / 主机监控：表体滚动条「按需出现」。
    antd Table 一旦传 scroll.y，rc-table 会给 .ant-table-body 写死行内 overflow-y:scroll（滚动条常驻），
-   这里用 !important 覆盖为 auto，仅在内容超出高度时才出现滚动条。 */
-.users-page .ant-table-body {
+   这里用 !important 覆盖为 auto，仅在内容超出高度时才出现滚动条。
+   注：Drawer 内容默认 portal 到 body，不在这些页面容器内，故抽屉内表格不受影响。 */
+.users-page .ant-table-body,
+.roles-page .ant-table-body,
+.dims-page .ant-table-body,
+.mcps-page .ant-table-body,
+.skills-page .ant-table-body,
+.cron-page .ant-table-body,
+.workers-page .ant-table-body {
   overflow-y: auto !important;
 }
 

@@ -263,7 +263,7 @@ export default function SystemUsersPage() {
       }}
     >
       <Card
-        title="用户"
+        title="用户管理"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {

@@ -37,7 +37,6 @@ import {
   FlowerWorkersOverview,
   WorkerRegisteredTaskConfigOverview,
 } from "@/lib/api";
-import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
 
 const { Text } = Typography;
@@ -414,10 +413,11 @@ export default function WorkersPage() {
 
   return (
     <div
+      className="workers-page"
       style={{
         display: "flex",
         flexDirection: "column",
-        height: "100%",
+        height: "calc(100vh - 45px)",
         minHeight: 0,
         background: "#F5F7FA",
         padding: 8,
@@ -425,11 +425,22 @@ export default function WorkersPage() {
       }}
     >
       {/* 2026-10-08: 参考用户管理页改造 —— Card 标题「主机监控」、extra 摘要 + 刷新、
-          inline 筛选表单、表格一屏自适应、分页常驻底栏 */}
+          inline 筛选表单、分页常驻底栏
+          2026-10-08: 表格高度对齐用户管理页「固定视口高度」——高度锁定 视口 − 顶部/筛选/分页偏移
+          （100vh-264px），进页即撑满无底部空白；数据多时表头固定、表体滚动（antd Table scroll.y） */}
       <Card
         title="主机监控"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
         extra={
           <Space size={16} wrap>
             <span>
@@ -480,16 +491,17 @@ export default function WorkersPage() {
           </Form.Item>
         </Form>
 
-        <ModoTable<FlowerWorkerOverview>
+        <Table<FlowerWorkerOverview>
           rowKey="workerName"
           size="small"
           loading={loading}
           dataSource={pagedWorkers}
           columns={columns}
-          scroll={{ x: 1500 }}
+          pagination={false}
+          scroll={{ x: 1500, y: "calc(100vh - 264px)" }}
         />
 
-        <div style={{ borderTop: "1px solid #E3E9EF", flexShrink: 0 }}>
+        <div style={{ borderTop: "1px solid #E3E9EF", flexShrink: 0, marginTop: "auto" }}>
           <ModoPagination
             current={currentPage}
             pageSize={pageSize}

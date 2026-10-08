@@ -16,11 +16,11 @@ import {
   Radio,
   Select,
   Space,
+  Table,
   Tag,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { ReloadOutlined } from "@ant-design/icons";
-import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import {
@@ -249,12 +249,26 @@ export default function CronPage() {
 
   return (
     // 2026-10-08: 参考用户管理页改造 —— 外层 8px padding、Card 标题「定时任务」、extra 刷新/新建、
-    // inline 筛选表单、表格一屏自适应、分页常驻底栏
-    <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+    // inline 筛选表单、分页常驻底栏
+    // 2026-10-08: 表格高度对齐用户管理页「固定视口高度」——高度锁定 视口 − 顶部/筛选/分页偏移
+    // （100vh-264px），进页即撑满无底部空白；数据多时表头固定、表体滚动（antd Table scroll.y）
+    <div
+      className="cron-page"
+      style={{ padding: 8, height: "calc(100vh - 45px)", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+    >
       <Card
         title="定时任务"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
         extra={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={() => void load()}>
@@ -285,16 +299,17 @@ export default function CronPage() {
           </Form.Item>
         </Form>
 
-        <ModoTable
+        <Table
           columns={columns}
           dataSource={items}
           rowKey="id"
           loading={loading}
           size="small"
-          scroll={{ x: 1100 }}
+          pagination={false}
+          scroll={{ x: 1100, y: "calc(100vh - 264px)" }}
         />
 
-        <div style={{ flexShrink: 0 }}>
+        <div style={{ flexShrink: 0, marginTop: "auto" }}>
           <ModoPagination
             current={page}
             pageSize={pageSize}

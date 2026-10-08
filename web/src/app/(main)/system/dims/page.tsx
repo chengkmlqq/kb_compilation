@@ -3,11 +3,11 @@
 /**
  * 参数管理（2026-10-08 参考用户管理页改造）：
  * 外层 8px padding + Card(标题「参数」/ extra 新建按钮) + inline 筛选表单(参数编码/参数分组/查询/重置)
- * + ModoTable 一屏自适应 + ModoPagination 常驻底栏；ModoDrawer 新建/编辑（dimCode 编辑禁用）。
+ * + antd Table 固定视口高度 + ModoPagination 常驻底栏；ModoDrawer 新建/编辑（dimCode 编辑禁用）。
  * 数据走 /api/v1/system/dims（modo_dim 通用 CRUD）。
  */
 import { useCallback, useEffect, useState } from "react";
-import { App, Button, Card, Form, Input, InputNumber, Select, Space, Tooltip } from "antd";
+import { App, Button, Card, Form, Input, InputNumber, Select, Space, Table, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { CheckCircleFilled, CloseCircleFilled } from "@ant-design/icons";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
@@ -15,7 +15,6 @@ import { ModoSelect } from "@/components/biz/modo-select";
 import { ModoRadio } from "@/components/biz/modo-radio";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
-import { ModoTable } from "@/components/biz/modo-table";
 import { ModoPagination } from "@/components/biz/modo-pagination";
 import {
   apiCreateDim,
@@ -244,12 +243,26 @@ export default function SystemDimsPage() {
 
   return (
     // 2026-10-08: 参考用户管理页改造 —— 外层 8px padding、Card 标题「参数」、extra 新建按钮、
-    // inline 筛选表单、表格占满剩余高度（一屏自适应）、分页常驻底栏
-    <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+    // inline 筛选表单、分页常驻底栏
+    // 2026-10-08: 表格高度对齐用户管理页「固定视口高度」——高度锁定 视口 − 顶部/筛选/分页偏移
+    // （100vh-264px），进页即撑满无底部空白；数据多时表头固定、表体滚动（antd Table scroll.y）
+    <div
+      className="dims-page"
+      style={{ padding: 8, height: "calc(100vh - 45px)", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+    >
       <Card
         title="参数"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
         extra={
           <Button type="primary" onClick={openCreate}>
             新建参数
@@ -294,17 +307,18 @@ export default function SystemDimsPage() {
           </Form.Item>
         </Form>
 
-        <ModoTable<DimItem>
+        <Table<DimItem>
           columns={columns}
           dataSource={data}
           rowKey="id"
           loading={loading}
-          scroll={{ x: "100%" }}
+          pagination={false}
+          scroll={{ x: "100%", y: "calc(100vh - 264px)" }}
           locale={{ emptyText: "暂无参数" }}
           size="small"
         />
 
-        <div style={{ flexShrink: 0 }}>
+        <div style={{ flexShrink: 0, marginTop: "auto" }}>
           <ModoPagination
             current={page}
             pageSize={pageSize}

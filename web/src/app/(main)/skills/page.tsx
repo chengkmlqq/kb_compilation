@@ -12,6 +12,7 @@ import {
   Select,
   Space,
   Spin,
+  Table,
   Tag,
   Tree,
   Typography,
@@ -21,7 +22,6 @@ import { ReloadOutlined, UploadOutlined } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import CodeViewer from "@/components/CodeViewer";
-import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import {
@@ -329,12 +329,25 @@ export default function SkillManagePage() {
   };
 
   return (
-    // 一屏自适应（对齐 data-synth）：外层不滚动，卡片内表格占满剩余高度，分页常驻底栏
-    <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+    // 2026-10-08: 表格高度对齐用户管理页「固定视口高度」——高度锁定 视口 − 顶部/分页偏移
+    // （100vh-220px），进页即撑满无底部空白；数据多时表头固定、表体滚动（antd Table scroll.y）
+    <div
+      className="skills-page"
+      style={{ padding: 8, height: "calc(100vh - 45px)", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+    >
       <Card
         title="技能管理"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
         extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
@@ -348,11 +361,13 @@ export default function SkillManagePage() {
         </Space>
       }
     >
-      <ModoTable
+      <Table
         rowKey="id"
         size="small"
         loading={loading}
         dataSource={pagedItems}
+        pagination={false}
+        scroll={{ x: 1000, y: "calc(100vh - 220px)" }}
         locale={{ emptyText: <Text type="secondary">暂无技能，点击右上角「安装技能 (ZIP)」上传</Text> }}
         columns={[
           {
@@ -398,16 +413,18 @@ export default function SkillManagePage() {
           },
         ]}
       />
-      <ModoPagination
-        current={safePage}
-        pageSize={pageSize}
-        total={totalRows}
-        showTotal={(t) => `共 ${t} 个技能`}
-        onChange={(p, ps) => {
-          setPage(p);
-          setPageSize(ps);
-        }}
-      />
+      <div style={{ flexShrink: 0, marginTop: "auto" }}>
+        <ModoPagination
+          current={safePage}
+          pageSize={pageSize}
+          total={totalRows}
+          showTotal={(t) => `共 ${t} 个技能`}
+          onChange={(p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          }}
+        />
+      </div>
       <Drawer
         title={detailTarget ? `技能详情：${detailTarget.name}` : "技能详情"}
         width={840}
