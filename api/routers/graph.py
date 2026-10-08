@@ -29,6 +29,18 @@ from api.services.kb_admin import get_kb
 router = APIRouter(tags=["graph"])
 
 
+class CypherRequest(BaseModel):
+    """Popoto 查询代理请求（只读）。"""
+
+    statement: str
+    parameters: dict = {}
+
+
+# 只读白名单：仅允许查询类语句（Popoto 只读数据浏览/查询构建）
+_CYPHER_READ_PREFIXES = ("MATCH", "OPTIONAL MATCH", "WITH", "RETURN", "UNWIND", "CALL db")
+_CYPHER_WRITE_KEYWORDS = ("CREATE", "MERGE", "DELETE", "SET ", "REMOVE", "DROP", "LOAD CSV", "CREATE CONSTRAINT", "CREATE INDEX")
+
+
 def _require_user(x_next_identity: str | None = Cookie(default=None, alias="x-next-identity")) -> str:
     """轻量登录校验：图谱接口只需登录态（数据按 kb_id 隔离）。"""
     identity = decode_identity_cookie(x_next_identity or "")
@@ -45,6 +57,75 @@ def _reader_or_503():
             detail="Neo4j 未配置（缺少 NEO4J_URI / NEO4J_PASSWORD）",
         )
     return reader
+
+
+@router.post("/cypher")
+def run_cypher(req: CypherRequest, _user: str = Depends(_require_user)) -> dict:
+    """只读 Cypher 代理（Popoto.js 数据通道）。
+
+    模拟 Neo4j HTTP transaction 响应格式（results/columns/data/meta），
+    Popoto 直接将该端点配置为数据源即可。仅放行查询类语句（只读浏览
+    与查询构建），写语句一律 400 拒绝。
+    """
+    stmt = req.statement.strip()
+    if not stmt:
+        raise HTTPException(status_code=400, detail="empty statement")
+    upper = stmt.upper()
+    if not upper.startswith(_CYPHER_READ_PREFIXES):
+        raise HTTPException(status_code=400, detail="只允许查询语句（MATCH/OPTIONAL MATCH/WITH/RETURN/UNWIND）")
+    for kw in _CYPHER_WRITE_KEYWORDS:
+        if kw in upper:
+            raise HTTPException(status_code=400, detail=f"不允许写语句: {kw.strip()}")
+
+    reader = _reader_or_503()
+    rows = reader._run(stmt, req.parameters or {})
+
+    # 构造 Neo4j transaction 兼容响应
+    columns: list[str] = []
+    data: list[dict] = []
+    for rec in rows:
+        if isinstance(rec, dict):
+            if not columns:
+                columns = list(rec.keys())
+            row = [_row_value(rec.get(c)) for c in columns]
+            meta = [_meta_for(rec.get(c)) for c in columns]
+            data.append({"row": row, "meta": meta})
+    return {"results": [{"columns": columns, "data": data}], "errors": []}
+
+
+def _row_value(value: object) -> object:
+    """neo4j 对象转可 JSON 序列化值（Popoto 走 meta 拿节点标识，row 仅需可序列化）。"""
+    import neo4j
+
+    if isinstance(value, neo4j.graph.Node):
+        return {"id": str(value.element_id), "labels": list(value.labels), "properties": dict(value)}
+    if isinstance(value, neo4j.graph.Relationship):
+        return {
+            "id": str(value.element_id),
+            "type": value.type,
+            "start": str(value.start_node.element_id),
+            "end": str(value.end_node.element_id),
+            "properties": dict(value),
+        }
+    if isinstance(value, neo4j.graph.Path):
+        return {
+            "nodes": [str(n.element_id) for n in value.nodes],
+            "relationships": [str(r.element_id) for r in value.relationships],
+        }
+    return value
+
+
+def _meta_for(value: object) -> dict:
+    """推断 Neo4j 值 meta（node/relationship 标识），Popoto 依赖 meta 区分。"""
+    import neo4j
+
+    if isinstance(value, neo4j.graph.Node):
+        return {"id": str(value.element_id), "type": "node", "labels": list(value.labels)}
+    if isinstance(value, neo4j.graph.Relationship):
+        return {"id": str(value.element_id), "type": "relationship", "labels": [value.type]}
+    if isinstance(value, neo4j.graph.Path):
+        return {"id": str(value.element_id), "type": "path", "labels": []}
+    return {"id": None, "type": "value", "labels": []}
 
 
 @router.get("/graph/health")
