@@ -38,7 +38,6 @@ import {
   StopOutlined,
 } from "@ant-design/icons";
 import {
-  apiBatchDeleteSessions,
   apiCreateAgentSession,
   apiCreateSession,
   apiDeleteAttachment,
@@ -925,29 +924,6 @@ export default function ChatPage() {
     return sessions.filter((s) => s.title.toLowerCase().includes(q));
   }, [sessions, sessionSearch]);
 
-  // 2026-10-07 对齐 WeKnora：批量删除模式
-  const [bulkMode, setBulkMode] = useState(false);
-  const [selected, setSelected] = useState<string[]>([]);
-
-  const batchDelete = async () => {
-    if (selected.length === 0) return;
-    try {
-      const res = await apiBatchDeleteSessions(selected);
-      setSelected([]);
-      setBulkMode(false);
-      if (activeSession && selected.includes(activeSession)) {
-        setActiveSession(undefined);
-        setMsgs([]);
-        setRecommendations([]);
-        setAttachments([]);
-      }
-      await loadSessions();
-      void toast.success(`已删除 ${res.data?.deleted ?? selected.length} 个会话`);
-    } catch {
-      void toast.error("批量删除失败");
-    }
-  };
-
   // 2026-10-07 对齐 WeKnora：会话按日期分组（今天 / 昨天 / 7 天内 / 更早）
   const groupedSessions = useMemo(() => {
     const now = new Date();
@@ -981,11 +957,39 @@ export default function ChatPage() {
   const [atOpen, setAtOpen] = useState(false);
 
   return (
-    <div style={{ display: "flex", height: "calc(100vh - 64px - 48px)", gap: 16 }}>
+    // 2026-10-08: 对齐任务监控页「固定视口高度 + 统一 8px 边距」——外层锁定 视口 − 顶栏(45px)，
+    // 左右两栏吃满剩余高度、各自内部滚动，页面本身不出现滚动条。
+    <div
+      className="chat-page"
+      style={{
+        display: "flex",
+        height: "calc(100vh - 45px)",
+        gap: 8,
+        padding: 8,
+        minHeight: 0,
+        overflow: "hidden",
+      }}
+    >
       {/* 左：会话列表 */}
       <Card
-        style={{ width: 280, flexShrink: 0, overflow: "auto" }}
-        styles={{ body: { padding: 12 } }}
+        style={{
+          width: 280,
+          flexShrink: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          minHeight: 0,
+        }}
+        styles={{
+          body: {
+            padding: 12,
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          },
+        }}
         title={
           <Space style={{ width: "100%", justifyContent: "space-between" }}>
             <span>会话</span>
@@ -995,25 +999,8 @@ export default function ChatPage() {
           </Space>
         }
       >
-        {bulkMode ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              已选 {selected.length} 项
-            </Text>
-            <Popconfirm title={`删除所选 ${selected.length} 个会话？`} onConfirm={() => void batchDelete()}>
-              <Button size="small" danger disabled={selected.length === 0}>
-                删除所选
-              </Button>
-            </Popconfirm>
-            <Button size="small" onClick={() => { setBulkMode(false); setSelected([]); }}>
-              完成
-            </Button>
-          </div>
-        ) : (
-          <Button size="small" style={{ marginBottom: 8 }} onClick={() => setBulkMode(true)}>
-            多选
-          </Button>
-        )}
+        {/* 工具条（固定，不随列表滚动） */}
+        <div style={{ flexShrink: 0 }}>
         <Input
           allowClear
           placeholder="搜索会话"
@@ -1022,6 +1009,9 @@ export default function ChatPage() {
           value={sessionSearch}
           onChange={(e) => setSessionSearch(e.target.value)}
         />
+        </div>
+        {/* 会话列表：占满剩余高度，超高时内部滚动（对齐任务监控页表格区） */}
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {groupedSessions.length === 0 ? (
           <Empty description="暂无会话" />
         ) : (
@@ -1034,7 +1024,6 @@ export default function ChatPage() {
                 dataSource={g.items}
                 locale={{ emptyText: null }}
                 renderItem={(s) => {
-                  const checked = selected.includes(s.id);
                   return (
                     <List.Item
                       style={{
@@ -1043,13 +1032,7 @@ export default function ChatPage() {
                         cursor: "pointer",
                         background: activeSession === s.id ? "#e6f4ff" : "transparent",
                       }}
-                      onClick={() => {
-                        if (bulkMode) {
-                          setSelected((prev) => (checked ? prev.filter((x) => x !== s.id) : [...prev, s.id]));
-                        } else {
-                          void openSession(s.id);
-                        }
-                      }}
+                      onClick={() => void openSession(s.id)}
                       actions={[
                         activeSession === s.id && activeStreaming ? (
                           <Tag key="streaming" color="processing" style={{ fontSize: 11 }}>
@@ -1087,17 +1070,9 @@ export default function ChatPage() {
                         </Popconfirm>,
                       ].filter(Boolean)}
                     >
-                      {bulkMode && (
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          readOnly
-                          style={{ marginRight: 6, pointerEvents: "none" }}
-                        />
-                      )}
                       <List.Item.Meta
                         avatar={s.pinned ? <PushpinOutlined style={{ color: "#1677ff" }} /> : <MessageOutlined />}
-                        title={<Text ellipsis style={{ maxWidth: bulkMode ? 110 : 140 }}>{s.title}</Text>}
+                        title={<Text ellipsis style={{ maxWidth: 140 }}>{s.title}</Text>}
                         description={<Text type="secondary" style={{ fontSize: 12 }}>{s.updated_at.slice(5, 16).replace("T", " ")}</Text>}
                       />
                     </List.Item>
@@ -1107,11 +1082,30 @@ export default function ChatPage() {
             </div>
           ))
         )}
+        </div>
       </Card>
 
       {/* 右：对话区 */}
-      <Card style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }} styles={{ body: { display: "flex", flexDirection: "column", height: "100%", padding: 0 } }}>
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", alignItems: "center", gap: 12 }}>
+      <Card
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          minHeight: 0,
+        }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            padding: 0,
+          },
+        }}
+      >
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
           <Text strong>智能问答（RAG）</Text>
           <Select
             style={{ width: 180 }}
@@ -1153,7 +1147,7 @@ export default function ChatPage() {
             const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
             setShowScrollBtn(!atBottom);
           }}
-          style={{ flex: 1, overflow: "auto", padding: 16, position: "relative" }}
+          style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16, position: "relative" }}
         >
           {loadingMsgs ? (
             <div style={{ textAlign: "center", padding: 40 }}>
@@ -1400,7 +1394,7 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </div>
 
-        <div style={{ padding: "12px 16px", borderTop: "1px solid #f0f0f0" }}>
+        <div style={{ padding: "12px 16px", borderTop: "1px solid #f0f0f0", flexShrink: 0 }}>
           {/* 2026-10-06: 模型切换——chat 模型下拉（空=默认模型） */}
           {chatModels.length > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>

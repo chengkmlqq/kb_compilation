@@ -7,11 +7,11 @@ import {
   Card,
   Drawer,
   Dropdown,
+  Empty,
   Form,
   Input,
   InputNumber,
   Modal,
-  Popconfirm,
   Radio,
   Select,
   Space,
@@ -61,6 +61,7 @@ import {
   ModelScope,
   ModelType,
 } from "@/lib/api";
+import ModoPagination from "@/components/biz/modo-pagination";
 
 const { Text } = Typography;
 
@@ -109,6 +110,8 @@ export default function ModelRegistryPage() {
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [providers, setProviders] = useState<ModelProvider[]>([]);
   const [editing, setEditing] = useState<ModelItem | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -144,6 +147,11 @@ export default function ModelRegistryPage() {
     if (typeFilter === "all") return items;
     return items.filter((it) => it.type === typeFilter);
   }, [items, typeFilter]);
+
+  // 客户端分页（对齐 MCP 管理页常驻底栏分页；切换类型 Tab 时回退到第 1 页）
+  const totalRows = filtered.length;
+  const safePage = Math.min(page, Math.max(1, Math.ceil(totalRows / pageSize)));
+  const pagedItems = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   const countByType = useCallback(
     (t: string) => items.filter((it) => it.type === t).length,
@@ -271,19 +279,32 @@ export default function ModelRegistryPage() {
     return false; // 阻止 antd 默认上传
   };
 
-  if (loading && items.length === 0) {
-    return (
-      <div style={{ display: "flex", justifyContent: "center", padding: 80 }}>
-        <Spin />
-      </div>
-    );
-  }
-
   return (
-    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
-    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
+    // 2026-10-08: 对齐 MCP 管理页范式——外层定高不滚动，卡片内「Tabs 固定 / 卡片网格滚动 / 分页钉底」
+    <div
+      className="models-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
       <Card
         title="模型配置"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
         extra={
           <Space>
             <Button icon={<DownloadOutlined />} onClick={handleExport}>
@@ -307,7 +328,11 @@ export default function ModelRegistryPage() {
       >
         <Tabs
           activeKey={typeFilter}
-          onChange={setTypeFilter}
+          onChange={(k) => {
+            setTypeFilter(k);
+            setPage(1);
+          }}
+          style={{ marginBottom: 8, flexShrink: 0 }}
           items={[
             { key: "all", label: `全部 (${items.length})` },
             ...ALL_TYPES.map((t) => ({
@@ -317,15 +342,26 @@ export default function ModelRegistryPage() {
           ]}
         />
 
-        {filtered.length === 0 ? null : (
+        {loading && items.length === 0 ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+            <Spin />
+          </div>
+        ) : filtered.length === 0 ? (
+          <Empty description="暂无模型" />
+        ) : (
+          // 卡片视图（保留）——flex:1 占满剩余高度，内容超出时内部滚动
           <div
             style={{
+              flex: 1,
+              minHeight: 0,
+              overflow: "auto",
               display: "grid",
               gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
               gap: 16,
+              alignContent: "start",
             }}
           >
-            {filtered.map((item) => (
+            {pagedItems.map((item) => (
               <Card
                 key={item.id}
                 size="small"
@@ -373,13 +409,21 @@ export default function ModelRegistryPage() {
                     >
                       <Button size="small" type="text" icon={<EllipsisOutlined />} />
                     </Dropdown>
-                    <Popconfirm
-                      title={`删除模型 ${item.name}？`}
-                      description="删除后不可恢复"
-                      onConfirm={() => void handleDelete(item)}
-                    >
-                      <Button size="small" type="text" danger icon={<DeleteOutlined />} />
-                    </Popconfirm>
+                    <Button
+                      size="small"
+                      type="text"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={() =>
+                        modal.confirm({
+                          title: `删除模型 ${item.name}？`,
+                          content: "删除后不可恢复",
+                          okText: "删除",
+                          okButtonProps: { danger: true },
+                          onOk: () => handleDelete(item),
+                        })
+                      }
+                    />
                   </Space>
                 }
               >
@@ -416,6 +460,20 @@ export default function ModelRegistryPage() {
             ))}
           </div>
         )}
+
+        {/* 分页常驻底栏 */}
+        <div style={{ flexShrink: 0, marginTop: "auto" }}>
+          <ModoPagination
+            current={safePage}
+            pageSize={pageSize}
+            total={totalRows}
+            showTotal={(t) => `共 ${t} 个模型`}
+            onChange={(p, ps) => {
+              setPage(p);
+              setPageSize(ps);
+            }}
+          />
+        </div>
 
         {modalOpen && (
           <ModelEditorModal

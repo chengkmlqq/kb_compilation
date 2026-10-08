@@ -28,7 +28,6 @@ import {
   CloudUploadOutlined,
   FileOutlined,
   FolderFilled,
-  UpOutlined,
 } from "@ant-design/icons";
 import {
   apiFileDelete,
@@ -351,23 +350,7 @@ export default function FilesPage() {
         }
       >
         {/* 路径导航（固定） */}
-        <div
-          style={{
-            flexShrink: 0,
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            marginBottom: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          <Button
-            icon={<UpOutlined />}
-            disabled={currentPath === "/"}
-            onClick={() => goBreadcrumb(parts.length - 2)}
-          >
-            上级
-          </Button>
+        <div style={{ flexShrink: 0, marginBottom: 12 }}>
           <Breadcrumb items={breadcrumbItems} />
         </div>
 

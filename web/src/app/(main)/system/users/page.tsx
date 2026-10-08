@@ -323,6 +323,12 @@ export default function SystemUsersPage() {
         columns={[
           { title: "用户编码", dataIndex: "user_id", ellipsis: true },
           {
+            title: "用户名",
+            dataIndex: "user_name",
+            ellipsis: true,
+            render: (v: string | null | undefined) => v || "-",
+          },
+          {
             title: "角色",
             dataIndex: "role_ids",
             width: 200,
@@ -338,17 +344,6 @@ export default function SystemUsersPage() {
               ) : (
                 "-"
               ),
-          },
-          {
-            title: "用户名",
-            dataIndex: "user_name",
-            ellipsis: true,
-            render: (v: string | null | undefined) => (
-              <Space size={6}>
-                <Tag color="blue">用户</Tag>
-                <span>{v || "-"}</span>
-              </Space>
-            ),
           },
           { title: "手机号", dataIndex: "phone", ellipsis: true, render: (v: string | null) => v || "-" },
           { title: "邮箱", dataIndex: "email", ellipsis: true, render: (v: string | null) => v || "-" },

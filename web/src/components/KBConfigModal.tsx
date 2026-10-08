@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  Button,
   Checkbox,
   Divider,
+  Drawer,
   Form,
   InputNumber,
-  Modal,
   Radio,
   Select,
+  Space,
   Switch,
   Typography,
 } from "antd";
@@ -128,14 +130,19 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
     }));
 
   return (
-    <Modal
+    <Drawer
       title={`知识库配置 · ${kb?.name ?? ""}`}
       open={open}
-      onOk={() => void onSave()}
-      onCancel={() => onClose()}
-      okText="保存"
-      cancelText="取消"
+      onClose={() => onClose()}
       width={620}
+      extra={
+        <Space>
+          <Button onClick={() => onClose()}>取消</Button>
+          <Button type="primary" onClick={() => void onSave()}>
+            保存
+          </Button>
+        </Space>
+      }
     >
       <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
         <Form.Item name="type" label="知识库类型">
@@ -215,6 +222,6 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
           </>
         )}
       </Form>
-    </Modal>
+    </Drawer>
   );
 }

@@ -19,6 +19,18 @@ import {
   Tabs,
   Typography,
 } from "antd";
+import {
+  ApiOutlined,
+  CommentOutlined,
+  DatabaseOutlined,
+  FileTextOutlined,
+  GlobalOutlined,
+  PictureOutlined,
+  SearchOutlined,
+  StarOutlined,
+  ThunderboltOutlined,
+  ToolOutlined,
+} from "@ant-design/icons";
 import { apiListKbs, apiListMcps, apiListModels, apiListSkillsRegistry, KbItem, ModelItem } from "@/lib/api";
 
 const { TextArea } = Input;
@@ -40,16 +52,16 @@ interface Props {
 // 分区定义（对齐 WeKnora navGroups：basic/prompts/model/conversation/suggestions/
 // knowledge/retrieval/websearch/multimodal/tools/mcp/skills）
 const SECTIONS = [
-  { key: "prompts", label: "提示词", icon: "📝" },
-  { key: "model", label: "模型设置", icon: "🧠" },
-  { key: "conversation", label: "对话设置", icon: "💬" },
-  { key: "knowledge", label: "知识库", icon: "📚" },
-  { key: "retrieval", label: "检索策略", icon: "🔍" },
-  { key: "websearch", label: "联网搜索", icon: "🌐" },
-  { key: "multimodal", label: "多模态", icon: "🖼️" },
-  { key: "tools", label: "工具", icon: "🛠️" },
-  { key: "mcp", label: "MCP", icon: "🔌" },
-  { key: "skills", label: "技能", icon: "✨" },
+  { key: "prompts", label: "提示词", icon: <FileTextOutlined /> },
+  { key: "model", label: "模型设置", icon: <ThunderboltOutlined /> },
+  { key: "conversation", label: "对话设置", icon: <CommentOutlined /> },
+  { key: "knowledge", label: "知识库", icon: <DatabaseOutlined /> },
+  { key: "retrieval", label: "检索策略", icon: <SearchOutlined /> },
+  { key: "websearch", label: "联网搜索", icon: <GlobalOutlined /> },
+  { key: "multimodal", label: "多模态", icon: <PictureOutlined /> },
+  { key: "tools", label: "工具", icon: <ToolOutlined /> },
+  { key: "mcp", label: "MCP", icon: <ApiOutlined /> },
+  { key: "skills", label: "技能", icon: <StarOutlined /> },
 ];
 
 export default function AgentEditorModal({ mode, open, initial, onClose, onSubmit }: Props) {
@@ -259,6 +271,9 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
                 key={s.key}
                 onClick={() => setSection(s.key)}
                 style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
                   padding: "8px 12px",
                   borderRadius: 6,
                   cursor: "pointer",
@@ -268,7 +283,8 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
                   fontWeight: section === s.key ? 600 : 400,
                 }}
               >
-                {s.icon} {s.label}
+                {s.icon}
+                {s.label}
               </div>
             ))}
           </div>

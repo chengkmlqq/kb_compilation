@@ -21,7 +21,6 @@ import {
   EditOutlined,
   MessageOutlined,
   MoreOutlined,
-  PlusOutlined,
   RobotOutlined,
 } from "@ant-design/icons";
 import {
@@ -246,18 +245,7 @@ export default function AgentsPage() {
         {/* 卡片列表（flex:1 占满剩余高度，内容超出时内部滚动） */}
         <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
           {visible.length === 0 ? (
-            <Empty description="暂无智能体">
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => {
-                  setEditing(null);
-                  setEditorOpen(true);
-                }}
-              >
-                新建智能体
-              </Button>
-            </Empty>
+            <Empty description="暂无智能体" />
           ) : (
             <Row gutter={[16, 16]}>
               {visible.map((agent) => {

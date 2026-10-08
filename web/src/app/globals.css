@@ -77,6 +77,27 @@ body {
   background: #f9fbfd !important;
 }
 
+/* 列内容防越界（「列压到相邻列」的兜底）：table-layout:fixed 下列宽写死，
+   antd 单元格只声明 overflow-wrap（普通文字会换行，但 Tag 等 white-space:nowrap 内容不会），
+   所以超长内容会直接压到相邻列上。裁剪后内容最多占满自身单元格。
+   固定列（fixed:start/end）除外——它的滚动阴影是定位在单元格框外的 ::after，裁掉就看不见了；
+   而固定列都在表格边缘，越界也只会被表格容器裁掉，不会压到别的列。
+   注：弹层（Dropdown/Tooltip/Select）默认 portal 到 body，不受影响；未用 sorter/filters，表头不会被裁。 */
+.ant-table-thead > tr > th:not([class*="ant-table-cell-fix"]),
+.ant-table-tbody > tr > td:not([class*="ant-table-cell-fix"]) {
+  overflow: hidden;
+}
+
+/* 单元格内的 Tag 再做「优雅截断」：Tag 是 inline-block + white-space:nowrap，不可换行，
+   仅靠上面的单元格裁剪会从字中间硬切；限制 Tag 不超过单元格宽度后可用省略号收尾。
+   （单元格左右内边距各 8px，Tag 自身 margin-inline-end 8px 落在内边距内，不会外溢。） */
+.ant-table-thead > tr > th .ant-tag,
+.ant-table-tbody > tr > td .ant-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* 用户管理 / 角色管理 / 参数管理 / MCP 管理 / 技能管理 / 任务管理 / 主机监控 / 任务监控：表体滚动条「按需出现」。
    antd Table 一旦传 scroll.y，rc-table 会给 .ant-table-body 写死行内 overflow-y:scroll（滚动条常驻），
    这里用 !important 覆盖为 auto，仅在内容超出高度时才出现滚动条。
@@ -94,7 +115,8 @@ body {
 .websearch-page .ant-table-body,
 .teams-page .ant-table-body,
 .menus-page .ant-table-body,
-.logs-page .ant-table-body {
+.logs-page .ant-table-body,
+.datagrid-page .ant-table-body {
   overflow-y: auto !important;
 }
 

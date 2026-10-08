@@ -718,7 +718,6 @@ export default function DatasourcesPage() {
   const listPane = (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-        title="数据源管理"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {
@@ -730,16 +729,13 @@ export default function DatasourcesPage() {
             padding: "12px 16px 0",
           },
         }}
-        extra={
-          <Button type="primary" onClick={openCreate}>
-            新增数据源
-          </Button>
-        }
       >
+        {/* 筛选行 + 新增按钮（上方页签已显示「数据源管理」，此处不再重复标题） */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexShrink: 0 }}>
         <Form
           form={filterForm}
           layout="inline"
-          style={{ marginBottom: 12, flexShrink: 0 }}
+          style={{ marginBottom: 12, flex: 1 }}
           onFinish={doSearch}
           initialValues={{ name: "", label: "", dsType: undefined }}
         >
@@ -768,6 +764,10 @@ export default function DatasourcesPage() {
             </Space>
           </Form.Item>
         </Form>
+        <Button type="primary" onClick={openCreate} style={{ marginBottom: 12, flexShrink: 0 }}>
+          新增数据源
+        </Button>
+        </div>
         <Table<DatasourceItem>
           rowKey="id"
           size="small"
@@ -775,7 +775,7 @@ export default function DatasourcesPage() {
           dataSource={rows}
           columns={columns}
           pagination={false}
-          scroll={{ x: 900, y: "calc(100vh - 308px)" }}
+          scroll={{ x: 900, y: "calc(100vh - 252px)" }}
           locale={{ emptyText: <Empty description="暂无数据源" /> }}
         />
         <div style={{ flexShrink: 0, marginTop: "auto" }}>

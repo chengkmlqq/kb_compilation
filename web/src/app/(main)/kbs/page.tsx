@@ -7,11 +7,11 @@ import {
   Card,
   Checkbox,
   Col,
+  Drawer,
   Dropdown,
   Empty,
   Form,
   Input,
-  Modal,
   Radio,
   Row,
   Select,
@@ -208,8 +208,14 @@ export default function KbsPage() {
     [models]
   );
 
+  const openCreate = () => {
+    form.resetFields();
+    setCreateOpen(true);
+  };
+
   const onCreate = async () => {
-    const values = await form.validateFields();
+    const values = await form.validateFields().catch(() => null);
+    if (!values) return;
     const picked: string[] = values.pipelines || [];
     const payload: KbCreatePayload = {
       name: values.name,
@@ -304,7 +310,7 @@ export default function KbsPage() {
           },
         }}
         extra={
-          <Button type="primary" onClick={() => setCreateOpen(true)}>
+          <Button type="primary" onClick={openCreate}>
             新建知识库
           </Button>
         }
@@ -341,7 +347,7 @@ export default function KbsPage() {
         <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
           {visibleKbs.length === 0 ? (
             <Empty description="暂无知识库，点击右上角「新建知识库」创建">
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
                 新建知识库
               </Button>
             </Empty>
@@ -462,15 +468,21 @@ export default function KbsPage() {
           />
         </div>
 
-        <Modal
+        <Drawer
           title="新建知识库"
           open={createOpen}
-          onOk={onCreate}
-          onCancel={() => setCreateOpen(false)}
-          okText="创建"
-          cancelText="取消"
+          onClose={() => setCreateOpen(false)}
+          width={560}
+          extra={
+            <Space>
+              <Button onClick={() => setCreateOpen(false)}>取消</Button>
+              <Button type="primary" onClick={() => void onCreate()}>
+                创建
+              </Button>
+            </Space>
+          }
         >
-          <Form form={form} layout="vertical">
+          <Form form={form} layout="vertical" preserve={false}>
             <Form.Item
               name="name"
               label="知识库名称"
@@ -571,7 +583,7 @@ export default function KbsPage() {
               </Form.Item>
             )}
           </Form>
-        </Modal>
+        </Drawer>
 
         <ChunkingConfigModal
           open={chunkingKbId !== null}
