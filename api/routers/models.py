@@ -21,6 +21,7 @@ Requires the x-next-identity cookie; admin gating for system scope.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -232,6 +233,13 @@ def import_models(
         except Exception as exc:  # noqa: BLE001 - 单条失败不阻塞批量
             errors.append({"index": i, "name": p.name, "error": str(exc)[:120]})
     db.commit()
+    if errors:
+        logging.getLogger("kb.models.import").warning(
+            "model import errors: created=%s updated=%s errors=%s",
+            created,
+            updated,
+            errors,
+        )
     return {
         "success": True,
         "data": {"created": created, "updated": updated, "errors": errors},

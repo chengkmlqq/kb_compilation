@@ -8,12 +8,10 @@ import {
   Button,
   Card,
   Drawer,
-  Dropdown,
   Empty,
   Form,
   Input,
   Modal,
-  Popconfirm,
   Select,
   Space,
   Tag,
@@ -35,6 +33,7 @@ import {
 import { StateTag } from "../_shared";
 import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
+import { ModoActionGroup } from "@/components/biz/modo-action-group";
 
 type FormValues = {
   userId: string;
@@ -47,7 +46,7 @@ type FormValues = {
 };
 
 export default function SystemUsersPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [rows, setRows] = useState<SysUserItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<{ userId: string; userName: string }>({ userId: "", userName: "" });
@@ -318,30 +317,26 @@ export default function SystemUsersPage() {
           },
           {
             title: "操作",
-            width: 190,
+            width: 140,
             render: (_: unknown, u: SysUserItem) => (
-              <Space>
-                <Button size="small" type="link" onClick={() => openEdit(u)}>
-                  编辑
-                </Button>
-                <Popconfirm title={`确定删除用户 ${u.user_id}?`} onConfirm={() => void doDelete(u)}>
-                  <Button size="small" type="link" danger>
-                    删除
-                  </Button>
-                </Popconfirm>
-                <Dropdown
-                  menu={{
-                    items: [
-                      { key: "role", label: "角色配置", onClick: () => void openRoleConfig(u) },
-                      { key: "pwd", label: "重置密码", onClick: () => openResetPwd(u) },
-                    ],
-                  }}
-                >
-                  <Button size="small" type="link">
-                    更多
-                  </Button>
-                </Dropdown>
-              </Space>
+              <ModoActionGroup
+                maxCount={2}
+                actions={[
+                  { key: "edit", label: "编辑", onClick: () => openEdit(u) },
+                  {
+                    key: "delete",
+                    label: "删除",
+                    danger: true,
+                    onClick: () =>
+                      modal.confirm({
+                        title: `确定删除用户 ${u.user_id}?`,
+                        onOk: () => doDelete(u),
+                      }),
+                  },
+                  { key: "role", label: "角色配置", onClick: () => void openRoleConfig(u) },
+                  { key: "pwd", label: "重置密码", onClick: () => openResetPwd(u) },
+                ]}
+              />
             ),
           },
         ]}
