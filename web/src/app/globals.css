@@ -77,6 +77,13 @@ body {
   background: #f9fbfd !important;
 }
 
+/* 用户管理：表体滚动条「按需出现」。
+   antd Table 一旦传 scroll.y，rc-table 会给 .ant-table-body 写死行内 overflow-y:scroll（滚动条常驻），
+   这里用 !important 覆盖为 auto，仅在内容超出高度时才出现滚动条。 */
+.users-page .ant-table-body {
+  overflow-y: auto !important;
+}
+
 /* Tabs：无底部白边（页面 Tab 直接贴在卡片头下方） */
 .ant-tabs .ant-tabs-nav {
   margin-bottom: 0;

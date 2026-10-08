@@ -1022,6 +1022,7 @@ export interface SysUserItem {
   default_team?: string | null;
   state?: string | null;
   create_dt?: string | null;
+  role_ids?: string[];
 }
 
 export interface SysRoleItem {

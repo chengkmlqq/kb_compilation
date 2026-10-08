@@ -91,6 +91,8 @@ def test_list_users_paginated(sys_db) -> None:
     assert data["total"] == 2
     assert len(data["items"]) == 2
     assert data["items"][0]["user_name"] == "张三"
+    # 表格「角色」列：随用户列表一并返回，避免逐行查角色
+    assert data["items"][0]["role_ids"] == ["r1"]
 
 
 def test_list_users_keyword(sys_db) -> None:

@@ -87,6 +87,14 @@ export default function SystemUsersPage() {
     () => roles.map((r) => ({ label: `${r.role_name}（${r.role_id}）`, value: r.role_id as string })),
     [roles],
   );
+  // role_id → role_name（表格「角色」列展示用；复用已加载的 roles，无额外请求）
+  const roleNameMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    roles.forEach((r) => {
+      if (r.role_id) m[r.role_id] = r.role_name || r.role_id;
+    });
+    return m;
+  }, [roles]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -244,6 +252,7 @@ export default function SystemUsersPage() {
     // 2026-10-08: 改为「固定视口高度」——表格高度锁定为 视口 − 顶部/筛选/分页偏移（100vh-264px），
     // 进页即撑满、底部无空白；数据多时表头固定、表体滚动（antd Table scroll.y，不走 ModoTable 的 flex 方案）
     <div
+      className="users-page"
       style={{
         padding: 8,
         height: "calc(100vh - 45px)",
@@ -312,7 +321,24 @@ export default function SystemUsersPage() {
         scroll={{ x: "100%", y: "calc(100vh - 264px)" }}
         locale={{ emptyText: <Empty description="暂无用户" /> }}
         columns={[
-          { title: "用户ID", dataIndex: "user_id", ellipsis: true },
+          { title: "用户编码", dataIndex: "user_id", ellipsis: true },
+          {
+            title: "角色",
+            dataIndex: "role_ids",
+            width: 200,
+            render: (ids: string[] | undefined) =>
+              ids && ids.length ? (
+                <Space size={4} wrap>
+                  {ids.map((id) => (
+                    <Tag key={id} color="green">
+                      {roleNameMap[id] || id}
+                    </Tag>
+                  ))}
+                </Space>
+              ) : (
+                "-"
+              ),
+          },
           {
             title: "用户名",
             dataIndex: "user_name",

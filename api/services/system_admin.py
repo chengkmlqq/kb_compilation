@@ -46,6 +46,12 @@ def list_users(db: Session, page: int = 1, page_size: int = 10, keyword: str = "
         stmt = stmt.where((User.user_id.ilike(like)) | (User.user_name.ilike(like)))
     all_rows = db.execute(stmt).scalars().all()
     total = len(all_rows)
+
+    # 一次性取全量「用户-角色」关系并分组，避免逐行查询（N+1）
+    roles_by_user: dict[str, list[str]] = {}
+    for uid, rid in db.execute(select(UserRoleRela.user_id, UserRoleRela.role_id)).all():
+        roles_by_user.setdefault(uid, []).append(rid)
+
     rows = [
         {
             "id": u.id,
@@ -56,6 +62,7 @@ def list_users(db: Session, page: int = 1, page_size: int = 10, keyword: str = "
             "default_team": u.default_team,
             "state": u.state,
             "create_dt": u.create_dt,
+            "role_ids": roles_by_user.get(u.user_id, []),
         }
         for u in all_rows[(page - 1) * page_size : page * page_size]
     ]

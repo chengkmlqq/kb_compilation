@@ -105,7 +105,14 @@ export default function SystemTeamsPage() {
     setLoading(true);
     try {
       const res = await apiListTeams(1, 500);
-      if (res.success) setTeams(res.data?.items || []);
+      if (res.success) {
+        const items = res.data?.items || [];
+        setTeams(items);
+        // 进入页面/刷新后兜底选中：保留仍存在的当前选中，否则默认选第一个团队（避免右侧空白）
+        setSelectedKey((prev) =>
+          prev && items.some((t) => t.team_name === prev) ? prev : items[0]?.team_name ?? null,
+        );
+      }
     } finally {
       setLoading(false);
     }
