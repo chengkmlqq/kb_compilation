@@ -5,10 +5,11 @@
  * 列表（搜索/分页）+ 新建/编辑（英文名/中文名/Cron表达式/任务类/队列/状态/扩展参数）
  * + 启停 + 删除。数据源 /api/v1/cron（list/save/delete/toggle/queues/registered-tasks）。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   App,
   Button,
+  Card,
   Drawer,
   Form,
   Input,
@@ -18,9 +19,10 @@ import {
   Tag,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { PlusOutlined, ReloadOutlined, SearchOutlined } from "@ant-design/icons";
+import { ReloadOutlined } from "@ant-design/icons";
 import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
+import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import {
   apiCreateCronTask,
   apiCronQueues,
@@ -35,7 +37,7 @@ import {
 
 export default function CronPage() {
   const { message, modal } = App.useApp();
-  const [form] = Form.useForm();
+  const [searchForm] = Form.useForm();
   const [drawerForm] = Form.useForm();
 
   const [items, setItems] = useState<CronTaskItem[]>([]);
@@ -43,7 +45,7 @@ export default function CronPage() {
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [keyword, setKeyword] = useState("");
+  const [applied, setApplied] = useState<{ keyword?: string }>({});
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerLoading, setDrawerLoading] = useState(false);
@@ -55,13 +57,13 @@ export default function CronPage() {
   const selectedTaskClass = Form.useWatch("taskClass", drawerForm) as string | undefined;
 
   const load = useCallback(
-    async (p = page, size = pageSize, kw = keyword) => {
+    async (p = page, size = pageSize, kw = applied.keyword) => {
       setLoading(true);
       try {
         const res = await apiListCronTasks({
           pageNum: p,
           pageSize: size,
-          keyWord: kw.trim() || undefined,
+          keyWord: kw || undefined,
         });
         if (res.success && res.data) {
           setItems(res.data.content);
@@ -73,7 +75,7 @@ export default function CronPage() {
         setLoading(false);
       }
     },
-    [page, pageSize, keyword, message],
+    [page, pageSize, applied, message],
   );
 
   const loadMeta = useCallback(async () => {
@@ -87,15 +89,15 @@ export default function CronPage() {
     void loadMeta();
   }, [load, loadMeta]);
 
-  const handleSearch = () => {
+  const handleSearch = (values: { keyword?: string }) => {
+    setApplied({ keyword: (values.keyword ?? "").trim() || undefined });
     setPage(1);
-    void load(1, pageSize, keyword);
   };
 
   const handleReset = () => {
-    setKeyword("");
+    searchForm.resetFields();
+    setApplied({});
     setPage(1);
-    void load(1, pageSize, "");
   };
 
   const openCreate = () => {
@@ -225,113 +227,74 @@ export default function CronPage() {
     {
       title: "操作",
       key: "action",
-      width: 180,
+      width: 160,
       align: "center" as const,
       fixed: "right" as const,
       render: (_, record) => (
-        <Space size="small">
-          <Button type="link" size="small" onClick={() => openEdit(record)}>
-            编辑
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            onClick={() => handleToggle(record)}
-          >
-            {record.state === "1" ? "禁用" : "启用"}
-          </Button>
-          <Button type="link" size="small" danger onClick={() => handleDelete(record)}>
-            删除
-          </Button>
-        </Space>
+        <ModoActionGroup
+          maxCount={2}
+          actions={[
+            { key: "edit", label: "编辑", onClick: () => openEdit(record) },
+            {
+              key: "toggle",
+              label: record.state === "1" ? "禁用" : "启用",
+              onClick: () => handleToggle(record),
+            },
+            { key: "delete", label: "删除", danger: true, onClick: () => handleDelete(record) },
+          ]}
+        />
       ),
     },
   ];
 
   return (
-    <div
-      className="modo-page"
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        minHeight: 0,
-        background: "#F5F7FA",
-        padding: 8,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          flex: 1,
-          minHeight: 0,
-          overflow: "hidden",
-          background: "#F5F7FA",
-        }}
+    // 2026-10-08: 参考用户管理页改造 —— 外层 8px padding、Card 标题「定时任务」、extra 刷新/新建、
+    // inline 筛选表单、表格一屏自适应、分页常驻底栏
+    <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <Card
+        title="定时任务"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+        extra={
+          <Space>
+            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+              刷新
+            </Button>
+            <Button type="primary" onClick={openCreate}>
+              新建任务
+            </Button>
+          </Space>
+        }
       >
-        {/* Filter + New Button Area */}
-        <div
-          style={{
-            flexShrink: 0,
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            background: "#fff",
-            borderRadius: 8,
-            border: "1px solid #E3E9EF",
-            padding: "10px 16px",
-            marginBottom: 8,
-            flexWrap: "wrap",
-          }}
+        <Form
+          form={searchForm}
+          layout="inline"
+          style={{ marginBottom: 12, flexShrink: 0 }}
+          onFinish={handleSearch}
         >
-          <Input
-            placeholder="搜索任务名称"
-            allowClear
-            style={{ width: 240 }}
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            onPressEnter={handleSearch}
-            prefix={<SearchOutlined />}
-          />
-          <Button icon={<SearchOutlined />} onClick={handleSearch}>
-            查询
-          </Button>
-          <Button onClick={handleReset}>重置</Button>
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={() => void load()}
-          >
-            刷新
-          </Button>
-          <div style={{ flex: 1 }} />
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新建任务
-          </Button>
-        </div>
+          <Form.Item name="keyword" label="任务名称">
+            <Input allowClear placeholder="请输入任务名称" style={{ width: 220 }} />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button onClick={handleReset}>重置</Button>
+            </Space>
+          </Form.Item>
+        </Form>
 
-        {/* Table + Pagination Area */}
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            minHeight: 0,
-            overflow: "hidden",
-            background: "#fff",
-            borderRadius: 8,
-            border: "1px solid #E3E9EF",
-          }}
-        >
-          <ModoTable
-            columns={columns}
-            dataSource={items}
-            rowKey="id"
-            loading={loading}
-            size="middle"
-            scroll={{ x: 1100 }}
-          />
+        <ModoTable
+          columns={columns}
+          dataSource={items}
+          rowKey="id"
+          loading={loading}
+          size="small"
+          scroll={{ x: 1100 }}
+        />
+
+        <div style={{ flexShrink: 0 }}>
           <ModoPagination
             current={page}
             pageSize={pageSize}
@@ -343,7 +306,7 @@ export default function CronPage() {
             }}
           />
         </div>
-      </div>
+      </Card>
 
       <Drawer
         title={editingId ? "编辑任务" : "新建任务"}

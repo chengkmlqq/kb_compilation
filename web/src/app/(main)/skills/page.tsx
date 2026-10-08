@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   App,
   Button,
@@ -17,7 +17,7 @@ import {
   Typography,
   Upload,
 } from "antd";
-import { InboxOutlined, ReloadOutlined, UploadOutlined } from "@ant-design/icons";
+import { ReloadOutlined, UploadOutlined } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import CodeViewer from "@/components/CodeViewer";
@@ -116,8 +116,6 @@ export default function SkillManagePage() {
   } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [fileLoading, setFileLoading] = useState(false);
-  const [zoneActive, setZoneActive] = useState(false);
-  const zoneCounter = useRef(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
@@ -350,44 +348,6 @@ export default function SkillManagePage() {
         </Space>
       }
     >
-      {/* 拖放安装区（支持拖入文件夹：全局拖放会递归展开并统计文件数） */}
-      <div
-        onDragEnter={(e) => {
-          e.preventDefault();
-          zoneCounter.current += 1;
-          setZoneActive(true);
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault();
-          zoneCounter.current = Math.max(0, zoneCounter.current - 1);
-          if (zoneCounter.current === 0) setZoneActive(false);
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          zoneCounter.current = 0;
-          setZoneActive(false);
-          // 不阻止冒泡：交由 window 级 GlobalDropZone 统一收集（含目录递归）并路由
-        }}
-        style={{
-          flexShrink: 0,
-          border: zoneActive ? "2px dashed #1677ff" : "2px dashed #d9d9d9",
-          background: zoneActive ? "rgba(22, 119, 255, 0.05)" : "#fafafa",
-          borderRadius: 8,
-          padding: "16px 12px",
-          marginBottom: 12,
-          textAlign: "center",
-          cursor: "pointer",
-          transition: "all 0.2s",
-        }}
-      >
-        <InboxOutlined style={{ fontSize: 26, color: zoneActive ? "#1677ff" : "#999", marginRight: 8 }} />
-        <span style={{ fontSize: 13, color: zoneActive ? "#1677ff" : "#666" }}>
-          将技能包（.zip）拖到这里安装，支持拖入文件夹（自动展开并统计文件数）
-        </span>
-      </div>
       <ModoTable
         rowKey="id"
         size="small"

@@ -12,7 +12,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   App,
   Button,
+  Card,
   Drawer,
+  Form,
   Input,
   Select,
   Space,
@@ -20,9 +22,9 @@ import {
   Tabs,
   Tag,
   Tooltip,
+  Typography,
 } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
-import { Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import type { TabsProps } from "antd";
 import {
@@ -34,9 +36,9 @@ import {
   FlowerWorkerTaskOverview,
   FlowerWorkersOverview,
   WorkerRegisteredTaskConfigOverview,
-  } from "@/lib/api";
-  import ModoTable from "@/components/biz/modo-table";
-  import ModoPagination from "@/components/biz/modo-pagination";
+} from "@/lib/api";
+import ModoTable from "@/components/biz/modo-table";
+import ModoPagination from "@/components/biz/modo-pagination";
 
 const { Text } = Typography;
 
@@ -110,10 +112,10 @@ function renderStateTag(state: string) {
 export default function WorkersPage() {
   const { message } = App.useApp();
 
+  const [searchForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [overview, setOverview] = useState<FlowerWorkersOverview>(EMPTY_OVERVIEW);
-  const [workerKeyword, setWorkerKeyword] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>();
+  const [filter, setFilter] = useState<{ workerKeyword?: string; status?: string }>({});
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const inFlightRef = useRef(false);
@@ -198,18 +200,29 @@ export default function WorkersPage() {
   }, [taskDrawerOpen, taskWorkerName, fetchWorkerTasks]);
 
   const filteredWorkers = useMemo(() => {
-    const kw = String(workerKeyword || "").trim().toLowerCase();
+    const kw = String(filter.workerKeyword || "").trim().toLowerCase();
     return overview.workers.filter((w) => {
       if (kw && !w.workerName.toLowerCase().includes(kw)) return false;
-      if (statusFilter && w.status !== statusFilter) return false;
+      if (filter.status && w.status !== filter.status) return false;
       return true;
     });
-  }, [overview.workers, workerKeyword, statusFilter]);
+  }, [overview.workers, filter]);
 
   const pagedWorkers = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return filteredWorkers.slice(start, start + pageSize);
   }, [filteredWorkers, currentPage, pageSize]);
+
+  const handleSearch = (values: { workerKeyword?: string; status?: string }) => {
+    setFilter({ workerKeyword: values.workerKeyword, status: values.status });
+    setCurrentPage(1);
+  };
+
+  const handleReset = () => {
+    searchForm.resetFields();
+    setFilter({});
+    setCurrentPage(1);
+  };
 
   const openTaskDrawer = useCallback(
     (workerName: string) => {
@@ -411,96 +424,84 @@ export default function WorkersPage() {
         overflow: "hidden",
       }}
     >
-      {/* 筛选 + 摘要 */}
-      <div
-        style={{
-          flexShrink: 0,
-          background: "#fff",
-          borderRadius: 8,
-          border: "1px solid #E3E9EF",
-          padding: "14px 16px",
-          marginBottom: 12,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 16,
-          flexWrap: "wrap",
-        }}
+      {/* 2026-10-08: 参考用户管理页改造 —— Card 标题「主机监控」、extra 摘要 + 刷新、
+          inline 筛选表单、表格一屏自适应、分页常驻底栏 */}
+      <Card
+        title="主机监控"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+        extra={
+          <Space size={16} wrap>
+            <span>
+              总数: <strong>{overview.summary.total}</strong>
+            </span>
+            <span style={{ color: "#389e0d" }}>
+              在线: <strong>{overview.summary.online}</strong>
+            </span>
+            <span style={{ color: "#79879C" }}>
+              离线: <strong>{overview.summary.offline}</strong>
+            </span>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => void fetchOverview({ forceRefresh: true })}
+            >
+              刷新
+            </Button>
+          </Space>
+        }
       >
-        <Space size={12} wrap>
-          <Input.Search
-            placeholder="Worker 名称"
-            allowClear
-            style={{ width: 220 }}
-            value={workerKeyword}
-            onChange={(e) => setWorkerKeyword(e.target.value)}
-          />
-          <Select
-            placeholder="状态"
-            allowClear
-            style={{ width: 120 }}
-            value={statusFilter}
-            onChange={setStatusFilter}
-            options={[
-              { label: "在线", value: "ONLINE" },
-              { label: "离线", value: "OFFLINE" },
-            ]}
-          />
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={() => void fetchOverview({ forceRefresh: true })}
-          >
-            刷新
-          </Button>
-        </Space>
-        <Space size={16}>
-          <span>
-            总数: <strong>{overview.summary.total}</strong>
-          </span>
-          <span style={{ color: "#389e0d" }}>
-            在线: <strong>{overview.summary.online}</strong>
-          </span>
-          <span style={{ color: "#79879C" }}>
-            离线: <strong>{overview.summary.offline}</strong>
-          </span>
-        </Space>
-      </div>
+        <Form
+          form={searchForm}
+          layout="inline"
+          style={{ marginBottom: 12, flexShrink: 0 }}
+          onFinish={handleSearch}
+        >
+          <Form.Item name="workerKeyword" label="Worker 名称">
+            <Input allowClear placeholder="请输入 Worker 名称" style={{ width: 220 }} />
+          </Form.Item>
+          <Form.Item name="status" label="状态">
+            <Select
+              allowClear
+              placeholder="请选择状态"
+              style={{ width: 120 }}
+              options={[
+                { label: "在线", value: "ONLINE" },
+                { label: "离线", value: "OFFLINE" },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button onClick={handleReset}>重置</Button>
+            </Space>
+          </Form.Item>
+        </Form>
 
-      {/* Worker 表格 */}
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          overflow: "hidden",
-          background: "#fff",
-          borderRadius: 8,
-          border: "1px solid #E3E9EF",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
         <ModoTable<FlowerWorkerOverview>
-                  containerStyle={{ padding: "0 16px" }}
-                  rowKey="workerName"
-                  size="middle"
-                  loading={loading}
-                  dataSource={pagedWorkers}
-                  columns={columns}
-                  scroll={{ x: 1500 }}
-                />
-                <div style={{ borderTop: "1px solid #E3E9EF", flexShrink: 0 }}>
-                  <ModoPagination
-                    current={currentPage}
-                    pageSize={pageSize}
-                    total={filteredWorkers.length}
-                    showTotal={(t) => `共 ${t} 个 Worker`}
-                    onChange={(p, ps) => {
-                      setCurrentPage(p);
-                      setPageSize(ps);
-                    }}
-                  />
-                </div>
-              </div>
+          rowKey="workerName"
+          size="small"
+          loading={loading}
+          dataSource={pagedWorkers}
+          columns={columns}
+          scroll={{ x: 1500 }}
+        />
+
+        <div style={{ borderTop: "1px solid #E3E9EF", flexShrink: 0 }}>
+          <ModoPagination
+            current={currentPage}
+            pageSize={pageSize}
+            total={filteredWorkers.length}
+            showTotal={(t) => `共 ${t} 个 Worker`}
+            onChange={(p, ps) => {
+              setCurrentPage(p);
+              setPageSize(ps);
+            }}
+          />
+        </div>
+      </Card>
 
       {/* 任务快照抽屉 */}
       <Drawer
