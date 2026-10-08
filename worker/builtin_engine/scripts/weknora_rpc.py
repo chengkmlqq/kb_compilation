@@ -474,6 +474,13 @@ def _page_detail(kb, flat_slug, use_cache=True):
             return None
         raise
     data = r.get('data') or {}
+    if not data:
+        # 空响应 = 页面不存在（direct 模式 get_wiki_page 返回 None → data={}）。
+        # 必须返回 None 让 read_page 判定 error，否则幂等查重误判「已存在」→
+        # 实体/长句页全部 SKIP（2026-10-08 实测：清库后构建只建 summary，
+        # 其余全 [SKIP] 已存在，因为 {} 被当成了存在的页面）。
+        _PAGE_CACHE.pop(key, None)
+        return None
     _PAGE_CACHE[key] = data
     return data
 
