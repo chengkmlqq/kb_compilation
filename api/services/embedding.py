@@ -36,6 +36,7 @@ class EmbeddingConfig:
     timeout: float = DEFAULT_TIMEOUT
     batch_size: int = DEFAULT_BATCH_SIZE
     custom_headers: dict | None = None  # extra request headers (model-scoped)
+    interface_type: str = "openai"  # openai(/v1) | oip(KServe /v2)
 
 
 def load_embedding_config(
@@ -87,6 +88,7 @@ def load_embedding_config(
                     model=resolved.get("model") or "",
                     dim=int(resolved.get("dimension") or settings.EMBEDDING_DIM),
                     custom_headers=resolved.get("custom_headers") or None,
+                    interface_type=(resolved.get("interface_type") or "openai"),
                 )
         except Exception:
             logger.warning(
@@ -145,6 +147,8 @@ class EmbeddingClient:
         return out
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        if (self.cfg.interface_type or "openai").lower() == "oip":
+            return self._embed_batch_oip(texts)
         payload = {"model": self.cfg.model, "input": texts}
         headers = {"Content-Type": "application/json"}
         if self.cfg.api_key:
@@ -188,6 +192,37 @@ class EmbeddingClient:
         if all(x == 0.0 for x in vec):
             return None
         return vec
+
+    def _embed_batch_oip(self, texts: list[str]) -> list[list[float]]:
+        """KServe Open Inference Protocol embeddings.
+
+        POST {base}/v2/models/{model}/infer with a BYTES "text" input;
+        output "EMBEDDINGS" is a flat FP32 array [n*dim]. Batch size 1 is
+        the portable baseline: many OIP servers ignore batch and return a
+        single vector regardless of input count, so we send one request per
+        text (kept simple and robust).
+        """
+        from api.services.oip import embedding_vector_from_output, infer, text_input
+
+        vectors: list[list[float]] = []
+        for t in texts:
+            blob = infer(
+                self.cfg.base_url,
+                self.cfg.model,
+                [text_input("text", [t])],
+                [{"name": "EMBEDDINGS"}],
+                api_key=self.cfg.api_key,
+                custom_headers=self.cfg.custom_headers,
+                timeout=self.cfg.timeout,
+            )
+            data = blob.get("EMBEDDINGS") or next(iter(blob.values()), [])
+            if not data:
+                raise RuntimeError(f"OIP embedding returned no data for text: {t[:60]}...")
+            vec = embedding_vector_from_output(list(data), self.cfg.dim)
+            if not vec:
+                raise RuntimeError("OIP embedding returned empty vector")
+            vectors.append(l2_normalize(vec) if any(v != 0 for v in vec) else vec)
+        return vectors
 
 
 _client_lock = threading.Lock()

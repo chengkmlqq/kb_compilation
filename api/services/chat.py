@@ -34,6 +34,8 @@ class ChatConfig:
     model: str
     timeout: float = DEFAULT_TIMEOUT
     custom_headers: dict | None = None  # extra request headers (model-scoped)
+    # 接口协议：openai（OpenAI 兼容 /v1，流式）| oip（KServe OIP /v2 非流式）
+    interface_type: str = "openai"
 
 
 @dataclass
@@ -83,6 +85,7 @@ def load_chat_config(
                     api_key=resolved.get("api_key") or "",
                     model=resolved.get("model") or "",
                     custom_headers=resolved.get("custom_headers") or None,
+                    interface_type=(resolved.get("interface_type") or "openai"),
                 )
         except Exception:
             logger.warning("failed to resolve scoped chat model; using legacy config", exc_info=True)
@@ -219,6 +222,11 @@ class ChatClient:
         Messages carrying images are serialized as OpenAI content arrays
         (image_url data URLs) for multimodal (vllm) probing.
         """
+        # 接口协议 = oip：KServe Open Inference Protocol（/v2 非流式）
+        if (self.cfg.interface_type or "openai").lower() == "oip":
+            yield from self._stream_oip(messages, temperature, max_tokens, top_p)
+            return
+
         endpoint = (self.cfg.base_url or "").rstrip("/")
         if not endpoint:
             raise RuntimeError("AI_CHAT_API_ENDPOINT is not configured")
@@ -351,6 +359,54 @@ class ChatClient:
                 resp.close()
         # 流结束兜底：部分实现不发 finish_reason=tool_calls，已累积调用照常吐出
         yield from _flush_tool_calls()
+        yield {"type": "done"}
+
+    def _stream_oip(
+        self,
+        messages: list[ChatMessage],
+        temperature: float,
+        max_tokens: int,
+        top_p: float | None,
+    ) -> Iterator[dict]:
+        """KServe Open Inference Protocol (non-streaming).
+
+        OIP has no SSE; the whole answer arrives in one
+        /v2/models/{model}/infer response, so it is emitted as a single
+        delta event to keep the upstream event contract unchanged.
+        Thinking / tool calls / multimodal have no portable OIP binding.
+        """
+        from api.services.oip import decode_bytes_cell, infer, scalar_input, text_input
+
+        roles = {"system": "System", "user": "User", "assistant": "Assistant", "tool": "Tool"}
+        parts = [f"{roles.get(m.role, m.role)}: {m.content}" for m in messages if (m.content or "").strip()]
+        prompt = "\n\n".join(parts)
+        if not prompt.strip():
+            raise RuntimeError("OIP infer skipped: empty prompt")
+
+        inputs = [
+            text_input("text", [prompt]),
+            scalar_input("stream", "BOOL", False),
+        ]
+        if max_tokens:
+            inputs.append(scalar_input("max_tokens", "INT64", int(max_tokens)))
+        if temperature is not None:
+            inputs.append(scalar_input("temperature", "FP32", float(temperature)))
+        if top_p is not None:
+            inputs.append(scalar_input("top_p", "FP32", float(top_p)))
+
+        blob = infer(
+            self.cfg.base_url,
+            self.cfg.model,
+            inputs,
+            [{"name": "text"}],
+            api_key=self.cfg.api_key,
+            custom_headers=self.cfg.custom_headers,
+            timeout=self.cfg.timeout,
+        )
+        cells = blob.get("text") or []
+        text = decode_bytes_cell(cells[0]) if cells else ""
+        if text:
+            yield {"type": "delta", "text": text}
         yield {"type": "done"}
 
     def chat(

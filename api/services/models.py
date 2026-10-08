@@ -250,6 +250,10 @@ def create_model(
         owner_team_name = ""  # personal rows are NOT team-visible
 
     raw_api_key = str(payload.get("api_key") or "").strip()
+    # 接口协议：openai（OpenAI 兼容 /v1）| oip（KServe Open Inference Protocol /v2）
+    interface_type = str(payload.get("interface_type") or "openai").strip() or "openai"
+    if interface_type not in ("openai", "oip"):
+        raise ValueError(f"无效的接口协议: {interface_type}（支持 openai / oip）")
     m = KbModel(
         id=uuid.uuid4().hex[:36],
         scope=scope,
@@ -331,7 +335,10 @@ def update_model(
     if "provider" in payload:
         m.provider = str(payload.get("provider") or "").strip() or None
     if "interface_type" in payload:
-        m.interface_type = str(payload.get("interface_type") or "openai").strip() or "openai"
+            itype = str(payload.get("interface_type") or "openai").strip() or "openai"
+            if itype not in ("openai", "oip"):
+                raise ValueError(f"无效的接口协议: {itype}（支持 openai / oip）")
+            m.interface_type = itype
     if "source" in payload:
         m.source = str(payload.get("source") or "remote").strip().lower() or "remote"
     if "dimension" in payload:
@@ -603,6 +610,7 @@ def resolve_model_config(
         "model_id": m.id,
         "scope": m.scope,
         "custom_headers": m.custom_headers or {},
+        "interface_type": m.interface_type or "openai",
     }
 
 

@@ -500,6 +500,7 @@ function ModelEditorModal({
         provider: item.provider,
         description: item.description,
         base_url: item.base_url,
+        interface_type: item.interface_type || "openai",
         dimension: item.dimension,
         supports_vision: item.supports_vision,
         is_default: item.is_default,
@@ -515,6 +516,7 @@ function ModelEditorModal({
         scope: scope,
         type: "chat",
         provider: "deepseek",
+        interface_type: "openai",
         is_default: true,
       });
     }
@@ -573,7 +575,7 @@ function ModelEditorModal({
         provider: v.provider || null,
         description: v.description || null,
         base_url: v.base_url || null,
-        interface_type: "openai",
+        interface_type: v.interface_type || "openai",
         dimension: v.type === "embedding" ? v.dimension || null : null,
         supports_vision: !!v.supports_vision,
         is_default: !!v.is_default,
@@ -619,7 +621,7 @@ function ModelEditorModal({
       onCancel={onClose}
       destroyOnClose
     >
-      <Form form={form} layout="vertical" initialValues={{ scope, type: "chat", provider: "deepseek", is_default: true }}>
+      <Form form={form} layout="vertical" initialValues={{ scope, type: "chat", provider: "deepseek", interface_type: "openai", is_default: true }}>
         <Form.Item name="scope" label="配置级别" style={{ maxWidth: 240 }}>
           <Select
             disabled={editing}
@@ -635,6 +637,14 @@ function ModelEditorModal({
             optionType="button"
             buttonStyle="solid"
             options={ALL_TYPES.map((t) => ({ label: TYPE_LABEL[t], value: t }))}
+          />
+        </Form.Item>
+        <Form.Item name="interface_type" label="接口协议" style={{ maxWidth: 260 }}>
+          <Select
+            options={[
+              { label: "OpenAI 兼容（/v1）", value: "openai" },
+              { label: "OIP 推理协议（/v2）", value: "oip" },
+            ]}
           />
         </Form.Item>
         <Form.Item name="provider" label="厂商" style={{ maxWidth: 400 }}>
