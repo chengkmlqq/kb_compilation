@@ -72,5 +72,32 @@ class TapeStep(Base):
     step_seq: Mapped[int] = mapped_column(Integer, default=0)
     pre_step_ids: Mapped[list | None] = mapped_column(JSON)  # 前置步骤 id 数组
     next_step_ids: Mapped[list | None] = mapped_column(JSON)  # 后继步骤 id 数组
+    # 节点目标队列（2026-10-09 编排异步化）：指定该节点投递到哪个 celery worker
+    # 队列（default/agent/build/orch）。空 = 继承编排默认队列。不同节点可跑不同 worker。
+    queue_name: Mapped[str | None] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class TapeRun(Base):
+    """编排执行记录（异步执行：API 立即返回 run_id，worker 后台逐步执行）。
+
+    step_results 每步执行完追加一条：
+      {step_id, step_inst, step_label, queue, status(success/failed/skipped),
+       start_time, end_time, duration_ms, body, error}
+    bindings 存最终运行上下文（可回溯中间结果，截断长值）。
+    """
+
+    __tablename__ = "kb_tape_run"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # run_id
+    tape_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    tape_name: Mapped[str] = mapped_column(String(128), default="")
+    status: Mapped[str] = mapped_column(String(32), default="queued")  # queued|running|success|failed|cancelled
+    inputs: Mapped[dict | None] = mapped_column(JSON)  # 运行入参
+    step_results: Mapped[list | None] = mapped_column(JSON)  # 逐步日志（执行时追加）
+    bindings: Mapped[dict | None] = mapped_column(JSON)  # 最终 bindings（截断长值）
+    error: Mapped[str | None] = mapped_column(Text)
+    create_user: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

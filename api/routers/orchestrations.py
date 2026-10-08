@@ -119,3 +119,16 @@ def offline(tape_id: str, db: Session = Depends(get_db), _user: str = Depends(_c
 @router.post("/{tape_id}/execute")
 def execute(tape_id: str, payload: dict | None = None, db: Session = Depends(get_db), _user: str = Depends(_current_user)):
     return _guarded(svc.execute_tape, db, tape_id, (payload or {}).get("inputs") or {})
+
+
+# ── 执行记录（异步编排 2026-10-09 新增）──
+
+@router.get("/{tape_id}/runs")
+def tape_runs(tape_id: str, page: int = 1, page_size: int = 20,
+              db: Session = Depends(get_db), _user: str = Depends(_current_user)):
+    return _guarded(svc.list_tape_runs, db, tape_id, page, page_size)
+
+
+@router.get("/runs/{run_id}")
+def run_detail(run_id: str, db: Session = Depends(get_db), _user: str = Depends(_current_user)):
+    return _guarded(lambda: svc.serialize_tape_run(svc.get_tape_run(db, run_id)))

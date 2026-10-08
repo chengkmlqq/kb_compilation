@@ -179,6 +179,26 @@ services:
     networks:
       - kb-net
 
+  celery-orch-worker:
+    # 编排调度中枢（2026-10-09）：只消费 orch 队列，负责编排 DAG 的依赖检查
+    # 与节点投递（execute_run/advance_run）。节点本身投到各自队列的 worker。
+    image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-agent-worker:${KB_IMAGE_TAG:-latest}
+    container_name: kb-celery-orch-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info", "--concurrency=2", "-Q", "orch"]
+    <<: *api-env
+    volumes:
+      - kb-docs:/data/kb_documents
+    depends_on:
+      redis:
+        condition: service_started
+      pg:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - kb-net
+
   celery-beat:
     image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-worker:${KB_IMAGE_TAG:-latest}
     container_name: kb-celery-beat

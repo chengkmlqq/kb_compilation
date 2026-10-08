@@ -18,6 +18,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -164,6 +165,63 @@ class ScriptStep(BaseStep):
             return StepResponse.fail(f"Script execution error: {e}\n{traceback.format_exc()}")
 
 
+class RunScriptStep(BaseStep):
+    """'run_script' 子进程执行（2026-10-09 编排异步化新增）。
+
+    在节点所在 worker 内以 subprocess 运行脚本（如技能 run_one.py / build_full.py），
+    支持超时 + 环境变量注入。config:
+      - command: 命令行 argv 列表（首项可含 {{ }} 模板）
+      - script_path: 或指定脚本路径（worker 内置技能脚本），自动拼 python + args
+      - args: 脚本参数列表（支持 {{ }} 模板）
+      - env: 附加环境变量 dict（值支持 {{ }} 模板）
+      - timeout_sec: 超时（默认 0 = 不限；建议按步骤实际耗时配置）
+    """
+
+    def handle(self, context: TapeRuntimeContext) -> StepResponse:
+        import os
+        import subprocess
+
+        def _render(v):
+            if isinstance(v, str):
+                return context.render(v)
+            if isinstance(v, list):
+                return [context.render(x) for x in v]
+            if isinstance(v, dict):
+                return {k: context.render(x) for k, x in v.items()}
+            return v
+
+        cmd = _render(self.config.get("command") or [])
+        script_path = _render(self.config.get("script_path") or "")
+        args = _render(self.config.get("args") or [])
+        env_extra = _render(self.config.get("env") or {})
+        timeout_sec = float(self.config.get("timeout_sec") or 0)
+
+        if script_path:
+            cmd = [sys.executable, script_path] + list(args)
+        if not cmd:
+            return StepResponse.fail("run_script 需要 command 或 script_path 配置")
+
+        env = dict(os.environ)
+        env.update({str(k): str(v) for k, v in env_extra.items()})
+        try:
+            proc = subprocess.run(
+                [str(c) for c in cmd],
+                capture_output=True, text=True, timeout=timeout_sec or None,
+                env=env, cwd=context.bindings.get("cwd") or None,
+            )
+            tail_out = (proc.stdout or "")[-3000:]
+            tail_err = (proc.stderr or "")[-1500:]
+            if proc.returncode != 0:
+                return StepResponse.fail(
+                    f"退出码 {proc.returncode}\n[stdout]\n{tail_out}\n[stderr]\n{tail_err}"
+                )
+            return StepResponse.success({"returncode": 0, "stdout_tail": tail_out})
+        except subprocess.TimeoutExpired:
+            return StepResponse.fail(f"子进程超时（>{int(timeout_sec)}s）: {cmd}")
+        except Exception as e:  # noqa: BLE001
+            return StepResponse.fail(f"子进程启动失败: {e}")
+
+
 class IfStep(BaseStep):
     """'if' 条件分支：condition 为真走 next_step_ids，为假走 fail 后继。"""
 
@@ -200,6 +258,7 @@ ATOM_MAP: Dict[str, Callable[[str, str, str, Optional[dict]], BaseStep]] = {
     "def": DefStep,
     "print": PrintStep,
     "script": ScriptStep,
+    "run_script": RunScriptStep,
     "if": IfStep,
     "loop": LoopStep,
 }

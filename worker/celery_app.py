@@ -44,6 +44,7 @@ celery_app.conf.update(
         "worker.tasks.wiki_graph",
         "worker.tasks.agent_gateway",
         "worker.tasks.agent_worker",
+        "worker.tasks.orch_runner",
     ],
     # 队列隔离（2026-10 WeKnora 对齐）：wiki 构建的 agent 任务投到独立 agent 队列，
     # 由专用 celery-agent-worker（-Q agent）消费；文档解析留在 default 队列的
@@ -70,6 +71,7 @@ try:
         chunk_verify,
         doc_process,
         log_cleanup,
+        orch_runner,
         orphan_recovery,
         wiki_build,
         wiki_graph,

@@ -119,6 +119,26 @@ ORCH_STEP_DEFINES: list[tuple[str, str, str, str, str, list[dict], int]] = [
      [{"name": "item_var", "label": "迭代变量名", "type": "input", "required": True, "placeholder": "item"},
       {"name": "collection", "label": "集合表达式", "type": "input", "required": True,
        "placeholder": "[1,2,3] 或 bindings 里的列表变量"}], 5),
+    ("run_script", "脚本执行(子进程)", "基础", "CodeOutlined",
+     "在节点所在 worker 以子进程运行脚本（技能 run_one.py / build_full.py），支持超时与 env 注入",
+     [{"name": "script_path", "label": "脚本路径(worker内置)", "type": "input", "required": False,
+       "placeholder": "/srv/kb/worker/builtin_engine/scripts/run_one.py"},
+      {"name": "args", "label": "脚本参数(JSON数组,支持{{}})", "type": "textarea", "required": False,
+       "placeholder": '["{{kid}}", "--kb", "{{kb_id}}"]'},
+      {"name": "command", "label": "或直接命令行(argv列表)", "type": "textarea", "required": False,
+       "placeholder": '["python3", "script.py", "--flag"]'},
+      {"name": "env", "label": "附加环境变量(JSON)", "type": "textarea", "required": False,
+       "placeholder": '{"WEKNORA_KB_ID": "{{kb_id}}", "WEKNORA_DOC_NAME": "{{doc_name}}"}',
+       "props": {"rows": 3}},
+      {"name": "timeout_sec", "label": "超时(秒,0=不限)", "type": "input", "required": False, "placeholder": "1800"},
+      {"name": "queue", "label": "执行队列", "type": "select", "required": False,
+       "options": [
+           {"label": "默认", "value": ""},
+           {"label": "解析/通用 (default)", "value": "default"},
+           {"label": "Agent (agent)", "value": "agent"},
+           {"label": "构建 (build)", "value": "build"},
+           {"label": "编排调度 (orch)", "value": "orch"},
+       ]}], 6),
 ]
 
 
