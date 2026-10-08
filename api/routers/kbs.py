@@ -168,6 +168,8 @@ def get_kbs(
     x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
     ) -> dict:
     identity = decode_identity_cookie(x_next_identity or "")
+    if not identity:
+        raise HTTPException(status_code=401, detail="未登录")
     caller_user_id = identity.user_id if identity else ""
     caller_team_name = identity.team_name or "" if identity else ""
     is_sys_admin = False
@@ -197,6 +199,8 @@ def post_kb(
     x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
 ) -> dict:
     identity = decode_identity_cookie(x_next_identity or "")
+    if not identity:
+        raise HTTPException(status_code=401, detail="未登录")
     caller_user_id = identity.user_id if identity else ""
     caller_team_name = identity.team_name or "" if identity else ""
     is_sys_admin = False

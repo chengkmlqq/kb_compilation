@@ -19,6 +19,7 @@ from api.services.system_config import (
     get_model_config,
     get_platform_config,
     get_retrieval_config,
+    get_settings,
     get_skill_detail,
     install_skill,
     list_mcp_servers,

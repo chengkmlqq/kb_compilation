@@ -191,6 +191,9 @@ def create_kb(
     from api.services.kb_config import normalize_indexing_strategy
 
     cfg = dict(configs or {})
+    if not name or not name.strip():
+        raise ValueError("知识库名称不能为空")
+    name = name.strip()
     if vector_store_id:
         _validate_vector_store_ref(db, vector_store_id)
     _validate_bound_model(
