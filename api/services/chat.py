@@ -555,6 +555,14 @@ def answer_question(
             for ev in buffered:
                 yield ev
             break
+        # 动作开始：LLM 决定调用工具 → 即时透出（前端步骤树显示「正在调用」）
+        yield {
+            "type": "tool_call",
+            "tool_calls": [
+                {"id": tc.get("id") or f"call_{i}", "name": tc.get("name") or "", "arguments": tc.get("arguments") or ""}
+                for i, tc in enumerate(tool_calls)
+            ],
+        }
         # 回填工具结果：assistant 消息带 tool_calls，随后每个工具一条 role=tool
         messages.append(
             ChatMessage(
@@ -574,12 +582,15 @@ def answer_question(
             )
         )
         results: list[dict] = []
+        durations: list[float] = []
         for i, tc in enumerate(tool_calls):
+            _t0 = time.time()
             result = (
                 tool_executor(tc)
                 if tool_executor
                 else f"工具不可用: 未配置执行器（{tc.get('name') or '?'}）"
             )
+            durations.append(round(time.time() - _t0, 2))
             results.append(
                 {"id": tc.get("id") or f"call_{i}", "name": tc.get("name") or "", "result": result}
             )
@@ -590,7 +601,7 @@ def answer_question(
                     tool_call_id=tc.get("id") or f"call_{i}",
                 )
             )
-        yield {"type": "tool", "tool_calls": tool_calls, "results": results}
+        yield {"type": "tool", "tool_calls": tool_calls, "results": results, "durations": durations}
 
 
 def _stream_once(client: ChatClient, messages: list[ChatMessage]) -> Iterator[dict]:

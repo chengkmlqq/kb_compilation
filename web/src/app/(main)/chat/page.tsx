@@ -354,26 +354,47 @@ export default function ChatPage() {
                   return { ...m, steps };
                 }),
               );
+            } else if (ev.type === "tool_call") {
+              // 动作开始：LLM 决定调用工具 → 加「正在调用」节点（running）
+              const pendingSteps: RagStep[] = ((ev.tool_calls || []) as Array<{ id?: string; name?: string; arguments?: string }>).map(
+                (tc) => ({
+                  stage: `tool:${tc.name || "unknown"}`,
+                  status: "running" as const,
+                  title: `调用工具 ${tc.name || "unknown"}`,
+                  detail: tc.arguments ? `参数: ${tc.arguments}` : undefined,
+                }),
+              );
+              setMsgs((prev) =>
+                prev.map((m) =>
+                  m.id === applyId ? { ...m, steps: [...(m.steps || []), ...pendingSteps] } : m,
+                ),
+              );
             } else if (ev.type === "tool") {
               const toolSteps: RagStep[] = ((ev.tool_calls || []) as Array<{ id?: string; name?: string }>).map(
                 (tc, i) => {
-                  const res = ((ev.results || []) as Array<{ result?: string }>)[i];
+                  const res = ((ev.results || []) as Array<{ result?: string; name?: string }>)[i];
+                  const dur = ((ev.durations || []) as number[])[i];
                   const brief = res?.result ? String(res.result) : "";
+                  const detailBits = [
+                    res?.name ? `工具: ${res.name}` : "",
+                    dur != null ? `耗时: ${dur}s` : "",
+                    brief ? `执行结果:\n${brief.slice(0, 1500)}` : "",
+                  ].filter(Boolean);
                   return {
                     stage: `tool:${tc.name || "unknown"}`,
                     status: "done" as const,
-                    title: `调用工具 ${tc.name || "unknown"}`,
+                    title: `完成工具 ${tc.name || "unknown"}`,
                     summary: brief
                       ? brief.slice(0, 60) + (brief.length > 60 ? "…" : "")
                       : undefined,
+                    detail: detailBits.join("\n") || undefined,
+                    duration: dur,
                   };
                 },
               );
               setMsgs((prev) =>
                 prev.map((m) =>
-                  m.id === applyId
-                    ? { ...m, steps: [...(m.steps || []), ...toolSteps] }
-                    : m,
+                  m.id === applyId ? { ...m, steps: [...(m.steps || []), ...toolSteps] } : m,
                 ),
               );
             } else if (ev.type === "done") {
@@ -595,18 +616,42 @@ export default function ChatPage() {
                   return { ...m, steps };
                 }),
               );
+            } else if (evt.type === "tool_call") {
+              const pendingSteps: RagStep[] = ((evt.tool_calls || []) as Array<{ id?: string; name?: string; arguments?: string }>).map(
+                (tc) => ({
+                  stage: `tool:${tc.name || "unknown"}`,
+                  status: "running" as const,
+                  title: `调用工具 ${tc.name || "unknown"}`,
+                  detail: tc.arguments ? `参数: ${tc.arguments}` : undefined,
+                }),
+              );
+              setMsgs((prev) =>
+                prev.map((m) =>
+                  m.id === placeholder.id
+                    ? { ...m, steps: [...(m.steps || []), ...pendingSteps] }
+                    : m,
+                ),
+              );
             } else if (evt.type === "tool") {
               const toolSteps: RagStep[] = ((evt.tool_calls || []) as Array<{ id?: string; name?: string }>).map(
                 (tc, i) => {
-                  const res = ((evt.results || []) as Array<{ result?: string }>)[i];
+                  const res = ((evt.results || []) as Array<{ result?: string; name?: string }>)[i];
+                  const dur = ((evt.durations || []) as number[])[i];
                   const brief = res?.result ? String(res.result) : "";
+                  const detailBits = [
+                    res?.name ? `工具: ${res.name}` : "",
+                    dur != null ? `耗时: ${dur}s` : "",
+                    brief ? `执行结果:\n${brief.slice(0, 1500)}` : "",
+                  ].filter(Boolean);
                   return {
                     stage: `tool:${tc.name || "unknown"}`,
                     status: "done" as const,
-                    title: `调用工具 ${tc.name || "unknown"}`,
+                    title: `完成工具 ${tc.name || "unknown"}`,
                     summary: brief
                       ? brief.slice(0, 60) + (brief.length > 60 ? "…" : "")
                       : undefined,
+                    detail: detailBits.join("\n") || undefined,
+                    duration: dur,
                   };
                 },
               );
@@ -1702,10 +1747,8 @@ export default function ChatPage() {
 
 function ThinkingBlock({ thinking, streaming }: { thinking: string; streaming?: boolean }) {
   const [open, setOpen] = useState(false);
-  // 对齐 WeKnora deepThink：思考中强制展开跟随显示；完成后自动折叠
-  useEffect(() => {
-    if (!streaming) setOpen(false);
-  }, [streaming]);
+  // 2026-10-08: 思考中强制展开跟随显示；完成后保持展开（不自动收起），
+  // 让用户能看到完整思考过程。点击可折叠/展开。
   const expanded = streaming || open;
   return (
     <div style={{ marginBottom: 8 }}>
