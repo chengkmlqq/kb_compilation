@@ -7,6 +7,7 @@ import {
   App,
   Button,
   Card,
+  Checkbox,
   Descriptions,
   Dropdown,
   Empty,
@@ -24,13 +25,18 @@ import {
   apiCreateTeam,
   apiDeleteTeam,
   apiGetTeamMembers,
+  apiListDatasources,
+  apiListTeamDsAuth,
   apiListTeams,
   apiListUsers,
+  apiSaveTeamDsAuth,
   apiSaveTeamMembers,
   apiUpdateTeam,
+  DatasourceItem,
   SysTeamItem,
   SysTeamMemberItem,
   SysUserItem,
+  TeamDsMapItem,
 } from "@/lib/api";
 import { StateTag } from "../_shared";
 import ModoTable from "@/components/biz/modo-table";
@@ -44,6 +50,8 @@ type TeamFormValues = {
 };
 
 type TeamNode = SysTeamItem & { key: string; title: React.ReactNode; children?: TeamNode[] };
+
+type DsAuthRow = { key: string; dsName: string; label: string };
 
 function buildTree(teams: SysTeamItem[]): TeamNode[] {
   const byName = new Map<string, TeamNode>();
@@ -100,6 +108,12 @@ export default function SystemTeamsPage() {
   const [allUsers, setAllUsers] = useState<SysUserItem[]>([]);
   const [targetUsers, setTargetUsers] = useState<string[]>([]);
   const [savingMembers, setSavingMembers] = useState(false);
+
+  // 数据源授权（作用于左侧当前选中团队）
+  const [authItems, setAuthItems] = useState<TeamDsMapItem[]>([]);
+  const [authRows, setAuthRows] = useState<DatasourceItem[]>([]);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [savingAuth, setSavingAuth] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -158,6 +172,43 @@ export default function SystemTeamsPage() {
   useEffect(() => {
     if (selectedKey) void loadMembers(selectedKey);
   }, [selectedKey, loadMembers]);
+
+  const loadAuth = useCallback(async (teamName: string) => {
+    setAuthLoading(true);
+    try {
+      const [maps, list] = await Promise.all([
+        apiListTeamDsAuth(teamName),
+        apiListDatasources(1, 200),
+      ]);
+      setAuthItems(maps.success ? maps.data || [] : []);
+      setAuthRows(list.success ? list.data?.items || [] : []);
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // 切换团队先清空，避免把上一团队的勾选误存到新团队
+    setAuthItems([]);
+    setAuthRows([]);
+    if (selectedKey) void loadAuth(selectedKey);
+  }, [selectedKey, loadAuth]);
+
+  const doSaveAuth = async () => {
+    if (!selectedKey) return;
+    setSavingAuth(true);
+    try {
+      const res = await apiSaveTeamDsAuth(selectedKey, authItems);
+      if (res.success) {
+        message.success("数据源授权已保存");
+        await loadAuth(selectedKey);
+      } else {
+        message.error(res.message || "保存失败");
+      }
+    } finally {
+      setSavingAuth(false);
+    }
+  };
 
   const openCreate = (parent?: SysTeamItem | null) => {
     setEditing(null);
@@ -433,6 +484,80 @@ export default function SystemTeamsPage() {
                             dataIndex: "state",
                             width: 90,
                             render: (v: string | null) => <StateTag value={v} />,
+                          },
+                        ]}
+                      />
+                    </div>
+                  ),
+                },
+                {
+                  key: "dsAuth",
+                  label: "数据源授权",
+                  children: (
+                    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                      <Space style={{ marginBottom: 12, flexShrink: 0 }}>
+                        <Button type="primary" loading={savingAuth} onClick={() => void doSaveAuth()}>
+                          保存授权
+                        </Button>
+                        <Button onClick={() => selectedKey && void loadAuth(selectedKey)}>刷新</Button>
+                      </Space>
+                      <ModoTable<DsAuthRow>
+                        rowKey="dsName"
+                        size="small"
+                        loading={authLoading}
+                        dataSource={authRows.map((r) => ({
+                          key: String(r.dsName),
+                          dsName: String(r.dsName),
+                          label: String(r.dsLabel || r.dsName),
+                        }))}
+                        locale={{ emptyText: <Empty description="暂无数据源" /> }}
+                        columns={[
+                          { title: "数据源英文名", dataIndex: "dsName", width: 220 },
+                          { title: "数据源中文名", dataIndex: "label" },
+                          {
+                            title: "授权",
+                            width: 120,
+                            render: (_: unknown, row: DsAuthRow) => (
+                              <Checkbox
+                                checked={authItems.some((i) => i.dsName === row.dsName)}
+                                onChange={(e) => {
+                                  setAuthItems((prev) =>
+                                    e.target.checked
+                                      ? [
+                                          ...prev.filter((i) => i.dsName !== row.dsName),
+                                          {
+                                            id: `new-${row.dsName}`,
+                                            dsName: row.dsName,
+                                            schemaName: "",
+                                            teamName: selectedKey || "",
+                                            isProd: "0",
+                                          },
+                                        ]
+                                      : prev.filter((i) => i.dsName !== row.dsName),
+                                  );
+                                }}
+                              />
+                            ),
+                          },
+                          {
+                            title: "生产",
+                            width: 90,
+                            render: (_: unknown, row: DsAuthRow) => (
+                              <Checkbox
+                                checked={authItems.some(
+                                  (i) => i.dsName === row.dsName && i.isProd === "1",
+                                )}
+                                onChange={(e) => {
+                                  setAuthItems((prev) =>
+                                    prev.map((i) =>
+                                      i.dsName === row.dsName
+                                        ? { ...i, isProd: e.target.checked ? "1" : "0" }
+                                        : i,
+                                    ),
+                                  );
+                                }}
+                              />
+                            ),
                           },
                         ]}
                       />

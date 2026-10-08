@@ -2,7 +2,7 @@
 
 /**
  * 数据源管理页 —— 对齐 data-synth system/datasources（2026-10-06 ds-align）：
- * - Tabs 布局（列表 + 新建/编辑动态 Tab + 团队授权 Tab）
+ * - Tabs 布局（列表 + 新建/编辑动态 Tab）；团队数据源授权已迁至「系统管理 / 团队管理」页
  * - 列表：三条件筛选（英文名/中文名/类型下拉，数据驱动）
  * - 新建两步向导：选择类型（分类侧栏 + 类型卡片 img/字母头像）→ 信息配置
  * - 编辑直达「信息配置」步（类型只读，无需重选）；dsConf 解析回填动态字段，endpoints 数组转逗号串
@@ -14,25 +14,27 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   App,
+  Button,
   Card,
   Checkbox,
   Empty,
   Form,
+  Input,
   InputNumber,
   Radio,
+  Select,
   Space,
   Spin,
   Steps,
   Switch,
+  Table,
   Tag,
   Tooltip,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
   DatabaseOutlined,
-  PlusOutlined,
   QuestionCircleOutlined,
-  TeamOutlined,
 } from "@ant-design/icons";
 import {
   apiCreateDatasource,
@@ -43,8 +45,6 @@ import {
   apiListDsCategories,
   apiListDsFormFields,
   apiListDsTypes,
-  apiListTeamDsAuth,
-  apiSaveTeamDsAuth,
   apiTestDatasource,
   apiUpdateDatasource,
   DsCategoryItem,
@@ -52,9 +52,7 @@ import {
   DsSavePayload,
   DsTypeItem,
   DatasourceItem,
-  TeamDsMapItem,
 } from "@/lib/api";
-import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 import { ModoButton } from "@/components/biz/modo-button";
@@ -62,7 +60,6 @@ import { ModoInput, ModoPassword, ModoTextArea, ModoSearch } from "@/components/
 import { ModoSelect } from "@/components/biz/modo-select";
 import { ModoRadio } from "@/components/biz/modo-radio";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
-import { PageFilter } from "@/components/biz/page-filter";
 
 type EditTab = {
   key: string;
@@ -137,7 +134,6 @@ export default function DatasourcesPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [filters, setFilters] = useState<{ name?: string; label?: string; dsType?: string }>({});
-  const [searchParams, setSearchParams] = useState<Record<string, unknown>>({});
 
   // ---- 元数据 ----
   const [categories, setCategories] = useState<DsCategoryItem[]>([]);
@@ -153,11 +149,6 @@ export default function DatasourcesPage() {
   const [typeSearch, setTypeSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-
-  // ---- 团队授权 ----
-  const [authTeam, setAuthTeam] = useState("ROOT");
-  const [authItems, setAuthItems] = useState<TeamDsMapItem[]>([]);
-  const [authRows, setAuthRows] = useState<DatasourceItem[]>([]);
 
   const loadList = useCallback(
     async (p = page, size = pageSize, flt = filters) => {
@@ -372,29 +363,6 @@ export default function DatasourcesPage() {
         }
       },
     });
-  };
-
-  const loadAuth = useCallback(async (team: string) => {
-    const [maps, list] = await Promise.all([
-      apiListTeamDsAuth(team),
-      apiListDatasources(1, 200),
-    ]);
-    setAuthItems(maps.success ? maps.data || [] : []);
-    setAuthRows(list.success ? list.data?.items || [] : []);
-  }, []);
-
-  useEffect(() => {
-    void loadAuth(authTeam);
-  }, [authTeam, loadAuth]);
-
-  const saveAuth = async () => {
-    const res = await apiSaveTeamDsAuth(authTeam, authItems);
-    if (res.success) {
-      message.success("团队数据源授权已保存");
-      void loadAuth(authTeam);
-    } else {
-      message.error(res.message || "保存失败");
-    }
   };
 
   const columns: ColumnsType<DatasourceItem> = [
@@ -734,171 +702,122 @@ export default function DatasourcesPage() {
     );
   };
 
-  const listPane = (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, flex: 1, minHeight: 0 }}>
-          <div style={{ flexShrink: 0 }}>
-            <PageFilter
-              form={filterForm}
-              onSearch={(vals) => {
-                setSearchParams(vals);
-                setFilters(vals as { name?: string; label?: string; dsType?: string });
-                setPage(1);
-                void loadList(1, pageSize, vals as { name?: string; label?: string; dsType?: string });
-              }}
-              onReset={() => {
-                setSearchParams({});
-                setFilters({});
-                setPage(1);
-                void loadList(1, pageSize, {});
-              }}
-              searchParams={searchParams}
-              setSearchParams={setSearchParams}
-              labelMap={{ name: "英文名", label: "中文名", dsType: "类型" }}
-              valueMap={{}}
-            >
-              <Form.Item name="name" label="英文名">
-                <ModoInput placeholder="输入英文名" allowClear />
-              </Form.Item>
-              <Form.Item name="label" label="中文名">
-                <ModoInput placeholder="输入中文名" allowClear />
-              </Form.Item>
-              <Form.Item name="dsType" label="类型">
-                <ModoSelect
-                  placeholder="请选择类型"
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  options={allTypes.map((t) => ({ label: t.dsTypeLabel || t.dsType, value: t.dsType }))}
-                />
-              </Form.Item>
-            </PageFilter>
-          </div>
-          <div style={{ flexShrink: 0, display: "flex", justifyContent: "flex-start", alignItems: "center", padding: "0 2px 10px" }}>
-            <ModoButton type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新增数据源
-            </ModoButton>
-          </div>
-        <ModoTable<DatasourceItem>
-              rowKey="id"
-              size="middle"
-              loading={loading}
-              dataSource={rows}
-              columns={columns}
-              scroll={{ x: 900 }}
-              locale={{ emptyText: <Empty description="暂无数据源" /> }}
-            />
-            <ModoPagination
-              current={page}
-              pageSize={pageSize}
-              total={total}
-              showSizeChanger
-              showTotal={(t) => `共 ${t} 条`}
-              onChange={(p, ps) => {
-                setPage(p);
-                setPageSize(ps);
-              }}
-            />
-          </div>
-        );
+  const doSearch = (vals: { name?: string; label?: string; dsType?: string }) => {
+    setFilters(vals);
+    setPage(1);
+    void loadList(1, pageSize, vals);
+  };
 
-  const authPane = (
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, flex: 1, minHeight: 0 }}>
-        <Space wrap style={{ flexShrink: 0 }}>
-                <span>团队：</span>
-                <ModoSelect
-                  value={authTeam}
-                  style={{ width: 200 }}
-                  onChange={setAuthTeam}
-                  options={[
-                    { value: "ROOT", label: "ROOT" },
-                    { value: "test", label: "test" },
-                  ]}
-                />
-                <ModoButton type="primary" icon={<TeamOutlined />} onClick={() => void saveAuth()}>
-                  保存授权
-                </ModoButton>
-                <ModoButton onClick={() => void loadAuth(authTeam)}>刷新</ModoButton>
-              </Space>
-      <ModoTable<{ key: string; dsName: string; label: string }>
-              rowKey="dsName"
-              size="middle"
-              dataSource={authRows.map((r) => ({
-          key: String(r.dsName),
-          dsName: String(r.dsName),
-          label: String(r.dsLabel || r.dsName),
-        }))}
-        columns={[
-          { title: "数据源英文名", dataIndex: "dsName", width: 220 },
-          { title: "数据源中文名", dataIndex: "label" },
-          {
-            title: "授权",
-            width: 120,
-            render: (_, row) => (
-              <Checkbox
-                checked={authItems.some((i) => i.dsName === row.dsName)}
-                onChange={(e) => {
-                  setAuthItems((prev) =>
-                    e.target.checked
-                      ? [
-                          ...prev.filter((i) => i.dsName !== row.dsName),
-                          {
-                            id: `new-${row.dsName}`,
-                            dsName: row.dsName,
-                            schemaName: "",
-                            teamName: authTeam,
-                            isProd: "0",
-                          },
-                        ]
-                      : prev.filter((i) => i.dsName !== row.dsName),
-                  );
-                }}
-              />
-            ),
+  const doReset = () => {
+    filterForm.resetFields();
+    setFilters({});
+    setPage(1);
+    void loadList(1, pageSize, {});
+  };
+
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <Card
+        title="数据源管理"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
           },
-          {
-            title: "生产",
-            width: 90,
-            render: (_, row) => (
-              <Checkbox
-                checked={authItems.some((i) => i.dsName === row.dsName && i.isProd === "1")}
-                onChange={(e) => {
-                  setAuthItems((prev) =>
-                    prev.map((i) =>
-                      i.dsName === row.dsName
-                        ? { ...i, isProd: e.target.checked ? "1" : "0" }
-                        : i,
-                    ),
-                  );
-                }}
-              />
-            ),
-          },
-        ]}
-      />
+        }}
+        extra={
+          <Button type="primary" onClick={openCreate}>
+            新增数据源
+          </Button>
+        }
+      >
+        <Form
+          form={filterForm}
+          layout="inline"
+          style={{ marginBottom: 12, flexShrink: 0 }}
+          onFinish={doSearch}
+          initialValues={{ name: "", label: "", dsType: undefined }}
+        >
+          <Form.Item name="name" label="英文名">
+            <Input allowClear placeholder="请输入英文名" style={{ width: 180 }} />
+          </Form.Item>
+          <Form.Item name="label" label="中文名">
+            <Input allowClear placeholder="请输入中文名" style={{ width: 180 }} />
+          </Form.Item>
+          <Form.Item name="dsType" label="类型">
+            <Select
+              allowClear
+              showSearch
+              placeholder="请选择类型"
+              style={{ width: 200 }}
+              optionFilterProp="label"
+              options={allTypes.map((t) => ({ label: t.dsTypeLabel || t.dsType, value: t.dsType }))}
+            />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button onClick={doReset}>重置</Button>
+            </Space>
+          </Form.Item>
+        </Form>
+        <Table<DatasourceItem>
+          rowKey="id"
+          size="small"
+          loading={loading}
+          dataSource={rows}
+          columns={columns}
+          pagination={false}
+          scroll={{ x: 900, y: "calc(100vh - 308px)" }}
+          locale={{ emptyText: <Empty description="暂无数据源" /> }}
+        />
+        <div style={{ flexShrink: 0, marginTop: "auto" }}>
+          <ModoPagination
+            current={page}
+            pageSize={pageSize}
+            total={total}
+            showSizeChanger
+            showTotal={(t) => `共 ${t} 条`}
+            onChange={(p, ps) => {
+              setPage(p);
+              setPageSize(ps);
+            }}
+          />
+        </div>
+      </Card>
     </div>
   );
 
   return (
-    <div className="modo-page" style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-          <ModoTabs
-            type="editable-card"
-            hideAdd
-            activeKey={activeTab}
-            onChange={setActiveTab}
-            onEdit={(key, action) => {
-              if (action === "remove") closeTab(String(key));
-            }}
-            items={[
-              { key: "home", label: "数据源管理", icon: <DatabaseOutlined />, children: listPane },
-              ...tabs.map((t) => ({
-                key: t.key,
-                label: t.title,
-                closable: true,
-                children: renderEditTab(t),
-              })),
-              { key: "auth", label: "团队授权", children: authPane },
-            ]}
-          />
-        </div>
-      );
+    <div
+      className="datasources-page"
+      style={{ padding: 8, height: "calc(100vh - 45px)", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        items={[
+          { key: "home", label: "数据源管理", icon: <DatabaseOutlined />, children: listPane },
+          ...tabs.map((t) => ({
+            key: t.key,
+            label: t.title,
+            closable: true,
+            children: renderEditTab(t),
+          })),
+        ]}
+      />
+    </div>
+  );
 }

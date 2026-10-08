@@ -1,19 +1,20 @@
 "use client";
 
 import React from "react";
-import { App, Button, Space, Tag, Tooltip, Typography } from "antd";
+import { App, Button, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
   DeleteOutlined,
   EyeOutlined,
   PauseCircleOutlined,
 } from "@ant-design/icons";
-import ModoTable from "@/components/biz/modo-table";
 import { JobItem } from "@/lib/api";
 
 interface JobTableProps {
   loading: boolean;
   data: JobItem[];
+  /** 表体最大高度（px），由父级实测容器高度传入；不传则不限制高度 */
+  scrollY?: number;
   onViewLog: (job: JobItem) => void;
   onStop: (job: JobItem) => void;
   onDelete: (job: JobItem) => void;
@@ -107,6 +108,7 @@ function renderStateTag(state: string) {
 const JobTable: React.FC<JobTableProps> = ({
   loading,
   data,
+  scrollY,
   onViewLog,
   onStop,
   onDelete,
@@ -269,17 +271,18 @@ const JobTable: React.FC<JobTableProps> = ({
   ];
 
   return (
-    <ModoTable<JobItem>
-          rowKey="id"
-          size="middle"
-          loading={loading}
-          dataSource={data}
-          columns={columns}
-          scroll={{ x: 1200 }}
-          rowClassName={(record) =>
-            record.state === "RUNNING" ? "modo-running-row" : ""
-          }
-        />
+    <Table<JobItem>
+      rowKey="id"
+      size="middle"
+      loading={loading}
+      dataSource={data}
+      columns={columns}
+      pagination={false}
+      scroll={{ x: 1200, y: scrollY }}
+      rowClassName={(record) =>
+        record.state === "RUNNING" ? "modo-running-row" : ""
+      }
+    />
   );
 };
 

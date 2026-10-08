@@ -51,6 +51,21 @@ export default function JobsPage() {
 
   const latestQueryRef = useRef({ page: 1, pageSize: 20, filters: {} as JobFilterValues });
 
+  // 2026-10-08: 表格可用高度实测——统计卡/筛选栏高度由内容决定，写死 vh 偏移易失准；
+  // 这里量「表格容器」的实际高度传给 antd Table 的 scroll.y，窗口缩放/布局变化自动跟随。
+  const [tableBodyHeight, setTableBodyHeight] = useState<number>();
+  const tableBodyRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = tableBodyRef.current;
+    if (!el) return;
+    const update = () => setTableBodyHeight(el.clientHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const load = useCallback(
     async (p = page, size = pageSize, f = filters) => {
       setLoading(true);
@@ -139,12 +154,14 @@ export default function JobsPage() {
   };
 
   return (
+    // 2026-10-08: 对齐用户管理页「固定视口高度」——外层锁定 视口 − 顶栏(45px)，
+    // 使 flex 链路有界：统计卡/筛选栏定高，表格区吃满剩余空间，任务再多也不溢出屏幕。
     <div
-      className="modo-page"
+      className="jobs-page"
       style={{
         display: "flex",
         flexDirection: "column",
-        height: "100%",
+        height: "calc(100vh - 45px)",
         minHeight: 0,
         background: "#F5F7FA",
         padding: 8,
@@ -184,13 +201,16 @@ export default function JobsPage() {
             border: "1px solid #E3E9EF",
           }}
         >
-          <JobTable
-            loading={loading}
-            data={items}
-            onViewLog={handleViewLog}
-            onStop={handleStop}
-            onDelete={handleDelete}
-          />
+          <div ref={tableBodyRef} style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "0 16px" }}>
+            <JobTable
+              loading={loading}
+              data={items}
+              scrollY={tableBodyHeight}
+              onViewLog={handleViewLog}
+              onStop={handleStop}
+              onDelete={handleDelete}
+            />
+          </div>
           <ModoPagination
             current={page}
             pageSize={pageSize}
