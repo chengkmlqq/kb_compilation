@@ -87,10 +87,17 @@ def tool(name, **kwargs):
 
 
 def ensure_folder(name, parent_id):
-    r = wr.list_folders(kb_id=KB, parent_id=parent_id)
-    for f in r.get('folders', []):
-        if f['name'] == name:
-            return f['id']
+    # 全量目录缓存（2026-10-07）：direct 模式每 parent 查询 5.66s，24 层
+    # ≈2.2min/篇——一次拉全量 + 本地查
+    try:
+        for f in wr.list_all_folders_cached(kb_id=KB):
+            if f.get('name') == name and str(f.get('parent_id') or '') == str(parent_id or ''):
+                return f['id']
+    except Exception:
+        r = wr.list_folders(kb_id=KB, parent_id=parent_id)
+        for f in (r.get('data') or r.get('folders') or []):
+            if f['name'] == name:
+                return f['id']
     r = wr.create_folder(name, parent_id=parent_id, kb_id=KB)
     if isinstance(r, dict) and 'error' in r:
         raise RuntimeError(f"create_folder 失败: {r['error']}")

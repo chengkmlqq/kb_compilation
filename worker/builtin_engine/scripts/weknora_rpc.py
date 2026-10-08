@@ -592,12 +592,39 @@ def ontology_cat_map(schema):
     return m
 
 
+_ALL_FOLDERS_CACHE = {"ts": 0.0, "data": None}
+
+
+def list_all_folders_cached(kb_id=None, ttl=600):
+    """全量目录缓存（一次拉全库目录，本地按 parent/name 查）。
+
+    ensure_folder 在建目录树时对每个 parent 都调 list_folders——direct 模式
+    每次 5.66s（子页面计数 join），24 个层级 ≈ 2.2 分钟/篇（2026-10-07 实证
+    卡在 [2]→[3]）。这里一次拉全量 + 10 分钟 TTL，后续本地 O(1) 查。
+    """
+    import time as _t
+
+    kb = kb_id or KB
+    now = _t.time()
+    if _ALL_FOLDERS_CACHE["data"] is not None and now - _ALL_FOLDERS_CACHE["ts"] < ttl:
+        return _ALL_FOLDERS_CACHE["data"]
+    r = api_get(f"/api/v1/kbs/{kb}/wiki/folders")
+    data = r.get("data") or []
+    _ALL_FOLDERS_CACHE["ts"] = now
+    _ALL_FOLDERS_CACHE["data"] = data
+    return data
+
+
 def mcp_init():
     """（历史命名）登录平台并初始化 HTTP 会话——**不走 MCP**。
     技能与平台交互 = HTTP 直调 + Neo4j 直连（无 MCP 服务）。
     平台适配版：等价于「确保已登录」（预热 cookie，失败早抛便于排查）。
     """
     global _COOKIE
+    if _DIRECT:
+        # 内部直连模式：平台调用走进程内 services，无需 HTTP cookie——
+        # 跳过登录（2026-10-07 实证：api-server 过载时登录重试 4x60s 卡数分钟）
+        return True
     if not _COOKIE:
         _COOKIE = _login()
     return True
