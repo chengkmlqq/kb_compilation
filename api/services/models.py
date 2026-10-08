@@ -368,30 +368,35 @@ def copy_model(
     caller_team_name: str,
     is_sys_admin: bool,
 ) -> dict:
-    """Duplicate a model under the caller's context. New name gets a
-    `-copy` suffix, de-duplicated with a counter when taken. Mirrors
-    WeKnora's ModelSettings copy action (edit menu → 复制)."""
+    """Duplicate a model under the caller's context.
+
+    `name` is the model id sent to the provider on every request — it MUST
+    stay identical to the source, otherwise the clone would probe with
+    `xxx-copy` and every test/debug call would fail (Model Not Found).
+    The `-copy` suffix goes on `display_name` (the human-facing label),
+    de-duplicated with a counter when taken. Mirrors WeKnora's
+    ModelSettings copy action (edit menu → 复制)."""
     src = get_model(db, model_id)
     if not src:
         raise KeyError("模型不存在")
     if not can_manage(db, src, caller_user_id, caller_team_name, is_sys_admin):
         raise PermissionError("无权复制该模型")
 
-    existing = {
-        (m.name or "") for m in db.execute(select(KbModel)).scalars().all()
+    taken_displays = {
+        (m.display_name or m.name or "") for m in db.execute(select(KbModel)).scalars().all()
     }
-    base_name = f"{src.name}-copy"
-    name = base_name
+    base_display = f"{src.display_name or src.name}-copy"
+    display_name = base_display
     counter = 2
-    while name in existing:
-        name = f"{base_name} {counter}"
+    while display_name in taken_displays:
+        display_name = f"{base_display} {counter}"
         counter += 1
 
     clone = KbModel(
         id=uuid.uuid4().hex[:36],
         scope="personal" if not is_sys_admin else src.scope,
-        name=name,
-        display_name=src.display_name,
+        name=src.name,  # model id 保持不变（复制品必须能调通同一供应商模型）
+        display_name=display_name,
         type=src.type,
         source=src.source,
         provider=src.provider,

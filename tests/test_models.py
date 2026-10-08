@@ -154,10 +154,14 @@ def test_copy_model(model_db):
         caller_team_name="",
         is_sys_admin=False,
     )
-    assert clone["name"] == "deepseek-v4-pro-copy"
+    # name 是调 API 时的 model id，复制品必须保持不变（否则测试/调试
+    # 会拿 `xxx-copy` 去请求供应商 → Model Not Found）；-copy 后缀落在
+    # display_name（显示名）上用于区分。
+    assert clone["name"] == "deepseek-v4-pro"
+    assert clone["display_name"] == "deepseek-v4-pro-copy"
     assert clone["type"] == "chat"
     assert clone["is_default"] is False
-    # 复制第二次 → 名称去重递增
+    # 复制第二次 → 显示名去重递增
     clone2 = copy_model(
         model_db,
         orig["id"],
@@ -165,7 +169,8 @@ def test_copy_model(model_db):
         caller_team_name="",
         is_sys_admin=False,
     )
-    assert clone2["name"] == "deepseek-v4-pro-copy 2"
+    assert clone2["name"] == "deepseek-v4-pro"
+    assert clone2["display_name"] == "deepseek-v4-pro-copy 2"
     # 非 owner 复制 → 无权
     with pytest.raises(PermissionError):
         copy_model(
