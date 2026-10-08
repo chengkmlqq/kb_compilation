@@ -533,13 +533,14 @@ function ModelEditorModal({
         // 编辑模式：api_key 留空 = 保持已保存密钥不变，表单里没有明文，
         // 直接拿空 key 去测必然 401 —— 改走 /models/{id}/debug 用服务端
         // 解密后的已保存密钥做真实探测。
-        if (item.type === "vllm" || item.type === "asr") {
+        // 注意用表单值 v.type 而非已保存 item.type：改类型未保存前测试要按新类型探测
+        if (v.type === "vllm" || v.type === "asr") {
           message.info("该类型需在「调试」抽屉中上传文件测试，此处仅校验连通性可先保存后到调试里验证");
           setTestResult({ ok: false, error: "vllm/asr 类型请到调试抽屉上传文件测试" });
           return;
         }
         const debugPayload: ModelDebugPayload = { input: "ping" };
-        if (item.type === "rerank") debugPayload.documents = ["ping"];
+        if (v.type === "rerank") debugPayload.documents = ["ping"];
         const t = await apiDebugModel(item.id, debugPayload);
         setTestResult(t.data ?? { error: "无返回" });
         if (t.data?.ok) message.success("连通正常");

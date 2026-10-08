@@ -243,6 +243,45 @@ def test_update_requires_owner(model_db):
     assert updated["base_url"] == "https://new.example.org/v1"
 
 
+def test_update_switches_type(model_db):
+    """模型类型可切换并落库。
+
+    回归：update_model 曾静默丢弃 type 字段（无 type 分支），导致模型误配成
+    chat 后改 rerank「保存成功但类型不变」，连接测试仍打 chat/completions → 400。
+    """
+    item = _create(model_db, "personal", name="bge-reranker", type="chat")
+    updated = update_model(
+        model_db,
+        item["id"],
+        caller_user_id="alice",
+        caller_team_name="T1",
+        is_sys_admin=False,
+        payload={"type": "rerank"},
+    )
+    assert updated["type"] == "rerank"
+    row = get_model(model_db, item["id"])
+    assert row is not None
+    assert row.type == "rerank"
+    # 切换类型后不再占用旧类型(scope+type)的默认位
+    assert row.is_default is False
+
+
+def test_update_rejects_invalid_type(model_db):
+    item = _create(model_db, "personal")
+    with pytest.raises(ValueError):
+        update_model(
+            model_db,
+            item["id"],
+            caller_user_id="alice",
+            caller_team_name="T1",
+            is_sys_admin=False,
+            payload={"type": "not-a-type"},
+        )
+    row = get_model(model_db, item["id"])
+    assert row is not None
+    assert row.type == "chat"  # 类型未被改坏
+
+
 def test_delete_requires_owner(model_db):
     item = _create(model_db, "personal")
     with pytest.raises(PermissionError):

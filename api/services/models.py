@@ -308,6 +308,20 @@ def update_model(
         if not v:
             raise ValueError("模型名称不能为空")
         m.name = v
+    if "type" in payload:
+        new_type = str(payload.get("type") or "").strip()
+        if not new_type:
+            raise ValueError("模型类型不能为空")
+        if new_type not in MODEL_TYPES:
+            raise ValueError(f"无效的模型类型: {new_type}")
+        if new_type != m.type:
+            # type 参与 默认模型 唯一性 (scope+type) 与 知识库绑定 语义，
+            # 改类型必须重新校验：维度必填(embedding)、旧类型的默认标记需清除
+            if new_type == "embedding" and not m.dimension:
+                raise ValueError("切换为向量模型需要填写向量维度")
+            _clear_defaults(db, m.scope, m.type, exclude_id=m.id)
+            m.is_default = False
+            m.type = new_type
     if "display_name" in payload:
         m.display_name = str(payload.get("display_name") or "").strip() or None
     if "description" in payload:
