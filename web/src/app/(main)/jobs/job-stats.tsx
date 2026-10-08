@@ -73,7 +73,6 @@ function JobStats({ statistics }: JobStatsProps) {
         display: "grid",
         gridTemplateColumns: "repeat(6, 1fr)",
         gap: 16,
-        padding: "16px 16px 0",
         marginBottom: 16,
       }}
     >
