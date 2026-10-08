@@ -652,12 +652,116 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
     # 2026-10-05 实测: 删文档后其 wiki 构建任务仍执行（假成功/白跑 LLM）——
     # 删除时先级联取消关联的未完成 wiki 任务（PENDING/RUNNING → STOPPED + revoke）。
     _cancel_related_wiki_tasks(db, document_id)
-    # Cascade: drop chunks first, then the document row.
+
+    # --- 级联清理（2026-10-08 修复：此前只删 chunks+文档行，wiki 页/目录/链接/
+    #     向量/图谱全部残留成孤儿。对齐 delete_kb 语义逐层清理，先删依赖）---
+    #
+    # 1) wiki 层：该文档专属页（source_refs 仅含本文档）整页删除；共享页
+    #    （跨文档合并实体页）只摘除本 kid 引用不删页——防误伤其他文档。
+    #    页面删除后，指向这些页的链接一并清；不再被任何页引用的目录删除。
+    pages = db.execute(
+        select(WikiPage).where(
+            WikiPage.kb_id == kb_id, WikiPage.source_refs.isnot(None)
+        )
+    ).scalars().all()
+    doc_prefix = f"{document_id}|"
+    page_ids_to_delete: list[str] = []
+    kept_folder_ids: set[str] = set()
+    for p in pages:
+        refs = p.source_refs if isinstance(p.source_refs, list) else []
+        hits = [r for r in refs if isinstance(r, str) and r.startswith(doc_prefix)]
+        if not hits:
+            if p.folder_id:
+                kept_folder_ids.add(str(p.folder_id))
+            continue
+        if len(refs) <= len(hits):
+            # 专属页：本页所有 source_ref 都属于该文档 → 整页删除
+            page_ids_to_delete.append(p.id)
+        else:
+            # 共享页：摘除本 kid 引用，保留其他文档引用
+            p.source_refs = [r for r in refs if not r.startswith(doc_prefix)]
+            if p.folder_id:
+                kept_folder_ids.add(str(p.folder_id))
+    if page_ids_to_delete:
+        db.execute(delete(WikiLink).where(WikiLink.from_page_id.in_(page_ids_to_delete)))
+        db.execute(delete(WikiLink).where(WikiLink.to_page_id.in_(page_ids_to_delete)))
+        db.execute(
+            delete(WikiPage).where(WikiPage.id.in_(page_ids_to_delete))
+        )
+    # 该文档目录子树清理：从被删页所在 folder 向上收敛（该文档页专属目录），
+    # 不删根目录（parent_id 为空，全库共用）也不误伤其他文档目录。
+    # 收集被删页/共享页的 folder，向上找其根（parent_id 为空即停），只删
+    # 该子树下不再被任何保留页引用的目录。
+    if page_ids_to_delete:
+        affected_folder_ids = {
+            str(p.folder_id)
+            for p in pages
+            if p.id in page_ids_to_delete and p.folder_id
+        }
+    else:
+        affected_folder_ids = set()
+    # 子树内所有目录
+    all_folder_ids = {
+        str(f.id)
+        for f in db.execute(
+            select(WikiFolder).where(WikiFolder.kb_id == kb_id)
+        ).scalars()
+        if f.id
+    }
+    # 保留页引用的目录（含其他文档页 → 绝不能删）
+    folder_ids_to_delete = [
+        fid for fid in affected_folder_ids
+        if fid not in kept_folder_ids and fid in all_folder_ids
+    ]
+    if folder_ids_to_delete:
+        db.execute(
+            delete(WikiFolder).where(WikiFolder.id.in_(folder_ids_to_delete))
+        )
+    # 该文档操作日志 / 反馈（对齐 delete_kb 第 4 步；按 source 关联不可行则全量保日志）
+    #   wiki_operation_log / wiki_feedback 无 document_id 列，按 kb 保留——不删。
+
+    # 2) 文档层：chunks → 文档行
+    chunk_ids = [
+        c.id
+        for c in db.execute(
+            select(DocChunk.id).where(DocChunk.document_id == document_id)
+        ).scalars()
+    ]
     db.execute(delete(DocChunk).where(DocChunk.document_id == document_id))
     db.delete(doc)
     db.commit()
-    # Best-effort local file cleanup (never fatal).
+
+    # 3) 向量索引（该文档 chunks 的 embedding，best-effort 不阻塞）
+    if chunk_ids:
+        try:
+            from api.services.vector_store import get_vector_store
+
+            get_vector_store(doc.vector_store_id).delete_by_chunks(chunk_ids)
+        except Exception as exc:  # pragma: no cover - 向量清理尽力而为
+            logging.getLogger(__name__).warning(
+                "向量清理失败(doc=%s): %s", document_id, exc
+            )
+
+    # 4) 本地/对象存储文件清理（_remove_local_file 内部已 try/except，幂等）
     _remove_local_file(doc.storage_path)
+
+    # 5) Neo4j 图谱（kg = 该 kid 子图，best-effort 不阻塞）
+    try:
+        settings = get_settings()
+        if settings.neo4j_enabled:
+            from api.services.graph import Neo4jGraphStore
+
+            Neo4jGraphStore(
+                settings.NEO4J_URI,
+                settings.NEO4J_USERNAME,
+                settings.NEO4J_PASSWORD,
+                settings.NEO4J_DATABASE or None,
+            ).delete_doc_graph(document_id)
+    except Exception as exc:  # pragma: no cover - 图谱清理尽力而为
+        logging.getLogger(__name__).warning(
+            "Neo4j 图谱清理失败(doc=%s): %s", document_id, exc
+        )
+
     return {"success": True, "data": {"id": document_id}}
 
 

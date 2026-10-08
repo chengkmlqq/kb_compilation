@@ -207,6 +207,28 @@ class Neo4jGraphStore:
         finally:
             driver.close()
 
+    def delete_doc_graph(self, document_id: str) -> int:
+        """删除单个文档的图谱子图（kg = 该文档 kid 的 label）。
+
+        graph_export.py 写入时节点带 `ENTITY<kb_id>` 与 `ENTITY<kg>` 双 label
+        （kg = 文档 kid，`-`→`_`），删除文档必须按 kg label 定位子图——通用
+        Entity 节点（kb_id 属性）无文档粒度，不适用。返回删除的节点数。
+        """
+        from neo4j import GraphDatabase
+
+        kg_label = f"ENTITY{document_id.replace('-', '_')}"
+        driver = GraphDatabase.driver(self._uri, auth=self._auth)
+        try:
+            with driver.session(database=self._database) as session:
+                recs = session.run(
+                    f"MATCH (n:`{kg_label}`) WITH collect(n) AS ns "
+                    f"FOREACH (n IN ns | DETACH DELETE n) RETURN size(ns) AS cnt",
+                )
+                row = recs.single()
+                return int(row["cnt"]) if row else 0
+        finally:
+            driver.close()
+
     def delete_kb_graph(self, kb_id: str) -> int:
         """级联删除知识库时清理该库全部图谱节点/关系（DETACH DELETE）。
 
