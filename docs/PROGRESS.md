@@ -215,6 +215,7 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下；type-
 17. **MySQL 8 不支持 `CREATE INDEX IF NOT EXISTS`**（PG/SQLite/MariaDB 支持）：跨库 DDL 用裸 CREATE INDEX；幂等靠「docker init 全新库 + 表级 IF NOT EXISTS」，对已存在 schema 重跑报 Duplicate key name / Duplicate foreign key 可忽略。
 18. **MySQL 8 禁止 TEXT/BLOB 字面默认值**（`content TEXT DEFAULT ''` 直接报错）：跨库 DDL 的 TEXT 列不写 DEFAULT，ORM 端 `default=` 兜底。
 19. **知识库存储拆分后的 DDL 验证配方**：真库验证 `docker run -d --name kb-ddl-verify -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -p 13309:3306 mysql:8.0` → `docker exec -i kb-ddl-verify mysql -uroot <scripts/knowledge_business_schema.sql`（无库则先 CREATE DATABASE）；方言解析校验 `uv run --with sqlglot python -c "..."`（mysql/postgres/sqlite 三方言全过，22 语句）。
+20. **新增模型列不落到已有库（create_all 只建不更）**：模型加列后老库报 `Unknown column 'xxx' in 'field list'`（2026-10-08 chat_session.parent_session_id、chat_attachment.media_type/file_data 均踩中）。改模型后必须跑对应幂等迁移（scripts/migrate_chat_parent_session_column.py、migrate_chat_attachment_columns.py），并用 `scripts/check_schema_drift.py` 审计模型↔库列对齐（容器内 `.venv/bin/python` 跑；宿主跑会读错根 .env 指向 data_synth 库）。
 
 ## 8. 剩余工作（按优先级）
 
