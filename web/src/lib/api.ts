@@ -197,7 +197,7 @@ export function apiGetKb(kbId: string) {
 }
 
 export function apiListKbs(page = 1, pageSize = 20, keyword = "", scope?: string) {
-  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (keyword) params.set("keyword", keyword);
   if (scope) params.set("scope", scope);
   return request<PageList<KbItem>>(`/api/v1/kbs?${params.toString()}`);
@@ -256,7 +256,7 @@ export function apiListDocuments(
 ) {
   const params = new URLSearchParams({
     page: String(page),
-    pageSize: String(pageSize),
+    page_size: String(pageSize),
   });
   if (opts.keyword) params.set("keyword", opts.keyword);
   if (opts.fileType) params.set("file_type", opts.fileType);
@@ -643,7 +643,7 @@ export interface AgentItem {
 }
 
 export function apiListAgents(page = 1, pageSize = 20) {
-  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   return request<PageList<AgentItem>>(`/api/v1/agents?${params.toString()}`);
 }
 
@@ -688,7 +688,7 @@ export function apiListDatasources(
   pageSize = 10,
   opts: { keyword?: string; name?: string; label?: string; dsType?: string } = {},
 ) {
-  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (opts.keyword) params.set("keyword", opts.keyword);
   if (opts.name) params.set("name", opts.name);
   if (opts.label) params.set("label", opts.label);
@@ -1068,13 +1068,13 @@ export interface SysLogItem {
 }
 
 export function apiListUsers(page = 1, pageSize = 20, keyword = "") {
-  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (keyword) params.set("keyword", keyword);
   return request<PageList<SysUserItem>>(`/api/v1/system/users?${params.toString()}`);
 }
 
 export function apiListRoles(page = 1, pageSize = 20) {
-  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   return request<PageList<SysRoleItem>>(`/api/v1/system/roles?${params.toString()}`);
 }
 
@@ -1096,7 +1096,9 @@ export function apiListDims(
   pageSize = 20,
   opts: { dimCode?: string; dimGroup?: string } = {},
 ) {
-  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  // 注意：后端 Query 参数是 snake_case page_size（对齐 apiListRoles 等），
+  // 传 pageSize 会被 FastAPI 忽略落到默认 10（曾导致表格只显示 10 条而分页显示 20）
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (opts.dimCode) params.set("dim_code", opts.dimCode);
   if (opts.dimGroup) params.set("dim_group", opts.dimGroup);
   return request<PageList<DimItem>>(`/api/v1/system/dims?${params.toString()}`);
@@ -1128,7 +1130,7 @@ export function apiDeleteDim(id: string) {
 }
 
 export function apiListTeams(page = 1, pageSize = 20) {
-  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   return request<PageList<SysTeamItem>>(`/api/v1/system/teams?${params.toString()}`);
 }
 
@@ -1137,7 +1139,7 @@ export function apiListMenus() {
 }
 
 export function apiListOperationLogs(page = 1, pageSize = 20, keyword = "") {
-  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
   if (keyword) params.set("keyword", keyword);
   return request<PageList<SysLogItem>>(`/api/v1/system/operation-logs?${params.toString()}`);
 }
@@ -2313,6 +2315,9 @@ export function apiListCronTasks(params: {
   pageSize?: number;
   keyWord?: string;
 } = {}) {
+  // 注意：cron 后端(api/routers/cron.py)的 Query 参数就是 camelCase
+  // pageNum/pageSize/keyWord（对齐 data-synth 契约），与其余端点的
+  // snake_case page_size 不同——此处保持 camelCase，勿改成 page_size。
   const q = new URLSearchParams();
   if (params.pageNum) q.set("pageNum", String(params.pageNum));
   if (params.pageSize) q.set("pageSize", String(params.pageSize));
