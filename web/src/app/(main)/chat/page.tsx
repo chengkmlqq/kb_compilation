@@ -29,6 +29,7 @@ import {
   EditOutlined,
   MessageOutlined,
   PaperClipOutlined,
+  PictureOutlined,
   PlusOutlined,
   PushpinOutlined,
   ReloadOutlined,
@@ -108,6 +109,9 @@ export default function ChatPage() {
   const [agents, setAgents] = useState<{ id: string; name: string; config?: Record<string, unknown> }[]>([]);
   const [agentMode, setAgentMode] = useState<string>(); // 选中的 agent id
   const [attachments, setAttachments] = useState<ChatAttachmentItem[]>([]);
+  // 2026-10-08 对齐 WeKnora：图片独立入口 + 发送前预览（本地对象 URL）
+  const [imagePreviews, setImagePreviews] = useState<{ file: File; url: string }[]>([]);
+  const MAX_IMAGES = 5;
   const [searchOpen, setSearchOpen] = useState(false);
   const [refsDrawer, setRefsDrawer] = useState<{ title: string; refs: ChatRefItem[] } | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
@@ -489,6 +493,19 @@ export default function ChatPage() {
       }
     }
 
+    // 对齐 WeKnora：图片随发送上传到当前会话（作为问答上下文附件）
+    if (imagePreviews.length) {
+      const pending = imagePreviews;
+      setImagePreviews([]);
+      for (const p of pending) {
+        try {
+          await uploadAttachment(p.file, sessionId);
+        } finally {
+          URL.revokeObjectURL(p.url);
+        }
+      }
+    }
+
     try {
       const endpoint = effectiveAgent
         ? `/api/v1/agents/${effectiveAgent}/qa/stream`
@@ -727,8 +744,8 @@ export default function ChatPage() {
   };
 
   // L3：附件上传/删除
-  const uploadAttachment = async (file: File) => {
-    let sessionId = activeSession;
+  const uploadAttachment = async (file: File, sid?: string) => {
+    let sessionId = sid ?? activeSession;
     if (!sessionId) {
       const created = agentMode
         ? await apiCreateAgentSession(agentMode, kbId)
@@ -767,6 +784,62 @@ export default function ChatPage() {
   const UPLOAD_ACCEPT = canUploadImage
     ? ".pdf,.doc,.docx,.md,.txt,.html,.xlsx,.pptx,.png,.jpg,.jpeg,.gif,.webp,.bmp"
     : ".pdf,.doc,.docx,.md,.txt,.html,.xlsx,.pptx";
+
+  // ── 2026-10-08 对齐 WeKnora：图片 / 附件两个独立入口 ─────────────────
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const IMAGE_ACCEPT = "image/*";
+
+  const addImageFiles = (files: FileList | File[] | null) => {
+    if (!files || !files.length) return;
+    if (!canUploadImage) return;
+    const arr = Array.from(files).filter((f) => f.type.startsWith("image/"));
+    if (!arr.length) return;
+    setImagePreviews((prev) => {
+      const room = MAX_IMAGES - prev.length;
+      if (room <= 0) {
+        toast.warning(`最多同时上传 ${MAX_IMAGES} 张图片`);
+        return prev;
+      }
+      const added = arr.slice(0, room).map((file) => ({
+        file,
+        url: URL.createObjectURL(file),
+      }));
+      if (arr.length > room) toast.warning(`最多同时上传 ${MAX_IMAGES} 张图片`);
+      return [...prev, ...added];
+    });
+  };
+
+  const removeImagePreview = (idx: number) => {
+    setImagePreviews((prev) => {
+      const next = [...prev];
+      URL.revokeObjectURL(next[idx].url);
+      next.splice(idx, 1);
+      return next;
+    });
+  };
+
+  const handleChatPaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const images = Array.from(items)
+      .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => !!f);
+    if (images.length) {
+      e.preventDefault();
+      addImageFiles(images);
+      return;
+    }
+    const files = Array.from(items)
+      .filter((it) => it.kind === "file")
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => !!f);
+    if (files.length) {
+      e.preventDefault();
+      files.forEach((f) => uploadAttachment(f));
+    }
+  };
 
   // L3：消息搜索
   const doSearch = async () => {
@@ -1083,7 +1156,8 @@ export default function ChatPage() {
               )}
             </div>
           ) : (
-            msgs.map((m, idx) => (
+                      <div style={{ maxWidth: 960, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
+                      {msgs.map((m, idx) => (
               <div key={m.id} style={{ marginBottom: 16 }}>
                 <div style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
                   <div
@@ -1261,7 +1335,8 @@ export default function ChatPage() {
                   </div>
                 )}
               </div>
-            ))
+            ))}
+            </div>
           )}
           {streaming && (
             <div style={{ textAlign: "center", padding: "8px 0 4px" }}>
@@ -1300,76 +1375,188 @@ export default function ChatPage() {
               </Text>
             </div>
           )}
-          {/* 附件区 */}
-          {(attachments.length > 0 || true) && (
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-              {attachments.map((a) => (
-                <Tag
-                  key={a.id}
-                  closable
-                  onClose={() => void removeAttachment(a.id)}
-                  style={{ maxWidth: 240 }}
-                  title={a.media_type === "image" ? `图片：${a.file_name}` : a.file_name}
-                >
-                  {a.media_type === "image" ? "🖼️" : "📎"} {a.file_name}
-                </Tag>
-              ))}
-              <Upload
-                accept={UPLOAD_ACCEPT}
-                showUploadList={false}
-                beforeUpload={(file) => {
-                  void uploadAttachment(file as File);
-                  return false;
+          {/* 附件区（会话级已上传附件） */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+        {attachments.map((a) => (
+          <Tag
+            key={a.id}
+            closable
+            onClose={() => void removeAttachment(a.id)}
+            style={{ maxWidth: 240 }}
+            title={a.media_type === "image" ? `图片：${a.file_name}` : a.file_name}
+          >
+            {a.media_type === "image" ? "🖼️" : "📎"} {a.file_name}
+          </Tag>
+        ))}
+      </div>
+      {/* 2026-10-08 对齐 WeKnora：图片 / 附件双入口 + 输入卡片式布局 */}
+      <div
+        style={{
+          maxWidth: 960,
+          width: "100%",
+          margin: "0 auto",
+          border: "1px solid #dcdcdc",
+          borderRadius: 12,
+          boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+          background: "#fff",
+          padding: "10px 14px 6px",
+        }}
+      >
+        {/* 图片预览条（发送前本地预览） */}
+        {imagePreviews.length > 0 && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "8px 0 6px" }}>
+            {imagePreviews.map((p, i) => (
+              <div
+                key={p.url}
+                style={{
+                  position: "relative",
+                  width: 60,
+                  height: 60,
+                  borderRadius: 8,
+                  overflow: "hidden",
+                  border: "1px solid #e7e7e7",
+                  flexShrink: 0,
+                  cursor: "default",
                 }}
               >
-                <Button size="small" icon={<PaperClipOutlined />}>
-                  上传附件
-                </Button>
-              </Upload>
-              {canUploadImage && (
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  可传文档或图片（图片随问答发给模型识别）
-                </Text>
-              )}
-            </div>
-          )}
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-            {atTarget && (
-              <Tag
-                closable
-                color={atTarget.kind === "kb" ? "blue" : "purple"}
-                onClose={() => setAtTarget(null)}
-                style={{ marginBottom: 8 }}
-              >
-                @{atTarget.name}
-              </Tag>
-            )}
-            <Input.TextArea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="输入问题，Enter 发送，Shift+Enter 换行"
-              autoSize={{ minRows: 1, maxRows: 4 }}
-              disabled={streaming}
-              onPressEnter={(e) => {
-                if (!e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
-              }}
-              style={{ flex: 1 }}
-            />
+                <img src={p.url} alt={p.file.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                <span
+                  title="移除图片"
+                  onClick={() => removeImagePreview(i)}
+                  style={{
+                    position: "absolute",
+                    top: 2,
+                    right: 2,
+                    width: 16,
+                    height: 16,
+                    borderRadius: "50%",
+                    background: "rgba(0,0,0,0.55)",
+                    color: "#fff",
+                    fontSize: 10,
+                    lineHeight: "16px",
+                    textAlign: "center",
+                    cursor: "pointer",
+                  }}
+                >
+                  ✕
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        <Input.TextArea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onPaste={handleChatPaste}
+          placeholder="输入问题，Enter 发送，Shift+Enter 换行"
+          autoSize={{ minRows: 1, maxRows: 4 }}
+          disabled={streaming}
+          onPressEnter={(e) => {
+            if (!e.shiftKey) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+          variant="borderless"
+          style={{ padding: "4px 0", background: "transparent", resize: "none", overflow: "auto" }}
+        />
+        {/* 控制栏：左 工具按钮 / 右 发送·停止 */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "6px 0 2px",
+            borderTop: "1px solid #f0f0f0",
+            marginTop: 4,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
             <Button
-              type="default"
+              type="text"
+              size="small"
               icon={<AimOutlined />}
               title="@提及知识库 / 智能体"
-              style={{ marginBottom: 0 }}
               onClick={() => setAtOpen(true)}
             />
-            <Button type="primary" icon={<SendOutlined />} loading={streaming} disabled={!kbId && !agentMode} onClick={() => void send()}>
-              发送
-            </Button>
+            {canUploadImage && (
+              <Button
+                type="text"
+                size="small"
+                icon={<PictureOutlined />}
+                title="上传图片（随问答发给模型识别）"
+                onClick={() => imageInputRef.current?.click()}
+              />
+            )}
+            <Button
+              type="text"
+              size="small"
+              icon={<PaperClipOutlined />}
+              title="上传附件"
+              onClick={() => attachmentInputRef.current?.click()}
+            />
+            {canUploadImage && (
+              <Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>
+                可传文档或图片（随问答发送）
+              </Text>
+            )}
           </div>
-          {/* 2026-10-07 @提及多资源：选择本次消息的目标知识库 / 智能体 */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {streaming ? (
+              <Button
+                type="text"
+                size="small"
+                icon={<StopOutlined />}
+                title="停止生成"
+                onClick={() => abortRef.current?.abort()}
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: "50%",
+                  background: "rgba(22,119,255,0.08)",
+                  color: "#1677ff",
+                  border: "1.5px solid rgba(22,119,255,0.2)",
+                }}
+              />
+            ) : (
+              <Button
+                type="primary"
+                shape="circle"
+                size="small"
+                icon={<SendOutlined />}
+                disabled={!kbId && !agentMode}
+                onClick={() => void send()}
+                style={{ width: 30, height: 30 }}
+              />
+            )}
+          </div>
+        </div>
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept={IMAGE_ACCEPT}
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => {
+            addImageFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <input
+          ref={attachmentInputRef}
+          type="file"
+          accept={UPLOAD_ACCEPT}
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const files = e.target.files;
+            if (files) Array.from(files).forEach((f) => void uploadAttachment(f));
+            e.target.value = "";
+          }}
+        />
+      </div>
+        {/* 2026-10-07 @提及多资源：选择本次消息的目标知识库 / 智能体 */}
           <Modal
             title="@ 提及目标"
             open={atOpen}
