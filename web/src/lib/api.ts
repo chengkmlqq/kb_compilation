@@ -2802,3 +2802,42 @@ export function apiProcessingTimeline(
     { cache: "no-store" },
   );
 }
+
+// ---- 向量切片核对（MySQL doc_chunk ↔ 向量库，通用实现） ----
+
+export interface ChunkVerifyReport {
+  kb_id: string;
+  doc_chunks: number;
+  vector_chunks: number;
+  missing_in_vector: number;
+  orphan_vectors: number;
+  missing_samples?: string[];
+  orphan_samples?: string[];
+  ok: boolean;
+}
+
+export async function apiVerifyChunks(kbId: string): Promise<ApiEnvelope<ChunkVerifyReport>> {
+  const res = await fetch(`/api/v1/kbs/${kbId}/chunks/verify`, {
+    method: "POST",
+    cache: "no-store",
+  });
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { success: false, message: text.slice(0, 200) } as ApiEnvelope<ChunkVerifyReport>;
+  }
+}
+
+export async function apiFixChunks(kbId: string): Promise<ApiEnvelope<{ job_id: string }>> {
+  const res = await fetch(`/api/v1/kbs/${kbId}/chunks/verify/fix`, {
+    method: "POST",
+    cache: "no-store",
+  });
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { success: false, message: text.slice(0, 200) } as ApiEnvelope<{ job_id: string }>;
+  }
+}

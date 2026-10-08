@@ -178,3 +178,49 @@ def chunk_preview(
 @router.get("/parsers/engines")
 def get_parser_engines(caller: Caller = Depends(_require_caller)) -> dict:
     return {"success": True, "data": list_engines()}
+
+
+@router.post("/kbs/{kb_id}/chunks/verify")
+def verify_chunks(kb_id: str, caller: Caller = Depends(_require_caller)) -> dict:
+    """立即核对：MySQL 切片 ↔ 向量库（通用实现，不依赖 pgvector/ES）。"""
+    from api.services.chunk_verify import verify_kb
+
+    return {"success": True, "data": verify_kb(kb_id)}
+
+
+@router.post("/kbs/{kb_id}/chunks/verify/fix")
+def fix_chunks(kb_id: str, caller: Caller = Depends(_require_caller)) -> dict:
+    """投递切片核对修复任务（清孤儿向量 + 重嵌入缺失切片，worker 异步执行）。"""
+    import json
+    import uuid
+
+    from api.db import get_sessionmaker
+    from api.models.framework import Job
+
+    job_id = f"VERIFY_{uuid.uuid4().hex}"
+    db = get_sessionmaker()()
+    try:
+        db.add(
+            Job(
+                id=job_id,
+                task_id=job_id,
+                task_class="KbChunkVerifyTask",
+                queue_name="default",
+                task_params=json.dumps({"kb_id": kb_id, "action": "fix"}, ensure_ascii=False),
+                trigger_type="API",
+                state="PENDING",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    from worker.celery_app import celery_app
+
+    celery_app.send_task(
+        "worker.tasks.scheduler.execute_modo_job",
+        args=[job_id],
+        task_id=job_id,
+        queue="default",
+    )
+    return {"success": True, "data": {"job_id": job_id, "action": "fix"}}

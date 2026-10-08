@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from api.config import get_settings
 from api.db import get_knowledge_sessionmaker, get_sessionmaker
@@ -69,6 +69,14 @@ class VectorStore(ABC):
         threshold: float = 0.2,
     ) -> list[VectorHit]:
         """Similarity search; returns hits sorted by score desc."""
+
+    @abstractmethod
+    def list_chunk_ids(self, kb_id: str) -> list[str]:
+        """枚举某 KB 的全部 chunk_id（切片核对用，不依赖具体后端）。"""
+
+    @abstractmethod
+    def count(self, kb_id: str) -> int:
+        """某 KB 的切片向量数量（核对统计用）。"""
 
 
 class PgVectorStore(VectorStore):
@@ -154,6 +162,33 @@ class PgVectorStore(VectorStore):
                 VectorHit(chunk_id=r.chunk_id, score=1.0 - float(r.dist))
                 for r in rows
             ]
+        finally:
+            db.close()
+
+    def list_chunk_ids(self, kb_id: str) -> list[str]:
+        db = self._sessionmaker()
+        try:
+            rows = db.execute(
+                select(KbEmbedding.chunk_id).where(
+                    KbEmbedding.kb_id == kb_id,
+                    KbEmbedding.enabled.is_(True),
+                )
+            ).scalars().all()
+            return list(rows)
+        finally:
+            db.close()
+
+    def count(self, kb_id: str) -> int:
+        db = self._sessionmaker()
+        try:
+            return int(
+                db.execute(
+                    select(func.count()).select_from(KbEmbedding).where(
+                        KbEmbedding.kb_id == kb_id,
+                        KbEmbedding.enabled.is_(True),
+                    )
+                ).scalar() or 0
+            )
         finally:
             db.close()
 
@@ -297,6 +332,28 @@ class EsVectorStore(VectorStore):
             if len(hits) >= top_k:
                 break
         return hits
+
+    def list_chunk_ids(self, kb_id: str) -> list[str]:
+        if not self.client.indices.exists(index=self.index):
+            return []
+        ids: list[str] = []
+        resp = self.client.search(
+            index=self.index,
+            query={"term": {"kb_id": kb_id}},
+            source=["chunk_id"],
+            size=10000,
+        )
+        for h in resp.get("hits", {}).get("hits", []):
+            src = h.get("_source") or {}
+            if src.get("enabled", True) is not False:
+                ids.append(src.get("chunk_id") or h.get("_id"))
+        return ids
+
+    def count(self, kb_id: str) -> int:
+        if not self.client.indices.exists(index=self.index):
+            return 0
+        resp = self.client.count(index=self.index, query={"term": {"kb_id": kb_id}})
+        return int(resp.get("count") or 0)
 
 
 _store: VectorStore | None = None
