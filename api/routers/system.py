@@ -9,7 +9,7 @@ team-actions), and the menu-icon catalog (aligned with icon-actions).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Cookie, Depends, Query
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -25,8 +25,10 @@ from api.services.identity import (
 )
 from api.services.system_admin import (
     assign_user_roles,
+    create_dim,
     create_team,
     create_user,
+    delete_dim,
     delete_menu,
     delete_role,
     delete_team,
@@ -35,6 +37,8 @@ from api.services.system_admin import (
     get_role_menus,
     get_role_users,
     is_platform_admin,
+    list_dims,
+    list_dim_groups,
     list_menus,
     list_operation_logs,
     list_roles,
@@ -43,6 +47,7 @@ from api.services.system_admin import (
     my_menus,
     reset_user_pwd,
     save_menu,
+    update_dim,
     save_menu_apis,
     save_role,
     save_role_menus,
@@ -122,6 +127,51 @@ def update_role(role_id: str, payload: dict, db: Session = Depends(get_db)) -> d
 @router.delete("/roles/{role_id}")
 def remove_role(role_id: str, db: Session = Depends(get_db)) -> dict:
     return delete_role(db, role_id)
+
+
+# ---------------------------------------------------------------------------
+# dims — modo_dim 通用参数 CRUD（对齐 data-synth system/dims 参数管理页）
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dims")
+def get_dims(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    dim_code: str = "",
+    dim_group: str = "",
+    db: Session = Depends(get_db),
+) -> dict:
+    return {"success": True, "data": list_dims(db, page, page_size, dim_code, dim_group)}
+
+
+@router.get("/dims/groups")
+def get_dim_groups(db: Session = Depends(get_db)) -> dict:
+    return {"success": True, "data": list_dim_groups(db)}
+
+
+@router.post("/dims")
+def create_dim_item(payload: dict, db: Session = Depends(get_db)) -> dict:
+    try:
+        return {"success": True, "data": create_dim(db, payload)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.put("/dims/{dim_id}")
+def update_dim_item(dim_id: str, payload: dict, db: Session = Depends(get_db)) -> dict:
+    try:
+        return {"success": True, "data": update_dim(db, dim_id, payload)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.delete("/dims/{dim_id}")
+def remove_dim_item(dim_id: str, db: Session = Depends(get_db)) -> dict:
+    try:
+        return {"success": True, "data": delete_dim(db, dim_id)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/roles/{role_id}/menus")

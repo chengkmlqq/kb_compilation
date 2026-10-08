@@ -86,6 +86,7 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("sys_config", "sys_config", "平台参数", "/system/config", "system", "ControlOutlined", 11),
     ("system_retrieval", "system_retrieval", "检索参数", "/system/retrieval", "system", "SlidersOutlined", 12),
     ("sys_engines", "sys_engines", "引擎与存储", "/system/engines", "system", "CloudServerOutlined", 13),
+    ("sys_dims", "sys_dims", "参数管理", "/system/dims", "system", "DatabaseOutlined", 14),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，

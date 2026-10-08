@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from api.lib.crypto import aes_encrypt
 from api.models.framework import (
+    Dim,
     Menu,
     OperLog,
     RoleMenuRela,
@@ -806,4 +807,122 @@ __all__ = [
     "update_user",
     "user_role_ids",
     "user_roles",
+    # ---- dims (modo_dim 通用参数 CRUD, 对齐 data-synth system/dims) ----
+    "list_dims",
+    "list_dim_groups",
+    "create_dim",
+    "update_dim",
+    "delete_dim",
 ]
+
+
+# ============================================================================
+# dims — modo_dim 通用参数 CRUD（对齐 data-synth system/dims 参数管理页）
+# ============================================================================
+
+
+def _dim_to_dict(d: Dim) -> dict:
+    return {
+        "id": d.id,
+        "dim_code": d.dim_code,
+        "dim_group": d.dim_group,
+        "dim_value": d.dim_value,
+        "dim_desc": d.dim_desc,
+        "parent_dim_code": d.parent_dim_code,
+        "seq": d.seq,
+        "state": d.state,
+    }
+
+
+def list_dims(
+    db: Session,
+    page: int = 1,
+    page_size: int = 10,
+    dim_code: str = "",
+    dim_group: str = "",
+) -> dict:
+    stmt = select(Dim)
+    if dim_code:
+        stmt = stmt.where(Dim.dim_code.ilike(f"%{dim_code.strip()}%"))
+    if dim_group:
+        stmt = stmt.where(Dim.dim_group.ilike(f"%{dim_group.strip()}%"))
+    rows_all = db.execute(
+        stmt.order_by(Dim.seq, Dim.dim_code)
+    ).scalars().all()
+    total = len(rows_all)
+    rows = [
+        _dim_to_dict(d)
+        for d in rows_all[(page - 1) * page_size : page * page_size]
+    ]
+    return _paginate(rows, total, page, page_size)
+
+
+def list_dim_groups(db: Session) -> dict:
+    rows = db.execute(select(Dim.dim_group).distinct()).scalars().all()
+    items = sorted({g for g in rows if g})
+    return {"items": items, "total": len(items)}
+
+
+def create_dim(db: Session, payload: dict) -> dict:
+    dim_code = str(payload.get("dim_code") or "").strip()
+    if not dim_code:
+        raise ValueError("dim_code is required")
+    dup = db.execute(
+        select(Dim).where(Dim.dim_code == dim_code)
+    ).scalars().first()
+    if dup:
+        raise ValueError(f"dim_code already exists: {dim_code}")
+    dim = Dim(
+        id=uuid.uuid4().hex,
+        dim_code=dim_code,
+        dim_group=payload.get("dim_group") or None,
+        dim_value=payload.get("dim_value") or None,
+        dim_desc=payload.get("dim_desc") or None,
+        parent_dim_code=payload.get("parent_dim_code") or None,
+        seq=int(payload["seq"]) if payload.get("seq") is not None else 0,
+        state=str(payload.get("state") or "1"),
+    )
+    db.add(dim)
+    db.commit()
+    db.refresh(dim)
+    return {"id": dim.id, "created": True}
+
+
+def update_dim(db: Session, dim_id: str, payload: dict) -> dict:
+    dim = db.execute(
+        select(Dim).where(Dim.id == dim_id)
+    ).scalars().first()
+    if not dim:
+        raise ValueError(f"dim not found: {dim_id}")
+    dim_code = str(payload.get("dim_code") or "").strip()
+    if dim_code and dim_code != dim.dim_code:
+        dup = db.execute(
+            select(Dim).where(Dim.dim_code == dim_code, Dim.id != dim_id)
+        ).scalars().first()
+        if dup:
+            raise ValueError(f"dim_code already exists: {dim_code}")
+    for field, attr in (
+        ("dim_code", "dim_code"),
+        ("dim_group", "dim_group"),
+        ("dim_value", "dim_value"),
+        ("dim_desc", "dim_desc"),
+        ("parent_dim_code", "parent_dim_code"),
+        ("state", "state"),
+    ):
+        if field in payload:
+            setattr(dim, attr, payload[field] or None)
+    if "seq" in payload and payload["seq"] is not None:
+        dim.seq = int(payload["seq"])
+    db.commit()
+    return {"id": dim.id, "updated": True}
+
+
+def delete_dim(db: Session, dim_id: str) -> dict:
+    dim = db.execute(
+        select(Dim).where(Dim.id == dim_id)
+    ).scalars().first()
+    if not dim:
+        raise ValueError(f"dim not found: {dim_id}")
+    db.delete(dim)
+    db.commit()
+    return {"id": dim_id, "deleted": True}

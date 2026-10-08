@@ -1063,6 +1063,55 @@ export function apiListRoles(page = 1, pageSize = 20) {
   return request<PageList<SysRoleItem>>(`/api/v1/system/roles?${params.toString()}`);
 }
 
+// ---- 参数管理（modo_dim 通用 CRUD，对齐 data-synth system/dims） ----
+
+export interface DimItem {
+  id?: string;
+  dim_code?: string;
+  dim_group?: string | null;
+  dim_value?: string | null;
+  dim_desc?: string | null;
+  parent_dim_code?: string | null;
+  seq?: number | null;
+  state?: string | null;
+}
+
+export function apiListDims(
+  page = 1,
+  pageSize = 20,
+  opts: { dimCode?: string; dimGroup?: string } = {},
+) {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  if (opts.dimCode) params.set("dim_code", opts.dimCode);
+  if (opts.dimGroup) params.set("dim_group", opts.dimGroup);
+  return request<PageList<DimItem>>(`/api/v1/system/dims?${params.toString()}`);
+}
+
+export function apiListDimGroups() {
+  return request<{ items: string[]; total: number }>("/api/v1/system/dims/groups");
+}
+
+export function apiCreateDim(payload: Partial<DimItem>) {
+  return request<{ id?: string; created?: boolean }>("/api/v1/system/dims", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateDim(id: string, payload: Partial<DimItem>) {
+  return request<{ id?: string; updated?: boolean }>(
+    `/api/v1/system/dims/${encodeURIComponent(id)}`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export function apiDeleteDim(id: string) {
+  return request<{ id?: string; deleted?: boolean }>(
+    `/api/v1/system/dims/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
+}
+
 export function apiListTeams(page = 1, pageSize = 20) {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   return request<PageList<SysTeamItem>>(`/api/v1/system/teams?${params.toString()}`);
