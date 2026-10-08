@@ -430,6 +430,17 @@ DEBUG_MAX_FILE_BYTES = 20 * 1024 * 1024
 DEBUG_MAX_DOCUMENTS = 100
 
 
+def _rerank_endpoint(base_url: str) -> str:
+    """rerank 目标 URL：base_url 填到端点粒度则直接用，否则补 /rerank。
+
+    用户可能填 https://api.siliconflow.cn/v1/rerank（完整端点）或
+    https://api.siliconflow.cn/v1（版本根）——统一归一化，避免拼出 /rerank/rerank 404
+    （对齐 chat.py 对 /chat/completions 的 endswith 处理）。
+    """
+    b = (base_url or "").rstrip("/")
+    return b if b.endswith("/rerank") else f"{b}/rerank"
+
+
 def _parse_debug_options(raw: str) -> dict:
     """Parse the JSON options string; validate ranges (WeKnora-compatible)."""
     if not raw.strip():
@@ -575,11 +586,17 @@ def debug_model(
         if m.custom_headers:
             headers.update(m.custom_headers)
         body = {"model": use_model, "query": input.strip(), "documents": docs}
+        # base_url 可能填到端点粒度（如 https://api.siliconflow.cn/v1/rerank），
+        # 也可能只填到版本根（如 https://api.siliconflow.cn/v1）——统一归一化，
+        # 否则拼出 /rerank/rerank → 404
+        rerank_url = _rerank_endpoint(base_url)
         try:
             with httpx.Client(timeout=30) as client:
-                resp = client.post(f"{base_url}/rerank", json=body, headers=headers)
+                resp = client.post(rerank_url, json=body, headers=headers)
             if resp.status_code >= 300:
-                return finish(False, None, f"rerank 端点返回 {resp.status_code}: {resp.text[:300]}")
+                return finish(
+                    False, None, f"rerank 端点返回 {resp.status_code}: {resp.text[:300]}"
+                )
             data = resp.json()
             results = data.get("results") or []
             observations["result_count"] = len(results)

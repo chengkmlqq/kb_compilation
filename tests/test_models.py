@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from api.db import Base
 from api.models.framework import TeamMember, User, UserRole, UserRoleRela
 from api.models.model import KbModel
+from api.routers.models import _rerank_endpoint
 from api.services.models import (
     create_model,
     delete_model,
@@ -280,6 +281,20 @@ def test_update_rejects_invalid_type(model_db):
     row = get_model(model_db, item["id"])
     assert row is not None
     assert row.type == "chat"  # 类型未被改坏
+
+
+def test_rerank_endpoint_normalizes_base_url():
+    """base_url 两种填法都归一化到 /rerank 端点（避免 /rerank/rerank → 404）。
+
+    回归：rerank 模型把 base_url 填成完整端点 https://.../v1/rerank，
+    debug 再拼 /rerank 打成 /v1/rerank/rerank → 404「rerank 端点返回 404」。
+    """
+    # 完整端点：原样使用（尾斜杠规整掉）
+    assert _rerank_endpoint("https://api.example.org/v1/rerank") == "https://api.example.org/v1/rerank"
+    assert _rerank_endpoint("https://api.example.org/v1/rerank/") == "https://api.example.org/v1/rerank"
+    # 版本根：补 /rerank
+    assert _rerank_endpoint("https://api.example.org/v1") == "https://api.example.org/v1/rerank"
+    assert _rerank_endpoint("https://api.example.org/v1/") == "https://api.example.org/v1/rerank"
 
 
 def test_delete_requires_owner(model_db):
