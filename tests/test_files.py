@@ -146,7 +146,6 @@ def test_files_explore_upload_download_delete(monkeypatch) -> None:
 def test_files_team_isolation(monkeypatch) -> None:
     """非 admin 用户只能看到自己的团队文件。"""
     db = _make_session()
-    db.query(SysFile).delete()
     db.add(
         SysFile(
             id="F_TEAM_A",
@@ -215,6 +214,115 @@ def test_files_team_isolation(monkeypatch) -> None:
     # 同团队删除 → 200
     r = client.delete("/api/v1/files/F_TEAM_A")
     assert r.status_code == 200
+
+    files_mod.decode_identity_cookie = real_decoder
+    app.dependency_overrides.clear()
+
+
+def test_files_minio_tree_zip_and_raw_download(monkeypatch) -> None:
+    """MinIO 树模式：目录打包按对象前缀 / 单文件按 storage_path 下载。
+
+    对应线上 bug：explore 走 MinIO 桶真实对象树（目录项无 sys_file id），
+    但旧的 /zip 要求 module/team/date 三层表语义且单文件下载依赖 id，
+    导致「下载目录报错」。本次修复后 /zip 按 MinIO 前缀打包，
+    /files/raw 按 storage_path 下载。
+    """
+    import types
+
+    from api.services import storage as storage_svc
+    from api.services.identity import Identity, encode_identity_cookie
+
+    class _Obj:
+        def __init__(self, name: str, size: int = 0) -> None:
+            self.object_name = name
+            self.is_dir = False
+            self.size = size
+            self.last_modified = None
+
+    class _FakeClient:
+        def __init__(self, bucket: str) -> None:
+            self._bucket = bucket
+
+        def bucket_exists(self, bucket: str) -> bool:
+            return bucket == self._bucket
+
+        def list_objects(self, bucket: str, prefix: str = "", recursive: bool = True):
+            objects = [
+                _Obj("sys_files/default/team1/20261001/f1_a.txt"),
+                _Obj("sys_files/default/team1/20261001/f2_b.txt"),
+                _Obj("sys_files/default/team1/20261001/sub/f3_c.txt"),
+            ]
+            if prefix:
+                objects = [o for o in objects if o.object_name.startswith(prefix)]
+            return objects
+
+        def get_object(self, bucket: str, key: str):
+            return io.BytesIO(b"minio-bytes:" + key.encode())
+
+    db = _make_session()
+    app.dependency_overrides[get_db] = lambda: db
+
+    monkeypatch.setattr(
+        "api.middleware.get_sessionmaker", lambda: type("SM", (), {"__call__": lambda s: db})()
+    )
+    monkeypatch.setattr(
+        "api.middleware.get_settings",
+        lambda: types.SimpleNamespace(AUTH_ADMIN_USERS="admin"),
+    )
+    monkeypatch.setattr(
+        storage_svc, "_get_client", lambda: _FakeClient("kb-compilation")
+    )
+    monkeypatch.setattr(
+        storage_svc,
+        "get_settings",
+        lambda: types.SimpleNamespace(MINIO_BUCKET="kb-compilation"),
+    )
+    monkeypatch.setattr(
+        storage_svc,
+        "get_bytes",
+        lambda path: (b"minio-bytes:" + path.encode()) if path.startswith("minio://") else b"local",
+    )
+
+    import api.routers.files as files_mod
+
+    real_decoder = files_mod.decode_identity_cookie
+    files_mod.decode_identity_cookie = lambda cookie: Identity(
+        user_id="admin", user_name="admin", team_id="team1", team_name="team1"
+    )
+
+    client = TestClient(app)
+    client.cookies.set(
+        "x-next-identity",
+        encode_identity_cookie(
+            Identity(user_id="admin", user_name="admin", team_id="team1", team_name="team1")
+        ),
+    )
+
+    # ---- MinIO 树目录打包：前缀=sys_files/default/team1/20261001 ----
+    r = client.get(
+        "/api/v1/files/zip", params={"path": "/sys_files/default/team1/20261001"}
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    import zipfile as _zf
+
+    with _zf.ZipFile(io.BytesIO(r.content)) as zf:
+        names = sorted(zf.namelist())
+        assert names == ["f1_a.txt", "f2_b.txt", "sub/f3_c.txt"]
+        assert zf.read("f1_a.txt") == b"minio-bytes:minio://kb-compilation/sys_files/default/team1/20261001/f1_a.txt"
+
+    # ---- 单文件按 storage_path 下载（MinIO 树文件项无 id）----
+    r = client.get(
+        "/api/v1/files/raw",
+        params={"storage_path": "minio://kb-compilation/sys_files/default/team1/20261001/f1_a.txt"},
+    )
+    assert r.status_code == 200
+    assert r.content == b"minio-bytes:minio://kb-compilation/sys_files/default/team1/20261001/f1_a.txt"
+    assert "f1_a.txt" in r.headers["content-disposition"]
+
+    # ---- zip 前缀下无对象 → 404 ----
+    r = client.get("/api/v1/files/zip", params={"path": "/sys_files/empty/dir"})
+    assert r.status_code == 404
 
     files_mod.decode_identity_cookie = real_decoder
     app.dependency_overrides.clear()

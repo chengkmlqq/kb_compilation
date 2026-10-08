@@ -2518,6 +2518,11 @@ export function apiFileDownloadUrl(fileId: string) {
   return `/api/v1/files/${encodeURIComponent(fileId)}/download`;
 }
 
+/** MinIO 树模式文件项无 id，直接按 storage_path 下载（/files/raw）。 */
+export function apiFileRawDownloadUrl(storagePath: string) {
+  return `/api/v1/files/raw?storage_path=${encodeURIComponent(storagePath)}`;
+}
+
 export function apiFileDelete(fileId: string) {
   return request<{ id: string; deleted: boolean }>(
     `/api/v1/files/${encodeURIComponent(fileId)}`,

@@ -601,6 +601,35 @@ def remove_directory(
     return {"success": True, "data": {"total": len(rows)}}
 
 
+@router.get("/raw")
+def download_raw(
+    storage_path: str = Query(...),
+    identity: Identity = Depends(_require_identity),
+):
+    """按 storage_path 直接下载（MinIO 树模式文件项无 id，前端传对象路径）。
+
+    explore 在 MinIO 可用时展示桶内真实对象树（_explore_minio_tree），树中
+    文件项只有 name/storage_path 没有 sys_file id；本端点用 storage_path
+    统一读取（minio://bucket/key 或本地相对路径）。
+    """
+    from api.services import storage as storage_svc
+
+    if not (storage_path or "").strip():
+        raise HTTPException(status_code=400, detail="storage_path 不能为空")
+    # 与 explore MinIO 分支权限一致：登录即可（桶内树不做团队过滤）
+    try:
+        data = storage_svc.get_bytes(storage_path)
+    except Exception:  # noqa: BLE001
+        logger.warning("raw download failed: %s", storage_path, exc_info=True)
+        raise HTTPException(status_code=404, detail="物理文件缺失") from None
+    file_name = str(storage_path).rstrip("/").split("/")[-1] or "download"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": _content_disposition(file_name)},
+    )
+
+
 # ---------------------------------------------------------------------------
 # 目录打包下载
 # ---------------------------------------------------------------------------
@@ -612,7 +641,59 @@ def download_directory_zip(
     path: str = Query(...),
     db: Session = Depends(get_db),
 ):
-    """目录打包下载 zip（对齐 ds downloadSysDirectoryZipAction，内存生成）。"""
+    """目录打包下载 zip（对齐 ds downloadSysDirectoryZipAction，内存生成）。
+
+    双模式：
+    - MinIO 可用时：path 即桶内对象前缀（explore MinIO 树的 sourcePath，
+      如 /sys_files/default/team/date），列该前缀下全部对象打包；
+    - 否则回退 modo_sys_file 表语义（module/team/date 三层目录）。
+    """
+    # ── MinIO 前缀模式（与 explore 的 _explore_minio_tree 同源判定）──
+    try:
+        from api.services import storage as storage_svc
+
+        client = storage_svc._get_client()
+        bucket = storage_svc.get_settings().MINIO_BUCKET or "kb-compilation"
+        if client.bucket_exists(bucket):
+            prefix = str(path or "/").strip("/")
+            prefix_key = (prefix + "/") if prefix else ""
+            objs = [
+                o
+                for o in client.list_objects(bucket, prefix=prefix_key, recursive=True)
+                if not o.is_dir and (o.object_name or "") and not (o.object_name or "").endswith("/")
+            ]
+            if objs:
+                buffer = io.BytesIO()
+                zip_name = f"{prefix.rsplit('/', 1)[-1] or 'files'}.zip"
+                with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for o in objs:
+                        key = o.object_name or ""
+                        if not key:
+                            continue
+                        # zip 内路径：去掉前缀，保留前缀下相对结构
+                        rel = key[len(prefix_key):] if prefix_key else key
+                        try:
+                            bytes_ = storage_svc.get_bytes(
+                                storage_svc.build_remote(bucket, key)
+                            )
+                        except Exception:  # noqa: BLE001 — 单个对象读失败跳过
+                            logger.warning("zip skip unreadable object: %s", key)
+                            continue
+                        zf.writestr(rel, bytes_)
+                buffer.seek(0)
+                return Response(
+                    content=buffer.getvalue(),
+                    media_type="application/zip",
+                    headers={
+                        "Content-Disposition": f'attachment; filename="{zip_name}"'
+                    },
+                )
+            raise HTTPException(status_code=404, detail="目录下没有可下载文件")
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 — MinIO 不可用时回退 sys_file 表语义
+        logger.warning("minio zip unavailable, fallback to sys_file", exc_info=True)
+
     parts = [p for p in str(path or "/").split("/") if p]
     if len(parts) < 3:
         raise HTTPException(status_code=400, detail="目录路径无效（需 module/team/date）")

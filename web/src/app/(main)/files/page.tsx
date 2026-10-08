@@ -36,6 +36,7 @@ import {
   apiFileDelete,
   apiFileDownloadUrl,
   apiFileExplore,
+  apiFileRawDownloadUrl,
   apiFileRmdir,
   apiFileUpload,
   apiFileZipUrl,
@@ -146,10 +147,14 @@ export default function FilesPage() {
     return false; // 阻止 antd 默认上传
   };
 
-  const handleDownload = (fileId: string, fileName: string) => {
+  const handleDownload = (record: SysFileItem) => {
     const a = document.createElement("a");
-    a.href = apiFileDownloadUrl(fileId);
-    a.download = fileName;
+    // MinIO 树模式（explore 返回 storage_path 无 id）走 /files/raw，
+    // 表模式走 /files/{id}/download（两者后端均支持）
+    a.href = record.id
+      ? apiFileDownloadUrl(record.id)
+      : apiFileRawDownloadUrl(record.storage_path || "");
+    a.download = record.file_name || record.name || "download";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -291,7 +296,7 @@ export default function FilesPage() {
               type="link"
               size="small"
               icon={<DownloadOutlined />}
-              onClick={() => handleDownload(record.id, record.file_name)}
+              onClick={() => handleDownload(record)}
             >
               下载
             </Button>
