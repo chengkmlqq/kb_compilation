@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   App,
   Button,
@@ -20,9 +20,11 @@ import {
   ApiOutlined,
   CopyOutlined,
   DeleteOutlined,
+  DownloadOutlined,
   EditOutlined,
   PlusOutlined,
   ReloadOutlined,
+  UploadOutlined,
 } from "@ant-design/icons";
 import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
@@ -32,11 +34,14 @@ import {
   apiCopyOntologySchema,
   apiCreateOntologyCategory,
   apiDeleteOntologyCategory,
+  apiExportOntologySchema,
+  apiImportOntologySchema,
   apiListKbs,
   apiListOntologySchemas,
   apiUpdateOntologyCategory,
   OntologyCategory,
   OntologyCategoryPayload,
+  OntologySchemaExport,
   OntologySchemaGroup,
 } from "@/lib/api";
 
@@ -44,6 +49,7 @@ const DIM_LABEL: Record<string, string> = { business: "业务本体", rule: "规
 
 export default function OntologySchemasPage() {
   const { message } = App.useApp();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [loading, setLoading] = useState(false);
   const [groups, setGroups] = useState<OntologySchemaGroup[]>([]);
   const [current, setCurrent] = useState<OntologySchemaGroup | null>(null);
@@ -53,6 +59,10 @@ export default function OntologySchemasPage() {
   const [copyOpen, setCopyOpen] = useState(false);
   const [bindOpen, setBindOpen] = useState(false);
   const [kbList, setKbList] = useState<{ id: string; name: string }[]>([]);
+  // 导入：文件内容 + mode 弹窗
+  const [importFile, setImportFile] = useState<OntologySchemaExport | null>(null);
+  const [importMode, setImportMode] = useState<"skip" | "overwrite">("skip");
+  const [importing, setImporting] = useState(false);
   const [form] = Form.useForm();
   const [copyForm] = Form.useForm();
   const [bindForm] = Form.useForm();
@@ -134,6 +144,67 @@ export default function OntologySchemasPage() {
       void load();
     } catch (e) {
       message.error((e as Error).message);
+    }
+  };
+
+  // 导出整套 schema 为 JSON 文件
+  const doExport = async () => {
+    if (!current) return;
+    try {
+      const res = await apiExportOntologySchema(current.schema_name);
+      const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ontology-schema-${current.schema_name}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      message.success("已导出 JSON");
+    } catch (e) {
+      message.error(`导出失败: ${(e as Error).message}`);
+    }
+  };
+
+  // 选择导入文件（前端解析 JSON → 弹窗确认 mode）
+  const onImportFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result)) as OntologySchemaExport;
+        if (!parsed.schema_name || !Array.isArray(parsed.items)) {
+          message.error("文件格式不正确：需要 {schema_name, items[]}");
+          return;
+        }
+        setImportFile(parsed);
+        setImportMode("skip");
+      } catch {
+        message.error("JSON 解析失败");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // 执行导入
+  const doImport = async () => {
+    if (!importFile) return;
+    setImporting(true);
+    try {
+      const res = await apiImportOntologySchema({
+        schema_name: importFile.schema_name,
+        schema_label: importFile.schema_label,
+        schema_desc: importFile.schema_desc,
+        mode: importMode,
+        items: importFile.items,
+      });
+      message.success(
+        `导入完成：新建 ${res.data?.created} / 更新 ${res.data?.updated} / 跳过 ${res.data?.skipped}`,
+      );
+      setImportFile(null);
+      void load();
+    } catch (e) {
+      message.error(`导入失败: ${(e as Error).message}`);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -235,6 +306,23 @@ export default function OntologySchemasPage() {
           styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
           extra={
         <Space>
+          <Button icon={<UploadOutlined />} onClick={() => fileInputRef.current?.click()}>
+            导入
+          </Button>
+          <Button icon={<DownloadOutlined />} onClick={() => void doExport()} disabled={!current}>
+            导出
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onImportFile(f);
+              e.target.value = "";
+            }}
+          />
           <Button icon={<ApiOutlined />} onClick={() => { void loadKbs(); bindForm.setFieldsValue({ schema_name: current?.schema_name }); setBindOpen(true); }}>
             绑定知识库
           </Button>
@@ -323,6 +411,34 @@ export default function OntologySchemasPage() {
             <Input />
           </Form.Item>
 
+        </Form>
+      </Modal>
+      {/* 导入确认（skip / overwrite） */}
+      <Modal
+        title={`导入 Schema：${importFile?.schema_name ?? ""}`}
+        open={!!importFile}
+        onOk={() => void doImport()}
+        onCancel={() => setImportFile(null)}
+        confirmLoading={importing}
+        okText="开始导入"
+        width={520}
+      >
+        <Descriptions size="small" column={1} bordered style={{ marginBottom: 12 }}>
+          <Descriptions.Item label="Schema 名称">{importFile?.schema_name}</Descriptions.Item>
+          <Descriptions.Item label="Schema 标签">{importFile?.schema_label || "-"}</Descriptions.Item>
+          <Descriptions.Item label="分类条目数">{importFile?.items.length ?? 0}</Descriptions.Item>
+        </Descriptions>
+        <Form layout="vertical">
+          <Form.Item label="冲突处理">
+            <Select
+              value={importMode}
+              onChange={setImportMode}
+              options={[
+                { label: "跳过已存在条目（保留现有）", value: "skip" },
+                { label: "覆盖更新已存在条目", value: "overwrite" },
+              ]}
+            />
+          </Form.Item>
         </Form>
       </Modal>
       <Modal

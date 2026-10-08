@@ -17,6 +17,7 @@ Requires the x-next-identity cookie; admin gating for write ops.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -204,6 +205,121 @@ class CopyPayload(BaseModel):
     source_schema: str
     new_schema_name: str
     new_schema_label: str = ""
+
+
+class ImportPayload(BaseModel):
+    """导入整套 schema（导出的 JSON 结构）。"""
+
+    schema_name: str
+    schema_label: str = ""
+    schema_desc: str | None = None
+    mode: str = "skip"  # skip=跳过已存在条目; overwrite=覆盖更新
+    items: list[dict[str, Any]] = []
+
+
+@router.get("/ontology-schemas/{schema_name}/export")
+def export_schema(
+    schema_name: str,
+    caller: Caller = Depends(_require_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """导出一整套 schema（含 business/rule 全部维度条目）为 JSON。"""
+    rows = db.execute(select(OntologySchema).where(
+        OntologySchema.schema_name == schema_name,
+        OntologySchema.state == "1",
+    ).order_by(OntologySchema.dimension, OntologySchema.cat_no)).scalars().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="schema 不存在")
+    head = rows[0]
+    return {
+        "success": True,
+        "data": {
+            "schema_name": schema_name,
+            "schema_label": head.schema_label,
+            "schema_desc": head.schema_desc,
+            "exported_at": datetime.now().isoformat(timespec="seconds"),
+            "items": [
+                {
+                    "dimension": r.dimension,
+                    "cat_no": r.cat_no,
+                    "cat_name": r.cat_name,
+                    "cat_label": r.cat_label,
+                    "prompt_hint": r.prompt_hint,
+                    "neo4j_edge": r.neo4j_edge,
+                    "state": r.state,
+                }
+                for r in rows
+            ],
+        },
+    }
+
+
+@router.post("/ontology-schemas/import")
+def import_schema(
+    payload: ImportPayload,
+    caller: Caller = Depends(_require_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """导入整套 schema：mode=skip 跳过已存在条目，overwrite 覆盖更新。"""
+    _require_admin(caller)
+    if payload.schema_name.strip() == "":
+        raise HTTPException(status_code=400, detail="schema_name 不能为空")
+    mode = (payload.mode or "skip").lower()
+    if mode not in ("skip", "overwrite"):
+        raise HTTPException(status_code=400, detail="mode 须为 skip 或 overwrite")
+    created = updated = skipped = 0
+    for it in payload.items:
+        dim = it.get("dimension")
+        cat_no = it.get("cat_no")
+        cat_name = (it.get("cat_name") or "").strip()
+        if dim not in DIMENSIONS:
+            raise HTTPException(status_code=400, detail=f"dimension 须为 business 或 rule（收到 {dim}）")
+        if not isinstance(cat_no, int) or cat_name == "":
+            raise HTTPException(status_code=400, detail="每个 item 需要合法 cat_no 与 cat_name")
+        row = db.execute(select(OntologySchema).where(
+            OntologySchema.schema_name == payload.schema_name,
+            OntologySchema.dimension == dim,
+            OntologySchema.cat_no == cat_no,
+        )).scalar_one_or_none()
+        if row and mode == "skip":
+            skipped += 1
+            continue
+        if row:
+            row.cat_name = cat_name
+            row.cat_label = it.get("cat_label") or f"{cat_no}-{cat_name}"
+            row.prompt_hint = it.get("prompt_hint")
+            row.neo4j_edge = it.get("neo4j_edge")
+            row.state = it.get("state") or "1"
+            row.schema_label = payload.schema_label or row.schema_label
+            row.schema_desc = payload.schema_desc if payload.schema_desc is not None else row.schema_desc
+            updated += 1
+        else:
+            db.add(OntologySchema(
+                id=uuid4().hex[:24],
+                schema_name=payload.schema_name,
+                schema_label=payload.schema_label or payload.schema_name,
+                schema_desc=payload.schema_desc,
+                dimension=dim,
+                cat_no=cat_no,
+                cat_name=cat_name,
+                cat_label=it.get("cat_label") or f"{cat_no}-{cat_name}",
+                prompt_hint=it.get("prompt_hint"),
+                neo4j_edge=it.get("neo4j_edge"),
+                state=it.get("state") or "1",
+                sort=cat_no,
+            ))
+            created += 1
+    db.commit()
+    return {
+        "success": True,
+        "data": {
+            "schema_name": payload.schema_name,
+            "created": created,
+            "updated": updated,
+            "skipped": skipped,
+            "mode": mode,
+        },
+    }
 
 
 @router.post("/ontology-schemas/copy")

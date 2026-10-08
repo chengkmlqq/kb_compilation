@@ -2856,3 +2856,44 @@ export async function apiFixChunks(kbId: string): Promise<ApiEnvelope<{ job_id: 
     return { success: false, message: text.slice(0, 200) } as ApiEnvelope<{ job_id: string }>;
   }
 }
+
+export interface OntologySchemaExport {
+  schema_name: string;
+  schema_label?: string;
+  schema_desc?: string | null;
+  exported_at?: string;
+  items: Array<{
+    dimension: string;
+    cat_no: number;
+    cat_name: string;
+    cat_label?: string | null;
+    prompt_hint?: string | null;
+    neo4j_edge?: string | null;
+    state?: string;
+  }>;
+}
+
+export interface OntologyImportResult {
+  schema_name: string;
+  created: number;
+  updated: number;
+  skipped: number;
+  mode: string;
+}
+
+export function apiExportOntologySchema(schemaName: string) {
+  return request<OntologySchemaExport>(`/api/v1/ontology-schemas/${encodeURIComponent(schemaName)}/export`);
+}
+
+export function apiImportOntologySchema(payload: {
+  schema_name: string;
+  schema_label?: string;
+  schema_desc?: string | null;
+  mode: string;
+  items: OntologySchemaExport["items"];
+}) {
+  return request<OntologyImportResult>("/api/v1/ontology-schemas/import", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
