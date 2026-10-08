@@ -14,6 +14,7 @@ import {
   Modal,
   Select,
   Space,
+  Table,
   Tag,
 } from "antd";
 import {
@@ -31,7 +32,6 @@ import {
   SysUserItem,
 } from "@/lib/api";
 import { StateTag } from "../_shared";
-import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
 
@@ -65,6 +65,7 @@ export default function SystemUsersPage() {
   const [editing, setEditing] = useState<SysUserItem | null>(null);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<FormValues>();
+  const [searchForm] = Form.useForm<{ userId: string; userName: string }>();
 
   // 角色配置弹窗
   const [roleModalOpen, setRoleModalOpen] = useState(false);
@@ -240,11 +241,31 @@ export default function SystemUsersPage() {
   return (
     // 2026-10-07: 参考任务管理页，最外层容器加 8px padding（统一页面边距）
     // 2026-10-07 一屏自适应（对齐 data-synth）：外层不滚动，卡片内表格占满剩余高度，分页常驻底栏
-    <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+    // 2026-10-08: 改为「固定视口高度」——表格高度锁定为 视口 − 顶部/筛选/分页偏移（100vh-264px），
+    // 进页即撑满、底部无空白；数据多时表头固定、表体滚动（antd Table scroll.y，不走 ModoTable 的 flex 方案）
+    <div
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
       <Card
         title="用户"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
         extra={
           <Button type="primary" onClick={openCreate}>
             新增用户
@@ -253,6 +274,7 @@ export default function SystemUsersPage() {
       >
       {/* 筛选表单（对齐 ds FilterForm：用户ID + 用户名） */}
       <Form
+        form={searchForm}
         layout="inline"
         style={{ marginBottom: 12, flexShrink: 0 }}
         onFinish={doSearch}
@@ -271,7 +293,7 @@ export default function SystemUsersPage() {
             </Button>
             <Button
               onClick={() => {
-                form.resetFields();
+                searchForm.resetFields();
                 doReset();
               }}
             >
@@ -281,12 +303,13 @@ export default function SystemUsersPage() {
         </Form.Item>
       </Form>
 
-      <ModoTable
+      <Table
         rowKey="user_id"
         size="small"
         loading={loading}
         dataSource={rows}
-        scroll={{ x: "100%" }}
+        pagination={false}
+        scroll={{ x: "100%", y: "calc(100vh - 264px)" }}
         locale={{ emptyText: <Empty description="暂无用户" /> }}
         columns={[
           { title: "用户ID", dataIndex: "user_id", ellipsis: true },
@@ -341,7 +364,7 @@ export default function SystemUsersPage() {
           },
         ]}
       />
-      <div style={{ flexShrink: 0 }}>
+      <div style={{ flexShrink: 0, marginTop: "auto" }}>
         <ModoPagination
           current={page}
           pageSize={pageSize}
