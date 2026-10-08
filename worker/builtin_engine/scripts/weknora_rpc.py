@@ -1384,13 +1384,13 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
         try:
             raw = q.get(timeout=total_to)
         except __import__("queue").Empty:
-            _log_llm_event(kind="retry", model=model, attempt=attempt + 1,
-                           reason="slow_stream_timeout", backoff_s=15)
-            print(f"  ⏳ LLM 总时长超限 {total_to}s（慢流挂起），重试 ({attempt + 1}/{retries})")
-            time.sleep(15)
-            retry_events.append({"reason": "slow_stream_timeout", "backoff_s": 15})
-            last_err = TimeoutError(f"LLM 响应超过 {total_to}s 未完整")
-            continue
+            # 慢流不重试（2026-10-07）：660s 已是极慢——重试只再等一个 660s，
+            # 且会把批级 pool.shutdown(wait=True) 拖入 55min 级阻塞被 watchdog 杀。
+            # 直接抛走网络重试（上层批循环可换批继续）。
+            _log_llm_event(kind="error", model=model, llm_ms=int((time.time() - t_start) * 1000),
+                           error=f"slow_stream_timeout >{total_to}s")
+            print(f"  ⛔ LLM 总时长超限 {total_to}s（慢流挂起），抛错")
+            raise TimeoutError(f"LLM 响应超过 {total_to}s 未完整")
         try:
             resp = json.loads(raw)
             choice = resp['choices'][0]

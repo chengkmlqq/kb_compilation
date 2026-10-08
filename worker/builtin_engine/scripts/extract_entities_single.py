@@ -192,7 +192,8 @@ def extract_joint_llm(ls_all, args):
     # 2026-10-07 防挂起批永等：as_completed 900s 无任何批次完成即超时（某批
     # llm_call 真 hang 时不再无限等待——之前 extract_entities 反复 hang 8h 占槽）。
     # 超时后取消剩余 futures，未完成批标记失败（任务整体可重投）。
-    with ThreadPoolExecutor(max_workers=2) as pool:  # 2026-10-07 单→双 worker 提速（524 由 llm_call 重试兜底）
+    pool = ThreadPoolExecutor(max_workers=2)  # 2026-10-07 单→双 worker 提速（524 由 llm_call 重试兜底）
+    try:
         futures = {pool.submit(_run_batch, i): i for i in range(total_batches)}
         try:
             for fut in as_completed(futures, timeout=900):
@@ -202,6 +203,10 @@ def extract_joint_llm(ls_all, args):
             print(f'  [超时] 联合抽取 900s 无完成（{len(futures)} 批），取消剩余批——任务可重投')
             for fut in futures:
                 fut.cancel()
+    finally:
+        # wait=False：挂起线程成孤儿（2026-10-07 实证 wait=True 会等 55min 级
+        # 挂起批导致 with 退出阻塞被 watchdog 杀）
+        pool.shutdown(wait=False, cancel_futures=True)
 
     # 按原始批次序聚合（去重语义与原串行一致）
     for bidx in range(total_batches):
