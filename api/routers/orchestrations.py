@@ -18,7 +18,7 @@ from api.services.orchestration_engine import (
 router = APIRouter(prefix="/orchestrations", tags=["orchestrations"])
 
 
-def _current_user(x_next_identity: Optional[str] = Cookie(default=None)) -> str:
+def _current_user(x_next_identity: Optional[str] = Cookie(default=None, alias="x-next-identity")) -> str:
     if not x_next_identity:
         raise HTTPException(status_code=401, detail="未登录")
     return x_next_identity
