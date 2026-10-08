@@ -484,3 +484,45 @@ def test_menu_apis_none_is_empty(sys_db) -> None:
     assert menu_api_perms(sys_db, "m3") == []
     assert get_menu_apis(sys_db, "m3")["data"]["apis"] == []
     assert is_platform_admin(sys_db, "zhang_san", admin_users=[]) is False
+
+
+def test_is_admin_team_member_admin_not_in_first_row(sys_db) -> None:
+    """is_admin 必须逐行检查团队角色：admin 行不在首行时也要判为管理员。
+
+    回归：api/services/scope.py 旧实现用 .first() 只看第一行团队角色，
+    当用户同时持有 member/admin/kb_role 多行（线上 huqiang 即此结构）而
+    admin 排在后面时，被误判为非 admin → 本体 Schema 导入等接口 403。
+    """
+    from api.services.scope import is_admin
+
+    # zhang_san 关联角色 r1（role_name=管理员，非 admin/system）→ 不满足角色路径
+    db = sys_db
+    # 构造多行团队角色：member 在前、admin 在后、再跟一个普通角色
+    db.add(
+        TeamMember(
+            member_id="tm_s1", team_name="ROOT", user_id="zhang_san", role_name="member", state="1"
+        )
+    )
+    db.add(
+        TeamMember(
+            member_id="tm_s2", team_name="ROOT", user_id="zhang_san", role_name="admin", state="1"
+        )
+    )
+    db.add(
+        TeamMember(
+            member_id="tm_s3", team_name="ROOT", user_id="zhang_san", role_name="kb_role", state="1"
+        )
+    )
+    db.commit()
+
+    # 团队角色路径命中 admin → True
+    assert is_admin(db, "zhang_san") is True
+
+    # 对照：只有 member 行 → False
+    db.add(
+        TeamMember(
+            member_id="tm_l1", team_name="ROOT", user_id="li_si", role_name="member", state="1"
+        )
+    )
+    db.commit()
+    assert is_admin(db, "li_si") is False

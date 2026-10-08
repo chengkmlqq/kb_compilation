@@ -86,16 +86,19 @@ def is_admin(db: Session, user_id: str) -> bool:
             for (name, rtype) in rows
         ):
             return True
-    member_role = (
+    member_roles = (
         db.execute(
             select(TeamMember.role_name).where(
                 and_(TeamMember.user_id == user_id, TeamMember.state == "1")
             )
         )
         .scalars()
-        .first()
+        .all()
     )
-    return bool(member_role and member_role.strip().lower() == "admin")
+    # 一人可有多条团队角色行（member/admin/其他角色），必须逐行判断：
+    # 旧实现用 .first() 只看第一行，admin 行排在后面时被漏掉 → is_admin
+    # 误判 False → 本体 Schema 导入等 admin 接口返回 403。
+    return any((r or "").strip().lower() == "admin" for r in member_roles)
 
 
 def caller_context(db: Session, user_id: str) -> dict:
