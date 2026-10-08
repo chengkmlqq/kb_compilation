@@ -613,16 +613,19 @@ def _aggregate_events(job_id: str) -> dict:
 
 
 class _CpuWatchdog:
-    """子进程 CPU 心跳：零增长超过 stall 秒即判定挂起并 killpg。
+    """子进程 CPU + 事件双心跳：零增长超过 stall 秒**且事件文件也停更**才杀。
 
     /proc/<pid>/stat 的 utime+stime 是进程累计 CPU 时钟数（无 syscall 开销）。
-    进程挂起（等永不返回的 I/O/线程 join/死锁）时 CPU 不再增长——用零增长
-    窗口识别 hang，比总超时早数小时发现（2026-10-07 extract_entities 8h hang）。
+    仅 CPU 零增长不足以判死——LLM 慢流重试（每次最长 660s）期间 CPU 几乎
+    零增长但事件文件持续写 retry 事件（活着）——2026-10-07 曾误杀 8 篇
+    gen_summary（watchdog 15min < llm_call 重试链 55min）。事件文件活跃
+    （mtime 在 stall 窗口内有更新）→ 重置计时不杀；CPU 停 **且** 事件停 → 杀。
     """
 
-    def __init__(self, proc: subprocess.Popen, stall_s: int) -> None:
+    def __init__(self, proc: subprocess.Popen, stall_s: int, event_path: str = "") -> None:
         self.proc = proc
         self.stall_s = max(60, stall_s)
+        self.event_path = event_path
         self.last_cpu: float = -1.0
         self.last_seen = time.time()
         self.stopped = False
@@ -652,7 +655,19 @@ class _CpuWatchdog:
                 self.last_cpu = cpu
                 self.last_seen = time.time()
             elif time.time() - self.last_seen > self.stall_s:
-                # 挂起：广播到任务日志 + killpg
+                # CPU 零增长窗口已到——查事件文件是否活跃（LLM 慢流重试期间
+                # 事件持续写 = 活着，不杀；事件也停 = 真挂起才杀）
+                if self.event_path and os.path.isfile(self.event_path):
+                    try:
+                        ev_mtime = os.path.getmtime(self.event_path)
+                        if time.time() - ev_mtime < self.stall_s:
+                            # 事件活跃：重置 CPU 计时，继续观察
+                            self.last_cpu = cpu
+                            self.last_seen = time.time()
+                            continue
+                    except Exception:  # noqa: BLE001
+                        pass
+                # 真挂起：广播到任务日志 + killpg
                 try:
                     os.killpg(os.getpgid(self.proc.pid), 9)
                 except Exception:  # noqa: BLE001
@@ -722,7 +737,10 @@ def _handle_skill_direct_build(job_id: str, task_params: str | None) -> dict[str
         # 非网络/非超时）——按总超时判死太晚。每 30s 检查子进程 CPU 时间，
         # STALL 内零增长即判定挂起 → killpg 杀整组（早发现，任务可重投）。
         stall_timeout = int(os.getenv("WIKI_DIRECT_STALL_TIMEOUT", "900"))
-        watchdog = _CpuWatchdog(proc, stall_timeout)
+        watchdog = _CpuWatchdog(
+            proc, stall_timeout,
+            event_path=os.environ.get("WIKI_EVENTS_LOG", ""),
+        )
         stdout, stderr = proc.communicate(timeout=direct_timeout)
         watchdog.stop()
         rc = proc.returncode
