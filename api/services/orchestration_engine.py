@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import time
 import uuid
@@ -115,6 +116,12 @@ class DefStep(BaseStep):
 
     def handle(self, context: TapeRuntimeContext) -> StepResponse:
         assignments = self.config.get("assignments", [])
+        # 前端 textarea 存 JSON 字符串 → 兜底解析成 list
+        if isinstance(assignments, str):
+            try:
+                assignments = json.loads(assignments)
+            except Exception:  # noqa: BLE001
+                return StepResponse.fail(f"变量定义 JSON 解析失败: {assignments[:80]}")
         if not assignments and self.config.get("variable"):
             assignments = [{"variable": self.config["variable"], "expression": self.config.get("expression")}]
         if not assignments:
