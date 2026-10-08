@@ -556,6 +556,39 @@ RETRIEVAL_CONFIG_FIELDS: dict[str, tuple[str, str, str, list[str], str]] = {
 }
 
 
+def validate_retrieval_value(code: str, value: str | None) -> str:
+    """校验单个全局检索参数值（RETRIEVAL_CONFIG 组写入用）。
+
+    int/float 按 [min, max, step] 校验；bool 规范化 true/false。
+    非法值 raise ValueError。非本组参数不校验（dims 通用参数自由）。
+    """
+    code = normalize_value(code)
+    spec = RETRIEVAL_CONFIG_FIELDS.get(code)
+    if not spec:
+        return normalize_value(str(value if value is not None else ""))
+    label, vtype, default, bounds, desc = spec
+    v = normalize_value(str(value if value is not None else ""))
+    if vtype == "bool":
+        low = v.lower()
+        if low in ("true", "1", "yes"):
+            return "true"
+        if low in ("false", "0", "no"):
+            return "false"
+        raise ValueError(f"{label} 须为 true/false")
+    try:
+        if vtype == "int":
+            n = int(float(v))
+        else:
+            n = float(v)
+    except ValueError:
+        raise ValueError(f"{label} 必须是{'整数' if vtype == 'int' else '数字'}") from None
+    if bounds and len(bounds) >= 2:
+        lo, hi = float(bounds[0]), float(bounds[1])
+        if n < lo or n > hi:
+            raise ValueError(f"{label} 取值范围 {bounds[0]}-{bounds[1]}")
+    return str(int(n)) if vtype == "int" else (f"{n:g}" if float(n).is_integer() else f"{n:.6f}".rstrip("0").rstrip("."))
+
+
 def get_retrieval_config(db: Session) -> dict:
     """全局检索参数（DB 值 > 默认值），返回字段元数据 + 当前值。"""
     db_map = _dim_map(db, list(RETRIEVAL_CONFIG_FIELDS), group=RETRIEVAL_CONFIG_GROUP)

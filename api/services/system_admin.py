@@ -34,7 +34,10 @@ from api.services.identity import collect_user_role_ids
 from api.services.system_config import (
     PLATFORM_CONFIG_FIELDS,
     PLATFORM_CONFIG_GROUP,
+    RETRIEVAL_CONFIG_FIELDS,
+    RETRIEVAL_CONFIG_GROUP,
     validate_platform_value,
+    validate_retrieval_value,
 )
 
 logger = logging.getLogger(__name__)
@@ -888,6 +891,8 @@ def create_dim(db: Session, payload: dict) -> dict:
     dim_value = payload.get("dim_value")
     if dim_group == PLATFORM_CONFIG_GROUP or dim_code in PLATFORM_CONFIG_FIELDS:
         dim_value = validate_platform_value(dim_code, dim_value)
+    if dim_group == RETRIEVAL_CONFIG_GROUP or dim_code in RETRIEVAL_CONFIG_FIELDS:
+        dim_value = validate_retrieval_value(dim_code, dim_value)
     dim = Dim(
         id=uuid.uuid4().hex,
         dim_code=dim_code,
@@ -932,6 +937,9 @@ def update_dim(db: Session, dim_id: str, payload: dict) -> dict:
     # 平台运行参数：按 PLATFORM_CONFIG 校验并标准化
     if dim.dim_group == PLATFORM_CONFIG_GROUP or dim.dim_code in PLATFORM_CONFIG_FIELDS:
         dim.dim_value = validate_platform_value(dim.dim_code, dim.dim_value)
+    # 全局检索参数：按 RETRIEVAL_CONFIG 校验并标准化
+    if dim.dim_group == RETRIEVAL_CONFIG_GROUP or dim.dim_code in RETRIEVAL_CONFIG_FIELDS:
+        dim.dim_value = validate_retrieval_value(dim.dim_code, dim.dim_value)
     db.commit()
     return {"id": dim.id, "updated": True}
 
