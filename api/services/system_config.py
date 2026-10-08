@@ -418,6 +418,34 @@ def get_platform_config(db: Session) -> dict:
     return {"items": out}
 
 
+def validate_platform_value(code: str, value: str | None) -> str:
+    """校验单个平台运行参数值（枚举白名单 / int 范围），返回标准化值。
+
+    非法值 raise ValueError（供 dims 通用 CRUD 与 save_platform_config 复用，
+    API 层统一转 400）。
+    """
+    code = normalize_value(code)
+    spec = PLATFORM_CONFIG_FIELDS.get(code)
+    if not spec:
+        # 非平台参数：不强制校验（dims 通用参数可自由定义）
+        return normalize_value(str(value if value is not None else ""))
+    label, vtype, default, options, desc = spec
+    v = normalize_value(str(value if value is not None else ""))
+    if code == "WIKI_BUILD_MODE":
+        v = "direct" if v.lower() == "inline" else v.lower()
+        if v not in options:
+            raise ValueError(f"{label} 取值非法：{v}（可选 {options}）")
+        return v
+    try:
+        n = int(v)
+    except ValueError:
+        raise ValueError(f"{label} 必须是整数") from None
+    lo, hi = PLATFORM_INT_RANGES.get(code, (1, 1000))
+    if n < lo or n > hi:
+        raise ValueError(f"{label} 取值范围 {lo}-{hi}")
+    return str(n)
+
+
 def save_platform_config(db: Session, items: list[dict]) -> dict:
     """Upsert 平台运行参数到 modo_dim（校验类型/枚举）。"""
     saved: list[str] = []
@@ -427,25 +455,7 @@ def save_platform_config(db: Session, items: list[dict]) -> dict:
         if not spec:
             continue
         label, vtype, default, options, desc = spec
-        value = normalize_value(str(item.get("value") if item.get("value") is not None else ""))
-        if code == "WIKI_BUILD_MODE":
-            value = "direct" if value.lower() == "inline" else value.lower()
-            if value not in options:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"{label} 取值非法：{value}（可选 {options}）",
-                )
-        else:
-            try:
-                n = int(value)
-            except ValueError:
-                raise HTTPException(status_code=400, detail=f"{label} 必须是整数")
-            lo, hi = PLATFORM_INT_RANGES.get(code, (1, 1000))
-            if n < lo or n > hi:
-                raise HTTPException(
-                    status_code=400, detail=f"{label} 取值范围 {lo}-{hi}"
-                )
-            value = str(n)
+        value = validate_platform_value(code, item.get("value"))
         existing = (
             db.execute(
                 select(Dim).where(

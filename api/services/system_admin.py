@@ -31,6 +31,11 @@ from api.models.framework import (
     UserRoleRela,
 )
 from api.services.identity import collect_user_role_ids
+from api.services.system_config import (
+    PLATFORM_CONFIG_FIELDS,
+    PLATFORM_CONFIG_GROUP,
+    validate_platform_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -879,11 +884,15 @@ def create_dim(db: Session, payload: dict) -> dict:
     ).scalars().first()
     if dup:
         raise ValueError(f"dim_code already exists: {dim_code}")
+    dim_group = payload.get("dim_group") or None
+    dim_value = payload.get("dim_value")
+    if dim_group == PLATFORM_CONFIG_GROUP or dim_code in PLATFORM_CONFIG_FIELDS:
+        dim_value = validate_platform_value(dim_code, dim_value)
     dim = Dim(
         id=uuid.uuid4().hex,
         dim_code=dim_code,
-        dim_group=payload.get("dim_group") or None,
-        dim_value=payload.get("dim_value") or None,
+        dim_group=dim_group,
+        dim_value=dim_value,
         dim_desc=payload.get("dim_desc") or None,
         parent_dim_code=payload.get("parent_dim_code") or None,
         seq=int(payload["seq"]) if payload.get("seq") is not None else 0,
@@ -920,6 +929,9 @@ def update_dim(db: Session, dim_id: str, payload: dict) -> dict:
             setattr(dim, attr, payload[field] or None)
     if "seq" in payload and payload["seq"] is not None:
         dim.seq = int(payload["seq"])
+    # 平台运行参数：按 PLATFORM_CONFIG 校验并标准化
+    if dim.dim_group == PLATFORM_CONFIG_GROUP or dim.dim_code in PLATFORM_CONFIG_FIELDS:
+        dim.dim_value = validate_platform_value(dim.dim_code, dim.dim_value)
     db.commit()
     return {"id": dim.id, "updated": True}
 
