@@ -216,6 +216,9 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下；type-
 18. **MySQL 8 禁止 TEXT/BLOB 字面默认值**（`content TEXT DEFAULT ''` 直接报错）：跨库 DDL 的 TEXT 列不写 DEFAULT，ORM 端 `default=` 兜底。
 19. **知识库存储拆分后的 DDL 验证配方**：真库验证 `docker run -d --name kb-ddl-verify -e MYSQL_ALLOW_EMPTY_PASSWORD=yes -p 13309:3306 mysql:8.0` → `docker exec -i kb-ddl-verify mysql -uroot <scripts/knowledge_business_schema.sql`（无库则先 CREATE DATABASE）；方言解析校验 `uv run --with sqlglot python -c "..."`（mysql/postgres/sqlite 三方言全过，22 语句）。
 20. **新增模型列不落到已有库（create_all 只建不更）**：模型加列后老库报 `Unknown column 'xxx' in 'field list'`（2026-10-08 chat_session.parent_session_id、chat_attachment.media_type/file_data 均踩中）。改模型后必须跑对应幂等迁移（scripts/migrate_chat_parent_session_column.py、migrate_chat_attachment_columns.py），并用 `scripts/check_schema_drift.py` 审计模型↔库列对齐（容器内 `.venv/bin/python` 跑；宿主跑会读错根 .env 指向 data_synth 库）。
+21. **Alembic 已接管框架库 schema（2026-10-08 方案 A 落地）**：alembic.ini + migrations/（基线 0001_baseline = 当前库状态，已 stamp），api-server 启动 lifespan 自动 `alembic upgrade head`（AUTO_MIGRATE_ON_START 控制，默认开；pytest 经 tests/conftest.py 置 0 防止对 data_synth 库误迁移）。向量库 kb_embedding 不走 alembic（HNSW 索引表达不了，仍走 knowledge_schema.sql）。模型改列流程：改模型 → 容器内 `alembic revision --autogenerate` → **人工裁剪**（见 22）→ 重启自动生效。
+22. **alembic 1.20 autogenerate 的 compare_indexes/compare_foreign_keys=False 不生效**（源码 1.20 重构，比较器不读该 flag）：autogenerate 会把库 DDL 手建的索引名（idx_*/fk_*）与模型默认名（ix_*/op.f）差异、nullable 差异全量生成进迁移（含会失败的 drop_constraint）。生成后必须人工删除"历史噪音"行，只保留真实变更（缺表/缺列）。基线已 stamp，正常开发不受影响。
+23. **部署镜像已含 alembic**：4 个 Dockerfile 均 COPY alembic.ini + migrations/；pyproject.toml 加了 alembic>=1.13（uv.lock 同步）。部署新镜像前需重建（构建机跑 build-images workflow 手动触发）。
 
 ## 8. 剩余工作（按优先级）
 

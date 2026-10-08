@@ -49,6 +49,8 @@ COPY api/ ./api/
 COPY worker/ ./worker/
 COPY docreader/ ./docreader/
 COPY scripts/ ./scripts/
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
 RUN mkdir -p /data/kb_documents
 
 ENV PATH="/srv/kb/.venv/bin:$PATH" \
