@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * 角色管理（重写对齐 data-synth system/roles）：
- * ModoPage 外壳 + PageFilter(角色名称/角色类型) + 工具栏「新建角色」
- * + ModoTable(角色编码/角色名称/角色类型/角色描述/已分配菜单/状态/操作)
- * + ModoPagination 吸底；新建/编辑 ModoDrawer、分配菜单 TreeSelect、用户配置 Transfer。
+ * 角色管理（2026-10-08 参考用户管理页改造）：
+ * 外层 8px padding + Card(标题「角色」/ extra 新建按钮) + inline 筛选表单(角色名称/角色类型/查询/重置)
+ * + ModoTable(角色编码/角色名称/角色类型/角色描述/已分配菜单/状态/操作) 一屏自适应
+ * + ModoPagination 常驻底栏；新建/编辑 ModoDrawer、分配菜单 TreeSelect、用户配置 Transfer。
  *
  * 数据契约（kb 下划线风格，见 web/src/lib/api.ts）：
  * - apiListRoles(page, pageSize) 分页；角色字段 role_id/role_name/role_type/role_descr/state
@@ -19,8 +19,7 @@
  * 「已分配菜单」列：列表接口不返回汇总，对当前页逐行并行拉取 apiGetRoleMenus（页面小）。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App, Form, Spin, Tag, Tooltip, Transfer, TreeSelect } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { App, Button, Card, Form, Input, Select, Space, Spin, Tag, Tooltip, Transfer, TreeSelect } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
   apiCreateRole,
@@ -38,11 +37,8 @@ import {
   SysRoleWrite,
 } from "@/lib/api";
 import { menusToTreeData } from "../_shared";
-import { ModoPage } from "@/components/biz/modo-page";
-import { ModoButton } from "@/components/biz/modo-button";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import { ModoPagination } from "@/components/biz/modo-pagination";
-import { PageFilter } from "@/components/biz/page-filter";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
 import { ModoModal } from "@/components/biz/modo-modal";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
@@ -542,73 +538,73 @@ export default function SystemRolesPage() {
   ];
 
   return (
-    <ModoPage>
-      {/* 筛选 */}
-      <PageFilter
-        form={searchForm}
-        onSearch={handleSearch}
-        onReset={handleReset}
-        searchParams={searchParams}
-        setSearchParams={setSearchParams}
-        labelMap={{
-          roleName: "角色名称",
-          roleType: "角色类型",
-        }}
-        valueMap={{
-          roleType: ROLE_TYPE_LABEL_MAP,
-        }}
-      >
-        <Form.Item name="roleName" label="角色名称">
-          <ModoInput placeholder="输入角色名称" allowClear />
-        </Form.Item>
-        <Form.Item name="roleType" label="角色类型">
-          <ModoSelect placeholder="请选择角色类型" allowClear options={ROLE_TYPE_OPTIONS} />
-        </Form.Item>
-      </PageFilter>
-
-      {/* 内容区：工具栏 + 表格 + 分页吸底（flex 链撑满一屏，无外层滚动） */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          minHeight: 0,
-          background: "#fff",
-        }}
-      >
-        <div style={{ flexShrink: 0, padding: "10px 16px 0 16px", marginBottom: 10 }}>
-          <ModoButton type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+    // 2026-10-08: 参考用户管理页改造 —— 外层 8px padding、Card 标题「角色」、extra 新建按钮、
+    // inline 筛选表单、表格占满剩余高度（一屏自适应）、分页常驻底栏
+    <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <Card
+        title="角色"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+        extra={
+          <Button type="primary" onClick={handleCreate}>
             新建角色
-          </ModoButton>
-        </div>
+          </Button>
+        }
+      >
+        {/* 筛选表单（对齐用户管理页 FilterForm：角色名称 + 角色类型 + 查询/重置） */}
+        <Form
+          form={searchForm}
+          layout="inline"
+          colon={false}
+          style={{ marginBottom: 12, flexShrink: 0 }}
+          onFinish={handleSearch}
+        >
+          <Form.Item name="roleName" label="角色名称">
+            <Input allowClear placeholder="请输入角色名称" style={{ width: 180 }} />
+          </Form.Item>
+          <Form.Item name="roleType" label="角色类型">
+            <Select allowClear placeholder="请选择角色类型" style={{ width: 180 }} options={ROLE_TYPE_OPTIONS} />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button
+                onClick={() => {
+                  searchForm.resetFields();
+                  handleReset();
+                }}
+              >
+                重置
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
 
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-          <ModoTable
-            columns={columns}
-            dataSource={data}
-            rowKey="role_id"
-            loading={loading}
-            scroll={{ x: 1400 }}
-            sticky
-            style={{ width: "100%" }}
-            size="middle"
+        <ModoTable
+          columns={columns}
+          dataSource={data}
+          rowKey="role_id"
+          loading={loading}
+          scroll={{ x: 1400 }}
+          size="small"
+        />
+        <div style={{ flexShrink: 0 }}>
+          <ModoPagination
+            current={currentPage}
+            pageSize={pageSize}
+            total={total}
+            showSizeChanger
+            showQuickJumper
+            showTotal={(t: number) => `共 ${t} 条`}
+            onChange={(page: number, size: number) => {
+              setCurrentPage(page);
+              setPageSize(size);
+            }}
           />
         </div>
-
-        <ModoPagination
-          current={currentPage}
-          pageSize={pageSize}
-          total={total}
-          showSizeChanger
-          showQuickJumper
-          showTotal={(t: number) => `共 ${t} 条`}
-          onChange={(page: number, size: number) => {
-            setCurrentPage(page);
-            setPageSize(size);
-          }}
-        />
-      </div>
+      </Card>
 
       {/* 新建 / 编辑角色 Drawer */}
       <ModoDrawer
@@ -742,6 +738,6 @@ export default function SystemRolesPage() {
           </Form.Item>
         </Form>
       </ModoModal>
-    </ModoPage>
+    </div>
   );
 }
