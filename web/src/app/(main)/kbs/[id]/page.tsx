@@ -35,7 +35,7 @@ import {
 } from "@ant-design/icons";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import WikiGraphView from "@/components/WikiGraphView";
-import Neo4jGraphView from "@/components/Neo4jGraphView";
+import PopotoGraphView from "@/components/PopotoGraphView";
 import WikiBrowseView from "@/components/WikiBrowseView";
 import WikiManagePanel from "@/components/WikiManagePanel";
 import DocCardView, { fileTypeIcon, formatSize } from "@/components/DocCardView";
@@ -764,7 +764,8 @@ export default function KbDetailPage() {
           {
             key: "graph",
             label: "知识图谱",
-            children: <Neo4jGraphView kbId={kbId} />,
+            // 2026-10-08 方案2: Popoto.js 可视化查询构建器(拖拽查询/分类/Tabular查询/结果图)
+            children: <PopotoGraphView kbId={kbId} />,
           },
         ]}
       />
