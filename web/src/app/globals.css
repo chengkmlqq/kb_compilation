@@ -89,7 +89,12 @@ body {
 .cron-page .ant-table-body,
 .workers-page .ant-table-body,
 .jobs-page .ant-table-body,
-.datasources-page .ant-table-body {
+.datasources-page .ant-table-body,
+.files-page .ant-table-body,
+.websearch-page .ant-table-body,
+.teams-page .ant-table-body,
+.menus-page .ant-table-body,
+.logs-page .ant-table-body {
   overflow-y: auto !important;
 }
 

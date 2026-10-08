@@ -14,13 +14,12 @@ import {
   Form,
   Input,
   Modal,
-  Popconfirm,
-    Radio,
-    Select,
-    Space,
-    Tabs,
-    Tree,
-  } from "antd";
+  Radio,
+  Select,
+  Space,
+  Tabs,
+  Tree,
+} from "antd";
 import {
   apiCreateTeam,
   apiDeleteTeam,
@@ -85,7 +84,7 @@ function highlightTitle(label: string, kw: string): React.ReactNode {
 }
 
 export default function SystemTeamsPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [teams, setTeams] = useState<SysTeamItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState("");
@@ -278,6 +277,17 @@ export default function SystemTeamsPage() {
     }
   };
 
+  // 删除确认（对齐用户管理页：统一用 modal.confirm）
+  const confirmDelete = (t: SysTeamItem) => {
+    modal.confirm({
+      title: `确认删除团队 ${t.team_name}？`,
+      content: t.label ? `团队「${t.label}」删除后不可恢复。` : undefined,
+      okText: "删除",
+      okButtonProps: { danger: true },
+      onOk: () => doDelete(t),
+    });
+  };
+
   const openMemberModal = async () => {
     setTargetUsers(members.map((m) => m.user_id as string));
     setMemberModalOpen(true);
@@ -337,20 +347,45 @@ export default function SystemTeamsPage() {
           </Space>
         ),
         onClick: () => {
-          if (ctx?.team) void doDelete(ctx.team);
+          const team = ctx?.team;
           setCtx(null);
+          if (team) confirmDelete(team);
         },
       },
     ],
   };
 
   return (
-    // 2026-10-07 一屏自适应（对齐 data-synth）：外层不滚动，卡片内左右分栏占满剩余高度
-    <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+    // 2026-10-08: 对齐用户管理页范式——外层固定视口高度不滚动，卡片内左右分栏占满剩余高度
+    <div
+      className="teams-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
       <Card
-        title="团队"
+        title="团队管理"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
+        extra={
+          <Button type="primary" onClick={() => openCreate(null)}>
+            新增团队
+          </Button>
+        }
       >
         <div style={{ display: "flex", gap: 16, flex: 1, minHeight: 0 }}>
           {/* 左侧团队树 */}
@@ -447,12 +482,9 @@ export default function SystemTeamsPage() {
                         <Button type="primary" onClick={() => openEdit(selectedTeam)}>
                           编辑
                         </Button>
-                        <Popconfirm
-                          title={`确认删除该团队吗？${selectedTeam.team_name}`}
-                          onConfirm={() => void doDelete(selectedTeam)}
-                        >
-                          <Button danger>删除</Button>
-                        </Popconfirm>
+                        <Button danger onClick={() => confirmDelete(selectedTeam)}>
+                          删除
+                        </Button>
                         <Button onClick={() => openCreate(selectedTeam)}>新增子团队</Button>
                       </Space>
                     </div>

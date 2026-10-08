@@ -16,8 +16,10 @@ import {
   Alert,
   App,
   Button,
+  Card,
   Divider,
   Dropdown,
+  Empty,
   Form,
   Input,
   InputNumber,
@@ -40,14 +42,10 @@ import {
   PlusOutlined,
 } from "@ant-design/icons";
 import * as AntdIcons from "@ant-design/icons";
-import { ModoPage } from "@/components/biz/modo-page";
-import { ModoButton } from "@/components/biz/modo-button";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
 import { ModoTree } from "@/components/biz/modo-tree";
-import { ModoTable } from "@/components/biz/modo-table";
-import { PageFilter } from "@/components/biz/page-filter";
 import { ModoInput, ModoSearch, ModoTextArea } from "@/components/biz/modo-input";
 import { ModoSelect } from "@/components/biz/modo-select";
 import { ModoRadio } from "@/components/biz/modo-radio";
@@ -335,6 +333,8 @@ export default function SystemMenusPage() {
   };
 
   const handleReset = () => {
+    searchForm.resetFields();
+    setSearchParams({});
     setCurrentPage(1);
   };
 
@@ -554,6 +554,7 @@ export default function SystemMenusPage() {
       fixed: "right",
       render: (_, record) => (
         <ModoActionGroup
+          maxCount={2}
           actions={[
             { key: "edit", label: "编辑", onClick: () => openEdit(record) },
             { key: "delete", label: "删除", danger: true, onClick: () => handleDeleteConfirm(record.menu_id as string) },
@@ -564,9 +565,39 @@ export default function SystemMenusPage() {
   ];
 
   return (
-    <ModoPage>
+    // 2026-10-08: 对齐用户管理页范式——外层固定视口高度不滚动，卡片内表格占满剩余高度，分页常驻底栏
+    <div
+      className="menus-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <Card
+        title="菜单管理"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
+        extra={
+          <Button type="primary" onClick={() => openCreate()}>
+            新建
+          </Button>
+        }
+      >
       {/* 左树右表布局（对齐 data-synth）：Sider 240px 树区 + Content 表格区 */}
-      <Layout style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "row", background: "transparent" }}>
+      <Layout style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "row", background: "transparent" }}>
         <Sider
           width={240}
           theme="light"
@@ -583,11 +614,11 @@ export default function SystemMenusPage() {
         >
           <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%" }}>
             {/* 树搜索框 */}
-            <div style={{ padding: 16, flexShrink: 0 }}>
+            <div style={{ padding: "0 8px 12px 0", flexShrink: 0 }}>
               <ModoSearch placeholder="搜索菜单" variant="filled" onChange={onSearchChange} />
             </div>
             {/* 树区（占满剩余高度，超高滚动） */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 16px", minHeight: 0 }}>
+            <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 0 0", minHeight: 0 }}>
               <ModoTree
                 fieldNames={{ key: "key", title: "title" }}
                 treeData={treeData}
@@ -662,7 +693,7 @@ export default function SystemMenusPage() {
           )}
         </Sider>
 
-        {/* 右侧：筛选 + 工具栏 + 表格 + 吸底分页 */}
+        {/* 右侧：筛选 + 表格 + 吸底分页 */}
         <Content
           style={{
             flex: 1,
@@ -671,58 +702,55 @@ export default function SystemMenusPage() {
             overflow: "hidden",
             minHeight: 0,
             background: "#fff",
+            paddingLeft: 16,
           }}
         >
-          <div style={{ flex: 1, width: "100%", overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            <PageFilter
-              form={searchForm}
-              onSearch={handleSearch}
-              onReset={handleReset}
-              searchParams={searchParams}
-              setSearchParams={setSearchParams}
-              labelMap={{ menu_name: "模块编码", menu_label: "模块中文名" }}
-            >
-              <Form.Item name="menu_name" label="模块编码" style={{ marginBottom: 0 }}>
-                <ModoInput placeholder="输入模块编码" allowClear />
-              </Form.Item>
-              <Form.Item name="menu_label" label="模块中文名" style={{ marginBottom: 0 }}>
-                <ModoInput placeholder="输入模块中文名" allowClear />
-              </Form.Item>
-            </PageFilter>
+          {/* 筛选表单（对齐用户管理页：内联表单 + 查询/重置） */}
+          <Form
+            form={searchForm}
+            layout="inline"
+            style={{ marginBottom: 12, flexShrink: 0 }}
+            onFinish={handleSearch}
+            initialValues={{ menu_name: "", menu_label: "" }}
+          >
+            <Form.Item name="menu_name" label="模块编码">
+              <Input allowClear placeholder="输入模块编码" style={{ width: 180 }} />
+            </Form.Item>
+            <Form.Item name="menu_label" label="模块中文名">
+              <Input allowClear placeholder="输入模块中文名" style={{ width: 180 }} />
+            </Form.Item>
+            <Form.Item>
+              <Space>
+                <Button type="primary" htmlType="submit">
+                  查询
+                </Button>
+                <Button onClick={handleReset}>重置</Button>
+              </Space>
+            </Form.Item>
+          </Form>
 
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, background: "#fff" }}>
-              {/* 工具栏 */}
-              <div style={{ flexShrink: 0, padding: "10px 16px 0 16px", marginBottom: 10 }}>
-                <ModoButton type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>
-                  新建
-                </ModoButton>
-              </div>
-              {/* 表格（占满剩余高度，表体内滚动） */}
-              <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-                <ModoTable
-                  columns={columns}
-                  dataSource={pagedItems}
-                  rowKey="menu_id"
-                  loading={loading}
-                  scroll={{ x: "100%" }}
-                />
-              </div>
-              {/* 分页吸底 */}
-              <div style={{ flexShrink: 0, background: "#fff" }}>
-                <ModoPagination
-                  current={currentPage}
-                  pageSize={pageSize}
-                  total={filteredItems.length}
-                  showSizeChanger
-                  showQuickJumper
-                  showTotal={(t) => `共 ${t} 条`}
-                  onChange={(page, size) => {
-                    setCurrentPage(page);
-                    setPageSize(size);
-                  }}
-                />
-              </div>
-            </div>
+          <Table<MenuItemExt>
+            columns={columns}
+            dataSource={pagedItems}
+            rowKey="menu_id"
+            size="small"
+            loading={loading}
+            pagination={false}
+            scroll={{ x: "100%", y: "calc(100vh - 264px)" }}
+            locale={{ emptyText: <Empty description="暂无菜单" /> }}
+          />
+          {/* 分页吸底 */}
+          <div style={{ flexShrink: 0, marginTop: "auto" }}>
+            <ModoPagination
+              current={currentPage}
+              pageSize={pageSize}
+              total={filteredItems.length}
+              showTotal={(t) => `共 ${t} 条`}
+              onChange={(page, size) => {
+                setCurrentPage(page);
+                setPageSize(size);
+              }}
+            />
           </div>
         </Content>
       </Layout>
@@ -892,6 +920,7 @@ export default function SystemMenusPage() {
           )}
         </Form>
       </ModoDrawer>
-    </ModoPage>
+      </Card>
+    </div>
   );
 }

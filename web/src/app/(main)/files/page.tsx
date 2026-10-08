@@ -11,25 +11,23 @@ import {
   App,
   Breadcrumb,
   Button,
+  Card,
   Dropdown,
   Empty,
+  Form,
   Input,
-    Modal,
-    Space,
-    Tag,
-    Typography,
-    Upload,
-  } from "antd";
+  Modal,
+  Space,
+  Table,
+  Tag,
+  Typography,
+  Upload,
+} from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
   CloudUploadOutlined,
-  DeleteOutlined,
-  DownloadOutlined,
   FileOutlined,
   FolderFilled,
-  FolderOpenOutlined,
-  ReloadOutlined,
-  SearchOutlined,
   UpOutlined,
 } from "@ant-design/icons";
 import {
@@ -42,8 +40,8 @@ import {
   apiFileZipUrl,
   SysFileItem,
 } from "@/lib/api";
-import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
+import { ModoActionGroup } from "@/components/biz/modo-action-group";
 
 const { Text } = Typography;
 
@@ -65,10 +63,10 @@ export default function FilesPage() {
   const [total, setTotal] = useState(0);
   const [currentPath, setCurrentPath] = useState("/");
   const [search, setSearch] = useState("");
-  const [searchInput, setSearchInput] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [uploading, setUploading] = useState(false);
+  const [searchForm] = Form.useForm<{ keyword: string }>();
 
   const parts = useMemo(
     () => currentPath.split("/").filter(Boolean),
@@ -203,6 +201,18 @@ export default function FilesPage() {
     document.body.removeChild(a);
   };
 
+  // 筛选（对齐用户管理页：查询/重置 显式触发，交由 load 的 effect 重新加载）
+  const doSearch = (vals: { keyword?: string }) => {
+    setSearch((vals.keyword || "").trim());
+    setPage(1);
+  };
+
+  const doReset = () => {
+    searchForm.resetFields();
+    setSearch("");
+    setPage(1);
+  };
+
   const columns: ColumnsType<SysFileItem> = [
     {
       title: "名称",
@@ -265,84 +275,92 @@ export default function FilesPage() {
     {
       title: "操作",
       key: "action",
-      width: 160,
+      width: 140,
       fixed: "right" as const,
-      render: (_, record) =>
-        record.isFolder ? (
-          <Space size={4}>
-            <Button
-              type="link"
-              size="small"
-              icon={<DownloadOutlined />}
-              onClick={() => handleZip(`${currentPath}/${record.name ?? ""}`, record.name ?? "-")}
-            >
-              下载
-            </Button>
-            <Button
-              type="link"
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              onClick={() =>
-                handleDeleteDir(`${currentPath}/${record.name ?? ""}`, record.name ?? "-")
-              }
-            >
-              删除
-            </Button>
-          </Space>
-        ) : (
-          <Space size={4}>
-            <Button
-              type="link"
-              size="small"
-              icon={<DownloadOutlined />}
-              onClick={() => handleDownload(record)}
-            >
-              下载
-            </Button>
-            <Button
-              type="link"
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              onClick={() => handleDeleteFile(record)}
-            >
-              删除
-            </Button>
-          </Space>
-        ),
+      render: (_: unknown, record: SysFileItem) => (
+        <ModoActionGroup
+          maxCount={2}
+          actions={
+            record.isFolder
+              ? [
+                  {
+                    key: "download",
+                    label: "下载",
+                    onClick: () =>
+                      handleZip(`${currentPath}/${record.name ?? ""}`, record.name ?? "-"),
+                  },
+                  {
+                    key: "delete",
+                    label: "删除",
+                    danger: true,
+                    onClick: () =>
+                      handleDeleteDir(`${currentPath}/${record.name ?? ""}`, record.name ?? "-"),
+                  },
+                ]
+              : [
+                  {
+                    key: "download",
+                    label: "下载",
+                    onClick: () => handleDownload(record),
+                  },
+                  {
+                    key: "delete",
+                    label: "删除",
+                    danger: true,
+                    onClick: () => handleDeleteFile(record),
+                  },
+                ]
+          }
+        />
+      ),
     },
   ];
 
   return (
+    // 2026-10-08: 对齐用户管理页范式——外层定高不滚动，卡片内「路径/筛选固定、表格滚动、分页钉底」
     <div
+      className="files-page"
       style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
         display: "flex",
         flexDirection: "column",
-        height: "100%",
-        minHeight: 0,
-        background: "#F5F7FA",
-        padding: 8,
         overflow: "hidden",
+        minHeight: 0,
       }}
     >
-      {/* 工具栏 */}
-      <div
-        style={{
-          flexShrink: 0,
-          background: "#fff",
-          borderRadius: 8,
-          border: "1px solid #E3E9EF",
-          padding: "12px 16px",
-          marginBottom: 12,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 16,
-          flexWrap: "wrap",
+      <Card
+        title="文件管理"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
         }}
+        extra={
+          <Upload accept="*" showUploadList={false} beforeUpload={handleUpload}>
+            <Button type="primary" icon={<CloudUploadOutlined />} loading={uploading}>
+              上传
+            </Button>
+          </Upload>
+        }
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        {/* 路径导航（固定） */}
+        <div
+          style={{
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 12,
+            flexWrap: "wrap",
+          }}
+        >
           <Button
             icon={<UpOutlined />}
             disabled={currentPath === "/"}
@@ -352,79 +370,62 @@ export default function FilesPage() {
           </Button>
           <Breadcrumb items={breadcrumbItems} />
         </div>
-        <Space size={8}>
-          <Input.Search
-            placeholder="搜索文件名"
-            allowClear
-            style={{ width: 220 }}
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onSearch={(v) => {
-              setSearch(v.trim());
-              setPage(1);
-              void load("/", v.trim(), 1, pageSize);
+
+        {/* 筛选表单（对齐用户管理页：查询/重置 显式触发） */}
+        <Form
+          form={searchForm}
+          layout="inline"
+          style={{ marginBottom: 12, flexShrink: 0 }}
+          onFinish={doSearch}
+          initialValues={{ keyword: "" }}
+        >
+          <Form.Item name="keyword" label="文件名">
+            <Input allowClear placeholder="请输入文件名" style={{ width: 220 }} />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button
+                onClick={() => {
+                  searchForm.resetFields();
+                  doReset();
+                }}
+              >
+                重置
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+
+        <Table<SysFileItem>
+          rowKey={(r) => (r.isFolder ? `dir:${r.name}` : r.id)}
+          size="small"
+          loading={loading}
+          dataSource={list}
+          columns={columns}
+          pagination={false}
+          scroll={{ x: 900, y: "calc(100vh - 308px)" }}
+          locale={{ emptyText: <Empty description="暂无文件" /> }}
+          onRow={(record) =>
+            record.isFolder ? { onDoubleClick: () => enterFolder(record.name || "") } : {}
+          }
+        />
+        <div style={{ flexShrink: 0, marginTop: "auto" }}>
+          <ModoPagination
+            current={page}
+            pageSize={pageSize}
+            total={total}
+            showSizeChanger
+            showTotal={(t) => `共 ${t} 项${search ? "（搜索结果）" : ""}`}
+            onChange={(p, ps) => {
+              setPage(p);
+              setPageSize(ps);
             }}
           />
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={() => {
-              setSearch("");
-              setSearchInput("");
-              void load();
-            }}
-          >
-            刷新
-          </Button>
-          <Upload accept="*" showUploadList={false} beforeUpload={handleUpload}>
-            <Button type="primary" icon={<CloudUploadOutlined />} loading={uploading}>
-              上传
-            </Button>
-          </Upload>
-        </Space>
-      </div>
-
-      {/* 文件表格 */}
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          overflow: "hidden",
-          background: "#fff",
-          borderRadius: 8,
-          border: "1px solid #E3E9EF",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <ModoTable<SysFileItem>
-                  containerStyle={{ padding: "0 16px" }}
-                  rowKey={(r) => (r.isFolder ? `dir:${r.name}` : r.id)}
-                  size="middle"
-                  loading={loading}
-                  dataSource={list}
-                  columns={columns}
-                  scroll={{ x: 900 }}
-                  locale={{ emptyText: <Empty description="暂无文件" /> }}
-                  onRow={(record) =>
-                    record.isFolder
-                      ? { onDoubleClick: () => enterFolder(record.name || "") }
-                      : {}
-                  }
-                />
-                <div style={{ borderTop: "1px solid #E3E9EF", flexShrink: 0 }}>
-                  <ModoPagination
-                    current={page}
-                    pageSize={pageSize}
-                    total={total}
-                    showSizeChanger
-                    showTotal={(t) => `共 ${t} 项${search ? "（搜索结果）" : ""}`}
-                    onChange={(p, ps) => {
-                      setPage(p);
-                      setPageSize(ps);
-                    }}
-                  />
-                </div>
-      </div>
+        </div>
+      </Card>
     </div>
   );
 }

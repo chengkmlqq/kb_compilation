@@ -8,6 +8,7 @@ import {
   Col,
   Dropdown,
   Empty,
+  Form,
   Input,
   Row,
   Space,
@@ -70,6 +71,7 @@ export default function AgentsPage() {
   const [search, setSearch] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<AgentItem | null>(null);
+  const [searchForm] = Form.useForm<{ keyword: string }>();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -165,101 +167,154 @@ export default function AgentsPage() {
     ];
   };
 
+  // 筛选（对齐用户管理页：查询/重置 显式触发；本地过滤）
+  const doSearch = (vals: { keyword?: string }) => {
+    setSearch(vals.keyword?.trim() || "");
+  };
+
+  const doReset = () => {
+    searchForm.resetFields();
+    setSearch("");
+  };
+
   return (
-    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
-    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
+    // 2026-10-08: 对齐用户管理页范式——外层定高不滚动，卡片内「筛选固定 / 卡片列表滚动」
+    <div
+      className="agents-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
       <Card
         title="智能体配置"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
         extra={
-          <Space wrap>
-            <Input.Search
-              allowClear
-              placeholder="搜索智能体名称/描述"
-              style={{ width: 220 }}
-              onSearch={(v) => setSearch(v)}
-            />
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => {
-                setEditing(null);
-                setEditorOpen(true);
-              }}
-            >
-              新建智能体
-            </Button>
-          </Space>
+          <Button
+            type="primary"
+            onClick={() => {
+              setEditing(null);
+              setEditorOpen(true);
+            }}
+          >
+            新建智能体
+          </Button>
         }
       >
-        {visible.length === 0 ? (
-          <Empty description="暂无智能体">
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => {
-                setEditing(null);
-                setEditorOpen(true);
-              }}
-            >
-              新建智能体
-            </Button>
-          </Empty>
-        ) : (
-          <Row gutter={[16, 16]}>
-            {visible.map((agent) => {
-              const disabled = Boolean(agent.config?.disabled);
-              return (
-                <Col key={agent.id} xs={24} sm={12} lg={8} xl={6}>
-                  <Card
-                    size="small"
-                    hoverable
-                    style={{ height: "100%", opacity: disabled ? 0.55 : 1 }}
-                    title={
-                      <Space>
-                        {modeIcon(agent.config, agent.is_builtin)}
-                        <Typography.Text strong ellipsis style={{ maxWidth: 120 }}>
-                          {agent.name}
-                        </Typography.Text>
-                      </Space>
-                    }
-                    extra={
-                      <Dropdown
-                        menu={{
-                          items: menuItems(agent),
-                          onClick: ({ key }) => {
-                            if (key === "edit") {
-                              setEditing(agent);
-                              setEditorOpen(true);
-                            } else if (key === "copy") void onCopy(agent);
-                            else if (key === "enable" || key === "disable")
-                              void onToggleDisabled(agent);
-                            else if (key === "delete") onDelete(agent);
-                          },
-                        }}
-                      >
-                        <Button type="text" size="small" icon={<MoreOutlined />} />
-                      </Dropdown>
-                    }
-                  >
-                    <Typography.Paragraph
-                      type="secondary"
-                      ellipsis={{ rows: 2 }}
-                      style={{ minHeight: 44, marginBottom: 8 }}
+        {/* 筛选表单（对齐用户管理页：查询/重置 显式触发） */}
+        <Form
+          form={searchForm}
+          layout="inline"
+          style={{ marginBottom: 12, flexShrink: 0 }}
+          onFinish={doSearch}
+          initialValues={{ keyword: "" }}
+        >
+          <Form.Item name="keyword" label="智能体">
+            <Input allowClear placeholder="搜索名称/描述" style={{ width: 220 }} />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button
+                onClick={() => {
+                  searchForm.resetFields();
+                  doReset();
+                }}
+              >
+                重置
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+
+        {/* 卡片列表（flex:1 占满剩余高度，内容超出时内部滚动） */}
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          {visible.length === 0 ? (
+            <Empty description="暂无智能体">
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => {
+                  setEditing(null);
+                  setEditorOpen(true);
+                }}
+              >
+                新建智能体
+              </Button>
+            </Empty>
+          ) : (
+            <Row gutter={[16, 16]}>
+              {visible.map((agent) => {
+                const disabled = Boolean(agent.config?.disabled);
+                return (
+                  <Col key={agent.id} xs={24} sm={12} lg={8} xl={6}>
+                    <Card
+                      size="small"
+                      hoverable
+                      style={{ height: "100%", opacity: disabled ? 0.55 : 1 }}
+                      title={
+                        <Space>
+                          {modeIcon(agent.config, agent.is_builtin)}
+                          <Typography.Text strong ellipsis style={{ maxWidth: 120 }}>
+                            {agent.name}
+                          </Typography.Text>
+                        </Space>
+                      }
+                      extra={
+                        <Dropdown
+                          menu={{
+                            items: menuItems(agent),
+                            onClick: ({ key }) => {
+                              if (key === "edit") {
+                                setEditing(agent);
+                                setEditorOpen(true);
+                              } else if (key === "copy") void onCopy(agent);
+                              else if (key === "enable" || key === "disable")
+                                void onToggleDisabled(agent);
+                              else if (key === "delete") onDelete(agent);
+                            },
+                          }}
+                        >
+                          <Button type="text" size="small" icon={<MoreOutlined />} />
+                        </Dropdown>
+                      }
                     >
-                      {agent.description || "（无描述）"}
-                    </Typography.Paragraph>
-                    <Space wrap size={4}>
-                      {agent.is_builtin && <Tag color="blue">内置</Tag>}
-                      <Tag>{modeLabel(agent.config)}</Tag>
-                      {disabled && <Tag color="red">已停用</Tag>}
-                      {featureBadges(agent.config)}
-                    </Space>
-                  </Card>
-                </Col>
-              );
-            })}
-          </Row>
-        )}
+                      <Typography.Paragraph
+                        type="secondary"
+                        ellipsis={{ rows: 2 }}
+                        style={{ minHeight: 44, marginBottom: 8 }}
+                      >
+                        {agent.description || "（无描述）"}
+                      </Typography.Paragraph>
+                      <Space wrap size={4}>
+                        {agent.is_builtin && <Tag color="blue">内置</Tag>}
+                        <Tag>{modeLabel(agent.config)}</Tag>
+                        {disabled && <Tag color="red">已停用</Tag>}
+                        {featureBadges(agent.config)}
+                      </Space>
+                    </Card>
+                  </Col>
+                );
+              })}
+            </Row>
+          )}
+        </div>
 
         <AgentEditorModal
           mode={editing ? "edit" : "create"}

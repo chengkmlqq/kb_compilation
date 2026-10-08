@@ -12,7 +12,6 @@ import {
   Form,
   Input,
   Modal,
-  Pagination,
   Radio,
   Row,
   Select,
@@ -48,6 +47,7 @@ import {
   ModelItem,
   OntologySchemaGroup,
 } from "@/lib/api";
+import ModoPagination from "@/components/biz/modo-pagination";
 import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 import KBConfigModal from "@/components/KBConfigModal";
 
@@ -86,6 +86,7 @@ export default function KbsPage() {
   const [pinned, setPinned] = useState<Set<string>>(() => getPinned());
   const [configKb, setConfigKb] = useState<KbItem | null>(null);
   const [form] = Form.useForm();
+  const [searchForm] = Form.useForm<{ keyword: string }>();
 
   const customWiki = Form.useWatch("custom_wiki_generation", form) ?? false;
 
@@ -266,140 +267,193 @@ export default function KbsPage() {
     });
   };
 
+  // 筛选（对齐用户管理页：查询/重置 显式触发；本地过滤当前页数据）
+  const doSearch = (vals: { keyword?: string }) => {
+    setSearch(vals.keyword?.trim() || "");
+  };
+
+  const doReset = () => {
+    searchForm.resetFields();
+    setSearch("");
+  };
+
   return (
-    // 2026-10-07: 统一页面外边距（对齐用户管理页 padding:8）
-    <div style={{ padding: 8, height: "100%", overflow: "auto" }}>
+    // 2026-10-08: 对齐用户管理页范式——外层定高不滚动，卡片内「筛选固定 / 卡片视图滚动 / 分页钉底」
+    <div
+      className="kbs-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
       <Card
         title="知识库管理"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
         extra={
-          <Space wrap>
-            <Input.Search
-              allowClear
-              placeholder="搜索知识库名称/标签"
-              style={{ width: 240 }}
-              onSearch={(v) => setSearch(v)}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-              新建知识库
-            </Button>
-          </Space>
+          <Button type="primary" onClick={() => setCreateOpen(true)}>
+            新建知识库
+          </Button>
         }
       >
-        {visibleKbs.length === 0 ? (
-          <Empty description="暂无知识库，点击右上角「新建知识库」创建">
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-              新建知识库
-            </Button>
-          </Empty>
-        ) : (
-          <Row gutter={[16, 16]}>
-            {visibleKbs.map((kb) => {
-              const isFaq = kb.type === "faq";
-              const graphOn = Boolean(kb.indexing_strategy?.graph_enabled);
-              const vlmOn = kb.vlm_config && Object.keys(kb.vlm_config).length > 0;
-              const pinnedNow = pinned.has(kb.id);
-              return (
-                <Col key={kb.id} xs={24} sm={12} lg={8} xl={6}>
-                  <Card
-                    size="small"
-                    hoverable
-                    style={{ height: "100%" }}
-                    onClick={() => router.push(`/kbs/${kb.id}`)}
-                    title={
-                      <Space>
-                        <span
-                          style={{
-                            fontSize: 20,
-                            color: isFaq ? "#52c41a" : "#1677ff",
+        {/* 筛选表单（对齐用户管理页：查询/重置 显式触发） */}
+        <Form
+          form={searchForm}
+          layout="inline"
+          style={{ marginBottom: 12, flexShrink: 0 }}
+          onFinish={doSearch}
+          initialValues={{ keyword: "" }}
+        >
+          <Form.Item name="keyword" label="知识库">
+            <Input allowClear placeholder="搜索名称/标签" style={{ width: 220 }} />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button
+                onClick={() => {
+                  searchForm.resetFields();
+                  doReset();
+                }}
+              >
+                重置
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+
+        {/* 卡片视图（保留）——flex:1 占满剩余高度，内容超出时内部滚动 */}
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          {visibleKbs.length === 0 ? (
+            <Empty description="暂无知识库，点击右上角「新建知识库」创建">
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+                新建知识库
+              </Button>
+            </Empty>
+          ) : (
+            <Row gutter={[16, 16]}>
+              {visibleKbs.map((kb) => {
+                const isFaq = kb.type === "faq";
+                const graphOn = Boolean(kb.indexing_strategy?.graph_enabled);
+                const vlmOn = kb.vlm_config && Object.keys(kb.vlm_config).length > 0;
+                const pinnedNow = pinned.has(kb.id);
+                return (
+                  <Col key={kb.id} xs={24} sm={12} lg={8} xl={6}>
+                    <Card
+                      size="small"
+                      hoverable
+                      style={{ height: "100%" }}
+                      onClick={() => router.push(`/kbs/${kb.id}`)}
+                      title={
+                        <Space>
+                          <span
+                            style={{
+                              fontSize: 20,
+                              color: isFaq ? "#52c41a" : "#1677ff",
+                            }}
+                          >
+                            {isFaq ? <MessageOutlined /> : <FileTextOutlined />}
+                          </span>
+                          <Typography.Text strong ellipsis style={{ maxWidth: 140 }}>
+                            {kb.name}
+                          </Typography.Text>
+                        </Space>
+                      }
+                      extra={
+                        <Dropdown
+                          menu={{
+                            items: [
+                              { key: "open", label: "打开知识库" },
+                              { key: "config", label: "知识库配置" },
+                              { key: "chunking", label: "切片配置" },
+                              { type: "divider" },
+                              pinnedNow
+                                ? { key: "unpin", label: "取消置顶" }
+                                : { key: "pin", label: "置顶", icon: <PushpinOutlined /> },
+                              { type: "divider" },
+                              { key: "delete", label: "删除", danger: true },
+                            ],
+                            onClick: ({ key, domEvent }) => {
+                              domEvent.stopPropagation();
+                              if (key === "open") router.push(`/kbs/${kb.id}`);
+                              else if (key === "config") setConfigKb(kb);
+                              else if (key === "chunking") setChunkingKbId(kb.id);
+                              else if (key === "pin") togglePin(kb.id);
+                              else if (key === "unpin") togglePin(kb.id);
+                              else if (key === "delete") onDelete(kb);
+                            },
                           }}
                         >
-                          {isFaq ? <MessageOutlined /> : <FileTextOutlined />}
-                        </span>
-                        <Typography.Text strong ellipsis style={{ maxWidth: 140 }}>
-                          {kb.name}
-                        </Typography.Text>
-                      </Space>
-                    }
-                    extra={
-                      <Dropdown
-                        menu={{
-                          items: [
-                            { key: "open", label: "打开知识库" },
-                            { key: "config", label: "知识库配置" },
-                            { key: "chunking", label: "切片配置" },
-                            { type: "divider" },
-                            pinnedNow
-                              ? { key: "unpin", label: "取消置顶" }
-                              : { key: "pin", label: "置顶", icon: <PushpinOutlined /> },
-                            { type: "divider" },
-                            { key: "delete", label: "删除", danger: true },
-                          ],
-                          onClick: ({ key, domEvent }) => {
-                            domEvent.stopPropagation();
-                            if (key === "open") router.push(`/kbs/${kb.id}`);
-                            else if (key === "config") setConfigKb(kb);
-                            else if (key === "chunking") setChunkingKbId(kb.id);
-                            else if (key === "pin") togglePin(kb.id);
-                            else if (key === "unpin") togglePin(kb.id);
-                            else if (key === "delete") onDelete(kb);
-                          },
-                        }}
-                      >
-                        <Button
-                          type="text"
-                          size="small"
-                          icon={<MoreOutlined />}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </Dropdown>
-                    }
-                  >
-                    <Typography.Paragraph
-                      type="secondary"
-                      ellipsis={{ rows: 2 }}
-                      style={{ minHeight: 44, marginBottom: 8 }}
+                          <Button
+                            type="text"
+                            size="small"
+                            icon={<MoreOutlined />}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </Dropdown>
+                      }
                     >
-                      {kb.description || "（无描述）"}
-                    </Typography.Paragraph>
-                    <Space wrap size={4}>
-                      <Tag color="blue">
-                        <FileTextOutlined /> 文档 {kb.doc_count ?? 0}
-                      </Tag>
-                      <Tag color="green">
-                        <BookOutlined /> Wiki {kb.page_count ?? 0}
-                      </Tag>
-                      {kb.label && <Tag>{kb.label}</Tag>}
-                      {graphOn && (
-                        <Tag icon={<ApartmentOutlined />} color="purple">
-                          图谱
+                      <Typography.Paragraph
+                        type="secondary"
+                        ellipsis={{ rows: 2 }}
+                        style={{ minHeight: 44, marginBottom: 8 }}
+                      >
+                        {kb.description || "（无描述）"}
+                      </Typography.Paragraph>
+                      <Space wrap size={4}>
+                        <Tag color="blue">
+                          <FileTextOutlined /> 文档 {kb.doc_count ?? 0}
                         </Tag>
-                      )}
-                      {vlmOn && (
-                        <Tag icon={<PictureOutlined />} color="orange">
-                          多模态
+                        <Tag color="green">
+                          <BookOutlined /> Wiki {kb.page_count ?? 0}
                         </Tag>
-                      )}
-                      {isFaq && <Tag color="cyan">FAQ</Tag>}
-                      {pinnedNow && (
-                        <Tag icon={<PushpinOutlined />} color="gold">
-                          置顶
-                        </Tag>
-                      )}
-                    </Space>
-                  </Card>
-                </Col>
-              );
-            })}
-          </Row>
-        )}
+                        {kb.label && <Tag>{kb.label}</Tag>}
+                        {graphOn && (
+                          <Tag icon={<ApartmentOutlined />} color="purple">
+                            图谱
+                          </Tag>
+                        )}
+                        {vlmOn && (
+                          <Tag icon={<PictureOutlined />} color="orange">
+                            多模态
+                          </Tag>
+                        )}
+                        {isFaq && <Tag color="cyan">FAQ</Tag>}
+                        {pinnedNow && (
+                          <Tag icon={<PushpinOutlined />} color="gold">
+                            置顶
+                          </Tag>
+                        )}
+                      </Space>
+                    </Card>
+                  </Col>
+                );
+              })}
+            </Row>
+          )}
+        </div>
 
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
-          <Pagination
+        {/* 分页常驻底栏 */}
+        <div style={{ flexShrink: 0, marginTop: "auto" }}>
+          <ModoPagination
             current={page}
             pageSize={pageSize}
             total={total}
-            showSizeChanger
             showTotal={(t) => `共 ${t} 个知识库`}
             onChange={(p, ps) => {
               setPage(p);
