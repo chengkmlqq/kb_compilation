@@ -191,7 +191,9 @@ const JobTable: React.FC<JobTableProps> = ({
         // RUNNING：实时累加（now - start_time），其余用后端快照 duration_ms
         if (record.state === "RUNNING" && record.start_time) {
           const st = parseIsoUtc(record.start_time).getTime();
-          const text = Number.isNaN(st) ? fmtDur(ms) : fmtDur(now - st);
+          // 负值钳 0：后台标签页定时器被浏览器节流挂起时 now 落后于刚启动任务的
+          // start_time（或浏览器/服务器时钟轻微偏斜），短暂显示负耗时；钳 0 避免误解
+          const text = Number.isNaN(st) ? fmtDur(ms) : fmtDur(Math.max(0, now - st));
           return <span className="modo-running-duration">{text}</span>;
         }
         const text = fmtDur(ms);
