@@ -8,7 +8,6 @@ import {
   Drawer,
   Empty,
   Modal,
-  Popconfirm,
   Radio,
   Select,
   Space,
@@ -18,12 +17,13 @@ import {
   Typography,
   Upload,
 } from "antd";
-import { DeleteOutlined, DownloadOutlined, InboxOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from "@ant-design/icons";
+import { InboxOutlined, ReloadOutlined, UploadOutlined } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import CodeViewer from "@/components/CodeViewer";
 import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
+import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import {
   apiDeleteSkillRegistry,
   apiInstallSkillRegistryWithProgress,
@@ -97,7 +97,7 @@ function buildFileTree(files: { path: string; size: number }[]): TreeNode[] {
 }
 
 export default function SkillManagePage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [items, setItems] = useState<SkillRegistryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -415,19 +415,25 @@ export default function SkillManagePage() {
           },
           {
             title: "操作",
-            width: 200,
+            width: 140,
             render: (_: unknown, r: SkillRegistryItem) => (
-              <Space size={4}>
-                <Button size="small" onClick={() => void openDetail(r)}>
-                  详情
-                </Button>
-                <Button size="small" icon={<DownloadOutlined />} onClick={() => handleExport(r)}>
-                  导出
-                </Button>
-                <Popconfirm title={`删除技能 ${r.name}？`} onConfirm={() => void handleDelete(r)}>
-                  <Button size="small" danger icon={<DeleteOutlined />} />
-                </Popconfirm>
-              </Space>
+              <ModoActionGroup
+                maxCount={2}
+                actions={[
+                  { key: "detail", label: "详情", onClick: () => void openDetail(r) },
+                  { key: "export", label: "导出", onClick: () => handleExport(r) },
+                  {
+                    key: "delete",
+                    label: "删除",
+                    danger: true,
+                    onClick: () =>
+                      modal.confirm({
+                        title: `确定删除技能 ${r.name}？`,
+                        onOk: () => handleDelete(r),
+                      }),
+                  },
+                ]}
+              />
             ),
           },
         ]}

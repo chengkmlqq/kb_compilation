@@ -1,23 +1,20 @@
 "use client";
 
 /**
- * 参数管理（对齐 data-synth system/dims）：
- * PageFilter 折叠筛选（参数编码/参数分组）+ ModoTable（参数编码/分组/值/描述/排序/状态/操作）
- * + ModoDrawer 新建/编辑（dimCode 编辑禁用）+ ModoPagination 吸底。
+ * 参数管理（2026-10-08 参考用户管理页改造）：
+ * 外层 8px padding + Card(标题「参数」/ extra 新建按钮) + inline 筛选表单(参数编码/参数分组/查询/重置)
+ * + ModoTable 一屏自适应 + ModoPagination 常驻底栏；ModoDrawer 新建/编辑（dimCode 编辑禁用）。
  * 数据走 /api/v1/system/dims（modo_dim 通用 CRUD）。
  */
 import { useCallback, useEffect, useState } from "react";
-import { App, Form, InputNumber, Radio, Tooltip } from "antd";
+import { App, Button, Card, Form, Input, InputNumber, Select, Space, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { CheckCircleFilled, CloseCircleFilled, PlusOutlined } from "@ant-design/icons";
-import { ModoPage } from "@/components/biz/modo-page";
-import { ModoButton } from "@/components/biz/modo-button";
+import { CheckCircleFilled, CloseCircleFilled } from "@ant-design/icons";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
 import { ModoSelect } from "@/components/biz/modo-select";
 import { ModoRadio } from "@/components/biz/modo-radio";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
-import { PageFilter } from "@/components/biz/page-filter";
 import { ModoTable } from "@/components/biz/modo-table";
 import { ModoPagination } from "@/components/biz/modo-pagination";
 import {
@@ -37,7 +34,6 @@ export default function SystemDimsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [filter, setFilter] = useState<{ dimCode?: string; dimGroup?: string }>({});
-  const [searchParams, setSearchParams] = useState<Record<string, unknown>>({});
   const [groupOptions, setGroupOptions] = useState<{ label: string; value: string }[]>([]);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -78,6 +74,17 @@ export default function SystemDimsPage() {
       }
     });
   }, []);
+
+  // ---- 筛选（对齐用户管理页：查询/重置仅驱动状态，load 由 effect 触发） ----
+  const handleSearch = (values: { dimCode?: string; dimGroup?: string }) => {
+    setFilter(values);
+    setPage(1);
+  };
+
+  const handleReset = () => {
+    setFilter({});
+    setPage(1);
+  };
 
   const openCreate = () => {
     setDrawerMode("create");
@@ -236,40 +243,56 @@ export default function SystemDimsPage() {
   ];
 
   return (
-    <ModoPage>
-      <PageFilter
-        form={searchForm}
-        onSearch={(vals) => {
-          setSearchParams(vals);
-          setFilter(vals as { dimCode?: string; dimGroup?: string });
-          setPage(1);
-          void load(1, pageSize, vals as { dimCode?: string; dimGroup?: string });
-        }}
-        onReset={() => {
-          setSearchParams({});
-          setFilter({});
-          setPage(1);
-          void load(1, pageSize, {});
-        }}
-        searchParams={searchParams}
-        setSearchParams={setSearchParams}
-        labelMap={{ dimCode: "参数编码", dimGroup: "参数分组" }}
-        valueMap={{}}
-      >
-        <Form.Item name="dimCode" label="参数编码">
-          <ModoInput placeholder="输入参数编码" allowClear />
-        </Form.Item>
-        <Form.Item name="dimGroup" label="参数分组">
-          <ModoSelect placeholder="请选择参数分组" allowClear showSearch optionFilterProp="label" options={groupOptions} />
-        </Form.Item>
-      </PageFilter>
-
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, background: "#fff" }}>
-        <div style={{ flexShrink: 0, padding: "10px 16px 0 16px", marginBottom: 10 }}>
-          <ModoButton type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+    // 2026-10-08: 参考用户管理页改造 —— 外层 8px padding、Card 标题「参数」、extra 新建按钮、
+    // inline 筛选表单、表格占满剩余高度（一屏自适应）、分页常驻底栏
+    <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <Card
+        title="参数"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+        extra={
+          <Button type="primary" onClick={openCreate}>
             新建参数
-          </ModoButton>
-        </div>
+          </Button>
+        }
+      >
+        {/* 筛选表单（对齐用户管理页 FilterForm：参数编码 + 参数分组 + 查询/重置） */}
+        <Form
+          form={searchForm}
+          layout="inline"
+          colon={false}
+          style={{ marginBottom: 12, flexShrink: 0 }}
+          onFinish={handleSearch}
+        >
+          <Form.Item name="dimCode" label="参数编码">
+            <Input allowClear placeholder="请输入参数编码" style={{ width: 180 }} />
+          </Form.Item>
+          <Form.Item name="dimGroup" label="参数分组">
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="请选择参数分组"
+              style={{ width: 180 }}
+              options={groupOptions}
+            />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button
+                onClick={() => {
+                  searchForm.resetFields();
+                  handleReset();
+                }}
+              >
+                重置
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
 
         <ModoTable<DimItem>
           columns={columns}
@@ -278,21 +301,24 @@ export default function SystemDimsPage() {
           loading={loading}
           scroll={{ x: "100%" }}
           locale={{ emptyText: "暂无参数" }}
+          size="small"
         />
 
-        <ModoPagination
-          current={page}
-          pageSize={pageSize}
-          total={total}
-          showSizeChanger
-          showQuickJumper
-          showTotal={(t) => `共 ${t} 条`}
-          onChange={(p, ps) => {
-            setPage(p);
-            setPageSize(ps);
-          }}
-        />
-      </div>
+        <div style={{ flexShrink: 0 }}>
+          <ModoPagination
+            current={page}
+            pageSize={pageSize}
+            total={total}
+            showSizeChanger
+            showQuickJumper
+            showTotal={(t) => `共 ${t} 条`}
+            onChange={(p, ps) => {
+              setPage(p);
+              setPageSize(ps);
+            }}
+          />
+        </div>
+      </Card>
 
       <ModoDrawer
         title={drawerMode === "create" ? "新建参数" : "编辑参数"}
@@ -342,6 +368,6 @@ export default function SystemDimsPage() {
           </Form.Item>
         </Form>
       </ModoDrawer>
-    </ModoPage>
+    </div>
   );
 }

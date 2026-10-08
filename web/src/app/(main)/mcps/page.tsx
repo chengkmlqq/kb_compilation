@@ -10,7 +10,6 @@ import {
   Form,
   Input,
   Modal,
-  Popconfirm,
   Select,
   Space,
   Spin,
@@ -19,10 +18,11 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import CodeViewer from "@/components/CodeViewer";
 import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
+import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import {
   apiCreateMcp,
   apiDeleteMcp,
@@ -48,7 +48,7 @@ const SCOPE_COLOR: Record<ModelScope, string> = {
 };
 
 export default function McpManagePage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [items, setItems] = useState<McpRegistryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -179,19 +179,25 @@ export default function McpManagePage() {
           },
           {
             title: "操作",
-            width: 200,
+            width: 140,
             render: (_: unknown, r: McpRegistryItem) => (
-              <Space size={4}>
-                <Button size="small" icon={<ThunderboltOutlined />} onClick={() => setTestTarget(r)}>
-                  测试
-                </Button>
-                <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>
-                  编辑
-                </Button>
-                <Popconfirm title={`删除 ${r.name}？`} onConfirm={() => void handleDelete(r)}>
-                  <Button size="small" danger icon={<DeleteOutlined />} />
-                </Popconfirm>
-              </Space>
+              <ModoActionGroup
+                maxCount={2}
+                actions={[
+                  { key: "test", label: "测试", onClick: () => setTestTarget(r) },
+                  { key: "edit", label: "编辑", onClick: () => openEdit(r) },
+                  {
+                    key: "delete",
+                    label: "删除",
+                    danger: true,
+                    onClick: () =>
+                      modal.confirm({
+                        title: `确定删除 ${r.name}？`,
+                        onOk: () => handleDelete(r),
+                      }),
+                  },
+                ]}
+              />
             ),
           },
         ]}
