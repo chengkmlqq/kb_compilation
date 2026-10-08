@@ -25,6 +25,9 @@ def _fake_httpx(monkeypatch, captured: dict):
         def raise_for_status(self):
             pass
 
+        def close(self):
+            pass
+
         def iter_lines(self):
             return ["data: [DONE]"]
             yield  # pragma: no cover
@@ -38,6 +41,15 @@ def _fake_httpx(monkeypatch, captured: dict):
 
         def __exit__(self, *a):
             return False
+
+        def build_request(self, method, url, json=None, headers=None):
+            return {"method": method, "url": url, "json": json, "headers": headers}
+
+        def send(self, req, stream=True):
+            captured["url"] = req["url"]
+            captured["json"] = req["json"]
+            captured["headers"] = req["headers"]
+            return FakeResp()
 
         def stream(self, method, url, json=None, headers=None):
             captured["url"] = url
