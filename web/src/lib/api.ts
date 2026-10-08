@@ -35,7 +35,21 @@ async function request<T = unknown>(path: string, init?: RequestInit): Promise<A
     return { success: res.ok, message: `HTTP ${res.status}` };
   }
   try {
-    return JSON.parse(text) as ApiEnvelope<T>;
+    const parsed = JSON.parse(text) as ApiEnvelope<T> & { detail?: unknown };
+    if (!res.ok) {
+      // FastAPI 422/400 detail 结构 → 可读 message（否则页面只显示泛化「XX失败」）
+      const detail = parsed?.detail;
+      let msg = "";
+      if (Array.isArray(detail)) {
+        msg = (detail as Array<{ loc?: Array<string | number>; msg?: string }>)
+          .map((d) => `${(d.loc || []).slice(1).join(".")}: ${d.msg || ""}`)
+          .join("; ");
+      } else if (typeof detail === "string") {
+        msg = detail;
+      }
+      return { ...parsed, success: false, message: msg || parsed?.message || `HTTP ${res.status}` };
+    }
+    return parsed as ApiEnvelope<T>;
   } catch {
     return { success: false, message: text.slice(0, 200) };
   }
