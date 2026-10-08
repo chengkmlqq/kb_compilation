@@ -277,3 +277,31 @@ body {
   0%, 100% { box-shadow: 0 0 0 0 rgba(250, 140, 22, 0.45); }
   50% { box-shadow: 0 0 0 5px rgba(250, 140, 22, 0); }
 }
+
+/* ===== 全局细滚动条（对齐 data-synth globals.css） ===== */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(50, 50, 50, 0.25) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(50, 50, 50, 0.25);
+  border-radius: 5px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(50, 50, 50, 0.4);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
