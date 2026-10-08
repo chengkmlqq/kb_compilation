@@ -281,6 +281,7 @@ export default function ChatPage() {
       let full = "";
       let fullThinking = "";
       let refs: ChatRefItem[] = [];
+      let resumeDone = false;
       // 补一个续传占位消息（若最后一条不是本流助手消息）
       const lastMsg = msgsRef.current?.[msgsRef.current.length - 1];
       const needPlaceholder =
@@ -301,6 +302,7 @@ export default function ChatPage() {
       }
       const applyId = needPlaceholder ? placeholderId : (lastMsg?.id ?? placeholderId);
       while (true) {
+        if (resumeDone) break;
         const { done, value } = await reader.read();
         if (done) break;
         buf += decoder.decode(value, { stream: true });
@@ -370,12 +372,17 @@ export default function ChatPage() {
                     : m,
                 ),
               );
+            } else if (ev.type === "done") {
+              // 续传收到 done：立即结束，不再等连接关闭
+              resumeDone = true;
+              break;
             }
             evtCount += 1;
           } catch {
             // ignore
           }
         }
+        if (resumeDone) break;
       }
       setMsgs((prev) =>
         prev.map((m) =>
@@ -455,18 +462,27 @@ export default function ChatPage() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // 若还没有会话，先建一个（用第一条问题当会话）
+    // 若还没有会话，先建一个（用第一条问题当会话）。
+    // 注意：setStreaming(true) 发生在 try 块外，这里若抛异常（网络失败等）
+    // 必须复位 streaming，否则界面永远显示"正在生成回答…"。
     let sessionId = activeSession;
     if (!sessionId) {
-      const created = effectiveAgent
-        ? await apiCreateAgentSession(effectiveAgent, effectiveKbId, question.slice(0, 30))
-        : await apiCreateSession(effectiveKbId ?? "", question.slice(0, 30));
-      if (created.success && created.data) {
-        sessionId = created.data.id;
-        setActiveSession(sessionId);
-        await loadSessions();
-      } else {
-        toast.error(created.message || "创建会话失败");
+      try {
+        const created = effectiveAgent
+          ? await apiCreateAgentSession(effectiveAgent, effectiveKbId, question.slice(0, 30))
+          : await apiCreateSession(effectiveKbId ?? "", question.slice(0, 30));
+        if (created.success && created.data) {
+          sessionId = created.data.id;
+          setActiveSession(sessionId);
+          await loadSessions();
+        } else {
+          toast.error(created.message || "创建会话失败");
+          setMsgs((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== placeholder.id));
+          setStreaming(false);
+          return;
+        }
+      } catch (e) {
+        toast.error(`创建会话失败: ${(e as Error)?.message || String(e)}`);
         setMsgs((prev) => prev.filter((m) => m.id !== userMsg.id && m.id !== placeholder.id));
         setStreaming(false);
         return;
@@ -501,8 +517,18 @@ export default function ChatPage() {
       let refs: ChatRefItem[] = [];
       let streamId = "";
       let eventCount = 0;
+      let streamDone = false;
 
       while (true) {
+        if (streamDone) {
+          // 已收到 done 事件：主动释放连接，不再等待 HTTP 关闭
+          try {
+            await reader.cancel();
+          } catch {
+            // ignore
+          }
+          break;
+        }
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -585,6 +611,12 @@ export default function ChatPage() {
               }
             } else if (evt.type === "error") {
               toast.error(evt.message || "问答失败");
+            } else if (evt.type === "done") {
+              // 后端已确认生成结束：立即退出循环并复位 streaming，
+              // 不再依赖 HTTP 连接关闭（连接可能因 keep-alive/代理延迟关闭，
+              // 否则 setStreaming(false) 永远执行不到，界面一直显示"正在回答"）。
+              streamDone = true;
+              break;
             }
             eventCount += 1;
             if (sessionId && streamId) {
