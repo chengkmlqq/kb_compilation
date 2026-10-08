@@ -160,7 +160,8 @@ class WikiFeedbackStatusUpdate(BaseModel):
 @router.get("")
 def get_kbs(
     page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100),
+    # le=1000：本体 Schema 页「绑定知识库」下拉 apiListKbs(1, 500) 全量拉取
+    page_size: int = Query(10, ge=1, le=1000),
     keyword: str = "",
     scope: str | None = None,
     db: Session = Depends(get_db),

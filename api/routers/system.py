@@ -100,7 +100,8 @@ def _current_identity(x_next_identity: str | None) -> str | None:
 @router.get("/users")
 def get_users(
     page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100),
+    # le=1000：用户页「团队/角色下拉、成员维护」等按 apiListTeams/Roles/Users(1, 500) 全量拉取
+    page_size: int = Query(10, ge=1, le=1000),
     keyword: str = "",
     db: Session = Depends(get_db),
 ) -> dict:
@@ -108,7 +109,7 @@ def get_users(
 
 
 @router.get("/roles")
-def get_roles(page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100), db: Session = Depends(get_db)) -> dict:
+def get_roles(page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=1000), db: Session = Depends(get_db)) -> dict:
     return {"success": True, "data": list_roles(db, page, page_size)}
 
 
@@ -195,7 +196,7 @@ def assign_role_users(role_id: str, req: RoleUsersRequest, db: Session = Depends
 
 
 @router.get("/teams")
-def get_teams(page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100), db: Session = Depends(get_db)) -> dict:
+def get_teams(page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=1000), db: Session = Depends(get_db)) -> dict:
     return {"success": True, "data": list_teams(db, page, page_size)}
 
 
