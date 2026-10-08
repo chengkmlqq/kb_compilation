@@ -335,8 +335,10 @@ def execute_modo_job(job_id: str) -> dict:
         task_class = job.task_class
         task_params = job.task_params
         job.state = "RUNNING"
-        if job.start_time is None:
-            job.start_time = dt.datetime.now(dt.timezone.utc)
+        # 每次执行刷新 start_time（2026-10-07）：此前 if None 才更新——孤儿恢复
+        # 重投时保留历史 start_time → 重投后仍被孤儿恢复判定孤儿（>60min）→
+        # 每 5 分钟循环重投 + 双实例。无条件刷新 = 重投重新计时，循环打破。
+        job.start_time = dt.datetime.now(dt.timezone.utc)
         # 状态立即落库（2026-10-07：此前 RUNNING 从未 commit，任务页/监控
         # 一直显示 PENDING 直至收尾——状态漂移）
         db.commit()
