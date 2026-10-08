@@ -2908,3 +2908,138 @@ export function apiImportOntologySchema(payload: {
     body: JSON.stringify(payload),
   });
 }
+
+
+// ═══════════ 编排（Orchestration）— 迁移自 data-synth algorithm/tapes ═══════════
+
+export interface StepDefineItem {
+  id: string;
+  group_type: string;
+  step_inst: string;
+  step_label: string;
+  step_icon?: string | null;
+  step_desc?: string | null;
+  step_cfg: Record<string, unknown>[];
+  step_seq: number;
+  status: string;
+}
+
+export interface TapeItem {
+  id: string;
+  tape_name: string;
+  tape_label: string;
+  tape_descr?: string | null;
+  tape_type: string;
+  status: string; // draft | effective | offline
+  create_user?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface TapeDetail extends TapeItem {
+  nodes: Record<string, any>[];
+  edges: Record<string, any>[];
+  exec_params: Record<string, unknown>;
+}
+
+export interface TapeStepItem {
+  id: string;
+  tape_id: string;
+  step_inst: string;
+  step_label: string;
+  step_config: Record<string, unknown>;
+  step_seq: number;
+  pre_step_ids: string[];
+  next_step_ids: string[];
+}
+
+export interface TapeExecuteResult {
+  task_id: string;
+  tape_id: string;
+  tape_name: string;
+  success: boolean;
+  steps: {
+    step_id: string;
+    step_label: string;
+    step_inst: string;
+    status: string;
+    duration_ms: number;
+    body?: unknown;
+    error?: string | null;
+  }[];
+  bindings: Record<string, string>;
+}
+
+export function apiListStepDefines(page = 1, pageSize = 20, keyword = "", groupType = "") {
+  return request<{ total: number; items: StepDefineItem[] }>(
+    `/api/v1/orchestrations/step-defines?page=${page}&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}&group_type=${encodeURIComponent(groupType)}`,
+  );
+}
+
+export function apiCreateStepDefine(payload: Record<string, unknown>) {
+  return request<StepDefineItem>("/api/v1/orchestrations/step-defines", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateStepDefine(id: string, payload: Record<string, unknown>) {
+  return request<StepDefineItem>(`/api/v1/orchestrations/step-defines/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiDeleteStepDefine(id: string) {
+  return request<{ ok: boolean }>(`/api/v1/orchestrations/step-defines/${id}`, { method: "DELETE" });
+}
+
+export function apiListTapes(page = 1, pageSize = 20, keyword = "", status = "") {
+  return request<{ total: number; items: TapeItem[] }>(
+    `/api/v1/orchestrations?page=${page}&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}&status=${encodeURIComponent(status)}`,
+  );
+}
+
+export function apiGetTape(id: string) {
+  return request<TapeDetail>(`/api/v1/orchestrations/${id}`);
+}
+
+export function apiCreateTape(payload: Record<string, unknown>) {
+  return request<TapeItem>("/api/v1/orchestrations", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateTape(id: string, payload: Record<string, unknown>) {
+  return request<TapeItem>(`/api/v1/orchestrations/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiDeleteTape(id: string) {
+  return request<{ ok: boolean }>(`/api/v1/orchestrations/${id}`, { method: "DELETE" });
+}
+
+export function apiSaveTapeDesign(id: string, nodes: unknown[], edges: unknown[], execParams?: Record<string, unknown>) {
+  return request<TapeItem>(`/api/v1/orchestrations/${id}/design`, {
+    method: "POST",
+    body: JSON.stringify({ nodes, edges, exec_params: execParams }),
+  });
+}
+
+export function apiPublishTape(id: string) {
+  return request<TapeItem>(`/api/v1/orchestrations/${id}/publish`, { method: "POST" });
+}
+
+export function apiOfflineTape(id: string) {
+  return request<TapeItem>(`/api/v1/orchestrations/${id}/offline`, { method: "POST" });
+}
+
+export function apiExecuteTape(id: string, inputs: Record<string, unknown> = {}) {
+  return request<TapeExecuteResult>(`/api/v1/orchestrations/${id}/execute`, {
+    method: "POST",
+    body: JSON.stringify({ inputs }),
+  });
+}

@@ -72,6 +72,8 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_data", "ScheduleOutlined", 3),
     ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_data", "CloudServerOutlined", 4),
     ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_data", "TableOutlined", 5),
+    ("orch_tapes", "orch_tapes", "编排管理", "/orchestrations", "grp_data", "ApartmentOutlined", 6),
+    ("orch_defines", "orch_defines", "编排组件", "/orchestrations/steps", "grp_data", "BlockOutlined", 7),
     # ---- 系统管理（分组兼页面，顶级：点击自身跳 /system → 重定向到默认子页 /system/users）。
     # 用户/角色/团队/菜单/日志均为独立页面路由（对齐 ds system/* 独立页面，无顶部 Tab 聚合页）。
     ("system", "system", "系统管理", "/system", None, "SettingOutlined", 4),
@@ -90,6 +92,77 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，
 # 保证管理员/普通用户登录后侧栏都是完整菜单。
 SEED_GRANT_ROLES = (SEED_ROLE, "plat-mgr", "normal_user")
+
+
+# 编排内置组件定义（迁移自 data-synth algorithm/steps；step_cfg = dynamic-form FormField[]）
+ORCH_STEP_DEFINES: list[tuple[str, str, str, str, str, list[dict], int]] = [
+    ("def", "变量定义", "基础", "VariableOutlined",
+     "赋值变量到运行上下文（{{ }} 模板引用；支持 JSON 数组或单变量）",
+     [{"name": "assignments", "label": "变量赋值(JSON)", "type": "textarea", "required": True,
+       "placeholder": '[{"variable":"x","expression":"10"},{"variable":"y","expression":"x*2"}]',
+       "props": {"rows": 4}}], 1),
+    ("script", "脚本执行", "基础", "CodeOutlined",
+     "执行任意 Python 代码（注入 context / bindings / config，可读写变量）",
+     [{"name": "code", "label": "Python 代码", "type": "textarea", "required": True,
+       "placeholder": "print('hello')\nbindings['res'] = 123",
+       "props": {"rows": 8}}], 2),
+    ("print", "日志输出", "基础", "MessageOutlined",
+     "输出文本到执行日志（支持 {{ }} 变量引用）",
+     [{"name": "text", "label": "输出内容", "type": "textarea", "required": True,
+       "placeholder": "当前结果: {{res}}"}], 3),
+    ("if", "条件分支", "流程控制", "NodeIndexOutlined",
+     "按条件真/假走不同后继：真→后继节点，假→跳过（condition 支持 {{ }} 与表达式）",
+     [{"name": "condition", "label": "条件表达式", "type": "input", "required": True,
+       "placeholder": "len(bindings.get('items',[])) > 3"}], 4),
+    ("loop", "循环", "流程控制", "SyncOutlined",
+     "迭代集合执行后继子图：每轮设置 {{item_var}} 后重跑连线下游（支持 {{ }} 集合表达式）",
+     [{"name": "item_var", "label": "迭代变量名", "type": "input", "required": True, "placeholder": "item"},
+      {"name": "collection", "label": "集合表达式", "type": "input", "required": True,
+       "placeholder": "[1,2,3] 或 bindings 里的列表变量"}], 5),
+]
+
+
+def _seed_step_defines(db) -> tuple[int, int]:
+    from api.models.orchestration import StepDefine
+
+    created = updated = 0
+    for inst, label, group, icon, desc, cfg, seq in ORCH_STEP_DEFINES:
+        existing = db.execute(
+            select(StepDefine).where(StepDefine.step_inst == inst)
+        ).scalars().first()
+        if not existing:
+            db.add(
+                StepDefine(
+                    id=uuid.uuid4().hex[:64],
+                    group_type=group,
+                    step_inst=inst,
+                    step_label=label,
+                    step_icon=icon,
+                    step_desc=desc,
+                    step_cfg=cfg,
+                    step_seq=seq,
+                    status="effective",
+                )
+            )
+            created += 1
+        else:
+            changed = False
+            for field, value in (
+                ("group_type", group),
+                ("step_label", label),
+                ("step_icon", icon),
+                ("step_desc", desc),
+                ("step_cfg", cfg),
+                ("step_seq", seq),
+                ("status", "effective"),
+            ):
+                if getattr(existing, field) != value:
+                    setattr(existing, field, value)
+                    changed = True
+            if changed:
+                updated += 1
+    db.commit()
+    return created, updated
 
 
 def main() -> None:
@@ -291,7 +364,11 @@ def main() -> None:
             db.commit()
             print("[6/6] 日志清理 cron 种子 OK: 每天 03:00, 保留 90 天")
 
-        print("\nDONE — 登录: " + SEED_USER_ID + "/" + SEED_PASSWORD)
+        # 7) 编排内置组件定义（幂等 upsert）
+        d_created, d_updated = _seed_step_defines(db)
+        print(f"[7/7] 编排组件定义种子 OK: 内置 {len(ORCH_STEP_DEFINES)} 个 [新建 {d_created} / 修正 {d_updated}]")
+
+        print("\nDONE — 登录: " + SEED_USER_ID + "/" + SEED_PASSWORD + "（编排内置组件 " + str(len(ORCH_STEP_DEFINES)) + " 个）")
     finally:
         db.close()
 
