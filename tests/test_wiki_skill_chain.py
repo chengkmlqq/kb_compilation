@@ -48,8 +48,8 @@ def test_enqueue_wiki_skill_task_writes_job(chain_env) -> None:
     ok = dp._enqueue_wiki_skill_task("kb-1", "doc-1")
     assert ok is True
     assert sent["name"] == "worker.tasks.scheduler.execute_modo_job"
-    # 默认内联 agent：投 agent 队列（celery-agent-worker 消费）
-    assert sent["queue"] == "agent"
+    # 默认 direct（内化引擎）：投 build 队列（celery-build-worker 消费）
+    assert sent["queue"] == "build"
     # job_id 前缀 WIKI_SKILL_
     assert sent["task_id"].startswith("WIKI_SKILL_")
     # modo_job 行已写入（任务监控可见）
@@ -59,7 +59,7 @@ def test_enqueue_wiki_skill_task_writes_job(chain_env) -> None:
     job = jobs[0]
     # 2026-10-07: WIKI_AGENT_MODE 默认 direct——技能直跑替代 agent 编排
     assert job.task_class == "KbSkillDirectBuildTask"
-    assert job.queue_name == "agent"
+    assert job.queue_name == "build"
     assert job.state == "PENDING"
     params = json.loads(job.task_params)
     assert params["config"]["skill"] == "kb-wiki-builder"

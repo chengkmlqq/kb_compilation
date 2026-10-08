@@ -26,6 +26,8 @@ class Settings:
     SCHEMA_NAME: str = os.getenv("SCHEMA_NAME", "public")
     DB_MAX_CONNECTIONS: int = int(os.getenv("DB_MAX_CONNECTIONS", "10"))
     DB_POOL_PRE_PING: bool = os.getenv("DB_POOL_PRE_PING", "1") == "1"
+    # 启动时自动应用 Alembic 迁移（框架库 schema 对齐，见 api/services/migrations.py）
+    AUTO_MIGRATE_ON_START: bool = os.getenv("AUTO_MIGRATE_ON_START", "1") == "1"
 
     # --- Vector store (PostgreSQL + pgvector, for chunk embeddings only) ---
     # The knowledge BUSINESS tables (kb_datasource / kb_document / doc_chunk /

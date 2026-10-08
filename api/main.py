@@ -6,6 +6,8 @@ system config) migrated from the legacy Next.js backend.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import Cookie, Depends, FastAPI
 from sqlalchemy.orm import Session
 
@@ -14,11 +16,23 @@ from api.db import get_db
 from api.middleware import rbac_guard
 from api.routers import agents, auth, chat_sessions, chunking, cron, datasources, datagrid, files, graph, jobs, kbs, mcps, models, ontology, qa, skills, system, system_config, websearch, workers
 from api.services.identity import Identity, decode_identity_cookie
+from api.services.migrations import run_migrations_on_startup
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Auto-apply Alembic migrations to the framework store on boot, so model
+    # column changes reach the DB without manual migrate steps (create_all
+    # never alters existing tables). Fail-fast: refuse to serve on bad schema.
+    run_migrations_on_startup()
+    yield
+
 
 app = FastAPI(
     title="KB Compilation API",
     description="Framework layer + WeKnora RAG capabilities (KB wiki platform)",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # RBAC path guard: whitelist + identity cookie + role-menu assignment check

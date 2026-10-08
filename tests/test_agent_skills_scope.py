@@ -353,6 +353,9 @@ def _fake_httpx(monkeypatch, scripts: list[list[str]]):
         def raise_for_status(self):
             pass
 
+        def close(self):
+            pass
+
         def iter_lines(self):
             for ln in self._lines:
                 yield ln
@@ -366,6 +369,13 @@ def _fake_httpx(monkeypatch, scripts: list[list[str]]):
 
         def __exit__(self, *a):
             return False
+
+        def build_request(self, method, url, json=None, headers=None):
+            return {"method": method, "url": url, "json": json, "headers": headers}
+
+        def send(self, req, stream=True):
+            captured.append(req["json"])
+            return FakeResp(scripts[min(len(captured) - 1, len(scripts) - 1)])
 
         def stream(self, method, url, json=None, headers=None):
             captured.append(json)
@@ -670,6 +680,9 @@ def _scripted_client(captured: list[dict], scripts: list[list[str]]):
         def raise_for_status(self):
             pass
 
+        def close(self):
+            pass
+
         def iter_lines(self):
             yield from self._lines
 
@@ -682,6 +695,13 @@ def _scripted_client(captured: list[dict], scripts: list[list[str]]):
 
         def __exit__(self, *a):
             return False
+
+        def build_request(self, method, url, json=None, headers=None):
+            return {"method": method, "url": url, "json": json, "headers": headers}
+
+        def send(self, req, stream=True):
+            captured.append(req["json"])
+            return _FakeResp(scripts[min(len(captured) - 1, len(scripts) - 1)])
 
         def stream(self, method, url, json=None, headers=None):
             captured.append(json)
