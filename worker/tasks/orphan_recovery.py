@@ -62,6 +62,13 @@ def recover_orphan_running_jobs() -> dict:
             )
             if task_class is not None:
                 q = q.where(Job.task_class == task_class)
+            else:
+                # 通用 10min 分支必须排除有专属阈值的构建类——它们 20-40 分钟
+                # 正常耗时，10min 误判会让同一 job 每 5 分钟重复投递、多实例并发
+                # 抢跑（2026-10-08 实证 ForkPoolWorker 双跑同一 job + 页面竞态）
+                q = q.where(
+                    Job.task_class.not_in(list(_ORPHAN_AFTER_MINUTES_BY_CLASS.keys()))
+                )
             jobs.extend(db.execute(q).scalars().all())
         if not jobs:
             return {"recovered": 0, "skipped": 0}

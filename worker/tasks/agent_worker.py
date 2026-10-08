@@ -633,12 +633,37 @@ class _CpuWatchdog:
         self._t.start()
 
     def _read_cpu(self) -> float:
+        """读**进程组**全部成员 CPU 总和，而非仅 run_one 自身。
+
+        run_one 是组长（start_new_session=True），build_full/extract 等实际
+        干活的孙进程同属一组。此前只读 run_one 单进程 CPU——它在 communicate()
+        等待子进程时 CPU≈0 恒定，build_full 满 CPU 干活也被判「CPU 零增长」，
+        事件一停更就误杀整组（2026-10-08 实证 4 任务 -9）。改读组内所有进程
+        utime+stime 之和：任一层级在跑就累计增长，watchdog 不再误判。
+        """
+        total = 0.0
         try:
-            with open(f"/proc/{self.proc.pid}/stat", encoding="utf-8") as f:
-                parts = f.read().split()
-            return (int(parts[13]) + int(parts[14])) / 100.0  # utime+stime → 秒
+            pgid = os.getpgid(self.proc.pid)
         except Exception:  # noqa: BLE001 — 进程已退出
             return -1.0
+        try:
+            for entry in os.listdir("/proc"):
+                if not entry.isdigit():
+                    continue
+                try:
+                    with open(f"/proc/{entry}/stat", encoding="utf-8") as f:
+                        parts = f.read().split()
+                    if len(parts) < 15:
+                        continue
+                    # parts[4] 是进程组 ID（stat 字段顺序见 man 5 proc）
+                    if int(parts[4]) != pgid:
+                        continue
+                    total += (int(parts[13]) + int(parts[14])) / 100.0
+                except Exception:  # noqa: BLE001 — 进程恰好退出
+                    continue
+        except Exception:  # noqa: BLE001 — /proc 遍历失败
+            return -1.0
+        return total
 
     def _loop(self) -> None:
         while not self.stopped:
