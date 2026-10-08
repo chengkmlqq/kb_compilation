@@ -361,13 +361,48 @@ def resolve_kb_scope(db: Session, agent: KbAgent) -> list[KbDatasource]:
 
 
 def resolve_agent_qa_overrides(agent: KbAgent) -> dict:
-    """Retrieval overrides from the agent config (top_k / threshold / embed)."""
+    """Per-agent retrieval overrides from the agent config.
+
+    2026-10-08 bug fix: the editor stores embedding_top_k / vector_threshold /
+    keyword_threshold, but this resolver used to read top_k / threshold (keys that
+    the editor never writes) → agent retrieval settings silently had no effect and
+    every agent fell back to the global config.
+
+    Mapping (only explicitly configured values override, else None = fall back to
+    KB strategy < global system/retrieval):
+      embedding_top_k → top_k
+      vector_threshold (fallback keyword_threshold, then legacy threshold) → threshold
+      embed_query / vector_enabled → vector_enabled
+    """
     cfg = config_from_dict(agent.config or {})
-    return {
-        "top_k": cfg.top_k,
-        "threshold": cfg.threshold,
-        "vector_enabled": cfg.embed_query,
-    }
+    overrides: dict = {}
+
+    top_k = cfg.embedding_top_k
+    if top_k is None:
+        top_k = getattr(cfg, "top_k", None)
+    if top_k is not None:
+        try:
+            overrides["top_k"] = int(top_k)
+        except (TypeError, ValueError):
+            pass
+
+    thr = cfg.vector_threshold
+    if thr is None:
+        thr = cfg.keyword_threshold
+    if thr is None:
+        thr = getattr(cfg, "threshold", None)
+    if thr is not None:
+        try:
+            overrides["threshold"] = float(thr)
+        except (TypeError, ValueError):
+            pass
+
+    vec_enabled = getattr(cfg, "embed_query", None)
+    if vec_enabled is None:
+        vec_enabled = getattr(cfg, "vector_enabled", None)
+    if vec_enabled is not None:
+        overrides["vector_enabled"] = bool(vec_enabled)
+    return overrides
 
 
 def effective_system_prompt(agent: KbAgent, default: str = SYSTEM_PROMPT) -> str:
