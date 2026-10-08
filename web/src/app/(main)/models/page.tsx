@@ -104,7 +104,7 @@ const SCOPE_COLOR: Record<ModelScope, string> = {
 };
 
 export default function ModelRegistryPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [items, setItems] = useState<ModelItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -234,8 +234,33 @@ export default function ModelRegistryPage() {
           message.success(
             `导入完成：新建 ${res.data.created} / 更新 ${res.data.updated}${errs.length ? ` / 失败 ${errs.length}` : ""}`,
           );
-          if (errs.length) console.warn("导入失败项:", errs.slice(0, 5));
-          void load();
+          if (errs.length) {
+            modal.error({
+              title: `导入失败 ${errs.length} 条`,
+              width: 560,
+              content: (
+                <div style={{ maxHeight: 320, overflow: "auto" }}>
+                  {errs.map((e) => (
+                    <div
+                      key={e.index}
+                      style={{ padding: "8px 0", borderBottom: "1px solid #f0f0f0", fontSize: 13 }}
+                    >
+                      <div>
+                        <Text strong>第 {e.index + 1} 条</Text>
+                        {e.name ? <Text style={{ marginLeft: 8 }}>{e.name}</Text> : null}
+                      </div>
+                      <div>
+                        <Text type="danger">{e.error}</Text>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ),
+              onOk: () => void load(),
+            });
+          } else {
+            void load();
+          }
         } else {
           message.error((res as { message?: string }).message || "导入失败");
         }
