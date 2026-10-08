@@ -721,12 +721,13 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
     #   wiki_operation_log / wiki_feedback 无 document_id 列，按 kb 保留——不删。
 
     # 2) 文档层：chunks → 文档行
-    chunk_ids = [
-        c.id
-        for c in db.execute(
+    # 注意 select(DocChunk.id) 单列查询 .scalars() 直接产出字符串值，
+    # 不能对每个值再取 .id（曾导致删任何带 chunks 的文档 500）
+    chunk_ids = list(
+        db.execute(
             select(DocChunk.id).where(DocChunk.document_id == document_id)
         ).scalars()
-    ]
+    )
     db.execute(delete(DocChunk).where(DocChunk.document_id == document_id))
     db.delete(doc)
     db.commit()
@@ -736,7 +737,15 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
         try:
             from api.services.vector_store import get_vector_store
 
-            get_vector_store(doc.vector_store_id).delete_by_chunks(chunk_ids)
+            # vector_store_id 是 KB 级列（KbDatasource），文档行没有——
+            # 对齐 ingest.py 的取法，否则 doc.vector_store_id 运行时
+            # AttributeError 被吞 → 向量清理静默失效
+            kb_row = db.execute(
+                select(KbDatasource).where(KbDatasource.id == kb_id)
+            ).scalars().first()
+            get_vector_store(
+                kb_row.vector_store_id if kb_row else None
+            ).delete_by_chunks(chunk_ids)
         except Exception as exc:  # pragma: no cover - 向量清理尽力而为
             logging.getLogger(__name__).warning(
                 "向量清理失败(doc=%s): %s", document_id, exc
