@@ -346,26 +346,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      {/* KB 概览条：对齐 WeKnora 详情顶部（类型/归属/向量库/统计/索引开关） */}
-      {kb && (
-        <Card size="small" style={{ marginBottom: 12, flexShrink: 0 }}>
-          <Descriptions size="small" column={{ xs: 2, md: 4 }}>
-            <Descriptions.Item label="类型">
-              {kb.type === "faq" ? "问答对型" : "文档型"}
-            </Descriptions.Item>
-            <Descriptions.Item label="归属">
-              {kb.scope === "system" ? "系统" : kb.scope === "team" ? "团队" : "个人"}
-            </Descriptions.Item>
-            <Descriptions.Item label="向量库">
-              {kb.vector_store_id ? "自定义资源" : "系统默认（pgvector）"}
-            </Descriptions.Item>
-            <Descriptions.Item label="统计">
-              {kb.doc_count ?? 0} 文档 / {kb.page_count ?? 0} Wiki 页
-            </Descriptions.Item>
-          </Descriptions>
-        </Card>
-      )}
-
       <Card
         title={`知识库文档（${docTotal}）`}
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
