@@ -158,6 +158,16 @@
   display: none !important;
 }
 
+/* --- 内容区卡片与上方直角导航条对齐 --- */
+/* 导航条为直角、内容卡片却带全局 .ant-card 的 6px 圆角，二者衔接处出现缺口。
+   这里把「tab 面板的顶层卡片」（直接子元素，或仅隔一层 div 的包裹）切直角。
+   仅命中顶层卡片，卡片网格 / 卡片内嵌套卡片不受影响。
+   权重 (0,3,1) + !important 可压过 globals.css 的 .ant-card{border-radius:6px!important}。 */
+.modo-tabs :global(.ant-tabs-content) > :global(.ant-card),
+.modo-tabs :global(.ant-tabs-content) > div > :global(.ant-card) {
+  border-radius: 0 !important;
+}
+
 /* Truncated label helper */
 .tab-label-truncated {
   display: inline-block;
