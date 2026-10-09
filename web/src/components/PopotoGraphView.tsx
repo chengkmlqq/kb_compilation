@@ -34,16 +34,25 @@ interface PopotoGraphViewProps {
  * 正确做法: 提取首个 MATCH 变量, 有 WHERE 则前插, 否则在 RETURN 前插。
  */
 function injectKbFilter(statement: string, kbId: string): { statement: string; parameters: Record<string, unknown> } {
-  const params: Record<string, unknown> = { kb_id: kbId };
-  const m = statement.match(/MATCH\s*\(([a-zA-Z]\w*):/);
-  const varName = m ? m[1] : "n";
-  let out = statement;
-  if (/\bWHERE\b/i.test(out)) {
-    out = out.replace(/\bWHERE\b/i, `WHERE ${varName}.kb_id = $kb_id AND `);
-  } else if (/\bRETURN\b/i.test(out)) {
-    out = out.replace(/\bRETURN\b/i, `WHERE ${varName}.kb_id = $kb_id RETURN `);
+  // 2026-10-09 修复：技能写入的图谱节点没有 kb_id 属性（kb_id 编码在
+  // label 里：ENTITY + kb_id 去横线；节点属性只有 name/attributes），
+  // 旧注入 `n.kb_id = $kb_id` 永远为假 → 查询返回空 → 图谱页空白。
+  // 新策略按 label 限制：无 label 的 MATCH 注入技能 label，有 label 的不注入。
+  const kbLabel = "ENTITY" + kbId.replace(/-/g, "_");
+  // 已精确限定本 KB 标签 → 不注入
+  if (new RegExp(`MATCH\\s*\\(\\s*\\w+\\s*:\\s*${kbLabel}\\b`, "i").test(statement)) {
+    return { statement, parameters: {} };
   }
-  return { statement: out, parameters: params };
+  // 无 label 的 MATCH (n) → 注入技能 label：MATCH (n:ENTITY<kb>)
+  if (!/MATCH\s*\(\s*\w+\s*:/.test(statement)) {
+    const out = statement.replace(
+      /MATCH\s*\(\s*([a-zA-Z]\w*)\s*\)/i,
+      (_m, v) => `MATCH (${v}:${kbLabel})`,
+    );
+    return { statement: out, parameters: {} };
+  }
+  // 有其他 label（如平台 Entity）→ 不注入，避免破坏原生查询语义
+  return { statement, parameters: {} };
 }
 
 /** Popoto 全局单例的已启动 KB（模块级，跨挂载周期存活）。
@@ -168,10 +177,26 @@ export default function PopotoGraphView({ kbId, height = 640 }: PopotoGraphViewP
         steps.push("runner ok");
 
         // 4) 数据模型：label provider
+        // 2026-10-09 修复：root label 必须是技能写入的 ENTITY<kb_id去横线>，
+        // 不是平台 Entity（库里 Entity 标签节点数为 0，用 Entity 作 root 的查询全空）。
+        const kbLabel = `ENTITY${kbId.replace(/-/g, "_")}`;
         const prov = popoto.provider;
         // dist 版 dist/popoto.min.js 未初始化 node.Provider（源码 src 有），兜底建对象
         prov.node.Provider = prov.node.Provider || {};
-        prov.node.Provider["Entity"] = {
+        prov.node.Provider[kbLabel] = {
+          label: kbLabel,
+          display: ["name", "entity_type", "description"],
+          root: kbLabel,
+          returnAttributes: ["name", "entity_type", "description"],
+          displayAttribute: "name",
+          constraintAttribute: "name",
+          attributes: ["name", "entity_type", "description"],
+          children: [],
+          colors: {},
+          layouts: {},
+        };
+        // 保留平台 Entity（若有）
+        prov.node.Provider["Entity"] = prov.node.Provider["Entity"] || {
           label: "Entity",
           display: ["name", "entity_type", "description"],
           root: "Entity",
@@ -187,8 +212,8 @@ export default function PopotoGraphView({ kbId, height = 640 }: PopotoGraphViewP
         prov.relationship.Provider = prov.relationship.Provider || {};
         prov.relationship.Provider["RELATED_TO"] = {
           type: "RELATED_TO",
-          source: "Entity",
-          target: "Entity",
+          source: kbLabel,
+          target: kbLabel,
           attributes: ["type", "description", "strength"],
         };
         steps.push("provider ok: node=" + (prov.node ? "有" : "无"));
@@ -208,7 +233,7 @@ export default function PopotoGraphView({ kbId, height = 640 }: PopotoGraphViewP
         // 容器先清空：卸载周期里 Popoto 渲染的 DOM 会残留，二次挂载时错乱
         resetPopotoContainers();
         if (popotoStartedFor !== kbId) {
-          popoto.start("Entity");
+          popoto.start(kbLabel);
           popotoStartedFor = kbId;
           steps.push("start ok");
         } else {
