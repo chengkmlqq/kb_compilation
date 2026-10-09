@@ -23,6 +23,7 @@ logger = logging.getLogger("kb.orch.runner")
 from api.db import get_sessionmaker
 from api.models.orchestration import Tape, TapeRun, TapeStep
 from api.services.orchestration_engine import ATOM_MAP, TapeRuntimeContext
+from worker.tasks import orch_loop
 
 TASK_CLASS_ORCH_RUN = "KbOrchestrationRunTask"
 TASK_CLASS_ORCH_NODE = "KbOrchestrationNodeTask"
@@ -115,10 +116,24 @@ def _bindings_from_run(run_id: str) -> dict:
 
 # ───────────────────────── 调度中枢 ─────────────────────────
 
-def _advance_impl(run_id: str) -> None:
-    """检查所有可推进的就绪节点并投递；无就绪节点时判定终态。"""
+def _send_node(run_id: str, sid: str, bindings: dict, round_no: int, queue: str) -> None:
     from worker.celery_app import celery_app
 
+    celery_app.send_task(
+        "worker.tasks.orch_runner.run_node",
+        args=[run_id, sid, bindings, round_no],
+        queue=queue,
+    )
+
+
+def _advance_impl(run_id: str) -> None:
+    """检查所有可推进的就绪节点并投递；无就绪节点时判定终态。
+
+    loop 迭代（2026-10-09 修复）：原先 loop 节点只当普通节点跑一次，循环体
+    既不迭代、item_var 也不注入（同步引擎 OrchestrationEngine.execute 有展开
+    逻辑，两条链路不一致）。现在由 orch_loop 按 collection 逐轮投循环体，
+    每条执行记录带 round 字段，同一 body 节点跑 N 轮不被「已执行」吞掉。
+    """
     run = _get_run(run_id)
     if not run or run.status not in ("queued", "running"):
         return
@@ -129,18 +144,21 @@ def _advance_impl(run_id: str) -> None:
     steps = _load_steps(run.tape_id)
     results = list(run.step_results or [])
     done = {r["step_id"] for r in results}
+    loop_state = orch_loop.init_state(run.bindings)
     # 2026-10-09 实测坑: 失败传播缺失——run_script 失败后 print 仍执行。
     # 语义: 任一 pre 失败 → 后继阻断(skipped 标记,不投递)。
     failed_ids = {r["step_id"] for r in results if r.get("status") == "failed"}
     skip_ids = {r["step_id"] for r in results if r.get("status") == "skipped"}
     # bindings 合并：已执行步骤的 body 更新到 run.bindings（def/print 结果）
     bindings = dict(run.bindings or {})
+    bindings.pop(orch_loop.LOOP_STATE_KEY, None)  # 内部状态不进业务 bindings
     for r in results:
         if r.get("status") == "success" and isinstance(r.get("body"), dict):
             body = r["body"]
             for k, v in body.items():
                 if k.startswith("set:"):
                     bindings[k[4:]] = v
+    bindings.update(loop_state.get("bindings") or {})  # loop item_var 注入
 
     # 0) 失败传播：任一 pre 失败的未执行节点 → skipped（阻断链），标记入 done 继续传播
     newly_skipped = []
@@ -155,7 +173,7 @@ def _advance_impl(run_id: str) -> None:
                 "step_id": sid, "step_inst": steps[sid]["inst"],
                 "step_label": steps[sid]["label"],
                 "queue": _step_queue(steps, sid), "status": "skipped",
-                "error": None, "duration_ms": 0,
+                "error": None, "duration_ms": 0, "round": 0,
                 "body": None,
             })
         logger.info("编排 run=%s 失败传播：%d 个后继节点 skipped", run_id, len(newly_skipped))
@@ -166,31 +184,38 @@ def _advance_impl(run_id: str) -> None:
         failed_ids = {r["step_id"] for r in results if r.get("status") == "failed"}
         skip_ids = {r["step_id"] for r in results if r.get("status") == "skipped"}
 
-    # 1) 找就绪节点（所有 pre 已完成 && 自身未执行）
-    ready = []
-    for sid, s in steps.items():
-        if sid in done:
-            continue
-        if all(p in done for p in s["pre"]):
-            ready.append(sid)
-    # 2) loop 展开：loop 节点是"就绪"但展开逻辑特殊——先处理循环体迭代
-    #    简化：loop 节点本身作为普通节点投递；其返回 collection 后由
-    #    advance 对 collection 每项重投循环体（在节点结果 body 标记）。
-    if ready:
-        run.status = "running"
-        _update_run(run_id, status="running", bindings=bindings)
-        for sid in ready:
-            s = steps[sid]
-            q = _step_queue(steps, sid)
-            celery_app.send_task(
-                "worker.tasks.orch_runner.run_node",
-                args=[run_id, sid, bindings],
-                queue=q,
-            )
+    # 0.5) loop 迭代展开：给已完成的 loop 节点投下一轮循环体（投了就等回调）
+    looped = orch_loop.dispatch_next_round(
+        run_id, steps, results, loop_state, bindings,
+        step_queue_fn=_step_queue, send_task=_send_node)
+    if looped:
+        _update_run(run_id, status="running",
+                    bindings={**bindings, orch_loop.LOOP_STATE_KEY: loop_state})
         return
 
-    # 3) 无就绪节点：检查是否全部完成 → 终态
-    all_done = all(sid in done for sid in steps)
+    # 1) 找就绪节点（所有 pre 已完成 && 自身在本轮尚未执行）
+    pairs = orch_loop.done_pairs(results)
+    body_map = orch_loop.body_of(loop_state)
+    ready = []
+    for sid, s in steps.items():
+        rnd = orch_loop.round_of(sid, loop_state)
+        if (sid, rnd) in pairs:
+            continue
+        if all((p, rnd if p in body_map else 0) in pairs for p in s["pre"]):
+            ready.append(sid)
+    if ready:
+        _update_run(run_id, status="running",
+                    bindings={**bindings, orch_loop.LOOP_STATE_KEY: loop_state})
+        for sid in ready:
+            _send_node(run_id, sid, bindings,
+                       orch_loop.round_of(sid, loop_state), _step_queue(steps, sid))
+        return
+
+    # 2) 无就绪节点：检查是否全部完成 → 终态（loop body 按应有轮次集判定）
+    expected = orch_loop.expected_rounds(steps, loop_state)
+    pairs = orch_loop.done_pairs(results)
+    all_done = all(expected.get(sid, {0}).issubset({r for s, r in pairs if s == sid})
+                   for sid in steps)
     if all_done:
         failed = [r for r in results if r.get("status") == "failed"]
         status = "failed" if failed else "success"
@@ -199,7 +224,7 @@ def _advance_impl(run_id: str) -> None:
         logger.info("编排 run=%s 终态 %s (%d 步)", run_id, status, len(results))
     else:
         # 有未执行但 pre 未完成（依赖等待中）—— 不动作，等节点回调
-        logger.info("编排 run=%s 等待依赖完成 (done=%d/%d)", run_id, len(done), len(steps))
+        logger.info("编排 run=%s 等待依赖完成 (done=%d/%d)", run_id, len(pairs), len(steps))
 
 
 def execute_run(run_id: str) -> dict:
@@ -220,7 +245,7 @@ def advance_run(run_id: str, step_id: str) -> dict:
 
 # ───────────────────────── 单节点执行（节点所在 worker） ─────────────────────────
 
-def run_node(run_id: str, step_id: str, bindings: dict) -> dict:
+def run_node(run_id: str, step_id: str, bindings: dict, round_no: int = 0) -> dict:
     """执行单个编排节点（投递到该节点指定队列的 worker）。
 
     执行完写 step_results，再 send_task advance_run 推进 DAG。
@@ -238,7 +263,7 @@ def run_node(run_id: str, step_id: str, bindings: dict) -> dict:
         _append_step_result(run_id, {
             "step_id": step_id, "step_inst": s["inst"], "step_label": s["label"],
             "queue": _step_queue(steps, step_id), "status": "failed",
-            "error": f"未知组件指令: {s['inst']}", "duration_ms": 0,
+            "error": f"未知组件指令: {s['inst']}", "duration_ms": 0, "round": round_no,
         })
         _send_advance(run_id, step_id)
         return {"success": False, "error": f"unknown step_inst {s['inst']}"}
@@ -262,11 +287,18 @@ def run_node(run_id: str, step_id: str, bindings: dict) -> dict:
         "duration_ms": int((time.time() - start) * 1000),
         "body": body if status == "success" else None,
         "error": error or None,
+        "round": round_no,
     }
     _append_step_result(run_id, result)
 
-    # 新 bindings 写回 run（advance 时合并）
-    _update_run(run_id, bindings=context.bindings)
+    # 新 bindings 写回 run（与库里现有值合并，不整体覆盖）。
+    # 2026-10-09 loop 修复：整体覆盖会把调度中枢维护的 loop 迭代状态
+    # (__loop_state__) 冲掉 → 下一轮投不出循环体。loop_state 由调度中枢独占。
+    cur = _bindings_from_run(run_id)
+    merged = {**cur, **context.bindings}
+    if orch_loop.LOOP_STATE_KEY in cur:
+        merged[orch_loop.LOOP_STATE_KEY] = cur[orch_loop.LOOP_STATE_KEY]
+    _update_run(run_id, bindings=merged)
     _send_advance(run_id, step_id)
     logger.info("编排节点[%s %s] %s (%.0fms) run=%s", s["inst"], s["label"], status, (time.time() - start) * 1000, run_id)
     return {"success": status == "success", "step_id": step_id}

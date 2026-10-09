@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
 
 from api.db import Session, get_db
 from api.services.identity import decode_identity_cookie
@@ -45,8 +45,8 @@ def _guarded(fn, *args, **kwargs):
 
 @router.get("/step-defines")
 def step_defines(
-    page: int = 1,
-    page_size: int = 20,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     keyword: str = "",
     group_type: str = "",
     db: Session = Depends(get_db),
@@ -74,8 +74,8 @@ def delete_step_define_route(define_id: str, db: Session = Depends(get_db), _use
 
 @router.get("")
 def tapes(
-    page: int = 1,
-    page_size: int = 20,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     keyword: str = "",
     status: str = "",
     db: Session = Depends(get_db),
@@ -141,9 +141,10 @@ def execute(tape_id: str, payload: dict | None = None, db: Session = Depends(get
 # ── 执行记录（异步编排 2026-10-09 新增）──
 
 @router.get("/{tape_id}/runs")
-def tape_runs(tape_id: str, page: int = 1, page_size: int = 20,
+def tape_runs(tape_id: str, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
               db: Session = Depends(get_db), _user: str = Depends(_current_user)):
-    return _guarded(svc.list_tape_runs, db, tape_id, page, page_size)
+    # 编排不存在应 404（与其它编排端点一致）——原先直接查子表返回 200 空列表。
+    return _guarded(lambda: svc.list_tape_runs(db, tape_id, page, page_size))
 
 
 @router.get("/runs/{run_id}")

@@ -20,6 +20,22 @@ from api.services.orchestration_engine import (
 EXPORT_TYPE = "kb.orchestration.draft"
 EXPORT_SCHEMA_VERSION = 1
 
+# kb_tape.tape_name 是 String(64)：超长直接落库会抛 MySQL Data too long → 500。
+# 在入口截断（与 tape_label 的 [:128] 同一策略），既不 500 也不丢数据。
+TAPE_NAME_MAX = 64
+
+
+def _clean_name(raw, required: bool = True) -> str:
+    """编排名清洗：去空白、非空校验、超长截断（列长 64，避免 MySQL 500）。"""
+    name = str(raw or "").strip()
+    if not name:
+        if required:
+            raise ValueError("编排名称不能为空")
+        return ""
+    if len(name) > TAPE_NAME_MAX:
+        name = name[:TAPE_NAME_MAX]
+    return name
+
 
 def export_tape_draft(db, tape_id: str) -> dict:
     """导出编排草稿为 JSON：节点/连线/执行参数 + 基础信息（对齐 data-synth 导出语义）。"""
@@ -83,9 +99,21 @@ def import_tape_draft(db, tape_id: str, content: str) -> dict:
 
 
 def _tape_payload_to_model(obj: Tape, payload: dict) -> None:
-    for field in ("tape_name", "tape_label", "tape_descr", "tape_type"):
-        if field in payload:
-            setattr(obj, field, payload[field] or ("" if field != "tape_name" else obj.tape_name))
+    """把可更新字段写入模型。tape_name 走 _clean_name（截断防超列长）。
+
+    2026-10-09 修复：原先直接 setattr(payload[field])，超长 tape_name/
+    tape_label 会原样落库 → MySQL Data too long → 500。
+    """
+    if "tape_name" in payload:
+        obj.tape_name = _clean_name(payload["tape_name"], required=True)
+    if "tape_label" in payload:
+        label = str(payload["tape_label"] or "").strip()
+        obj.tape_label = label[:128]
+    if "tape_descr" in payload:
+        descr = str(payload["tape_descr"] or "").strip()
+        obj.tape_descr = descr[:2000] or None
+    if "tape_type" in payload:
+        obj.tape_type = str(payload["tape_type"] or "general") or "general"
 
 
 def list_tapes(db, page=1, page_size=20, keyword="", status=""):
@@ -126,14 +154,12 @@ def get_tape(db, tape_id: str) -> Tape:
 
 
 def create_tape(db, payload: dict, user_id: str = "") -> Tape:
-    name = str(payload.get("tape_name") or "").strip()
-    if not name:
-        raise ValueError("编排名称不能为空")
+    name = _clean_name(payload.get("tape_name"), required=True)
     t = Tape(
         id=uuid.uuid4().hex[:64],
         tape_name=name,
-        tape_label=str(payload.get("tape_label") or name)[:128],
-        tape_descr=payload.get("tape_descr") or None,
+        tape_label=str(payload.get("tape_label") or name)[:128] or None,
+        tape_descr=str(payload.get("tape_descr") or "").strip()[:2000] or None,
         tape_type=str(payload.get("tape_type") or "general") or "general",
         status="draft",
         nodes=payload.get("nodes") or [],
@@ -149,18 +175,19 @@ def create_tape(db, payload: dict, user_id: str = "") -> Tape:
 
 def update_tape(db, tape_id: str, payload: dict) -> Tape:
     t = get_tape(db, tape_id)
-    if "tape_name" in payload:
-        name = str(payload["tape_name"] or "").strip()
-        if not name:
-            raise ValueError("编排名称不能为空")
-        t.tape_name = name
-    _tape_payload_to_model(t, payload)
+    _tape_payload_to_model(t, payload)  # 内含 tape_name 清洗/截断
     if "nodes" in payload:
-        t.nodes = payload["nodes"]
+        if payload["nodes"] is not None and not isinstance(payload["nodes"], list):
+            raise ValueError("nodes 必须是数组")
+        t.nodes = payload["nodes"] or []
     if "edges" in payload:
-        t.edges = payload["edges"]
+        if payload["edges"] is not None and not isinstance(payload["edges"], list):
+            raise ValueError("edges 必须是数组")
+        t.edges = payload["edges"] or []
     if "exec_params" in payload:
-        t.exec_params = payload["exec_params"]
+        if payload["exec_params"] is not None and not isinstance(payload["exec_params"], dict):
+            raise ValueError("exec_params 必须是对象")
+        t.exec_params = payload["exec_params"] or {}
     db.commit()
     db.refresh(t)
     return t
@@ -169,6 +196,15 @@ def update_tape(db, tape_id: str, payload: dict) -> Tape:
 def save_tape_design(db, tape_id: str, nodes: list, edges: list, exec_params: dict | None = None) -> Tape:
     """设计器保存：写主表 nodes/edges，并覆盖式同步 kb_tape_step 子表。"""
     t = get_tape(db, tape_id)
+    # 类型守卫：非 list 的 nodes/edges 直接落库会在后续迭代时抛 500。
+    if nodes is None:
+        nodes = []
+    if edges is None:
+        edges = []
+    if not isinstance(nodes, list):
+        raise ValueError("nodes 必须是数组")
+    if not isinstance(edges, list):
+        raise ValueError("edges 必须是数组")
     t.nodes = nodes or []
     t.edges = edges or []
     if exec_params is not None:
@@ -301,6 +337,8 @@ def get_tape_run(db, run_id: str) -> TapeRun:
 
 
 def list_tape_runs(db, tape_id: str, page=1, page_size=20) -> dict:
+    # 编排不存在 → KeyError → router _guarded 转 404（与其它编排端点一致）。
+    get_tape(db, tape_id)
     q = db.query(TapeRun).filter(TapeRun.tape_id == tape_id)
     total = q.count()
     items = q.order_by(TapeRun.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
@@ -321,6 +359,9 @@ def list_tape_runs(db, tape_id: str, page=1, page_size=20) -> dict:
 
 
 def serialize_tape_run(run: TapeRun) -> dict:
+    # 过滤内部迭代状态（loop 调度状态借 bindings 内层承载，不属业务变量）。
+    bindings = {k: v for k, v in (run.bindings or {}).items()
+                if not str(k).startswith("__")}
     return {
         "id": run.id,
         "tape_id": run.tape_id,
@@ -328,7 +369,7 @@ def serialize_tape_run(run: TapeRun) -> dict:
         "status": run.status,
         "inputs": run.inputs or {},
         "step_results": run.step_results or [],
-        "bindings": run.bindings or {},
+        "bindings": bindings,
         "error": run.error or "",
         "created_at": run.created_at.isoformat() if run.created_at else "",
         "updated_at": run.updated_at.isoformat() if run.updated_at else "",
