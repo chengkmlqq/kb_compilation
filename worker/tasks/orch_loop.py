@@ -116,20 +116,42 @@ def dispatch_next_round(run_id: str, steps: dict, results: list, loop_state: dic
                 "编排 loop 展开 run=%s 节点=%s 迭代 %d 轮 循环体 %d 步: %s",
                 run_id, loop_sid, len(st["items"]), len(st["body_ids"]), st["body_ids"])
         items, body_ids = st["items"], st["body_ids"]
-        round_no = int(st["idx"])
-        if round_no >= len(items):
+        next_round = int(st["idx"])
+        if next_round >= len(items):
             continue  # 该 loop 已全部展开
+        # 2026-10-09 实测 bug：轮次推进必须等「本轮 body 全部完成」。
+        # 原实现每轮无条件开下一轮并只投起点，导致同轮后续节点（n5/n6）来不及
+        # 跑就被下一轮吞掉——实测 3 轮循环体里 n5/n6 只执行了第 2 轮，
+        # run 卡在 running（终态判定缺 (n5,0)/(n5,1) 等）。
+        cur_round = next_round - 1
+        if cur_round >= 0:
+            unfinished = [b for b in body_ids if (b, cur_round) not in done]
+            if unfinished:
+                continue  # 本轮尚未跑完 → 不开新轮，交常规就绪逻辑推进本轮
+        round_no = next_round
         item = items[round_no]
         round_bindings = dict(bindings)
         item_var = (s.get("config") or {}).get("item_var")
         if item_var:
             round_bindings[item_var] = item
-        pending = [b for b in body_ids if (b, round_no) not in done]
+        body_set = set(body_ids)
+        # 只投「本轮 pre 已满足」的起点节点；同轮后续节点由 _advance_impl
+        # 的就绪判定（按 round 追踪）继续推进。
+        pending = [
+            b for b in body_ids
+            if (b, round_no) not in done
+            and all(
+                (p, round_no if p in body_set else 0) in done
+                for p in steps[b]["pre"]
+            )
+        ]
+        if not pending:
+            # 本轮无可投起点（起点 pre 未满足/已失败）→ 交回常规就绪逻辑。
+            # 注意：此分支不动 st（idx 不推进），否则会跳轮导致漏迭代。
+            continue
         st["idx"] = round_no + 1
         st["current_round"] = round_no
         st["bindings"] = round_bindings
-        if not pending:
-            continue  # 本轮 body 已全部有结果 → 推进下一轮
         for b in pending:
             send_task(run_id, b, round_bindings, round_no, step_queue_fn(steps, b))
         logger.info("编排 loop 迭代 run=%s 节点=%s 第 %d/%d 轮 投 %d 步 item=%r",
