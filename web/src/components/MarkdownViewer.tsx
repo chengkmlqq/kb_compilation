@@ -11,16 +11,7 @@ function inline(text: string, keyPrefix: string): ReactNode[] {
   parts.forEach((p, i) => {
     if (p.startsWith("`") && p.endsWith("`") && p.length > 2) {
       nodes.push(
-        <code
-          key={`${keyPrefix}-c${i}`}
-          style={{
-            background: "#f0f0f0",
-            padding: "1px 5px",
-            borderRadius: 4,
-            fontSize: "0.9em",
-            fontFamily: "monospace",
-          }}
-        >
+        <code key={`${keyPrefix}-c${i}`} className="kb-chat-md-inline-code">
           {p.slice(1, -1)}
         </code>
       );
@@ -43,7 +34,7 @@ function inline(text: string, keyPrefix: string): ReactNode[] {
               href={m[2]}
               target="_blank"
               rel="noreferrer"
-              style={{ color: "#1677ff" }}
+              className="kb-chat-md-link"
             >
               {m[1]}
             </a>
@@ -68,9 +59,9 @@ function renderBlock(text: string): ReactNode[] {
     if (!listBuf) return;
     const Tag = listBuf.type === "ul" ? "ul" : "ol";
     out.push(
-      <Tag key={key} style={{ margin: "6px 0 6px 20px", padding: 0 }}>
+      <Tag key={key} className="kb-chat-md-list">
         {listBuf.items.map((it, n) => (
-          <li key={n} style={{ marginBottom: 2 }}>
+          <li key={n} className="kb-chat-md-li">
             {inline(it, `${key}-li${n}`)}
           </li>
         ))}
@@ -85,18 +76,7 @@ function renderBlock(text: string): ReactNode[] {
       flushList(`list-${i}`);
       if (codeBuf !== null) {
         out.push(
-          <pre
-            key={`code-${i}`}
-            style={{
-              background: "#282c34",
-              color: "#f8f8f2",
-              padding: 10,
-              borderRadius: 6,
-              overflow: "auto",
-              fontSize: "0.9em",
-              margin: "6px 0",
-            }}
-          >
+          <pre key={`code-${i}`} className="kb-chat-md-pre">
             <code>{codeBuf.join("\n")}</code>
           </pre>
         );
@@ -114,13 +94,8 @@ function renderBlock(text: string): ReactNode[] {
     if (h) {
       flushList(`list-${i}`);
       const level = h[1].length;
-      const style = {
-        margin: "8px 0 4px",
-        fontSize: level === 1 ? 18 : level === 2 ? 16 : 14,
-        fontWeight: 600,
-      } as const;
       out.push(
-        <div key={`h${i}`} style={style}>
+        <div key={`h${i}`} className={`kb-chat-md-h${level}`}>
           {inline(h[2], `h${i}`)}
         </div>
       );
@@ -148,15 +123,7 @@ function renderBlock(text: string): ReactNode[] {
     if (q) {
       flushList(`list-${i}`);
       out.push(
-        <div
-          key={`q${i}`}
-          style={{
-            borderLeft: "3px solid #d9d9d9",
-            paddingLeft: 8,
-            color: "#666",
-            margin: "4px 0",
-          }}
-        >
+        <div key={`q${i}`} className="kb-chat-md-quote">
           {inline(q[1], `q${i}`)}
         </div>
       );
@@ -170,11 +137,11 @@ function renderBlock(text: string): ReactNode[] {
         ? lines[i + 2].slice(1, -1).split("|").map((c) => c.trim())
         : null;
       out.push(
-        <table key={`tbl${i}`} style={{ borderCollapse: "collapse", margin: "6px 0" }}>
+        <table key={`tbl${i}`} className="kb-chat-md-table">
           <thead>
             <tr>
               {header.map((c, n) => (
-                <th key={n} style={{ border: "1px solid #d9d9d9", padding: "4px 8px" }}>
+                <th key={n}>
                   {inline(c, `th${n}`)}
                 </th>
               ))}
@@ -184,7 +151,7 @@ function renderBlock(text: string): ReactNode[] {
             <tbody>
               <tr>
                 {body.map((c, n) => (
-                  <td key={n} style={{ border: "1px solid #d9d9d9", padding: "4px 8px" }}>
+                  <td key={n}>
                     {inline(c, `td${n}`)}
                   </td>
                 ))}
@@ -198,10 +165,10 @@ function renderBlock(text: string): ReactNode[] {
     }
     flushList(`list-${i}`);
     if (line.trim() === "") {
-      out.push(<div key={`sp${i}`} style={{ height: 6 }} />);
+      out.push(<div key={`sp${i}`} className="kb-chat-md-spacer" />);
     } else {
       out.push(
-        <div key={`p${i}`} style={{ margin: "2px 0" }}>
+        <div key={`p${i}`} className="kb-chat-md-p">
           {inline(line, `p${i}`)}
         </div>
       );
@@ -212,5 +179,5 @@ function renderBlock(text: string): ReactNode[] {
 }
 
 export default function MarkdownViewer({ text }: { text: string }) {
-  return <div style={{ lineHeight: 1.7 }}>{renderBlock(text)}</div>;
+  return <div className="kb-chat-md">{renderBlock(text)}</div>;
 }

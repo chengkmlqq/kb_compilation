@@ -965,3 +965,200 @@ body {
 .kb-wiki-source-ref:hover {
   background: #e6f4ff;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   问答界面 —— 像素级对齐 WeKnora chat（creatChat.vue + chat/index.vue
+   + botmsg/usermsg + chat-markdown.less）。
+   基准：frontend/src/views/chat/index.vue、components/botmsg.vue、
+   components/usermsg.vue、components/css/chat-markdown.less。
+   （TDesign token → antd token 映射：
+     --td-text-color-primary      → rgba(0,0,0,0.88)
+     --td-text-color-secondary    → rgba(0,0,0,0.65)
+     --td-text-color-placeholder  → rgba(0,0,0,0.30)
+     --td-bg-color-secondarycontainer → #f3f3f3
+     --td-bg-color-container-hover    → rgba(0,0,0,0.04)
+     --td-component-stroke        → #dcdcdc
+     --td-brand-color             → #1677ff）
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 消息列表容器（对齐 chat/index.vue .chat 消息区） ── */
+.kb-chat-msgs {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 10px 14px 48px 14px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* ── 消息气泡（对齐 botmsg.vue .bot_msg / usermsg.vue .user_msg） ── */
+.kb-chat-msg {
+  max-width: 100%;
+  box-sizing: border-box;
+  border-radius: 4px;
+  color: rgba(0, 0, 0, 0.88);
+  font-size: 16px;
+  line-height: 1.625;
+  overflow-wrap: anywhere;
+}
+
+/* AI 消息：全宽、无气泡背景（对齐 .bot_msg max-width:100% / margin-right:auto） */
+.kb-chat-msg--bot {
+  margin-right: auto;
+  background: transparent;
+  padding: 2px 0;
+}
+
+/* 用户消息：右对齐、76% 宽、secondarycontainer 底（对齐 .user_msg） */
+.kb-chat-msg--user {
+  max-width: min(76%, 820px);
+  display: flex;
+  padding: 8px 12px;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  border-radius: 8px;
+  background: #f3f3f3;
+  margin-left: auto;
+  font-size: 16px;
+}
+
+/* ── 消息正文 markdown（对齐 chat-markdown.less：16px / 1.625） ── */
+.kb-chat-md {
+  font-size: 16px;
+  color: rgba(0, 0, 0, 0.88);
+  line-height: 1.625;
+}
+
+.kb-chat-md-p {
+  margin: 0 0 0.25em;
+  line-height: 1.625;
+}
+
+.kb-chat-md-h1,
+.kb-chat-md-h2,
+.kb-chat-md-h3,
+.kb-chat-md-h4 {
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.kb-chat-md-h1 {
+  margin-top: 0.75em;
+  margin-bottom: 0.25em;
+  font-size: 1.5em;
+}
+
+.kb-chat-md-h2 {
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+  font-size: 1.25em;
+}
+
+.kb-chat-md-h3 {
+  margin-top: 0.75em;
+  margin-bottom: 0.25em;
+  font-size: 1.125em;
+}
+
+.kb-chat-md-h4 {
+  margin-top: 0.75em;
+  margin-bottom: 0.25em;
+  font-size: 1em;
+}
+
+.kb-chat-md-list {
+  margin: 0.125em 0 0.375em;
+  padding-left: 1.5em;
+  line-height: 1.625;
+}
+
+.kb-chat-md-li {
+  margin-bottom: 0.125em;
+  line-height: 1.625;
+}
+
+.kb-chat-md-quote {
+  margin: 0.75em 0;
+  padding: 6px 10px 6px 12px;
+  border-left: 3px solid #dcdcdc;
+  border-radius: 0 4px 4px 0;
+  color: rgba(0, 0, 0, 0.65);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.kb-chat-md-inline-code {
+  padding: 0.15em 0.45em;
+  font-size: 0.8125em;
+  line-height: 1.4;
+  color: rgba(0, 0, 0, 0.88);
+  background: #f3f3f3;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.kb-chat-md-pre {
+  margin: 0.75em 0;
+  padding: 14px 16px;
+  background: #282c34;
+  color: #f8f8f2;
+  border-radius: 6px;
+  overflow: auto;
+  line-height: 1.55;
+  font-size: 13px;
+}
+
+.kb-chat-md-pre code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+}
+
+.kb-chat-md-link {
+  color: #1677ff;
+  text-decoration: none;
+}
+
+.kb-chat-md-link:hover {
+  text-decoration: underline;
+}
+
+.kb-chat-md-table {
+  border-collapse: collapse;
+  margin: 0.75em 0;
+  font-size: 13px;
+  line-height: 1.55;
+  background: #fff;
+  border: 1px solid #dcdcdc;
+  border-radius: 6px;
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.kb-chat-md-table th,
+.kb-chat-md-table td {
+  border: 1px solid #dcdcdc;
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.kb-chat-md-table th {
+  background: #fafafa;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.88);
+}
+
+.kb-chat-md-table tr:hover td {
+  background: #fafafa;
+}
+
+.kb-chat-md-spacer {
+  height: 6px;
+}

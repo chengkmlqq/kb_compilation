@@ -1212,21 +1212,13 @@ export default function ChatPage() {
               )}
             </div>
           ) : (
-                      <div style={{ maxWidth: CONTENT_MAX_WIDTH, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
+                      <div className="kb-chat-msgs">
                       {msgs.map((m, idx) => (
               <div key={m.id}>
-                <div style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
-                  <div
-                    style={{
-                      maxWidth: "80%",
-                      padding: "10px 14px",
-                      borderRadius: 8,
-                      background: m.role === "user" ? token.colorPrimaryBg : token.colorFillTertiary,
-                      color: token.colorText,
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
-                    }}
-                  >
+                {/* 对齐 WeKnora：AI 全宽无气泡（.bot_msg max-width:100%），用户 76% 圆角气泡（.user_msg） */}
+                <div
+                  className={`kb-chat-msg ${m.role === "user" ? "kb-chat-msg--user" : "kb-chat-msg--bot"}`}
+                >
                     {m.role === "assistant" && m.steps && m.steps.length > 0 && (
                       <RagPipelineProgress steps={m.steps} />
                     )}
@@ -1264,7 +1256,6 @@ export default function ChatPage() {
                     ) : (
                       <span style={{ whiteSpace: "pre-wrap" }}>{m.content}</span>
                     )}
-                  </div>
                 </div>
                 {/* 2026-10-07 对齐 WeKnora 分支交互：用户消息 → 分叉 / 回溯 */}
                 {m.role === "user" && (
