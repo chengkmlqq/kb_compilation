@@ -160,6 +160,12 @@ ORCH_STEP_DEFINES: list[tuple[str, str, str, str, str, list[dict], int]] = [
        "options": [{"label": "JSON数组 (list)", "value": "list"},
                    {"label": "键值映射 (map)", "value": "map"},
                    {"label": "纯文本行 (lines)", "value": "lines"}]},
+      # map 形状必需（orch_atoms.llm_extract 里 output_shape=map 会 _die 校验）——
+      # 2026-10-09 回归修复：原表单缺这两个字段，UI 选「键值映射」必然失败。
+      {"name": "output_key_field", "label": "map形状-key字段", "type": "input", "required": False,
+       "placeholder": "name（map 形状时必填）"},
+      {"name": "output_value_field", "label": "map形状-value字段", "type": "input", "required": False,
+       "placeholder": "desc（map 形状时必填）"},
       {"name": "batch_size", "label": "每批条数", "type": "input", "required": False, "placeholder": "8"},
       {"name": "max_workers", "label": "并发线程", "type": "input", "required": False, "placeholder": "2"},
       {"name": "max_tokens", "label": "max_tokens", "type": "input", "required": False, "placeholder": "8000"},

@@ -8,7 +8,7 @@ kb_compilation 平台 HTTP 直调（登录 cookie + REST），并按各脚本既
 
 连接配置（环境变量 > 技能根 config.yaml > 默认）
   - API 入口:  KB_API_BASE_URL            > config.yaml kb.api_base_url > http://api-server:8000
-  - 服务账号:  KB_API_USER / KB_API_PWD    > config.yaml kb.api_user/api_pwd > huqiang/sys
+  - 服务账号:  KB_API_USER / KB_API_PWD    > config.yaml kb.api_user/api_pwd > admin/sys
   - 目标知识库: WEKNORA_KB_ID（agent 任务注入） > config.yaml kb.kb_id
   - LLM:       WEKNORA_LLM_*（任务级）> LLM_* / AI_CHAT_*（容器注入）> config.yaml model 段
                > 默认 https://inferaiapi.com/v1 + deepseek-v4-pro（key 兜底读
@@ -178,7 +178,10 @@ def api_base_url():
 
 def api_credentials():
     cfg = _skill_config().get('kb', {}) or {}
-    user = _env('KB_API_USER') or str(cfg.get('api_user') or 'huqiang')
+    # 2026-10-09 fix: 默认服务账号由 huqiang 改为 admin——huqiang 已删除，
+    # 沿用旧默认值会让编排业务原子组件(llm_extract/wiki_publish)登录 KB
+    # 报「用户不存在」。与 seed_framework_db.SEED_USER_ID 默认值保持一致。
+    user = _env('KB_API_USER') or str(cfg.get('api_user') or 'admin')
     pwd = _env('KB_API_PWD') or str(cfg.get('api_pwd') or 'sys')
     return user, pwd
 

@@ -156,6 +156,9 @@ def llm_extract(cfg: dict[str, Any]) -> dict[str, Any]:
         user = _render(prompt_tpl, {prompt_var: items, "count": len(batch),
                                    "index": idx + 1, "total": len(batches)})
         parse_fail = 0
+        last_err = ""  # 2026-10-09 fix: except-as e 的绑定在 except 块结束即删除(PEP 3110)，
+        # 重试耗尽后引用 e 会 UnboundLocalError——本意是「显式记账不静默产出 0 条」，
+        # 却在记账这行崩掉。用外层变量捕获最后一次错误。
         for attempt in range(retries):
             try:
                 raw = wr.llm_call(
@@ -176,12 +179,13 @@ def llm_extract(cfg: dict[str, Any]) -> dict[str, Any]:
                 print(f"[llm_extract] 批次 {idx + 1}/{len(batches)} → {len(parsed)} 条")
                 return parsed
             except Exception as e:  # noqa: BLE001
+                last_err = str(e)
                 parse_fail += 1
                 print(f"[llm_extract] 批次 {idx + 1} 第 {attempt + 1} 次失败: {e}")
                 if attempt < retries - 1:
                     time.sleep(min(2 ** attempt, 8))
         # 重试耗尽：显式记账，不静默产出 0 条（对齐"静默零产出"坑教训）
-        warn.append((idx + 1, f"重试 {retries} 次仍失败: {e}"))
+        warn.append((idx + 1, f"重试 {retries} 次仍失败: {last_err}"))
         print(f"[llm_extract] ⚠️ 批次 {idx + 1} 重试耗尽, 记空（详见汇总）")
         return []
 
@@ -257,13 +261,17 @@ def wiki_publish(cfg: dict[str, Any]) -> dict[str, Any]:
     src = cfg.get("source")
     if not src:
         _die("wiki_publish 缺 source")
-    folder_name = cfg.get("folder")
-    folder_id = cfg.get("folder_id")
-    if not folder_name and not folder_id:
-        _die("wiki_publish 缺 folder 或 folder_id")
     prefix = cfg.get("slug_prefix")
     if not prefix:
         _die("wiki_publish 缺 slug_prefix")
+    dry_run = bool(cfg.get("dry_run"))
+    # 2026-10-09 fix: dry_run 只统计不写库(只 print slug)，不需要 folder；
+    # 原实现在 dry_run 也 _die 缺 folder + 跑 _resolve_folder(一次往返)，
+    # 导致「仅统计」这个最安全的调试入口反而跑不通。dry_run 放行无 folder。
+    folder_name = cfg.get("folder")
+    folder_id = cfg.get("folder_id")
+    if not dry_run and not folder_name and not folder_id:
+        _die("wiki_publish 缺 folder 或 folder_id（dry_run 时可省略）")
     page_type = cfg.get("page_type") or "custom"
 
     records = _as_records(_read_json(src))
@@ -271,7 +279,6 @@ def wiki_publish(cfg: dict[str, Any]) -> dict[str, Any]:
     hash_len = int(cfg.get("slug_hash_len") or 8)
     with_kid = cfg.get("slug_with_kid_prefix", True)
     title_field = cfg.get("title_field") or "title"
-    dry_run = bool(cfg.get("dry_run"))
     sref = cfg.get("source_ref")
     status = cfg.get("status") or "published"
     content_tpl = cfg.get("content_template")
@@ -282,9 +289,12 @@ def wiki_publish(cfg: dict[str, Any]) -> dict[str, Any]:
     wr.mcp_init()
 
     # 目录解析
-    if not folder_id:
-        folder_id = _resolve_folder(folder_name, kb_id=wr.KB)
-    print(f"[wiki_publish] 目录: {folder_name or folder_id} → {folder_id}")
+    if dry_run:
+        print(f"[wiki_publish] dry_run: 跳过目录解析（folder={folder_name or folder_id or '未指定'}）")
+    else:
+        if not folder_id:
+            folder_id = _resolve_folder(folder_name or "", kb_id=wr.KB)
+        print(f"[wiki_publish] 目录: {folder_name or folder_id} → {folder_id}")
 
     kid_prefix = hashlib.md5(kid.encode()).hexdigest()[:10] if (kid and with_kid) else ""
     created = updated = skipped = errors = 0
