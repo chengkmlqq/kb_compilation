@@ -6,8 +6,7 @@
  */
 import { Card } from "antd";
 
-const EMBED_URL =
-  "http://10.1.215.50:8086/embed/b4464442-b8f8-4955-a7a4-37bd517693fd#token=em_DCrPPnCu9mCNGwIiBQEfyWZeaEZdALvnTeVX0YDgjLI";
+const EMBED_URL = "http://10.1.215.50:8086/login";
 
 export default function WeknoraEmbedPage() {
   return (
