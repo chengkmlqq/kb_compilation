@@ -2,7 +2,7 @@
 
 /** 团队管理（对齐 ds TeamManagerZj：左侧团队树 + 右键新增/删除/编辑 +
  * 搜索高亮；右侧 Tabs：团队信息 / 团队成员）。 */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   App,
   Button,
@@ -39,6 +39,10 @@ import {
 } from "@/lib/api";
 import { StateTag } from "../_shared";
 import ModoTable from "@/components/biz/modo-table";
+import { ModoTabs } from "@/components/biz/modo-tabs";
+
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type TeamTab = { key: string; title: string; children: ReactNode };
 
 type TeamFormValues = {
   teamName: string;
@@ -113,6 +117,17 @@ export default function SystemTeamsPage() {
   const [authRows, setAuthRows] = useState<DatasourceItem[]>([]);
   const [authLoading, setAuthLoading] = useState(false);
   const [savingAuth, setSavingAuth] = useState(false);
+
+  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
+  // 首个 tab「团队管理」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<TeamTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -355,21 +370,10 @@ export default function SystemTeamsPage() {
     ],
   };
 
-  return (
-    // 2026-10-08: 对齐用户管理页范式——外层固定视口高度不滚动，卡片内左右分栏占满剩余高度
-    <div
-      className="teams-page"
-      style={{
-        padding: 8,
-        height: "calc(100vh - 45px)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        minHeight: 0,
-      }}
-    >
+  // 列表区（首个选项卡内容）：左侧团队树 + 右侧团队信息/成员
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-        title="团队管理"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {
@@ -381,11 +385,6 @@ export default function SystemTeamsPage() {
             padding: "12px 16px 0",
           },
         }}
-        extra={
-          <Button type="primary" onClick={() => openCreate(null)}>
-            新增团队
-          </Button>
-        }
       >
         <div style={{ display: "flex", gap: 16, flex: 1, minHeight: 0 }}>
           {/* 左侧团队树 */}
@@ -668,6 +667,42 @@ export default function SystemTeamsPage() {
         />
       </Modal>
       </Card>
+    </div>
+  );
+
+  return (
+    // 2026-10-08: 对齐用户管理页范式——外层固定视口高度不滚动，卡片内左右分栏占满剩余高度
+    // 2026-10-09: 顶部改为「动态选项卡」（复用用户管理页 ModoTabs editable-card 模式）——
+    // 首 tab「团队管理」= 页面标题 + 列表（不可关闭），后续详情/编辑表单可作为可关闭 tab 打开。
+    <div
+      className="teams-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+          <Button type="primary" onClick={() => openCreate(null)}>
+            新增团队
+          </Button>
+        }
+        items={[
+          { key: "home", label: "团队管理", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
     </div>
   );
 }

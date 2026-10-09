@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   App,
   Button,
@@ -27,6 +27,7 @@ import {
   WebSearchProviderType,
 } from "@/lib/api";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
+import { ModoTabs } from "@/components/biz/modo-tabs";
 
 const { Text } = Typography;
 
@@ -49,6 +50,9 @@ const TYPE_OPTIONS: { label: string; value: WebSearchProviderType }[] = [
   { label: "generic（自定义端点）", value: "generic" },
 ];
 
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type WebSearchTab = { key: string; title: string; children: ReactNode };
+
 export default function WebSearchManagePage() {
   const { message, modal } = App.useApp();
   const [items, setItems] = useState<WebSearchProviderItem[]>([]);
@@ -56,6 +60,17 @@ export default function WebSearchManagePage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<WebSearchProviderItem | null>(null);
+
+  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
+  // 首个 tab「联网搜索」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<WebSearchTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -96,21 +111,10 @@ export default function WebSearchManagePage() {
     setEditOpen(true);
   };
 
-  return (
-    // 2026-10-08: 对齐用户管理页范式——外层固定视口高度不滚动，卡片内表格占满剩余高度
-    <div
-      className="websearch-page"
-      style={{
-        padding: 8,
-        height: "calc(100vh - 45px)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        minHeight: 0,
-      }}
-    >
+  // 列表区（首个选项卡内容）：表格占满剩余高度
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-        title="联网搜索"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {
@@ -122,16 +126,6 @@ export default function WebSearchManagePage() {
             padding: "12px 16px 0",
           },
         }}
-        extra={
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-              刷新
-            </Button>
-            <Button type="primary" onClick={openCreate}>
-              新增提供方
-            </Button>
-          </Space>
-        }
       >
         <Table<WebSearchProviderItem>
           rowKey="id"
@@ -139,7 +133,7 @@ export default function WebSearchManagePage() {
           loading={loading}
           dataSource={items}
           pagination={false}
-          scroll={{ x: 900, y: "calc(100vh - 168px)" }}
+          scroll={{ x: 900, y: "calc(100vh - 156px)" }}
           locale={{ emptyText: <Empty description="暂无搜索提供方" /> }}
           columns={[
             {
@@ -209,6 +203,47 @@ export default function WebSearchManagePage() {
           />
         )}
       </Card>
+    </div>
+  );
+
+  return (
+    // 2026-10-09: 顶部改为「动态选项卡」（复用用户管理页 ModoTabs editable-card 模式）——首 tab「联网搜索」
+    // = 页面标题 + 列表（不可关闭），后续内容较多的详情/编辑表单可作为可关闭 tab 打开；本轮先预留能力。
+    // 表格高度偏移 168 → 156（tab 导航 44px 取代卡片头 56px）。
+    <div
+      className="websearch-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+          <Space>
+            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+              刷新
+            </Button>
+            <Button type="primary" onClick={openCreate}>
+              新增提供方
+            </Button>
+          </Space>
+        }
+        items={[
+          { key: "home", label: "联网搜索", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
     </div>
   );
 }

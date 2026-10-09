@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Alert,
   App,
@@ -23,6 +23,7 @@ import { PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import CodeViewer from "@/components/CodeViewer";
 import ModoPagination from "@/components/biz/modo-pagination";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
+import { ModoTabs } from "@/components/biz/modo-tabs";
 import {
   apiCreateMcp,
   apiDeleteMcp,
@@ -47,6 +48,9 @@ const SCOPE_COLOR: Record<ModelScope, string> = {
   system: "purple",
 };
 
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type McpTab = { key: string; title: string; children: ReactNode };
+
 export default function McpManagePage() {
   const { message, modal } = App.useApp();
   const [items, setItems] = useState<McpRegistryItem[]>([]);
@@ -58,6 +62,17 @@ export default function McpManagePage() {
   const [testTarget, setTestTarget] = useState<McpRegistryItem | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+
+  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
+  // 首个 tab「MCP 管理」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<McpTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -112,37 +127,22 @@ export default function McpManagePage() {
     setEditOpen(true);
   };
 
-  return (
-      // 2026-10-08: 表格高度对齐用户管理页「固定视口高度」——高度锁定 视口 − 顶部/Tabs/分页偏移
-      // （100vh-274px），进页即撑满无底部空白；数据多时表头固定、表体滚动（antd Table scroll.y）
-      <div
-        className="mcps-page"
-        style={{ padding: 8, height: "calc(100vh - 45px)", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+  // 列表区（首个选项卡内容）：类型 Tab + 表格 + 钉底分页
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <Card
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
       >
-        <Card
-          title="MCP 管理"
-          style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-          styles={{
-            body: {
-              flex: 1,
-              minHeight: 0,
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-              padding: "12px 16px 0",
-            },
-          }}
-          extra={
-        <Space>
-          <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-            刷新
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新增服务器
-          </Button>
-        </Space>
-      }
-    >
       <Tabs
               activeKey={typeFilter}
               onChange={(k) => {
@@ -162,7 +162,7 @@ export default function McpManagePage() {
               loading={loading}
               dataSource={pagedItems}
               pagination={false}
-              scroll={{ x: 1000, y: "calc(100vh - 274px)" }}
+              scroll={{ x: 1000, y: "calc(100vh - 262px)" }}
               locale={{ emptyText: <Text type="secondary">暂无 MCP 服务器</Text> }}
         columns={[
           {
@@ -245,6 +245,37 @@ export default function McpManagePage() {
       )}
       <McpTestDrawer target={testTarget} onClose={() => setTestTarget(null)} message={message} />
       </Card>
+    </div>
+  );
+
+  return (
+    <div
+      className="mcps-page"
+      style={{ padding: 8, height: "calc(100vh - 45px)", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+          <Space>
+            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+              刷新
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              新增服务器
+            </Button>
+          </Space>
+        }
+        items={[
+          { key: "home", label: "MCP 管理", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
     </div>
   );
 }

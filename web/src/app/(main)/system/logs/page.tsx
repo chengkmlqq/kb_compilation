@@ -1,10 +1,14 @@
 "use client";
 
 /** 操作日志（独立页，对齐 ds system/system-logs）。 */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Button, Card, Empty, Form, Input, Space, Table, Tag } from "antd";
 import { apiListOperationLogs, SysLogItem } from "@/lib/api";
 import ModoPagination from "@/components/biz/modo-pagination";
+import { ModoTabs } from "@/components/biz/modo-tabs";
+
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type LogTab = { key: string; title: string; children: ReactNode };
 
 export default function SystemLogsPage() {
   const [rows, setRows] = useState<SysLogItem[]>([]);
@@ -14,6 +18,17 @@ export default function SystemLogsPage() {
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
   const [searchForm] = Form.useForm<{ keyword: string }>();
+
+  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
+  // 首个 tab「操作日志」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<LogTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -43,21 +58,10 @@ export default function SystemLogsPage() {
     setKeyword("");
   };
 
-  return (
-    // 2026-10-08: 对齐用户管理页范式——外层固定视口高度不滚动，卡片内表格占满剩余高度，分页常驻底栏
-    <div
-      className="logs-page"
-      style={{
-        padding: 8,
-        height: "calc(100vh - 45px)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        minHeight: 0,
-      }}
-    >
+  // 列表区（首个选项卡内容）：筛选 + 表格 + 钉底分页
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-        title="操作日志"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {
@@ -97,7 +101,7 @@ export default function SystemLogsPage() {
           loading={loading}
           dataSource={rows}
           pagination={false}
-          scroll={{ x: 900, y: "calc(100vh - 264px)" }}
+          scroll={{ x: 900, y: "calc(100vh - 252px)" }}
           locale={{ emptyText: <Empty description="暂无日志" /> }}
           columns={[
             { title: "用户", dataIndex: "user_name" },
@@ -125,6 +129,38 @@ export default function SystemLogsPage() {
           />
         </div>
       </Card>
+    </div>
+  );
+
+  return (
+    // 2026-10-08: 对齐用户管理页范式——外层固定视口高度不滚动
+    // 2026-10-09: 顶部改为「动态选项卡」（复用用户管理页 ModoTabs editable-card 模式）——首 tab「操作日志」
+    // = 页面标题 + 列表（不可关闭），后续内容较多的详情/编辑表单可作为可关闭 tab 打开；本轮先预留能力。
+    // 表格高度偏移 264 → 252（tab 导航 44px 取代卡片头 56px）。
+    <div
+      className="logs-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        items={[
+          { key: "home", label: "操作日志", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
     </div>
   );
 }

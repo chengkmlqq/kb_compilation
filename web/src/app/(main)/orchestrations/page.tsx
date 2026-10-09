@@ -5,7 +5,7 @@
  * Card + inline 筛选（关键词/状态）+ antd Table + ModoPagination；
  * 操作：设计(React Flow 画布跳转) / 编辑 / 发布 / 下线 / 执行(逐步日志弹窗) / 删除。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -15,6 +15,7 @@ import { ModoSelect } from "@/components/biz/modo-select";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import { ModoPagination } from "@/components/biz/modo-pagination";
+import { ModoTabs } from "@/components/biz/modo-tabs";
 import {
   apiCreateTape,
   apiDeleteTape,
@@ -34,6 +35,9 @@ const STATUS_META: Record<string, { color: string; label: string }> = {
   effective: { color: "green", label: "已发布" },
   offline: { color: "orange", label: "已下线" },
 };
+
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type OrchestrationTab = { key: string; title: string; children: ReactNode };
 
 export default function OrchestrationsPage() {
   const { message, modal } = App.useApp();
@@ -60,6 +64,17 @@ export default function OrchestrationsPage() {
   const [running, setRunning] = useState(false);
   const [execResult, setExecResult] = useState<TapeExecuteResult | null>(null);
   const [execOpen, setExecOpen] = useState(false);
+
+  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
+  // 首个 tab「编排管理」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<OrchestrationTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -238,22 +253,10 @@ export default function OrchestrationsPage() {
     },
   ];
 
-  return (
-    // 2026-10-09: 参考用户管理页——固定视口高度（外层不滚动），表格 scroll.y 锁定高度让表头固定、表体内部滚动，
-    // 分页常驻底栏；筛选改为 inline Form（查询/重置）
-    <div
-      className="orchestrations-page"
-      style={{
-        padding: 8,
-        height: "calc(100vh - 45px)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        minHeight: 0,
-      }}
-    >
+  // 列表区（首个选项卡内容）：筛选 + 表格 + 钉底分页
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-        title="编排管理"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {
@@ -265,11 +268,6 @@ export default function OrchestrationsPage() {
             padding: "12px 16px 0",
           },
         }}
-        extra={
-          <Button type="primary" onClick={openCreate}>
-            新建编排
-          </Button>
-        }
       >
         {/* 筛选表单（对齐用户管理页：查询/重置） */}
         <Form form={searchForm} layout="inline" style={{ marginBottom: 12, flexShrink: 0 }} onFinish={doSearch}>
@@ -305,7 +303,7 @@ export default function OrchestrationsPage() {
           columns={columns}
           dataSource={data}
           pagination={false}
-          scroll={{ x: "100%", y: "calc(100vh - 264px)" }}
+          scroll={{ x: "100%", y: "calc(100vh - 252px)" }}
           locale={{ emptyText: <Empty description="暂无编排" /> }}
         />
         <div style={{ flexShrink: 0, marginTop: "auto" }}>
@@ -321,6 +319,42 @@ export default function OrchestrationsPage() {
           />
         </div>
       </Card>
+    </div>
+  );
+
+  return (
+    // 2026-10-09: 顶部改为「动态选项卡」（复用用户管理页 ModoTabs editable-card 模式）——首 tab「编排管理」
+    // = 页面标题 + 列表（不可关闭），后续内容较多的详情/编辑表单可作为可关闭 tab 打开；本轮先预留能力。
+    // 表格高度偏移 264 → 252（tab 导航 44px 取代卡片头 56px）。
+    <div
+      className="orchestrations-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+          <Button type="primary" onClick={openCreate}>
+            新建编排
+          </Button>
+        }
+        items={[
+          { key: "home", label: "编排管理", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
 
       <ModoDrawer
         open={drawerOpen}

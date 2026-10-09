@@ -6,7 +6,7 @@
  * + antd Table 固定视口高度 + ModoPagination 常驻底栏；ModoDrawer 新建/编辑（dimCode 编辑禁用）。
  * 数据走 /api/v1/system/dims（modo_dim 通用 CRUD）。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { App, Button, Card, Form, Input, InputNumber, Select, Space, Table, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { CheckCircleFilled, CloseCircleFilled } from "@ant-design/icons";
@@ -16,6 +16,7 @@ import { ModoRadio } from "@/components/biz/modo-radio";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import { ModoPagination } from "@/components/biz/modo-pagination";
+import { ModoTabs } from "@/components/biz/modo-tabs";
 import {
   apiCreateDim,
   apiDeleteDim,
@@ -24,6 +25,9 @@ import {
   apiUpdateDim,
   DimItem,
 } from "@/lib/api";
+
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type DimsTab = { key: string; title: string; children: ReactNode };
 
 export default function SystemDimsPage() {
   const { message, modal } = App.useApp();
@@ -43,6 +47,17 @@ export default function SystemDimsPage() {
 
   const [searchForm] = Form.useForm();
   const [dimForm] = Form.useForm();
+
+  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
+  // 首个 tab「参数」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<DimsTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   const load = useCallback(
     async (p = page, size = pageSize, flt = filter) => {
@@ -241,17 +256,10 @@ export default function SystemDimsPage() {
     },
   ];
 
-  return (
-    // 2026-10-08: 参考用户管理页改造 —— 外层 8px padding、Card 标题「参数」、extra 新建按钮、
-    // inline 筛选表单、分页常驻底栏
-    // 2026-10-08: 表格高度对齐用户管理页「固定视口高度」——高度锁定 视口 − 顶部/筛选/分页偏移
-    // （100vh-264px），进页即撑满无底部空白；数据多时表头固定、表体滚动（antd Table scroll.y）
-    <div
-      className="dims-page"
-      style={{ padding: 8, height: "calc(100vh - 45px)", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-    >
+  // 列表区（首个选项卡内容）：筛选 + 表格 + 钉底分页
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-        title="参数"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {
@@ -263,11 +271,6 @@ export default function SystemDimsPage() {
             padding: "12px 16px 0",
           },
         }}
-        extra={
-          <Button type="primary" onClick={openCreate}>
-            新建参数
-          </Button>
-        }
       >
         {/* 筛选表单（对齐用户管理页 FilterForm：参数编码 + 参数分组 + 查询/重置） */}
         <Form
@@ -313,7 +316,7 @@ export default function SystemDimsPage() {
           rowKey="id"
           loading={loading}
           pagination={false}
-          scroll={{ x: "100%", y: "calc(100vh - 264px)" }}
+          scroll={{ x: "100%", y: "calc(100vh - 252px)" }}
           locale={{ emptyText: "暂无参数" }}
           size="small"
         />
@@ -333,6 +336,36 @@ export default function SystemDimsPage() {
           />
         </div>
       </Card>
+    </div>
+  );
+
+  return (
+    // 2026-10-08: 参考用户管理页改造 —— 外层 8px padding、inline 筛选表单、分页常驻底栏
+    // 2026-10-09: 顶部改为「动态选项卡」（复用用户管理页 ModoTabs editable-card 模式）——首 tab「参数」
+    // = 页面标题 + 列表（不可关闭），后续内容较多的详情/编辑表单可作为可关闭 tab 打开；本轮先预留能力。
+    // 表格高度偏移 264 → 252（tab 导航 44px 取代卡片头 56px）。
+    <div
+      className="dims-page"
+      style={{ padding: 8, height: "calc(100vh - 45px)", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+          <Button type="primary" onClick={openCreate}>
+            新建参数
+          </Button>
+        }
+        items={[
+          { key: "home", label: "参数", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
 
       <ModoDrawer
         title={drawerMode === "create" ? "新建参数" : "编辑参数"}

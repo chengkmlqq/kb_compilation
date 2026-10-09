@@ -6,7 +6,7 @@
  * 资源管理器式浏览：业务模块 → 团队 → 日期 → 文件，逐级下探；
  * 支持全局搜索、上传、单文件下载、逻辑删除、目录递归删除、目录打包下载。
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   App,
   Breadcrumb,
@@ -41,6 +41,7 @@ import {
 } from "@/lib/api";
 import ModoPagination from "@/components/biz/modo-pagination";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
+import { ModoTabs } from "@/components/biz/modo-tabs";
 
 const { Text } = Typography;
 
@@ -55,6 +56,9 @@ function fmtDate(text?: string | null): string {
   return text || "-";
 }
 
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type FileTab = { key: string; title: string; children: ReactNode };
+
 export default function FilesPage() {
   const { message, modal } = App.useApp();
   const [loading, setLoading] = useState(false);
@@ -66,6 +70,17 @@ export default function FilesPage() {
   const [pageSize, setPageSize] = useState(20);
   const [uploading, setUploading] = useState(false);
   const [searchForm] = Form.useForm<{ keyword: string }>();
+
+  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
+  // 首个 tab「文件管理」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<FileTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   const parts = useMemo(
     () => currentPath.split("/").filter(Boolean),
@@ -315,21 +330,10 @@ export default function FilesPage() {
     },
   ];
 
-  return (
-    // 2026-10-08: 对齐用户管理页范式——外层定高不滚动，卡片内「路径/筛选固定、表格滚动、分页钉底」
-    <div
-      className="files-page"
-      style={{
-        padding: 8,
-        height: "calc(100vh - 45px)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        minHeight: 0,
-      }}
-    >
+  // 列表区（首个选项卡内容）：路径 + 筛选 + 表格 + 钉底分页
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-        title="文件管理"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {
@@ -341,13 +345,6 @@ export default function FilesPage() {
             padding: "12px 16px 0",
           },
         }}
-        extra={
-          <Upload accept="*" showUploadList={false} beforeUpload={handleUpload}>
-            <Button type="primary" icon={<CloudUploadOutlined />} loading={uploading}>
-              上传
-            </Button>
-          </Upload>
-        }
       >
         {/* 路径导航（固定） */}
         <div style={{ flexShrink: 0, marginBottom: 12 }}>
@@ -389,7 +386,7 @@ export default function FilesPage() {
           dataSource={list}
           columns={columns}
           pagination={false}
-          scroll={{ x: 900, y: "calc(100vh - 308px)" }}
+          scroll={{ x: 900, y: "calc(100vh - 296px)" }}
           locale={{ emptyText: <Empty description="暂无文件" /> }}
           onRow={(record) =>
             record.isFolder ? { onDoubleClick: () => enterFolder(record.name || "") } : {}
@@ -409,6 +406,41 @@ export default function FilesPage() {
           />
         </div>
       </Card>
+    </div>
+  );
+
+  return (
+    <div
+      className="files-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+          <Upload accept="*" showUploadList={false} beforeUpload={handleUpload}>
+            <Button type="primary" icon={<CloudUploadOutlined />} loading={uploading}>
+              上传
+            </Button>
+          </Upload>
+        }
+        items={[
+          { key: "home", label: "文件管理", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
     </div>
   );
 }

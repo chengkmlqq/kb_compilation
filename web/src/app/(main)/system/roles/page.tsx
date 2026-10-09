@@ -18,7 +18,7 @@
  * 待后端支持后在此透传 searchParams 即可。
  * 「已分配菜单」列：列表接口不返回汇总，对当前页逐行并行拉取 apiGetRoleMenus（页面小）。
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { App, Button, Card, Form, Input, Select, Space, Spin, Table, Tag, Tooltip, Transfer, TreeSelect } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
@@ -44,6 +44,7 @@ import { ModoModal } from "@/components/biz/modo-modal";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
 import { ModoRadio } from "@/components/biz/modo-radio";
 import { ModoSelect } from "@/components/biz/modo-select";
+import { ModoTabs } from "@/components/biz/modo-tabs";
 
 /** 后端单页条数上限（Query le=100） */
 const USERS_PAGE_SIZE = 100;
@@ -65,6 +66,9 @@ const truncateStyle: React.CSSProperties = {
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
 };
+
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type RoleTab = { key: string; title: string; children: ReactNode };
 
 export default function SystemRolesPage() {
   const { message, modal } = App.useApp();
@@ -111,6 +115,17 @@ export default function SystemRolesPage() {
   const [userLoading, setUserLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
   const userConfigRequestSeqRef = useRef(0);
+
+  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
+  // 首个 tab「角色管理」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<RoleTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   // 菜单树数据（TreeSelect 用）+ 菜单 id -> 名称 映射（已分配菜单列用）
   const menuTreeData = useMemo(() => menusToTreeData(menuItems), [menuItems]);
@@ -536,17 +551,10 @@ export default function SystemRolesPage() {
     },
   ];
 
-  return (
-    // 2026-10-08: 参考用户管理页改造 —— 外层 8px padding、Card 标题「角色」、extra 新建按钮、
-    // inline 筛选表单、分页常驻底栏
-    // 2026-10-08: 表格高度对齐用户管理页「固定视口高度」——高度锁定 视口 − 顶部/筛选/分页偏移
-    // （100vh-264px），进页即撑满无底部空白；数据多时表头固定、表体滚动（antd Table scroll.y）
-    <div
-      className="roles-page"
-      style={{ padding: 8, height: "calc(100vh - 45px)", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-    >
+  // 列表区（首个选项卡内容）：筛选 + 表格 + 钉底分页
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-        title="角色管理"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {
@@ -558,11 +566,6 @@ export default function SystemRolesPage() {
             padding: "12px 16px 0",
           },
         }}
-        extra={
-          <Button type="primary" onClick={handleCreate}>
-            新建角色
-          </Button>
-        }
       >
         {/* 筛选表单（对齐用户管理页 FilterForm：角色名称 + 角色类型 + 查询/重置） */}
         <Form
@@ -601,7 +604,7 @@ export default function SystemRolesPage() {
           rowKey="role_id"
           loading={loading}
           pagination={false}
-          scroll={{ x: 1400, y: "calc(100vh - 264px)" }}
+          scroll={{ x: 1400, y: "calc(100vh - 252px)" }}
           size="small"
         />
         <div style={{ flexShrink: 0, marginTop: "auto" }}>
@@ -619,6 +622,36 @@ export default function SystemRolesPage() {
           />
         </div>
       </Card>
+    </div>
+  );
+
+  return (
+    // 2026-10-08: 参考用户管理页改造 —— 外层 8px padding、inline 筛选表单、分页常驻底栏
+    // 2026-10-09: 顶部改为「动态选项卡」（复用用户管理页 ModoTabs editable-card 模式）——首 tab「角色管理」
+    // = 页面标题 + 列表（不可关闭），后续内容较多的详情/编辑表单可作为可关闭 tab 打开；本轮先预留能力。
+    // 表格高度偏移 264 → 252（tab 导航 44px 取代卡片头 56px）。
+    <div
+      className="roles-page"
+      style={{ padding: 8, height: "calc(100vh - 45px)", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+          <Button type="primary" onClick={handleCreate}>
+            新建角色
+          </Button>
+        }
+        items={[
+          { key: "home", label: "角色管理", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
 
       {/* 新建 / 编辑角色 Drawer */}
       <ModoDrawer

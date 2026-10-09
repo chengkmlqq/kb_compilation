@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   App,
   Button,
@@ -32,6 +32,7 @@ import {
   AgentItem,
 } from "@/lib/api";
 import AgentEditorModal, { AgentEditorValues } from "@/components/AgentEditorModal";
+import { ModoTabs } from "@/components/biz/modo-tabs";
 
 const modeLabel = (c: Record<string, unknown> | undefined) =>
   c?.agent_mode === "smart-reasoning" ? "智能推理" : "快速问答";
@@ -63,6 +64,9 @@ const featureBadges = (c: Record<string, unknown> | undefined) => {
   return out;
 };
 
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type AgentTab = { key: string; title: string; children: ReactNode };
+
 export default function AgentsPage() {
   const { message, modal } = App.useApp();
   const [agents, setAgents] = useState<AgentItem[]>([]);
@@ -71,6 +75,17 @@ export default function AgentsPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<AgentItem | null>(null);
   const [searchForm] = Form.useForm<{ keyword: string }>();
+
+  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
+  // 首个 tab「智能体配置」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<AgentTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -176,21 +191,10 @@ export default function AgentsPage() {
     setSearch("");
   };
 
-  return (
-    // 2026-10-08: 对齐用户管理页范式——外层定高不滚动，卡片内「筛选固定 / 卡片列表滚动」
-    <div
-      className="agents-page"
-      style={{
-        padding: 8,
-        height: "calc(100vh - 45px)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        minHeight: 0,
-      }}
-    >
+  // 列表区（首个选项卡内容）：筛选固定 / 卡片列表滚动 + 编辑弹窗
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-        title="智能体配置"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {
@@ -202,17 +206,6 @@ export default function AgentsPage() {
             padding: "12px 16px 0",
           },
         }}
-        extra={
-          <Button
-            type="primary"
-            onClick={() => {
-              setEditing(null);
-              setEditorOpen(true);
-            }}
-          >
-            新建智能体
-          </Button>
-        }
       >
         {/* 筛选表单（对齐用户管理页：查询/重置 显式触发） */}
         <Form
@@ -320,6 +313,46 @@ export default function AgentsPage() {
           onSubmit={handleSubmit}
         />
       </Card>
+    </div>
+  );
+
+  return (
+    // 2026-10-08: 对齐用户管理页范式——外层定高不滚动，卡片内「筛选固定 / 卡片列表滚动」
+    <div
+      className="agents-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+          <Button
+            type="primary"
+            onClick={() => {
+              setEditing(null);
+              setEditorOpen(true);
+            }}
+          >
+            新建智能体
+          </Button>
+        }
+        items={[
+          { key: "home", label: "智能体配置", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
     </div>
   );
 }

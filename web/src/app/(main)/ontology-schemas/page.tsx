@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   App,
   Button,
@@ -28,6 +28,7 @@ import {
 } from "@ant-design/icons";
 import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
+import { ModoTabs } from "@/components/biz/modo-tabs";
 
 import {
   apiBindKbOntologySchema,
@@ -46,6 +47,9 @@ import {
 } from "@/lib/api";
 
 const DIM_LABEL: Record<string, string> = { business: "业务本体", rule: "规则本体" };
+
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type OntologyTab = { key: string; title: string; children: ReactNode };
 
 export default function OntologySchemasPage() {
   const { message } = App.useApp();
@@ -68,6 +72,17 @@ export default function OntologySchemasPage() {
   const [bindForm] = Form.useForm();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+
+  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
+  // 首个 tab「本体 Schema」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<OntologyTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -297,47 +312,13 @@ export default function OntologySchemasPage() {
     },
   ];
 
-  return (
-      // 一屏自适应（对齐 data-synth）：外层不滚动，卡片内表格占满剩余高度，分页常驻底栏
-      <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-        <Card
-          title="本体 Schema"
-          style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-          styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
-          extra={
-        <Space>
-          <Button icon={<UploadOutlined />} onClick={() => fileInputRef.current?.click()}>
-            导入
-          </Button>
-          <Button icon={<DownloadOutlined />} onClick={() => void doExport()} disabled={!current}>
-            导出
-          </Button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json,application/json"
-            style={{ display: "none" }}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) onImportFile(f);
-              e.target.value = "";
-            }}
-          />
-          <Button icon={<ApiOutlined />} onClick={() => { void loadKbs(); bindForm.setFieldsValue({ schema_name: current?.schema_name }); setBindOpen(true); }}>
-            绑定知识库
-          </Button>
-          <Button icon={<CopyOutlined />} onClick={() => { copyForm.setFieldsValue({ source_schema: current?.schema_name }); setCopyOpen(true); }}>
-            复制为新的领域
-          </Button>
-          <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-            刷新
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新增分类
-          </Button>
-        </Space>
-      }
-    >
+  // 列表区（首个选项卡内容）：描述 + Schema/维度切换 + 表格 + 钉底分页 + 各弹窗
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <Card
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+      >
             {current && (
               <Descriptions style={{ marginBottom: 16, flexShrink: 0 }} size="small" column={4} bordered>
             <Descriptions.Item label="Schema 名称">{current.schema_name}</Descriptions.Item>
@@ -465,7 +446,59 @@ export default function OntologySchemasPage() {
           </Form.Item>
         </Form>
       </Modal>
-            </Card>
-          </div>
-        );
-      }
+      </Card>
+    </div>
+  );
+
+  return (
+      // 一屏自适应（对齐 data-synth）：外层不滚动，卡片内表格占满剩余高度，分页常驻底栏
+      <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+        <Space>
+          <Button icon={<UploadOutlined />} onClick={() => fileInputRef.current?.click()}>
+            导入
+          </Button>
+          <Button icon={<DownloadOutlined />} onClick={() => void doExport()} disabled={!current}>
+            导出
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onImportFile(f);
+              e.target.value = "";
+            }}
+          />
+          <Button icon={<ApiOutlined />} onClick={() => { void loadKbs(); bindForm.setFieldsValue({ schema_name: current?.schema_name }); setBindOpen(true); }}>
+            绑定知识库
+          </Button>
+          <Button icon={<CopyOutlined />} onClick={() => { copyForm.setFieldsValue({ source_schema: current?.schema_name }); setCopyOpen(true); }}>
+            复制为新的领域
+          </Button>
+          <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+            刷新
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            新增分类
+          </Button>
+        </Space>
+        }
+        items={[
+          { key: "home", label: "本体 Schema", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
+      </div>
+  );
+}

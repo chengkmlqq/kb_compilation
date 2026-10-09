@@ -6,8 +6,11 @@
   overflow: hidden;
 }
 
-/* Ant Design Tabs Stretch */
-.modo-tabs :global(.ant-tabs-content-holder) {
+/* Ant Design Tabs Stretch
+   antd v6 内容区结构为：.ant-tabs > .ant-tabs-body-holder > .ant-tabs-body > .ant-tabs-content（面板即旧 tabpane）。
+   旧版本用的 .ant-tabs-content-holder / .ant-tabs-tabpane 在 v6 已不存在，会导致 flex 高度链路断裂、
+   卡片不再撑满、页面底部留白。 */
+.modo-tabs :global(.ant-tabs-body-holder) {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -15,13 +18,17 @@
   overflow: hidden;
 }
 
-.modo-tabs :global(.ant-tabs-content) {
-  height: 100%;
+.modo-tabs :global(.ant-tabs-body) {
+  flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
-.modo-tabs :global(.ant-tabs-tabpane) {
-  height: 100%;
+/* 内容面板（v6 中即 .ant-tabs-content）。不在此设置 display，避免覆盖 antd 的
+   .ant-tabs-content-hidden { display: none } 而令未激活面板外露。 */
+.modo-tabs :global(.ant-tabs-content) {
+  flex: 1;
   min-height: 0;
 }
 

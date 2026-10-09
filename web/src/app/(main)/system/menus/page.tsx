@@ -11,7 +11,7 @@
  *   apiListMenuIcons() -> string[]（图标名目录）
  * 扩展字段 openType/linkType/fetchMode/route/routeParam/url 放 menu_ext_conf（JSON 字符串）。
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Alert,
   App,
@@ -49,6 +49,7 @@ import { ModoTree } from "@/components/biz/modo-tree";
 import { ModoInput, ModoSearch, ModoTextArea } from "@/components/biz/modo-input";
 import { ModoSelect } from "@/components/biz/modo-select";
 import { ModoRadio } from "@/components/biz/modo-radio";
+import { ModoTabs } from "@/components/biz/modo-tabs";
 import {
   apiCreateMenu,
   apiDeleteMenu,
@@ -77,6 +78,9 @@ const ICON_COMPONENTS = AntdIcons as unknown as Record<
   string,
   React.ComponentType<{ style?: React.CSSProperties }>
 >;
+
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type MenuTab = { key: string; title: string; children: ReactNode };
 
 /** 菜单数组 -> 左侧树节点（递归 parent_id，按 sort_num 排序） */
 function buildMenuTree(menus: MenuItemExt[], parentId: string | null = null): DataNode[] {
@@ -238,6 +242,17 @@ export default function SystemMenusPage() {
   // ---- API 权限（kb 独有；编辑抽屉底部） ----
   const [apiPerms, setApiPerms] = useState<SysApiPerm[]>([]);
   const [apiPermsLoading, setApiPermsLoading] = useState(false);
+
+  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
+  // 首个 tab「菜单管理」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<MenuTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   // 加载菜单全量数据（树 + 表格数据源）
   const load = useCallback(async () => {
@@ -564,21 +579,10 @@ export default function SystemMenusPage() {
     },
   ];
 
-  return (
-    // 2026-10-08: 对齐用户管理页范式——外层固定视口高度不滚动，卡片内表格占满剩余高度，分页常驻底栏
-    <div
-      className="menus-page"
-      style={{
-        padding: 8,
-        height: "calc(100vh - 45px)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        minHeight: 0,
-      }}
-    >
+  // 列表区（首个选项卡内容）：左树右表 + 钉底分页
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-        title="菜单管理"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {
@@ -590,11 +594,6 @@ export default function SystemMenusPage() {
             padding: "12px 16px 0",
           },
         }}
-        extra={
-          <Button type="primary" onClick={() => openCreate()}>
-            新建
-          </Button>
-        }
       >
       {/* 左树右表布局（对齐 data-synth）：Sider 240px 树区 + Content 表格区 */}
       <Layout style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "row", background: "transparent" }}>
@@ -736,7 +735,7 @@ export default function SystemMenusPage() {
             size="small"
             loading={loading}
             pagination={false}
-            scroll={{ x: "100%", y: "calc(100vh - 264px)" }}
+            scroll={{ x: "100%", y: "calc(100vh - 252px)" }}
             locale={{ emptyText: <Empty description="暂无菜单" /> }}
           />
           {/* 分页吸底 */}
@@ -921,6 +920,43 @@ export default function SystemMenusPage() {
         </Form>
       </ModoDrawer>
       </Card>
+    </div>
+  );
+
+  return (
+    // 2026-10-08: 对齐用户管理页范式——外层固定视口高度不滚动
+    // 2026-10-09: 顶部改为「动态选项卡」（复用用户管理页 ModoTabs editable-card 模式）——首 tab「菜单管理」
+    // = 页面标题 + 列表（不可关闭），后续内容较多的详情/编辑表单可作为可关闭 tab 打开；本轮先预留能力。
+    // 表格高度偏移 264 → 252（tab 导航 44px 取代卡片头 56px）。
+    <div
+      className="menus-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+          <Button type="primary" onClick={() => openCreate()}>
+            新建
+          </Button>
+        }
+        items={[
+          { key: "home", label: "菜单管理", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
     </div>
   );
 }

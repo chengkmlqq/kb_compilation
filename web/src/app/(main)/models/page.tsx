@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   App,
   Button,
@@ -62,6 +62,7 @@ import {
   ModelType,
 } from "@/lib/api";
 import ModoPagination from "@/components/biz/modo-pagination";
+import { ModoTabs } from "@/components/biz/modo-tabs";
 
 const { Text } = Typography;
 
@@ -104,6 +105,9 @@ const SCOPE_COLOR: Record<ModelScope, string> = {
   system: "purple",
 };
 
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type ModelTab = { key: string; title: string; children: ReactNode };
+
 export default function ModelRegistryPage() {
   const { message, modal } = App.useApp();
   const [items, setItems] = useState<ModelItem[]>([]);
@@ -117,6 +121,17 @@ export default function ModelRegistryPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalSaving, setModalSaving] = useState(false);
   const [debugTarget, setDebugTarget] = useState<ModelItem | null>(null);
+
+  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
+  // 首个 tab「模型配置」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<ModelTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -279,21 +294,10 @@ export default function ModelRegistryPage() {
     return false; // 阻止 antd 默认上传
   };
 
-  return (
-    // 2026-10-08: 对齐 MCP 管理页范式——外层定高不滚动，卡片内「Tabs 固定 / 卡片网格滚动 / 分页钉底」
-    <div
-      className="models-page"
-      style={{
-        padding: 8,
-        height: "calc(100vh - 45px)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        minHeight: 0,
-      }}
-    >
+  // 列表区（首个选项卡内容）：类型 Tabs 固定 / 卡片网格滚动 / 分页钉底 + 编辑弹窗/调试抽屉
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-        title="模型配置"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {
@@ -305,26 +309,6 @@ export default function ModelRegistryPage() {
             padding: "12px 16px 0",
           },
         }}
-        extra={
-          <Space>
-            <Button icon={<DownloadOutlined />} onClick={handleExport}>
-              导出
-            </Button>
-            <Upload
-              accept=".json,application/json"
-              showUploadList={false}
-              beforeUpload={handleImportFile}
-            >
-              <Button icon={<UploadOutlined />}>导入</Button>
-            </Upload>
-            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-              刷新
-            </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新建模型
-            </Button>
-          </Space>
-        }
       >
         <Tabs
           activeKey={typeFilter}
@@ -498,6 +482,55 @@ export default function ModelRegistryPage() {
           message={message}
         />
       </Card>
+    </div>
+  );
+
+  return (
+    // 2026-10-08: 对齐 MCP 管理页范式——外层定高不滚动，卡片内「Tabs 固定 / 卡片网格滚动 / 分页钉底」
+    <div
+      className="models-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+          <Space>
+            <Button icon={<DownloadOutlined />} onClick={handleExport}>
+              导出
+            </Button>
+            <Upload
+              accept=".json,application/json"
+              showUploadList={false}
+              beforeUpload={handleImportFile}
+            >
+              <Button icon={<UploadOutlined />}>导入</Button>
+            </Upload>
+            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+              刷新
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              新建模型
+            </Button>
+          </Space>
+        }
+        items={[
+          { key: "home", label: "模型配置", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
     </div>
   );
 }

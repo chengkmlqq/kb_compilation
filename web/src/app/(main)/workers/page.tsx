@@ -8,7 +8,7 @@
  * 「查看任务」打开任务快照抽屉（active/reserved/scheduled/recent 四 Tab），
  * 点击注册任务数打开定时配置抽屉（modo_cron_task 关联）。5s 自动轮询。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   App,
   Button,
@@ -38,6 +38,7 @@ import {
   WorkerRegisteredTaskConfigOverview,
 } from "@/lib/api";
 import ModoPagination from "@/components/biz/modo-pagination";
+import { ModoTabs } from "@/components/biz/modo-tabs";
 
 const { Text } = Typography;
 
@@ -108,6 +109,9 @@ function renderStateTag(state: string) {
   );
 }
 
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type WorkerTab = { key: string; title: string; children: ReactNode };
+
 export default function WorkersPage() {
   const { message } = App.useApp();
 
@@ -130,6 +134,17 @@ export default function WorkersPage() {
   const [registeredOverview, setRegisteredOverview] =
     useState<WorkerRegisteredTaskConfigOverview | null>(null);
   const [registeredLoading, setRegisteredLoading] = useState(false);
+
+  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
+  // 首个 tab「主机监控」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<WorkerTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   const fetchOverview = useCallback(
     async (options?: { forceRefresh?: boolean; silent?: boolean }) => {
@@ -398,7 +413,7 @@ export default function WorkersPage() {
         size="small"
         dataSource={data}
         columns={taskColumns}
-        scroll={{ x: 1100, y: "calc(100vh - 320px)" }}
+        scroll={{ x: 1100, y: "calc(100vh - 308px)" }}
         pagination={{ pageSize: 20, showSizeChanger: false }}
         locale={{ emptyText: "暂无任务" }}
       />
@@ -411,25 +426,10 @@ export default function WorkersPage() {
     ];
   }, [taskOverview, taskColumns]);
 
-  return (
-    <div
-      className="workers-page"
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "calc(100vh - 45px)",
-        minHeight: 0,
-        background: "#F5F7FA",
-        padding: 8,
-        overflow: "hidden",
-      }}
-    >
-      {/* 2026-10-08: 参考用户管理页改造 —— Card 标题「主机监控」、extra 摘要 + 刷新、
-          inline 筛选表单、分页常驻底栏
-          2026-10-08: 表格高度对齐用户管理页「固定视口高度」——高度锁定 视口 − 顶部/筛选/分页偏移
-          （100vh-264px），进页即撑满无底部空白；数据多时表头固定、表体滚动（antd Table scroll.y） */}
+  // 列表区（首个选项卡内容）：摘要 + 筛选 + 表格 + 钉底分页
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-        title="主机监控"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {
@@ -441,25 +441,6 @@ export default function WorkersPage() {
             padding: "12px 16px 0",
           },
         }}
-        extra={
-          <Space size={16} wrap>
-            <span>
-              总数: <strong>{overview.summary.total}</strong>
-            </span>
-            <span style={{ color: "#389e0d" }}>
-              在线: <strong>{overview.summary.online}</strong>
-            </span>
-            <span style={{ color: "#79879C" }}>
-              离线: <strong>{overview.summary.offline}</strong>
-            </span>
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={() => void fetchOverview({ forceRefresh: true })}
-            >
-              刷新
-            </Button>
-          </Space>
-        }
       >
         <Form
           form={searchForm}
@@ -498,7 +479,7 @@ export default function WorkersPage() {
           dataSource={pagedWorkers}
           columns={columns}
           pagination={false}
-          scroll={{ x: 1500, y: "calc(100vh - 264px)" }}
+          scroll={{ x: 1500, y: "calc(100vh - 252px)" }}
         />
 
         <div style={{ borderTop: "1px solid #E3E9EF", flexShrink: 0, marginTop: "auto" }}>
@@ -514,6 +495,54 @@ export default function WorkersPage() {
           />
         </div>
       </Card>
+    </div>
+  );
+
+  return (
+    <div
+      className="workers-page"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "calc(100vh - 45px)",
+        minHeight: 0,
+        background: "#F5F7FA",
+        padding: 8,
+        overflow: "hidden",
+      }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+          <Space size={16} wrap>
+            <span>
+              总数: <strong>{overview.summary.total}</strong>
+            </span>
+            <span style={{ color: "#389e0d" }}>
+              在线: <strong>{overview.summary.online}</strong>
+            </span>
+            <span style={{ color: "#79879C" }}>
+              离线: <strong>{overview.summary.offline}</strong>
+            </span>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => void fetchOverview({ forceRefresh: true })}
+            >
+              刷新
+            </Button>
+          </Space>
+        }
+        items={[
+          { key: "home", label: "主机监控", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
 
       {/* 任务快照抽屉 */}
       <Drawer
