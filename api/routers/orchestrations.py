@@ -28,8 +28,13 @@ def _current_user(x_next_identity: Optional[str] = Cookie(default=None, alias="x
 
 
 def _guarded(fn, *args, **kwargs):
+    """编排端点统一返回 envelope {success, data}（对齐前端 request 契约）。
+
+    2026-10-08 fix: 此前裸返回 {total, items} 等，前端 request 读 res.success
+    恒 undefined → 编排/组件页面「加载失败」。
+    """
     try:
-        return fn(*args, **kwargs)
+        return {"success": True, "data": fn(*args, **kwargs)}
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
