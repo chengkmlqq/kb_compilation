@@ -396,7 +396,7 @@ def build(kid, family, version, source_file, file_format=None, skip_final=False,
             rc = subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, 'extract_rules_batch.py'),
             '--ls-file', ls_path, '--cat-ids', f'/tmp/catids_{kid[:8]}.json',
             '--kid', kid, '--kb', KB, '--source-file', source_file,
-            '--max-tokens', '16000'], check=False)
+            '--max-tokens', '8000', '--batch', '10'], check=False)
     print("    实体完成")
 
     # 9.5 Neo4j 图谱写入（2026-09-08 移植自供管版，默认开启；--no-graph 跳过）
