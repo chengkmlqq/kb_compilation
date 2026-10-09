@@ -2,7 +2,7 @@
 
 /** 用户管理（对齐 ds UserManagerNeo：筛选表单 + 表格 + Drawer 编辑 +
  * 角色配置弹窗 + 重置密码；用户ID/用户名/手机/邮箱/状态/操作列）。 */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   App,
   Button,
@@ -34,6 +34,7 @@ import {
 import { StateTag } from "../_shared";
 import ModoPagination from "@/components/biz/modo-pagination";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
+import { ModoTabs } from "@/components/biz/modo-tabs";
 
 type FormValues = {
   userId: string;
@@ -44,6 +45,9 @@ type FormValues = {
   defaultTeam?: string;
   state: string;
 };
+
+/** 动态选项卡条目（复用数据源页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
+type UserTab = { key: string; title: string; children: ReactNode };
 
 export default function SystemUsersPage() {
   const { message, modal } = App.useApp();
@@ -78,6 +82,17 @@ export default function SystemUsersPage() {
   const [pwdTarget, setPwdTarget] = useState<SysUserItem | null>(null);
   const [savingPwd, setSavingPwd] = useState(false);
   const [pwdForm] = Form.useForm<{ pwd: string; pwd2: string }>();
+
+  // ---- 动态选项卡（复用数据源页 ModoTabs 模式）----
+  // 首个 tab「用户管理」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
+  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  const [tabs, setTabs] = useState<UserTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   const teamOptions = useMemo(
     () => teams.map((t) => ({ label: `${t.label || ""}（${t.team_name}）`, value: t.team_name as string })),
@@ -246,24 +261,10 @@ export default function SystemUsersPage() {
     }
   };
 
-  return (
-    // 2026-10-07: 参考任务管理页，最外层容器加 8px padding（统一页面边距）
-    // 2026-10-07 一屏自适应（对齐 data-synth）：外层不滚动，卡片内表格占满剩余高度，分页常驻底栏
-    // 2026-10-08: 改为「固定视口高度」——表格高度锁定为 视口 − 顶部/筛选/分页偏移（100vh-264px），
-    // 进页即撑满、底部无空白；数据多时表头固定、表体滚动（antd Table scroll.y，不走 ModoTable 的 flex 方案）
-    <div
-      className="users-page"
-      style={{
-        padding: 8,
-        height: "calc(100vh - 45px)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        minHeight: 0,
-      }}
-    >
+  // 列表区（首个选项卡内容）：筛选 + 表格 + 钉底分页
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
-        title="用户管理"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{
           body: {
@@ -275,11 +276,6 @@ export default function SystemUsersPage() {
             padding: "12px 16px 0",
           },
         }}
-        extra={
-          <Button type="primary" onClick={openCreate}>
-            新增用户
-          </Button>
-        }
       >
       {/* 筛选表单（对齐 ds FilterForm：用户ID + 用户名） */}
       <Form
@@ -318,7 +314,7 @@ export default function SystemUsersPage() {
         loading={loading}
         dataSource={rows}
         pagination={false}
-        scroll={{ x: "100%", y: "calc(100vh - 264px)" }}
+        scroll={{ x: "100%", y: "calc(100vh - 252px)" }}
         locale={{ emptyText: <Empty description="暂无用户" /> }}
         columns={[
           { title: "用户编码", dataIndex: "user_id", ellipsis: true },
@@ -397,6 +393,44 @@ export default function SystemUsersPage() {
           }}
         />
       </div>
+      </Card>
+    </div>
+  );
+
+  return (
+    // 2026-10-07: 参考任务管理页，最外层容器加 8px padding（统一页面边距）
+    // 2026-10-09: 顶部改为「动态选项卡」（复用数据源页 ModoTabs editable-card 模式）——首 tab「用户管理」
+    // = 页面标题 + 列表（不可关闭），后续内容较多的详情/编辑表单可作为可关闭 tab 打开；本轮先预留能力。
+    // 表格高度偏移 264 → 252（tab 导航 44px 取代卡片头 56px）。
+    <div
+      className="users-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+          <Button type="primary" onClick={openCreate}>
+            新增用户
+          </Button>
+        }
+        items={[
+          { key: "home", label: "用户管理", children: listPane },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
 
       {/* 新增 / 编辑用户（对齐 ds Drawer 表单） */}
       <Drawer
@@ -506,7 +540,6 @@ export default function SystemUsersPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </Card>
     </div>
   );
 }

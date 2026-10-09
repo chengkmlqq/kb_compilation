@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { App, Button, Card, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, PauseCircleOutlined } from "@ant-design/icons";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
@@ -43,8 +43,12 @@ export default function OrchestrationsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [keyword, setKeyword] = useState("");
-  const [status, setStatus] = useState<string | undefined>(undefined);
+  // 筛选：applied 为「已提交」条件（驱动查询），表单值由 searchForm 托管
+  const [applied, setApplied] = useState<{ keyword: string; status?: string }>({
+    keyword: "",
+    status: undefined,
+  });
+  const [searchForm] = Form.useForm<{ keyword?: string; status?: string }>();
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<TapeItem | null>(null);
@@ -57,27 +61,35 @@ export default function OrchestrationsPage() {
   const [execResult, setExecResult] = useState<TapeExecuteResult | null>(null);
   const [execOpen, setExecOpen] = useState(false);
 
-  const load = useCallback(
-    async (p = page, size = pageSize, kw = keyword, st = status) => {
-      setLoading(true);
-      try {
-        const res = await apiListTapes(p, size, kw, st ?? "");
-        if (res.success) {
-          setData(res.data?.items || []);
-          setTotal(res.data?.total || 0);
-        } else {
-          message.error(res.message || "加载编排列表失败");
-        }
-      } finally {
-        setLoading(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiListTapes(page, pageSize, applied.keyword, applied.status ?? "");
+      if (res.success) {
+        setData(res.data?.items || []);
+        setTotal(res.data?.total || 0);
+      } else {
+        message.error(res.message || "加载编排列表失败");
       }
-    },
-    [page, pageSize, keyword, status, message],
-  );
+    } finally {
+      setLoading(false);
+    }
+  }, [page, pageSize, applied, message]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const doSearch = (v: { keyword?: string; status?: string }) => {
+    setPage(1);
+    setApplied({ keyword: v.keyword?.trim() || "", status: v.status });
+  };
+
+  const doReset = () => {
+    searchForm.resetFields();
+    setPage(1);
+    setApplied({ keyword: "", status: undefined });
+  };
 
   const openCreate = () => {
     setEditing(null);
@@ -209,7 +221,7 @@ export default function OrchestrationsPage() {
     {
       title: "操作",
       key: "act",
-      width: 260,
+      width: 140,
       render: (_, row) => (
         <ModoActionGroup
           actions={[
@@ -227,80 +239,87 @@ export default function OrchestrationsPage() {
   ];
 
   return (
-    <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+    // 2026-10-09: 参考用户管理页——固定视口高度（外层不滚动），表格 scroll.y 锁定高度让表头固定、表体内部滚动，
+    // 分页常驻底栏；筛选改为 inline Form（查询/重置）
+    <div
+      className="orchestrations-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
       <Card
         title="编排管理"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
         extra={
           <Button type="primary" onClick={openCreate}>
             新建编排
           </Button>
         }
-        style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
-        styles={{ body: { flex: 1, display: "flex", flexDirection: "column", minHeight: 0, padding: 12 } }}
       >
-        <Space style={{ marginBottom: 10 }} wrap>
-          <Input
-            placeholder="编排名称/标签"
-            style={{ width: 220 }}
-            allowClear
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            onPressEnter={() => {
-              setPage(1);
-              void load(1, pageSize, keyword, status);
+        {/* 筛选表单（对齐用户管理页：查询/重置） */}
+        <Form form={searchForm} layout="inline" style={{ marginBottom: 12, flexShrink: 0 }} onFinish={doSearch}>
+          <Form.Item name="keyword" label="编排名称">
+            <Input allowClear placeholder="名称/标签" style={{ width: 200 }} />
+          </Form.Item>
+          <Form.Item name="status" label="状态">
+            <Select
+              allowClear
+              placeholder="全部"
+              style={{ width: 130 }}
+              options={[
+                { label: "草稿", value: "draft" },
+                { label: "已发布", value: "effective" },
+                { label: "已下线", value: "offline" },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button onClick={doReset}>重置</Button>
+            </Space>
+          </Form.Item>
+        </Form>
+
+        <Table
+          rowKey="id"
+          size="small"
+          loading={loading}
+          columns={columns}
+          dataSource={data}
+          pagination={false}
+          scroll={{ x: "100%", y: "calc(100vh - 264px)" }}
+          locale={{ emptyText: <Empty description="暂无编排" /> }}
+        />
+        <div style={{ flexShrink: 0, marginTop: "auto" }}>
+          <ModoPagination
+            current={page}
+            pageSize={pageSize}
+            total={total}
+            showTotal={(t) => `共 ${t} 个编排`}
+            onChange={(p, ps) => {
+              setPage(p);
+              setPageSize(ps);
             }}
-          />
-          <Select
-            placeholder="状态"
-            style={{ width: 130 }}
-            allowClear
-            value={status}
-            options={[
-              { label: "草稿", value: "draft" },
-              { label: "已发布", value: "effective" },
-              { label: "已下线", value: "offline" },
-            ]}
-            onChange={(v) => {
-              setStatus(v);
-              setPage(1);
-              void load(1, pageSize, keyword, v);
-            }}
-          />
-          <Button type="primary" onClick={() => { setPage(1); void load(1, pageSize, keyword, status); }}>
-            查询
-          </Button>
-          <Button
-            onClick={() => {
-              setKeyword("");
-              setStatus(undefined);
-              setPage(1);
-              void load(1, pageSize, "", undefined);
-            }}
-          >
-            重置
-          </Button>
-        </Space>
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
-          <Table
-            rowKey="id"
-            size="small"
-            loading={loading}
-            columns={columns}
-            dataSource={data}
-            pagination={false}
-            scroll={{ x: 1100 }}
           />
         </div>
-        <ModoPagination
-          total={total}
-          current={page}
-          pageSize={pageSize}
-          onChange={(p, s) => {
-            setPage(p);
-            setPageSize(s);
-            void load(p, s, keyword, status);
-          }}
-        />
       </Card>
 
       <ModoDrawer

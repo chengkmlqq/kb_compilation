@@ -6,7 +6,7 @@
  * step_cfg 为 dynamic-form FormField[] JSON schema（textarea 编辑）。
  */
 import { useCallback, useEffect, useState } from "react";
-import { App, Button, Card, Form, Input, InputNumber, Select, Space, Table, Tag, Tooltip } from "antd";
+import { App, Button, Card, Empty, Form, Input, InputNumber, Select, Space, Table, Tag, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
 import { ModoSelect } from "@/components/biz/modo-select";
@@ -42,8 +42,12 @@ export default function OrchestrationStepsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [keyword, setKeyword] = useState("");
-  const [groupType, setGroupType] = useState<string | undefined>(undefined);
+  // 筛选：applied 为「已提交」条件（驱动查询），表单值由 searchForm 托管
+  const [applied, setApplied] = useState<{ keyword: string; groupType?: string }>({
+    keyword: "",
+    groupType: undefined,
+  });
+  const [searchForm] = Form.useForm<{ keyword?: string; groupType?: string }>();
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<StepDefineItem | null>(null);
@@ -51,27 +55,35 @@ export default function OrchestrationStepsPage() {
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
 
-  const load = useCallback(
-    async (p = page, size = pageSize, kw = keyword, gt = groupType) => {
-      setLoading(true);
-      try {
-        const res = await apiListStepDefines(p, size, kw, gt ?? "");
-        if (res.success) {
-          setData(res.data?.items || []);
-          setTotal(res.data?.total || 0);
-        } else {
-          message.error(res.message || "加载组件定义失败");
-        }
-      } finally {
-        setLoading(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiListStepDefines(page, pageSize, applied.keyword, applied.groupType ?? "");
+      if (res.success) {
+        setData(res.data?.items || []);
+        setTotal(res.data?.total || 0);
+      } else {
+        message.error(res.message || "加载组件定义失败");
       }
-    },
-    [page, pageSize, keyword, groupType, message],
-  );
+    } finally {
+      setLoading(false);
+    }
+  }, [page, pageSize, applied, message]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const doSearch = (v: { keyword?: string; groupType?: string }) => {
+    setPage(1);
+    setApplied({ keyword: v.keyword?.trim() || "", groupType: v.groupType });
+  };
+
+  const doReset = () => {
+    searchForm.resetFields();
+    setPage(1);
+    setApplied({ keyword: "", groupType: undefined });
+  };
 
   const openCreate = () => {
     setEditing(null);
@@ -196,84 +208,78 @@ export default function OrchestrationStepsPage() {
   ];
 
   return (
-    <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+    // 2026-10-09: 参考用户管理页——固定视口高度（外层不滚动），表格 scroll.y 锁定高度让表头固定、表体内部滚动，
+    // 分页常驻底栏；筛选改为 inline Form（查询/重置）
+    <div
+      className="steps-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - 45px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
       <Card
         title="编排组件"
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
         extra={
-          <Space>
-            <Button type="primary" onClick={openCreate}>
-              新建组件
-            </Button>
-          </Space>
+          <Button type="primary" onClick={openCreate}>
+            新建组件
+          </Button>
         }
-        style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
-        styles={{ body: { flex: 1, display: "flex", flexDirection: "column", minHeight: 0, padding: 12 } }}
       >
-        <Space style={{ marginBottom: 10 }} wrap>
-          <Input
-            placeholder="组件名称/指令"
-            style={{ width: 220 }}
-            allowClear
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            onPressEnter={() => {
-              setPage(1);
-              void load(1, pageSize, keyword, groupType);
+        {/* 筛选表单（对齐用户管理页：查询/重置） */}
+        <Form form={searchForm} layout="inline" style={{ marginBottom: 12, flexShrink: 0 }} onFinish={doSearch}>
+          <Form.Item name="keyword" label="组件名称">
+            <Input allowClear placeholder="名称/指令" style={{ width: 200 }} />
+          </Form.Item>
+          <Form.Item name="groupType" label="分组">
+            <Select allowClear placeholder="全部" style={{ width: 140 }} options={GROUP_OPTIONS} />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button onClick={doReset}>重置</Button>
+            </Space>
+          </Form.Item>
+        </Form>
+
+        <Table
+          rowKey="id"
+          size="small"
+          loading={loading}
+          columns={columns}
+          dataSource={data}
+          pagination={false}
+          scroll={{ x: "100%", y: "calc(100vh - 264px)" }}
+          locale={{ emptyText: <Empty description="暂无组件" /> }}
+        />
+        <div style={{ flexShrink: 0, marginTop: "auto" }}>
+          <ModoPagination
+            current={page}
+            pageSize={pageSize}
+            total={total}
+            showTotal={(t) => `共 ${t} 个组件`}
+            onChange={(p, ps) => {
+              setPage(p);
+              setPageSize(ps);
             }}
-          />
-          <Select
-            placeholder="分组"
-            style={{ width: 140 }}
-            allowClear
-            value={groupType}
-            options={GROUP_OPTIONS}
-            onChange={(v) => {
-              setGroupType(v);
-              setPage(1);
-              void load(1, pageSize, keyword, v);
-            }}
-          />
-          <Button
-            type="primary"
-            onClick={() => {
-              setPage(1);
-              void load(1, pageSize, keyword, groupType);
-            }}
-          >
-            查询
-          </Button>
-          <Button
-            onClick={() => {
-              setKeyword("");
-              setGroupType(undefined);
-              setPage(1);
-              void load(1, pageSize, "", undefined);
-            }}
-          >
-            重置
-          </Button>
-        </Space>
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
-          <Table
-            rowKey="id"
-            size="small"
-            loading={loading}
-            columns={columns}
-            dataSource={data}
-            pagination={false}
-            scroll={{ x: 1000 }}
           />
         </div>
-        <ModoPagination
-          total={total}
-          current={page}
-          pageSize={pageSize}
-          onChange={(p, s) => {
-            setPage(p);
-            setPageSize(s);
-            void load(p, s, keyword, groupType);
-          }}
-        />
       </Card>
 
       <ModoDrawer

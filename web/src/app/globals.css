@@ -116,7 +116,9 @@ body {
 .teams-page .ant-table-body,
 .menus-page .ant-table-body,
 .logs-page .ant-table-body,
-.datagrid-page .ant-table-body {
+.datagrid-page .ant-table-body,
+.orchestrations-page .ant-table-body,
+.steps-page .ant-table-body {
   overflow-y: auto !important;
 }
 
