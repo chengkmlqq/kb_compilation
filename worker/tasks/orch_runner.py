@@ -286,3 +286,16 @@ def register_task_handlers() -> None:
 
 
 register_task_handlers()
+
+# 注册为 celery task（send_task 按名投递，worker 端必须有对应注册的策略）
+# 2026-10-09 实测坑：orch worker 报 KeyError 'worker.tasks.orch_runner.execute_run'
+# —— 普通函数不注册，celery 消费时 strategies 里找不到任务名。
+from worker.celery_app import celery_app  # noqa: E402
+
+for _task_name, _task_fn in (
+    ("execute_run", execute_run),
+    ("advance_run", advance_run),
+    ("run_node", run_node),
+):
+    celery_app.task(name=f"worker.tasks.orch_runner.{_task_name}")(_task_fn)
+    logger.info("registered celery task worker.tasks.orch_runner.%s", _task_name)

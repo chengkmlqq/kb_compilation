@@ -111,7 +111,14 @@ def save_tape_design(db, tape_id: str, nodes: list, edges: list, exec_params: di
 
     # 覆盖式同步步骤子表
     db.query(TapeStep).filter(TapeStep.tape_id == tape_id).delete()
+    db.commit()
     node_by_id = {n.get("id", ""): n for n in (nodes or [])}
+    # 2026-10-09 实测坑: kb_tape_step.id 是全局主键,node id(如 n1/n2/n3)只
+    # 在编排内唯一——两个编排用相同 node id 保存 → Duplicate entry 500。
+    # 步骤行 id 加 tape 前缀保证全表唯一,pre/next 引用同步重映射。
+    def _step_id(nid: str) -> str:
+        return f"{tape_id[:12]}::{nid}" if nid else ""
+
     # edges: source->target 与 target->source 两个方向都建（pre/next 依赖）
     next_map: dict[str, list[str]] = {}
     pre_map: dict[str, list[str]] = {}
@@ -119,8 +126,9 @@ def save_tape_design(db, tape_id: str, nodes: list, edges: list, exec_params: di
         src, tgt = e.get("source"), e.get("target")
         if not src or not tgt:
             continue
-        next_map.setdefault(src, []).append(tgt)
-        pre_map.setdefault(tgt, []).append(src)
+        _src, _tgt = _step_id(src), _step_id(tgt)
+        next_map.setdefault(_src, []).append(_tgt)
+        pre_map.setdefault(_tgt, []).append(_src)
     seq = 0
     for n in nodes or []:
         nid = n.get("id", "")
@@ -133,14 +141,14 @@ def save_tape_design(db, tape_id: str, nodes: list, edges: list, exec_params: di
         ).strip()
         db.add(
             TapeStep(
-                id=nid or uuid.uuid4().hex[:64],
+                id=_step_id(nid) or uuid.uuid4().hex[:64],
                 tape_id=tape_id,
                 step_inst=step_inst,
                 step_label=str(data.get("label") or data.get("stepLabel") or step_inst)[:128],
                 step_config=data.get("config") or {},
                 step_seq=seq,
-                pre_step_ids=pre_map.get(nid, []),
-                next_step_ids=next_map.get(nid, []),
+                pre_step_ids=pre_map.get(_step_id(nid), []),
+                next_step_ids=next_map.get(_step_id(nid), []),
                 queue_name=queue_name,
             )
         )
