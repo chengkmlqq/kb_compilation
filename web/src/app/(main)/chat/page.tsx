@@ -18,21 +18,25 @@ import {
   Space,
   Spin,
   Tag,
+  theme,
   Tooltip,
   Typography,
   Upload,
 } from "antd";
 import {
   AimOutlined,
+  BulbOutlined,
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
+  FileTextOutlined,
   MessageOutlined,
   PaperClipOutlined,
   PictureOutlined,
   PlusOutlined,
   PushpinOutlined,
   ReloadOutlined,
+  RobotOutlined,
   SearchOutlined,
   SendOutlined,
   StopOutlined,
@@ -81,8 +85,12 @@ interface UiMessage extends ChatMessageItem {
 // 切页续传锚点：qa-resume:{sessionId} → {stream_id, offset}
 const QA_RESUME_KEY = (sid: string) => `qa-resume:${sid}`;
 
+// 内容区统一宽度基准：消息列表 / 输入卡片 / 推荐问题共用，保证左右边缘对齐
+const CONTENT_MAX_WIDTH = 960;
+
 export default function ChatPage() {
   const { message: toast } = App.useApp();
+  const { token } = theme.useToken();
   const router = useRouter();
   const [kbs, setKbs] = useState<KbItem[]>([]);
   const [kbId, setKbId] = useState<string>();
@@ -1004,7 +1012,7 @@ export default function ChatPage() {
         <Input
           allowClear
           placeholder="搜索会话"
-          prefix={<SearchOutlined style={{ color: "#999" }} />}
+          prefix={<SearchOutlined style={{ color: token.colorTextTertiary }} />}
           style={{ marginBottom: 8 }}
           value={sessionSearch}
           onChange={(e) => setSessionSearch(e.target.value)}
@@ -1030,7 +1038,7 @@ export default function ChatPage() {
                         padding: "6px 8px",
                         borderRadius: 6,
                         cursor: "pointer",
-                        background: activeSession === s.id ? "#e6f4ff" : "transparent",
+                        background: activeSession === s.id ? token.controlItemBgActive : "transparent",
                       }}
                       onClick={() => void openSession(s.id)}
                       actions={[
@@ -1041,7 +1049,7 @@ export default function ChatPage() {
                         ) : null,
                         <Tooltip key="pin" title={s.pinned ? "取消置顶" : "置顶"}>
                           <PushpinOutlined
-                            style={{ color: s.pinned ? "#1677ff" : "#999" }}
+                            style={{ color: s.pinned ? token.colorPrimary : token.colorTextTertiary }}
                             onClick={(e) => {
                               e.stopPropagation();
                               void togglePin(s);
@@ -1050,7 +1058,7 @@ export default function ChatPage() {
                         </Tooltip>,
                         <Tooltip key="rename" title="重命名">
                           <EditOutlined
-                            style={{ color: "#999" }}
+                            style={{ color: token.colorTextTertiary }}
                             onClick={(e) => {
                               e.stopPropagation();
                               setRenameTarget(s);
@@ -1066,12 +1074,12 @@ export default function ChatPage() {
                             void deleteSession(s.id);
                           }}
                         >
-                          <DeleteOutlined style={{ color: "#ff4d4f" }} onClick={(e) => e.stopPropagation()} />
+                          <DeleteOutlined style={{ color: token.colorError }} onClick={(e) => e.stopPropagation()} />
                         </Popconfirm>,
                       ].filter(Boolean)}
                     >
                       <List.Item.Meta
-                        avatar={s.pinned ? <PushpinOutlined style={{ color: "#1677ff" }} /> : <MessageOutlined />}
+                        avatar={s.pinned ? <PushpinOutlined style={{ color: token.colorPrimary }} /> : <MessageOutlined />}
                         title={<Text ellipsis style={{ maxWidth: 140 }}>{s.title}</Text>}
                         description={<Text type="secondary" style={{ fontSize: 12 }}>{s.updated_at.slice(5, 16).replace("T", " ")}</Text>}
                       />
@@ -1105,7 +1113,7 @@ export default function ChatPage() {
           },
         }}
       >
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${token.colorSplit}`, display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
           <Text strong>智能问答（RAG）</Text>
           <Select
             style={{ width: 180 }}
@@ -1121,7 +1129,15 @@ export default function ChatPage() {
                 setAttachments([]);
               }
             }}
-            options={agents.map((a) => ({ value: a.id, label: `🤖 ${a.name}` }))}
+            options={agents.map((a) => ({
+              value: a.id,
+              label: (
+                <Space size={4}>
+                  <RobotOutlined />
+                  {a.name}
+                </Space>
+              ),
+            }))}
           />
           <Select
             style={{ width: 240 }}
@@ -1157,9 +1173,11 @@ export default function ChatPage() {
             <div style={{ textAlign: "center", padding: 32 }}>
               <Text type="secondary" style={{ fontSize: 15 }}>输入问题开始问答，回答基于知识库检索片段生成。</Text>
               {recommendations.length > 0 && (
-                <div style={{ marginTop: 20, maxWidth: 720, marginLeft: "auto", marginRight: "auto" }}>
+                <div style={{ marginTop: 20, maxWidth: CONTENT_MAX_WIDTH, marginLeft: "auto", marginRight: "auto" }}>
                   <Space style={{ justifyContent: "center", width: "100%", marginBottom: 12 }}>
-                    <Text type="secondary" style={{ fontSize: 13 }}>💡 推荐问题</Text>
+                    <Text type="secondary" style={{ fontSize: 13 }}>
+                      <BulbOutlined /> 推荐问题
+                    </Text>
                     <Button
                       type="text"
                       size="small"
@@ -1180,13 +1198,12 @@ export default function ChatPage() {
                           hoverable
                           onClick={() => void send(q)}
                           style={{ textAlign: "left", minHeight: 76 }}
+                          styles={{ body: { height: 76, display: "flex", alignItems: "center", gap: 6 } }}
                         >
-                          <Space size={6}>
-                            <Tag color="cyan">FAQ</Tag>
-                            <Text style={{ fontSize: 13 }} ellipsis={{ tooltip: q }}>
-                              {q}
-                            </Text>
-                          </Space>
+                          <Tag color="cyan" style={{ flexShrink: 0 }}>FAQ</Tag>
+                          <Text style={{ fontSize: 13, flex: 1, minWidth: 0 }} ellipsis={{ tooltip: q }}>
+                            {q}
+                          </Text>
                         </Card>
                       </Col>
                     ))}
@@ -1195,17 +1212,17 @@ export default function ChatPage() {
               )}
             </div>
           ) : (
-                      <div style={{ maxWidth: 960, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
+                      <div style={{ maxWidth: CONTENT_MAX_WIDTH, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
                       {msgs.map((m, idx) => (
-              <div key={m.id} style={{ marginBottom: 16 }}>
+              <div key={m.id}>
                 <div style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
                   <div
                     style={{
                       maxWidth: "80%",
                       padding: "10px 14px",
-                      borderRadius: 10,
-                      background: m.role === "user" ? "#1677ff" : "#f5f5f5",
-                      color: m.role === "user" ? "#fff" : "#333",
+                      borderRadius: 8,
+                      background: m.role === "user" ? token.colorPrimaryBg : token.colorFillTertiary,
+                      color: token.colorText,
                       whiteSpace: "pre-wrap",
                       wordBreak: "break-word",
                     }}
@@ -1251,7 +1268,7 @@ export default function ChatPage() {
                 </div>
                 {/* 2026-10-07 对齐 WeKnora 分支交互：用户消息 → 分叉 / 回溯 */}
                 {m.role === "user" && (
-                  <div style={{ marginTop: 4, display: "flex", gap: 2, justifyContent: "flex-end" }}>
+                  <div style={{ marginTop: 6, display: "flex", gap: 2, justifyContent: "flex-end" }}>
                     <Button
                       type="link"
                       size="small"
@@ -1272,12 +1289,12 @@ export default function ChatPage() {
                 )}
                 {/* 答案工具栏：复制 */}
                 {m.role === "assistant" && !m.streaming && m.content && (
-                  <div style={{ marginTop: 2, display: "flex", gap: 4 }}>
+                  <div style={{ marginTop: 6, display: "flex", gap: 4 }}>
                     <Button
                       type="text"
                       size="small"
                       icon={<CopyOutlined />}
-                      style={{ fontSize: 12, padding: "0 4px", height: "auto", color: "#999" }}
+                      style={{ fontSize: 12, padding: "0 4px", height: "auto", color: token.colorTextTertiary }}
                       onClick={async () => {
                         try {
                           await navigator.clipboard.writeText(m.content);
@@ -1339,7 +1356,7 @@ export default function ChatPage() {
                 )}
                 {/* 重新生成（对齐 WeKnora 回答操作） */}
                 {m.role === "assistant" && !m.streaming && !m.error && m.content && (
-                  <div style={{ marginTop: 4 }}>
+                  <div style={{ marginTop: 6 }}>
                     <Button
                       type="link"
                       size="small"
@@ -1380,7 +1397,7 @@ export default function ChatPage() {
           {streaming && (
             <div style={{ textAlign: "center", padding: "8px 0 4px" }}>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                🤖 AI 正在回答…
+                <RobotOutlined /> AI 正在回答…
               </Text>
             </div>
           )}
@@ -1394,7 +1411,9 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </div>
 
-        <div style={{ padding: "12px 16px", borderTop: "1px solid #f0f0f0", flexShrink: 0 }}>
+        <div style={{ padding: "12px 16px", borderTop: `1px solid ${token.colorSplit}`, flexShrink: 0 }}>
+          {/* 底部内容统一居中列：模型选择 / 附件 / 输入卡片左边缘对齐（与消息列表同宽） */}
+          <div style={{ maxWidth: CONTENT_MAX_WIDTH, margin: "0 auto" }}>
           {/* 2026-10-06: 模型切换——chat 模型下拉（空=默认模型） */}
           {chatModels.length > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
@@ -1424,20 +1443,17 @@ export default function ChatPage() {
             style={{ maxWidth: 240 }}
             title={a.media_type === "image" ? `图片：${a.file_name}` : a.file_name}
           >
-            {a.media_type === "image" ? "🖼️" : "📎"} {a.file_name}
+            {a.media_type === "image" ? <PictureOutlined /> : <PaperClipOutlined />} {a.file_name}
           </Tag>
         ))}
       </div>
       {/* 2026-10-08 对齐 WeKnora：图片 / 附件双入口 + 输入卡片式布局 */}
       <div
         style={{
-          maxWidth: 960,
-          width: "100%",
-          margin: "0 auto",
-          border: "1px solid #dcdcdc",
-          borderRadius: 12,
-          boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
-          background: "#fff",
+          border: `1px solid ${token.colorBorderSecondary}`,
+          borderRadius: 8,
+          boxShadow: token.boxShadowTertiary,
+          background: token.colorBgContainer,
           padding: "10px 14px 6px",
         }}
       >
@@ -1453,7 +1469,7 @@ export default function ChatPage() {
                   height: 60,
                   borderRadius: 8,
                   overflow: "hidden",
-                  border: "1px solid #e7e7e7",
+                  border: `1px solid ${token.colorBorderSecondary}`,
                   flexShrink: 0,
                   cursor: "default",
                 }}
@@ -1469,8 +1485,8 @@ export default function ChatPage() {
                     width: 16,
                     height: 16,
                     borderRadius: "50%",
-                    background: "rgba(0,0,0,0.55)",
-                    color: "#fff",
+                    background: token.colorBgMask,
+                    color: token.colorTextLightSolid,
                     fontSize: 10,
                     lineHeight: "16px",
                     textAlign: "center",
@@ -1507,7 +1523,7 @@ export default function ChatPage() {
             justifyContent: "space-between",
             gap: 8,
             padding: "6px 0 2px",
-            borderTop: "1px solid #f0f0f0",
+            borderTop: `1px solid ${token.colorSplit}`,
             marginTop: 4,
           }}
         >
@@ -1544,7 +1560,7 @@ export default function ChatPage() {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {streaming ? (
               <Button
-                type="text"
+                shape="circle"
                 size="small"
                 icon={<StopOutlined />}
                 title="停止生成"
@@ -1552,10 +1568,9 @@ export default function ChatPage() {
                 style={{
                   width: 30,
                   height: 30,
-                  borderRadius: "50%",
-                  background: "rgba(22,119,255,0.08)",
-                  color: "#1677ff",
-                  border: "1.5px solid rgba(22,119,255,0.2)",
+                  background: token.colorPrimaryBg,
+                  color: token.colorPrimary,
+                  borderColor: token.colorPrimaryBorder,
                 }}
               />
             ) : (
@@ -1595,6 +1610,7 @@ export default function ChatPage() {
           }}
         />
       </div>
+          </div>
         {/* 2026-10-07 @提及多资源：选择本次消息的目标知识库 / 智能体 */}
           <Modal
             title="@ 提及目标"
@@ -1627,9 +1643,17 @@ export default function ChatPage() {
                 value={atTarget?.kind === "agent" ? atTarget.id : undefined}
                 onChange={(id) => {
                   const a = agents.find((x) => x.id === id);
-                  if (a) setAtTarget({ kind: "agent", id, name: `🤖 ${a.name}` });
+                  if (a) setAtTarget({ kind: "agent", id, name: a.name });
                 }}
-                options={agents.map((a) => ({ value: a.id, label: `🤖 ${a.name}` }))}
+                options={agents.map((a) => ({
+                  value: a.id,
+                  label: (
+                    <Space size={4}>
+                      <RobotOutlined />
+                      {a.name}
+                    </Space>
+                  ),
+                }))}
               />
             </div>
             <div style={{ textAlign: "right", marginTop: 12 }}>
@@ -1675,7 +1699,7 @@ export default function ChatPage() {
             <Empty description="无匹配消息" style={{ padding: 24 }} />
           ) : (
             searchResults.map((r) => (
-              <div key={r.id} style={{ padding: "8px 0", borderBottom: "1px solid #f0f0f0" }}>
+              <div key={r.id} style={{ padding: "8px 0", borderBottom: `1px solid ${token.colorSplit}` }}>
                 <Tag color="blue">{r.session_title || "未知会话"}</Tag>
                 <Tag>{r.role === "user" ? "问" : "答"}</Tag>
                 <Text style={{ fontSize: 13 }} ellipsis>
@@ -1706,7 +1730,7 @@ export default function ChatPage() {
                 )}
                 <Space size={8} wrap>
                   {r.meta?.source_file && (
-                    <Tag color="geekblue">📄 {r.meta.source_file}</Tag>
+                    <Tag color="geekblue"><FileTextOutlined /> {r.meta.source_file}</Tag>
                   )}
                   <Button
                     size="small"
@@ -1740,6 +1764,7 @@ export default function ChatPage() {
 // ---------------------------------------------------------------------------
 
 function ThinkingBlock({ thinking, streaming }: { thinking: string; streaming?: boolean }) {
+  const { token } = theme.useToken();
   const [open, setOpen] = useState(false);
   // 2026-10-08: 思考中强制展开跟随显示；完成后保持展开（不自动收起），
   // 让用户能看到完整思考过程。点击可折叠/展开。
@@ -1754,16 +1779,16 @@ function ThinkingBlock({ thinking, streaming }: { thinking: string; streaming?: 
           gap: 6,
           cursor: "pointer",
           fontSize: 12,
-          color: streaming ? "#fa8c16" : "#888",
-          background: streaming ? "#fff7e6" : "#f5f5f5",
-          border: `1px solid ${streaming ? "#ffd591" : "#e8e8e8"}`,
+          color: streaming ? token.colorWarning : token.colorTextTertiary,
+          background: streaming ? token.colorWarningBg : token.colorFillTertiary,
+          border: `1px solid ${streaming ? token.colorWarningBorder : token.colorSplit}`,
           borderRadius: 6,
           padding: "2px 10px",
           userSelect: "none",
         }}
       >
         {streaming && <span className="kb-think-indicator" />}
-        <span>{streaming ? "思考中…" : "💭 思考过程"}</span>
+        <span>{streaming ? "思考中…" : <><BulbOutlined /> 思考过程</>}</span>
         <span style={{ fontSize: 10 }}>{expanded ? "▾" : "▸"}</span>
       </div>
       {expanded && (
@@ -1771,11 +1796,11 @@ function ThinkingBlock({ thinking, streaming }: { thinking: string; streaming?: 
           style={{
             marginTop: 6,
             padding: "8px 12px",
-            background: "#fffbe6",
-            borderLeft: "3px solid #faad14",
-            borderRadius: 4,
+            background: token.colorFillQuaternary,
+            borderLeft: `3px solid ${token.colorFill}`,
+            borderRadius: 6,
             fontSize: 12,
-            color: "#666",
+            color: token.colorTextSecondary,
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
             maxHeight: 240,

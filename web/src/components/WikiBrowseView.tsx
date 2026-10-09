@@ -356,11 +356,19 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
   }
 
   return (
-    <div style={{ display: "flex", gap: 16 }}>
+    <div style={{ display: "flex", gap: 16, height: "100%", minHeight: 0 }}>
       {/* 左侧目录文档树（懒加载） */}
       <Card
         size="small"
-        style={{ width: 280, flexShrink: 0, maxHeight: 560, overflowY: "auto" }}
+        style={{
+          width: 280,
+          flexShrink: 0,
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+        styles={{ body: { flex: 1, minHeight: 0, overflowY: "auto" } }}
         title={
           <Space size={8}>
             <span>目录</span>
@@ -384,7 +392,17 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
         )}
       </Card>
       {/* 右侧内容 */}
-      <Card style={{ flex: 1, minWidth: 0 }}>
+      <Card
+        style={{
+          flex: 1,
+          minWidth: 0,
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+        styles={{ body: { flex: 1, minHeight: 0, overflowY: "auto" } }}
+      >
         {notFound || !page ? (
           <Empty description={notFound ? `Wiki 页面不存在: ${selectedSlug}` : "从左侧选择页面"} />
         ) : (
