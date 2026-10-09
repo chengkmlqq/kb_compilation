@@ -203,23 +203,45 @@ class RunScriptStep(BaseStep):
 
         env = dict(os.environ)
         env.update({str(k): str(v) for k, v in env_extra.items()})
+        import signal as _sig
+        proc = None
         try:
-            proc = subprocess.run(
+            # 2026-10-09 实测坑: subprocess.run(timeout=) 超时只杀直接子进程,
+            # run_one.py 的孙进程(build_full/extract_entities)残留成孤儿。
+            # 改 Popen + start_new_session(独立进程组) + 超时 killpg 整组杀。
+            proc = subprocess.Popen(
                 [str(c) for c in cmd],
-                capture_output=True, text=True, timeout=timeout_sec or None,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 env=env, cwd=context.bindings.get("cwd") or None,
+                start_new_session=True,
             )
-            tail_out = (proc.stdout or "")[-3000:]
-            tail_err = (proc.stderr or "")[-1500:]
+            try:
+                out, err = proc.communicate(timeout=timeout_sec or None)
+            except subprocess.TimeoutExpired:
+                # 杀整个进程组（含孙进程），再回收
+                try:
+                    os.killpg(os.getpgid(proc.pid), _sig.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+                return StepResponse.fail(f"子进程超时（>{int(timeout_sec)}s）: {cmd}")
+            tail_out = (out or "")[-3000:]
+            tail_err = (err or "")[-1500:]
             if proc.returncode != 0:
                 return StepResponse.fail(
                     f"退出码 {proc.returncode}\n[stdout]\n{tail_out}\n[stderr]\n{tail_err}"
                 )
             return StepResponse.success({"returncode": 0, "stdout_tail": tail_out})
-        except subprocess.TimeoutExpired:
-            return StepResponse.fail(f"子进程超时（>{int(timeout_sec)}s）: {cmd}")
         except Exception as e:  # noqa: BLE001
-            return StepResponse.fail(f"子进程启动失败: {e}")
+            if proc is not None and proc.poll() is None:
+                try:
+                    os.killpg(os.getpgid(proc.pid), _sig.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+            return StepResponse.fail(f"脚本执行异常: {e}")
 
 
 class IfStep(BaseStep):
