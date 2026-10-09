@@ -1,7 +1,22 @@
 "use client";
+
 /**
- * Wiki 浏览视图：左侧目录文档树 + 右侧 md 内容（对齐 WeKnora wiki 选项卡）。
- * 目录树懒加载（对齐 WeKnora 侧栏）：初始只拉根级分支，展开目录时按 folder 取直接子项；
+ * Wiki 浏览视图 —— 像素级对齐 WeKnora WikiBrowser.vue（wiki-sidebar + wiki-reader）。
+ *
+ * 左栏（wiki-sidebar，280px / border-right）:
+ *   - header：搜索行（搜索框 + 树/列表视图切换 + 新建根目录）
+ *   - page-list：目录树（目录项 34px、缩进 14px/级、chevron、计数胶囊）
+ *     与页面项（34px、page_type 彩色图标、标题 13px）或列表模式（项 98px：标题+摘要）
+ *   - 空状态（图标 + 标题 + 描述）
+ *
+ * 右栏（wiki-reader，padding 16px 24px）:
+ *   - 返回导航（页面栈）
+ *   - header：标题 26px/600 + 反馈图标、meta 行（类型标签 + 更新时间 + 右侧图谱链接）
+ *   - backlinks：被引用标签（顶部，border-bottom 分隔）
+ *   - body：markdown（14px/lh1.6，h1 24px / h2 18px / h3 16px、blockquote 左边框、table fit-content）
+ *   - sources：来源文档（底部，border-top 分隔）
+ *
+ * 目录树懒加载：初始只拉根级分支，展开目录时按 folder 取直接子项；
  * 深链 focusSlug 时沿父链逐级加载并自动展开；编辑/删除页面后全树按展开状态刷新。
  * 双链 [[slug]] 原地切换页面，不跳独立阅读页；编辑/反馈弹窗内嵌。
  */
@@ -9,7 +24,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   App,
   Button,
-  Card,
   Empty,
   Form,
   Input,
@@ -18,11 +32,27 @@ import {
   Space,
   Spin,
   Tag,
-  Tree,
-  Typography,
+  Tooltip,
 } from "antd";
-import { ApartmentOutlined, EditOutlined, MessageOutlined } from "@ant-design/icons";
-import type { TreeDataNode } from "antd";
+import {
+  ApartmentOutlined,
+  AppstoreOutlined,
+  BulbOutlined,
+  BulbTwoTone,
+  ClusterOutlined,
+  DownOutlined,
+  EditOutlined,
+  FileOutlined,
+  FileTextOutlined,
+  FileUnknownOutlined,
+  FolderAddOutlined,
+  LinkOutlined,
+  MessageOutlined,
+  ProfileOutlined,
+  ShareAltOutlined,
+  TagOutlined,
+  UnorderedListOutlined,
+} from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -31,24 +61,102 @@ import {
   apiWikiFolders,
   apiWikiListFeedback,
   apiWikiPage,
+  apiWikiSearch,
   apiWikiSubmitFeedback,
   apiWikiUpdatePage,
   WikiFeedbackItem,
   WikiFolderNode,
   WikiPageDetail,
   WikiPageItem,
+  WikiSearchItem,
 } from "@/lib/api";
 
+/** page_type → 中文标签（对齐 WeKnora getTypeLabel） */
+const TYPE_LABEL: Record<string, string> = {
+  entity: "实体",
+  concept: "概念",
+  synthesis: "综合",
+  comparison: "对比",
+  summary: "摘要",
+  topic_cluster: "主题聚类",
+  knowledge_graph_summary: "图谱摘要",
+  cross_document_insight: "跨文档洞察",
+};
+
+/** page_type → antd Tag 颜色 */
 const TYPE_COLOR: Record<string, string> = {
   entity: "purple",
   concept: "blue",
   summary: "gold",
+  synthesis: "cyan",
+  comparison: "magenta",
+  topic_cluster: "geekblue",
+  knowledge_graph_summary: "green",
+  cross_document_insight: "orange",
 };
+
 const TYPE_OPTIONS = [
   { value: "entity", label: "实体" },
   { value: "concept", label: "概念" },
   { value: "summary", label: "摘要" },
 ];
+
+/** page_type → 图标（对齐 WeKnora getPageIcon：entity=tag / concept=lightbulb / synthesis=relativity …） */
+function pageIconOf(pageType: string) {
+  switch (pageType) {
+    case "entity":
+      return <TagOutlined />;
+    case "concept":
+      return <BulbOutlined />;
+    case "synthesis":
+      return <ApartmentOutlined />;
+    case "comparison":
+      return <AppstoreOutlined />;
+    case "summary":
+      return <FileOutlined />;
+    case "topic_cluster":
+      return <ClusterOutlined />;
+    case "knowledge_graph_summary":
+      return <ShareAltOutlined />;
+    case "cross_document_insight":
+      return <BulbTwoTone />;
+    default:
+      return <FileTextOutlined />;
+  }
+}
+
+/** page_type → 图标颜色（对齐 WeKnora .wiki-page-file-icon--{type}） */
+const PAGE_ICON_COLOR: Record<string, string> = {
+  entity: "#8b5cf6",
+  concept: "#3b82f6",
+  synthesis: "#06b6d4",
+  comparison: "#d946ef",
+  summary: "#f59e0b",
+  topic_cluster: "#0ea5e9",
+  knowledge_graph_summary: "#10b981",
+  cross_document_insight: "#f97316",
+};
+
+function formatDate(value?: string | null): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** source_refs 归一化（对齐 WeKnora normalizeSourceRefs）：
+ *  裸 id / `<id>|knowledges.file_name` → 展示名取 `|` 之后，否则回落 id */
+function sourceLabel(ref: string): string {
+  const raw = String(ref || "").trim();
+  if (!raw) return "";
+  const bar = raw.indexOf("|");
+  if (bar >= 0) {
+    const name = raw.slice(bar + 1).trim();
+    if (name) return name;
+  }
+  return raw;
+}
 
 // [[slug]] / [[slug|别名]] 双链 → markdown 链接（href 规整为 /kbs/{id}/wiki/{slug}，组件内拦截原地切换）
 function renderWikiLinks(content: string, kbId: string): string {
@@ -63,19 +171,14 @@ function renderWikiLinks(content: string, kbId: string): string {
   });
 }
 
-/** antd Tree loadData 模式：按 key 替换节点并挂上 children */
-function updateTreeData(
-  list: TreeDataNode[],
-  key: React.Key,
-  children: TreeDataNode[],
-): TreeDataNode[] {
-  return list.map((node) => {
-    if (node.key === key) return { ...node, children };
-    if (node.children) {
-      return { ...node, children: updateTreeData(node.children, key, children) };
-    }
-    return node;
-  });
+/** 扁平化的树行（目录 / 页面），带深度用于缩进 */
+type TreeRow =
+  | { kind: "directory"; key: string; folderId: string; label: string; count: number; depth: number; hasChildren: boolean }
+  | { kind: "page"; key: string; page: WikiPageItem; depth: number };
+
+interface BranchData {
+  folders: WikiFolderNode[];
+  pages: WikiPageItem[];
 }
 
 interface Props {
@@ -88,14 +191,27 @@ interface Props {
 export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenGraph }: Props) {
   const router = useRouter();
   const { message } = App.useApp();
-  const [treeData, setTreeData] = useState<TreeDataNode[]>([]);
-  const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
+
+  // 已加载的分支：folderId（"" = 根）→ 子目录 + 子页面
+  const [branches, setBranches] = useState<Record<string, BranchData>>({});
+  const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const [selectedSlug, setSelectedSlug] = useState<string>(focusSlug || "");
   const [page, setPage] = useState<WikiPageDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
-  const expandedRef = useRef<React.Key[]>([]);
+
+  // 视图模式（树 / 列表）与搜索（对齐 WeKnora sidebarViewMode + searchQuery）
+  const [viewMode, setViewMode] = useState<"tree" | "list">("tree");
+  const [searchText, setSearchText] = useState("");
+  const [searchResults, setSearchResults] = useState<WikiSearchItem[] | null>(null);
+  const [flatPages, setFlatPages] = useState<WikiPageItem[] | null>(null);
+
+  // 页面栈（返回导航）
+  const [navStack, setNavStack] = useState<string[]>([]);
+
+  const expandedRef = useRef<string[]>([]);
   const selectedRef = useRef<string>(focusSlug || "");
+
   // 编辑
   const [editOpen, setEditOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -108,10 +224,11 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
   const [pageFeedback, setPageFeedback] = useState<WikiFeedbackItem[]>([]);
 
   const loadPage = useCallback(
-    async (slug: string) => {
+    async (slug: string, opts?: { pushNav?: boolean }) => {
       setLoading(true);
       setSelectedSlug(slug);
       selectedRef.current = slug;
+      if (opts?.pushNav) setNavStack((prev) => [...prev, slug]);
       const res = await apiWikiPage(kbId, slug);
       if (res.success && res.data) {
         setPage(res.data);
@@ -125,63 +242,27 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
     [kbId],
   );
 
-  const folderNode = useCallback(
-    (f: WikiFolderNode): TreeDataNode => ({
-      key: `folder:${f.id}`,
-      title: (
-        <Space size={4}>
-          <span>{f.name}</span>
-          {(f.child_count ?? 0) > 0 && (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {f.child_count}
-            </Typography.Text>
-          )}
-        </Space>
-      ),
-      // 无直接子项（子目录+子页面）则为叶子，不显示展开箭头
-      isLeaf: (f.child_count ?? 0) === 0,
-    }),
-    [],
-  );
-
-  const pageNode = useCallback((p: WikiPageItem): TreeDataNode => {
-    return {
-      key: `page:${p.slug}`,
-      title: p.title,
-      isLeaf: true,
-    };
-  }, []);
-
   const fetchBranch = useCallback(
-    async (folderId: string): Promise<TreeDataNode[]> => {
+    async (folderId: string): Promise<BranchData> => {
       const res = await apiWikiBranch(kbId, folderId);
-      if (!res.success || !res.data) return [];
+      if (!res.success || !res.data) return { folders: [], pages: [] };
       const d = res.data;
-      const nodes = [
-        ...d.folders.map(folderNode),
-        ...d.pages.map(pageNode),
-      ];
-      // 目录在前、页面在后，目录按名称排序
-      nodes.sort((a, b) => {
-        const ak = String(a.key);
-        const bk = String(b.key);
-        if (ak.startsWith("folder:") && bk.startsWith("page:")) return -1;
-        if (ak.startsWith("page:") && bk.startsWith("folder:")) return 1;
-        const at = typeof a.title === "string" ? a.title : String(a.title);
-        const bt = typeof b.title === "string" ? b.title : String(b.title);
-        return at.localeCompare(bt);
-      });
-      return nodes;
+      const folders = [...(d.folders || [])].sort((a, b) => a.name.localeCompare(b.name));
+      const pages = [...(d.pages || [])].sort((a, b) => a.title.localeCompare(b.title));
+      return { folders, pages };
     },
-    [kbId, folderNode, pageNode],
+    [kbId],
   );
 
-  // 初始加载：根级分支 + focusSlug 深链定位（沿父链逐级展开）
+  // 初始加载：根级分支 + focusSlug 深链定位（沿父链逐级加载并展开）
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      let tree = await fetchBranch("");
+      const rootBranch = await fetchBranch("");
       if (cancelled) return;
+      const next: Record<string, BranchData> = { "": rootBranch };
+      const nextExpanded: string[] = [];
+
       if (focusSlug) {
         const pageRes = await apiWikiPage(kbId, focusSlug);
         if (!cancelled && pageRes.success && pageRes.data) {
@@ -200,9 +281,8 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
             }
             for (const fid of chain) {
               if (cancelled) return;
-              const children = await fetchBranch(fid);
-              tree = updateTreeData(tree, `folder:${fid}`, children);
-              setExpandedKeys((prev) => [...new Set([...prev, `folder:${fid}`])]);
+              next[fid] = await fetchBranch(fid);
+              nextExpanded.push(fid);
             }
           }
           setSelectedSlug(focusSlug);
@@ -211,15 +291,18 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
         }
       } else {
         // 默认选中第一个根级页面
-        const rootPageKey = tree.find((n) => String(n.key).startsWith("page:"))?.key;
-        if (rootPageKey) {
-          const slug = String(rootPageKey).slice(5);
-          setSelectedSlug(slug);
-          selectedRef.current = slug;
-          void loadPage(slug);
+        const firstRootPage = rootBranch.pages[0];
+        if (firstRootPage) {
+          setSelectedSlug(firstRootPage.slug);
+          selectedRef.current = firstRootPage.slug;
+          void loadPage(firstRootPage.slug);
         }
       }
-      if (!cancelled) setTreeData(tree);
+      if (!cancelled) {
+        setBranches(next);
+        setExpandedKeys(nextExpanded);
+        expandedRef.current = nextExpanded;
+      }
     })();
     return () => {
       cancelled = true;
@@ -227,34 +310,94 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kbId, focusSlug]);
 
-  const onExpand = (keys: React.Key[]) => {
-    expandedRef.current = keys;
-    setExpandedKeys(keys);
-  };
+  /** 扁平化渲染行：目录（及其递归子项）在前，页面在后（对齐 antd Tree 与 WeKnora 目录优先） */
+  const treeRows = useMemo<TreeRow[]>(() => {
+    const expanded = new Set(expandedKeys);
+    const rows: TreeRow[] = [];
+    const walk = (parentId: string, depth: number) => {
+      const branch = branches[parentId];
+      if (!branch) return;
+      for (const f of branch.folders) {
+        rows.push({
+          kind: "directory",
+          key: `folder:${f.id}`,
+          folderId: f.id,
+          label: f.name,
+          count: f.child_count ?? 0,
+          depth,
+          hasChildren: (f.child_count ?? 0) > 0,
+        });
+        if (expanded.has(f.id)) walk(f.id, depth + 1);
+      }
+      for (const p of branch.pages) {
+        rows.push({ kind: "page", key: `page:${p.slug}`, page: p, depth });
+      }
+    };
+    walk("", 0);
+    return rows;
+  }, [branches, expandedKeys]);
 
-  // 展开目录时懒加载该目录的直接子项（对齐 WeKnora）
-  const onLoadData = async (node: TreeDataNode): Promise<void> => {
-    const key = String(node.key);
-    if (!key.startsWith("folder:")) return;
-    const fid = key.slice(7);
-    const children = await fetchBranch(fid);
-    setTreeData((prev) => updateTreeData(prev, key, children));
-  };
+  /** 列表模式：递归收集所有已加载分支的页面（并按需补拉未加载目录） */
+  const loadFlatPages = useCallback(async () => {
+    const collected: WikiPageItem[] = [];
+    const visited = new Set<string>();
+    const walk = async (folderId: string) => {
+      if (visited.has(folderId)) return;
+      visited.add(folderId);
+      let branch = branches[folderId];
+      if (!branch) {
+        branch = await fetchBranch(folderId);
+        setBranches((prev) => ({ ...prev, [folderId]: branch as BranchData }));
+      }
+      collected.push(...branch.pages);
+      for (const f of branch.folders) await walk(f.id);
+    };
+    await walk("");
+    setFlatPages(collected);
+  }, [branches, fetchBranch]);
+
+  const onToggleDirectory = useCallback((folderId: string) => {
+    setExpandedKeys((prev) => {
+      const next = prev.includes(folderId) ? prev.filter((k) => k !== folderId) : [...prev, folderId];
+      expandedRef.current = next;
+      return next;
+    });
+  }, []);
+
+  /** 展开目录时懒加载该目录的直接子项（对齐 WeKnora） */
+  const onExpandDirectory = useCallback(
+    async (folderId: string) => {
+      if (branches[folderId]) {
+        onToggleDirectory(folderId);
+        return;
+      }
+      const branch = await fetchBranch(folderId);
+      setBranches((prev) => ({ ...prev, [folderId]: branch }));
+      onToggleDirectory(folderId);
+    },
+    [branches, fetchBranch, onToggleDirectory],
+  );
 
   // 编辑/删除等树外变更后：按当前展开状态刷新已加载分支
   const reloadTree = useCallback(async () => {
-    let tree = await fetchBranch("");
-    for (const k of expandedRef.current) {
-      const key = String(k);
-      if (key.startsWith("folder:")) {
-        const children = await fetchBranch(key.slice(7));
-        tree = updateTreeData(tree, key, children);
-      }
+    const next: Record<string, BranchData> = { "": await fetchBranch("") };
+    for (const fid of expandedRef.current) {
+      next[fid] = await fetchBranch(fid);
     }
-    setTreeData(tree);
+    setBranches(next);
     const cur = selectedRef.current;
     if (cur) void loadPage(cur);
   }, [fetchBranch, loadPage]);
+
+  const runSearch = useCallback(async () => {
+    const q = searchText.trim();
+    if (!q) {
+      setSearchResults(null);
+      return;
+    }
+    const res = await apiWikiSearch(kbId, q, 50);
+    setSearchResults(res.success ? (res.data?.items || []) : []);
+  }, [kbId, searchText]);
 
   const loadFeedback = useCallback(async () => {
     if (!page) return;
@@ -318,9 +461,20 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
     }
   };
 
-  const handleSelect = (keys: React.Key[]) => {
-    const key = keys[0] as string | undefined;
-    if (key && key.startsWith("page:")) void loadPage(key.slice(5));
+  const handleSelectPage = (slug: string) => {
+    if (slug === selectedRef.current) return;
+    void loadPage(slug, { pushNav: true });
+  };
+
+  /** 返回上一页（页面栈） */
+  const goBack = () => {
+    setNavStack((prev) => {
+      if (prev.length === 0) return prev;
+      const next = [...prev];
+      const back = next.pop() as string;
+      void loadPage(back);
+      return next;
+    });
   };
 
   const onLocalLink = (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -328,145 +482,274 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
     const m = href.match(/\/wiki\/([^/]+)$/);
     if (m) {
       e.preventDefault();
-      void loadPage(decodeURIComponent(m[1]));
+      void loadPage(decodeURIComponent(m[1]), { pushNav: true });
     }
   };
 
-  const renderLinkTags = (items: { slug: string; title: string; page_type: string }[]) => (
-    <Space wrap>
-      {items.map((link) => (
-        <Tag
-          key={link.slug}
-          color={TYPE_COLOR[link.page_type] || "default"}
-          style={{ cursor: "pointer" }}
-          onClick={() => void loadPage(link.slug)}
-        >
-          {link.title}
-        </Tag>
-      ))}
-    </Space>
-  );
+  const openGraph = () => {
+    if (!page) return;
+    if (onOpenGraph) onOpenGraph(page.slug);
+    else router.push(`/kbs/${kbId}?wiki=graph&focus=${encodeURIComponent(page.slug)}`);
+  };
 
-  if (loading && !page) {
+  const hasContentPages = treeRows.length > 0;
+  const sourceRefs = (page?.source_refs || []).map(sourceLabel).filter(Boolean);
+  const searchMode = searchResults !== null;
+
+  // ── 左栏行渲染 ──
+  const renderSidebarRow = (row: TreeRow) => {
+    if (row.kind === "directory") {
+      const expanded = expandedKeys.includes(row.folderId);
+      return (
+        <div
+          key={row.key}
+          className="kb-wiki-directory-item"
+          style={{ "--kb-wiki-depth": row.depth } as React.CSSProperties}
+          onClick={() => void onExpandDirectory(row.folderId)}
+        >
+          <DownOutlined className={`kb-wiki-directory-toggle${expanded ? " kb-wiki-directory-toggle--expanded" : ""}`} />
+          <span className="kb-wiki-directory-title">{row.label}</span>
+          <div className="kb-wiki-tree-trailing">
+            <span className="kb-wiki-directory-count">{row.count}</span>
+          </div>
+        </div>
+      );
+    }
+    const p = row.page;
+    const active = p.slug === selectedSlug;
     return (
-      <Card>
-        <Spin />
-      </Card>
+      <Tooltip key={row.key} title={p.title} placement="top" mouseEnterDelay={0.6}>
+        <div
+          className={`kb-wiki-page-item kb-wiki-page-item--tree${active ? " active" : ""}`}
+          style={{ "--kb-wiki-depth": row.depth } as React.CSSProperties}
+          onClick={() => handleSelectPage(p.slug)}
+        >
+          <span
+            className="kb-wiki-page-file-icon"
+            style={{ color: PAGE_ICON_COLOR[p.page_type] || undefined }}
+          >
+            {pageIconOf(p.page_type)}
+          </span>
+          <span className="kb-wiki-page-item-title">{p.title}</span>
+        </div>
+      </Tooltip>
     );
-  }
+  };
+
+  const renderListItem = (p: WikiPageItem | WikiSearchItem) => {
+    const active = p.slug === selectedSlug;
+    return (
+      <div
+        key={("id" in p && p.id) || p.slug}
+        className={`kb-wiki-page-item kb-wiki-page-item--list${active ? " active" : ""}`}
+        onClick={() => handleSelectPage(p.slug)}
+      >
+        <div className="kb-wiki-page-item-title">{p.title}</div>
+        {p.summary && <div className="kb-wiki-page-item-summary">{p.summary}</div>}
+      </div>
+    );
+  };
 
   return (
-    <div style={{ display: "flex", gap: 16, height: "100%", minHeight: 0 }}>
-      {/* 左侧目录文档树（懒加载） */}
-      <Card
-        size="small"
-        style={{
-          width: 280,
-          flexShrink: 0,
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
-        styles={{ body: { flex: 1, minHeight: 0, overflowY: "auto" } }}
-        title={
-          <Space size={8}>
-            <span>目录</span>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              已加载 {treeData.length} 项
-            </Typography.Text>
-          </Space>
-        }
-      >
-        {treeData.length === 0 ? (
-          <Empty description="暂无 wiki 页面" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-        ) : (
-          <Tree
-            loadData={onLoadData}
-            expandedKeys={expandedKeys}
-            onExpand={onExpand}
-            selectedKeys={selectedSlug ? [`page:${selectedSlug}`] : []}
-            onSelect={handleSelect}
-            treeData={treeData}
-          />
-        )}
-      </Card>
-      {/* 右侧内容 */}
-      <Card
-        style={{
-          flex: 1,
-          minWidth: 0,
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
-        styles={{ body: { flex: 1, minHeight: 0, overflowY: "auto" } }}
-      >
-        {notFound || !page ? (
-          <Empty description={notFound ? `Wiki 页面不存在: ${selectedSlug}` : "从左侧选择页面"} />
-        ) : (
-          <Space direction="vertical" size="small" style={{ display: "flex" }}>
-            <Space style={{ justifyContent: "space-between", width: "100%" }} wrap>
-              <Space wrap>
-                <Typography.Title level={4} style={{ margin: 0 }}>
-                  {page.title}
-                </Typography.Title>
-                <Tag color={TYPE_COLOR[page.page_type] || "default"}>{page.page_type}</Tag>
-              </Space>
-              <Space>
-                <Button size="small" icon={<EditOutlined />} onClick={openEdit}>
-                  编辑
-                </Button>
-                <Button size="small" icon={<MessageOutlined />} onClick={() => setFeedbackOpen(true)}>
-                  反馈
-                </Button>
-                <Button
-                  size="small"
-                  icon={<ApartmentOutlined />}
-                  onClick={() =>
-                    onOpenGraph
-                      ? onOpenGraph(page.slug)
-                      : router.push(`/kbs/${kbId}?wiki=graph&focus=${encodeURIComponent(page.slug)}`)
-                  }
+    <div className="kb-wiki-root">
+      {/* ── 左栏：wiki-sidebar ── */}
+      <aside className="kb-wiki-sidebar">
+        <div className="kb-wiki-sidebar-header">
+          <div className="kb-wiki-search-row">
+            <Input
+              className="kb-wiki-search-input"
+              placeholder="搜索 wiki 页面"
+              allowClear
+              prefix={<FileUnknownOutlined />}
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              onPressEnter={() => void runSearch()}
+              onClear={() => {
+                setSearchText("");
+                setSearchResults(null);
+              }}
+            />
+            <div className="kb-wiki-view-toggle" role="group">
+              <Tooltip title="树视图" placement="top">
+                <button
+                  type="button"
+                  className={`kb-wiki-view-toggle-btn${viewMode === "tree" ? " active" : ""}`}
+                  aria-pressed={viewMode === "tree"}
+                  onClick={() => {
+                    setViewMode("tree");
+                    setFlatPages(null);
+                  }}
                 >
-                  图谱中查看
-                </Button>
-              </Space>
-            </Space>
-            {page.summary && <Typography.Paragraph type="secondary">{page.summary}</Typography.Paragraph>}
-            <hr />
-            <div className="kb-markdown">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{ a: (props) => <a {...props} onClick={onLocalLink} /> }}
-              >
-                {renderWikiLinks(page.content || "", kbId)}
-              </ReactMarkdown>
+                  <ProfileOutlined />
+                </button>
+              </Tooltip>
+              <Tooltip title="列表视图" placement="top">
+                <button
+                  type="button"
+                  className={`kb-wiki-view-toggle-btn${viewMode === "list" ? " active" : ""}`}
+                  aria-pressed={viewMode === "list"}
+                  onClick={() => {
+                    setViewMode("list");
+                    void loadFlatPages();
+                  }}
+                >
+                  <UnorderedListOutlined />
+                </button>
+              </Tooltip>
             </div>
-            {(page.links.length > 0 || page.in_links.length > 0) && (
-              <Card size="small" title="双向链接">
-                <Space direction="vertical" size="middle" style={{ display: "flex" }}>
-                  {page.in_links.length > 0 && (
-                    <div>
-                      <Typography.Text type="secondary">
-                        被引用（{page.in_links.length} 个页面链接到此页）
-                      </Typography.Text>
-                      <div style={{ marginTop: 8 }}>{renderLinkTags(page.in_links)}</div>
-                    </div>
-                  )}
-                  {page.links.length > 0 && (
-                    <div>
-                      <Typography.Text type="secondary">引用（{page.links.length}）</Typography.Text>
-                      <div style={{ marginTop: 8 }}>{renderLinkTags(page.links)}</div>
-                    </div>
-                  )}
-                </Space>
-              </Card>
-            )}
-          </Space>
-        )}
-      </Card>
+          </div>
+        </div>
+
+        <div className="kb-wiki-page-list">
+          {/* 搜索模式：扁平结果列表，无分组外壳 */}
+          {searchMode ? (
+            <>
+              {searchResults!.map((p) => renderListItem(p))}
+              {searchResults!.length === 0 && (
+                <div className="kb-wiki-empty-state">
+                  <p className="kb-wiki-empty-desc">没有找到匹配的页面</p>
+                </div>
+              )}
+            </>
+          ) : viewMode === "tree" ? (
+            <div className="kb-wiki-tree-panel">
+              <div className="kb-wiki-tree-list">{treeRows.map(renderSidebarRow)}</div>
+            </div>
+          ) : flatPages === null ? (
+            <div className="kb-wiki-group-loading">
+              <Spin size="small" />
+            </div>
+          ) : (
+            flatPages.map((p) => renderListItem(p))
+          )}
+
+          {/* 空状态 */}
+          {!searchMode && !loading && !hasContentPages && (
+            <div className="kb-wiki-empty-state">
+              <div className="kb-wiki-empty-icon">
+                <FileUnknownOutlined style={{ fontSize: 36 }} />
+              </div>
+              <p className="kb-wiki-empty-title">暂无 wiki 页面</p>
+              <p className="kb-wiki-empty-desc">构建完成后，wiki 页面会显示在这里</p>
+            </div>
+          )}
+        </div>
+      </aside>
+
+      {/* ── 右栏：wiki-content / wiki-reader ── */}
+      <div className="kb-wiki-content">
+        <div className="kb-wiki-reader">
+          {loading && !page ? (
+            <div className="kb-wiki-reader-empty">
+              <Spin />
+            </div>
+          ) : notFound || !page ? (
+            <div className="kb-wiki-reader-empty">
+              <Empty description={notFound ? `Wiki 页面不存在: ${selectedSlug}` : "从左侧选择页面"} />
+            </div>
+          ) : (
+            <>
+              {/* 返回导航 */}
+              {navStack.length > 0 && (
+                <div className="kb-wiki-nav-bar">
+                  <a className="kb-wiki-nav-back" onClick={goBack}>
+                    <DownOutlined style={{ transform: "rotate(90deg)", fontSize: 14 }} />
+                    <span>返回</span>
+                  </a>
+                </div>
+              )}
+
+              {/* 页面 header */}
+              <div className="kb-wiki-reader-header">
+                <h2 className="kb-wiki-reader-title">
+                  <span className="kb-wiki-reader-title-text">{page.title}</span>
+                  <Tooltip title="页面反馈" placement="bottom">
+                    <button
+                      type="button"
+                      className="kb-wiki-feedback-trigger"
+                      aria-label="页面反馈"
+                      onClick={() => setFeedbackOpen(true)}
+                    >
+                      <MessageOutlined style={{ fontSize: 16 }} />
+                    </button>
+                  </Tooltip>
+                </h2>
+                <div className="kb-wiki-reader-meta">
+                  <Tag color={TYPE_COLOR[page.page_type] || "default"}>
+                    {TYPE_LABEL[page.page_type] || page.page_type}
+                  </Tag>
+                  <span className="kb-wiki-reader-meta-text">更新于 {formatDate(page.updated_at)}</span>
+                  <span className="kb-wiki-reader-actions">
+                    <Button size="small" type="text" icon={<EditOutlined />} onClick={openEdit}>
+                      编辑
+                    </Button>
+                    <a className="kb-wiki-reader-graph-link" onClick={openGraph}>
+                      <ShareAltOutlined /> 在图谱中查看
+                    </a>
+                  </span>
+                </div>
+              </div>
+
+              {/* 被引用（in_links） */}
+              {page.in_links.length > 0 && (
+                <div className="kb-wiki-reader-backlinks">
+                  <span className="kb-wiki-backlink-label">
+                    <LinkOutlined style={{ fontSize: 14 }} /> 被引用
+                  </span>
+                  {page.in_links.map((link) => (
+                    <a
+                      key={link.slug}
+                      className="kb-wiki-backlink-tag"
+                      onClick={() => void loadPage(link.slug, { pushNav: true })}
+                    >
+                      {link.title}
+                    </a>
+                  ))}
+                </div>
+              )}
+
+              {/* 正文 */}
+              <div className="kb-wiki-reader-body">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{ a: (props) => <a {...props} onClick={onLocalLink} /> }}
+                >
+                  {renderWikiLinks(page.content || "", kbId)}
+                </ReactMarkdown>
+              </div>
+
+              {/* 出链（本页引用） */}
+              {page.links.length > 0 && (
+                <div className="kb-wiki-reader-sources">
+                  <span className="kb-wiki-link-label">引用</span>
+                  {page.links.map((link) => (
+                    <a
+                      key={link.slug}
+                      className="kb-wiki-source-ref"
+                      onClick={() => void loadPage(link.slug, { pushNav: true })}
+                    >
+                      <LinkOutlined style={{ fontSize: 14 }} /> {link.title}
+                    </a>
+                  ))}
+                </div>
+              )}
+
+              {/* 来源文档 */}
+              {sourceRefs.length > 0 && (
+                <div className="kb-wiki-reader-sources">
+                  <span className="kb-wiki-link-label">来源</span>
+                  {sourceRefs.map((name, idx) => (
+                    <span key={`${name}-${idx}`} className="kb-wiki-source-ref">
+                      <FileOutlined style={{ fontSize: 14 }} /> {name}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
       {/* 编辑弹窗 */}
       <Modal
         title="编辑页面"
@@ -499,20 +782,32 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
         onOk={() => void submitFeedback()}
         confirmLoading={feedbackSaving}
       >
-        <Space direction="vertical" style={{ display: "flex" }}>
-          <Radio.Group value={feedbackType} onChange={(e) => setFeedbackType(e.target.value)}>
-            <Radio.Button value="helpful">有帮助</Radio.Button>
-            <Radio.Button value="wrong">内容错误</Radio.Button>
-            <Radio.Button value="suggestion">建议</Radio.Button>
-          </Radio.Group>
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Radio.Group
+            value={feedbackType}
+            onChange={(e) => setFeedbackType(e.target.value)}
+            options={[
+              { value: "helpful", label: "有帮助" },
+              { value: "wrong", label: "内容有误" },
+              { value: "missing", label: "内容缺失" },
+            ]}
+          />
           <Input.TextArea
-            rows={3}
-            placeholder="补充说明（可选）"
+            rows={4}
             value={feedbackContent}
             onChange={(e) => setFeedbackContent(e.target.value)}
+            placeholder="请描述问题或建议"
           />
           {pageFeedback.length > 0 && (
-            <Typography.Text type="secondary">已有 {pageFeedback.length} 条反馈</Typography.Text>
+            <div>
+              <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                {pageFeedback.map((f) => (
+                  <div key={f.id} style={{ fontSize: 12, color: "#888" }}>
+                    [{f.feedback_type}] {f.content}
+                  </div>
+                ))}
+              </Space>
+            </div>
           )}
         </Space>
       </Modal>
