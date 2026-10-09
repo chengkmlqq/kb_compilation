@@ -3029,6 +3029,27 @@ export function apiSaveTapeDesign(id: string, nodes: unknown[], edges: unknown[]
   });
 }
 
+export interface TapeDraftExportData {
+  file_name: string;
+  content: string;
+}
+
+export interface TapeDraftImportResult {
+  imported_step_count: number;
+  overwrite: boolean;
+}
+
+export function apiExportTapeDraft(id: string) {
+  return request<TapeDraftExportData>(`/api/v1/orchestrations/${id}/export`);
+}
+
+export function apiImportTapeDraft(id: string, content: string) {
+  return request<TapeDraftImportResult>(`/api/v1/orchestrations/${id}/import`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
+}
+
 export function apiPublishTape(id: string) {
   return request<TapeItem>(`/api/v1/orchestrations/${id}/publish`, { method: "POST" });
 }

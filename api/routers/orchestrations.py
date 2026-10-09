@@ -106,6 +106,18 @@ def save_design(tape_id: str, payload: dict, db: Session = Depends(get_db), _use
     )
 
 
+@router.get("/{tape_id}/export")
+def export_draft(tape_id: str, db: Session = Depends(get_db), _user: str = Depends(_current_user)):
+    """导出编排草稿 JSON（对齐 data-synth 导出语义）。"""
+    return _guarded(svc.export_tape_draft, db, tape_id)
+
+
+@router.post("/{tape_id}/import")
+def import_draft(tape_id: str, payload: dict, db: Session = Depends(get_db), _user: str = Depends(_current_user)):
+    """导入编排草稿：上传 JSON 覆盖当前草稿（校验组件存在，不自动发布）。"""
+    return _guarded(svc.import_tape_draft, db, tape_id, str(payload.get("content") or ""))
+
+
 @router.post("/{tape_id}/publish")
 def publish(tape_id: str, db: Session = Depends(get_db), _user: str = Depends(_current_user)):
     return _guarded(svc.publish_tape, db, tape_id)

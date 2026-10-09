@@ -18,6 +18,8 @@ import {
   SaveOutlined,
   RocketOutlined,
   PlayCircleOutlined,
+  DownloadOutlined,
+  UploadOutlined,
   ZoomInOutlined,
   ZoomOutOutlined,
   FullscreenOutlined,
@@ -30,6 +32,8 @@ import {
   apiSaveTapeDesign,
   apiPublishTape,
   apiExecuteTape,
+  apiExportTapeDraft,
+  apiImportTapeDraft,
 } from '@/lib/api';
 import type { StepDefineItem, TapeDetail, TapeExecuteResult } from '@/lib/api';
 
@@ -37,6 +41,7 @@ import { LeftSidebar } from './left-sidebar';
 import { RightPanel } from './right-panel';
 import { CustomNode, nodeTypes } from './custom-node';
 import type { StepFlowNode, StepNodeData } from './custom-node';
+import { TapeImportModal } from './tape-import-modal';
 import { parseJsonRecord } from '../_utils/json';
 
 const { Text } = Typography;
@@ -162,6 +167,12 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
   const [execResult, setExecResult] = useState<TapeExecuteResult | null>(null);
   const [execOpen, setExecOpen] = useState(false);
 
+  // 导入弹窗
+  const [importOpen, setImportOpen] = useState(false);
+
+  // 画布重载信号（导入成功后自增触发重新拉取）
+  const [reloadKey, setReloadKey] = useState(0);
+
   /** 初始加载期间不标记 dirty（ReactFlow 初始化可能派发维度/选择类变更） */
   const isInitialLoadRef = useRef(true);
 
@@ -209,7 +220,7 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
     return () => {
       cancelled = true;
     };
-  }, [tapeId, setNodes, setEdges, fitView, message]);
+  }, [tapeId, reloadKey, setNodes, setEdges, fitView, message]);
 
   // ---------------- 画布事件 ----------------
   const onNodesChange = useCallback(
@@ -390,6 +401,47 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
     }
   };
 
+  /** 导出：先静默保存当前草稿，再拉取导出 JSON 并触发浏览器下载 */
+  const handleExport = async () => {
+    if (!tape) return;
+    message.loading({ content: '正在导出...', key: 'exportDraft' });
+    try {
+      const saved = await handleSave(true);
+      if (!saved) {
+        message.error({ content: '保存失败，无法导出', key: 'exportDraft' });
+        return;
+      }
+      const res = await apiExportTapeDraft(tapeId);
+      if (!res.success || !res.data) {
+        message.error({ content: res.message || '导出失败', key: 'exportDraft' });
+        return;
+      }
+      const blob = new Blob([res.data.content], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = res.data.file_name || `${tape.tape_name || tapeId}_draft_export.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      message.success({ content: '导出成功', key: 'exportDraft' });
+    } catch (e) {
+      message.error({ content: e instanceof Error ? e.message : '导出失败', key: 'exportDraft' });
+    }
+  };
+
+  /** 导入：调后端导入接口，成功后重载画布 */
+  const handleImport = async (content: string) => {
+    const res = await apiImportTapeDraft(tapeId, content);
+    if (!res.success || !res.data) {
+      throw new Error(res.message || '导入失败');
+    }
+    message.success(`导入成功，共 ${res.data.imported_step_count} 个节点`);
+    setImportOpen(false);
+    setReloadKey((k) => k + 1);
+  };
+
   const statusMeta = tape ? TAPE_STATUS_META[tape.status] : undefined;
 
   if (loading) {
@@ -435,6 +487,16 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
               onClick={() => void handleSave(false)}
             >
               保存
+            </Button>
+          </Tooltip>
+          <Tooltip title="导出当前草稿为 JSON 文件">
+            <Button icon={<DownloadOutlined />} onClick={() => void handleExport()}>
+              导出
+            </Button>
+          </Tooltip>
+          <Tooltip title="从 JSON 文件导入，覆盖当前草稿">
+            <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
+              导入
             </Button>
           </Tooltip>
           <Button icon={<RocketOutlined />} loading={saving} onClick={() => void handleSaveAndPublish()}>
@@ -563,6 +625,13 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
           </div>
         )}
       </Modal>
+
+      {/* ============ 导入弹窗 ============ */}
+      <TapeImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImport={(content) => handleImport(content)}
+      />
     </div>
   );
 }

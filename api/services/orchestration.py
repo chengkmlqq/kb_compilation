@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime
 
-from api.models.orchestration import Tape, TapeRun, TapeStep
+from api.models.orchestration import Tape, TapeRun, TapeStep, StepDefine
 from api.services.orchestration_engine import (
+    ATOM_MAP,
     OrchestrationEngine,
     list_step_defines,
     create_step_define,
@@ -14,6 +16,70 @@ from api.services.orchestration_engine import (
     delete_step_define,
     serialize_step_define,
 )
+
+EXPORT_TYPE = "kb.orchestration.draft"
+EXPORT_SCHEMA_VERSION = 1
+
+
+def export_tape_draft(db, tape_id: str) -> dict:
+    """导出编排草稿为 JSON：节点/连线/执行参数 + 基础信息（对齐 data-synth 导出语义）。"""
+    t = get_tape(db, tape_id)
+    payload = {
+        "type": EXPORT_TYPE,
+        "schemaVersion": EXPORT_SCHEMA_VERSION,
+        "exportedAt": datetime.now().isoformat(),
+        "draft": {
+            "tapeName": t.tape_name,
+            "tapeLabel": t.tape_label or "",
+            "tapeDescr": t.tape_descr or "",
+            "tapeType": t.tape_type or "general",
+            "nodes": t.nodes or [],
+            "edges": t.edges or [],
+            "execParams": t.exec_params or {},
+        },
+    }
+    return {
+        "file_name": f"{t.tape_name or tape_id}_draft_export.json",
+        "content": json.dumps(payload, ensure_ascii=False, indent=2),
+    }
+
+
+def import_tape_draft(db, tape_id: str, content: str) -> dict:
+    """导入编排草稿：解析 JSON -> 校验组件存在 -> 覆盖当前草稿（不自动发布）。
+
+    兼容导出文件（外层 draft）与裸节点结构（直接 nodes/edges/execParams）。
+    """
+    try:
+        parsed = json.loads(content)
+    except Exception:
+        raise ValueError("导入文件不是合法的 JSON")
+    if not isinstance(parsed, dict):
+        raise ValueError("导入文件格式不正确")
+
+    if parsed.get("type") and parsed.get("type") != EXPORT_TYPE:
+        raise ValueError(f"导入文件类型不支持: {parsed.get('type')}")
+
+    draft = parsed.get("draft") if isinstance(parsed.get("draft"), dict) else parsed
+    nodes = draft.get("nodes") if isinstance(draft.get("nodes"), list) else []
+    edges = draft.get("edges") if isinstance(draft.get("edges"), list) else []
+    exec_params = draft.get("execParams")
+    if not isinstance(exec_params, dict):
+        exec_params = {}
+
+    # 组件存在性校验：有效 step-define（effective）或引擎内置原子
+    enabled = {s.step_inst for s in db.query(StepDefine).filter(StepDefine.status == "effective").all()}
+    enabled |= set(ATOM_MAP.keys())
+    unknown: list[str] = []
+    for n in nodes:
+        data = n.get("data") if isinstance(n, dict) else None
+        inst = (data or {}).get("stepInst") if isinstance(data, dict) else None
+        if inst and inst not in enabled:
+            unknown.append(str(inst))
+    if unknown:
+        raise ValueError(f"导入文件包含当前环境不存在的组件: {', '.join(sorted(set(unknown)))}")
+
+    save_tape_design(db, tape_id, nodes, edges, exec_params)
+    return {"imported_step_count": len(nodes), "overwrite": True}
 
 
 def _tape_payload_to_model(obj: Tape, payload: dict) -> None:
