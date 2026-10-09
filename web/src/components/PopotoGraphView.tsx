@@ -46,18 +46,52 @@ function injectKbFilter(statement: string, kbId: string): { statement: string; p
   return { statement: out, parameters: params };
 }
 
-function loadScript(src: string): Promise<void> {
+/** Popoto 全局单例的已启动 KB（模块级，跨挂载周期存活）。
+ *  重复 popoto.start() 会叠加 d3 force simulation（rAF 循环）→ CPU 打满卡死，
+ *  故同一 kbId 重复挂载只复用、不再 start。 */
+let popotoStartedFor: string | null = null;
+
+/** 清空 Popoto 各容器：卸载后残留的 DOM 会让下次渲染错乱 */
+function resetPopotoContainers() {
+  for (const id of ["popoto-graph", "popoto-results", "popoto-query", "popoto-cypher", "popoto-taxonomy"]) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = "";
+  }
+}
+
+function loadScript(src: string, timeoutMs = 15000): Promise<void> {
   return new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[src="${src}"]`);
-    if (existing) {
-      if ((window as any).popoto) resolve();
-      else existing.addEventListener("load", () => resolve());
+    const g = globalThis as any;
+    // 唯一就绪判据：全局对象已挂出（脚本早已执行完毕）
+    if (g.popoto) {
+      resolve();
       return;
     }
+    // ⚠️ 已存在的 script 若执行失败/被拦截，load 事件不会重发 —— 对它 addEventListener
+    // 会让 Promise 永久挂起（页面一直转圈＝「卡死」）。移除后重新加载。
+    const stale = document.querySelector(`script[src="${src}"]`);
+    if (stale) stale.remove();
+
     const el = document.createElement("script");
     el.src = src;
-    el.onload = () => resolve();
-    el.onerror = () => reject(new Error(`load ${src} failed`));
+    const timer = setTimeout(() => {
+      el.onload = null;
+      el.onerror = null;
+      reject(new Error(`load ${src} timeout`));
+    }, timeoutMs);
+    el.onload = () => {
+      clearTimeout(timer);
+      el.onload = null;
+      el.onerror = null;
+      if (g.popoto) resolve();
+      else reject(new Error(`${src} 加载完成但未挂出 window.popoto`));
+    };
+    el.onerror = () => {
+      clearTimeout(timer);
+      el.onload = null;
+      el.onerror = null;
+      reject(new Error(`load ${src} failed`));
+    };
     document.head.appendChild(el);
   });
 }
@@ -171,8 +205,15 @@ export default function PopotoGraphView({ kbId, height = 640 }: PopotoGraphViewP
         };
 
         // 5) 挂载（start 自动检测 #popoto-graph/#popoto-taxonomy 等）
-        popoto.start("Entity");
-        steps.push("start ok");
+        // 容器先清空：卸载周期里 Popoto 渲染的 DOM 会残留，二次挂载时错乱
+        resetPopotoContainers();
+        if (popotoStartedFor !== kbId) {
+          popoto.start("Entity");
+          popotoStartedFor = kbId;
+          steps.push("start ok");
+        } else {
+          steps.push("start skipped（已启动，复用单例）");
+        }
         setReady(true);
       } catch (e) {
         const err = String(e instanceof Error ? e.stack || e.message : e);
