@@ -29,7 +29,6 @@ import {
   MoreOutlined,
   PictureOutlined,
   PlusOutlined,
-  PushpinOutlined,
   SlidersOutlined,
 } from "@ant-design/icons";
 import {
@@ -61,16 +60,6 @@ const PIPELINE_OPTIONS = [
   { label: "知识图谱", value: "graph", default: false },
 ];
 
-const PIN_KEY = "kb.top";
-
-const getPinned = (): Set<string> => {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(PIN_KEY) || "[]") as string[]);
-  } catch {
-    return new Set();
-  }
-};
-
 /** 知识库详情分段：文档 / Wiki / 知识图谱，各自成为顶层动态选项卡 */
 type KbSection = "docs" | "wiki" | "graph";
 /** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务分段 */
@@ -96,7 +85,6 @@ export default function KbsPage() {
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
-  const [pinned, setPinned] = useState<Set<string>>(() => getPinned());
   const [configKb, setConfigKb] = useState<KbItem | null>(null);
   const [form] = Form.useForm();
   const [searchForm] = Form.useForm<{ keyword: string }>();
@@ -150,36 +138,16 @@ export default function KbsPage() {
 
   const customWiki = Form.useWatch("custom_wiki_generation", form) ?? false;
 
-  const togglePin = (id: string) => {
-    setPinned((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      try {
-        localStorage.setItem(PIN_KEY, JSON.stringify([...next]));
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
-  };
-
   const visibleKbs = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const filtered = q
+    return q
       ? kbs.filter(
           (k) =>
             k.name.toLowerCase().includes(q) ||
             (k.label || "").toLowerCase().includes(q)
         )
       : kbs;
-    return [...filtered].sort((a, b) => {
-      const pa = pinned.has(a.id) ? 1 : 0;
-      const pb = pinned.has(b.id) ? 1 : 0;
-      if (pa !== pb) return pb - pa;
-      return 0;
-    });
-  }, [kbs, search, pinned]);
+  }, [kbs, search]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -401,7 +369,6 @@ export default function KbsPage() {
                 const isFaq = kb.type === "faq";
                 const graphOn = Boolean(kb.indexing_strategy?.graph_enabled);
                 const vlmOn = kb.vlm_config && Object.keys(kb.vlm_config).length > 0;
-                const pinnedNow = pinned.has(kb.id);
                 return (
                   <Col key={kb.id} xs={24} sm={12} lg={8} xl={6}>
                     <Card
@@ -434,10 +401,6 @@ export default function KbsPage() {
                               { key: "config", label: "知识库配置" },
                               { key: "chunking", label: "切片配置" },
                               { type: "divider" },
-                              pinnedNow
-                                ? { key: "unpin", label: "取消置顶" }
-                                : { key: "pin", label: "置顶", icon: <PushpinOutlined /> },
-                              { type: "divider" },
                               { key: "delete", label: "删除", danger: true },
                             ],
                             onClick: ({ key, domEvent }) => {
@@ -447,8 +410,6 @@ export default function KbsPage() {
                               else if (key === "graph") openKbSection(kb, "graph");
                               else if (key === "config") setConfigKb(kb);
                               else if (key === "chunking") setChunkingKbId(kb.id);
-                              else if (key === "pin") togglePin(kb.id);
-                              else if (key === "unpin") togglePin(kb.id);
                               else if (key === "delete") onDelete(kb);
                             },
                           }}
@@ -488,11 +449,6 @@ export default function KbsPage() {
                           </Tag>
                         )}
                         {isFaq && <Tag color="cyan">FAQ</Tag>}
-                        {pinnedNow && (
-                          <Tag icon={<PushpinOutlined />} color="gold">
-                            置顶
-                          </Tag>
-                        )}
                       </Space>
                     </Card>
                   </Col>

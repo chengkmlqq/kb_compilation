@@ -29,7 +29,7 @@ export const PARSE_STATE_COLOR: Record<string, string> = {
   FAILED: "error",
 };
 
-const STATE_LABEL: Record<string, string> = {
+export const STATE_LABEL: Record<string, string> = {
   PENDING: "待解析",
   PARSING: "解析中",
   EMBEDDING: "向量化中",

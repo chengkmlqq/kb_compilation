@@ -13,11 +13,9 @@ import {
   Button,
   Card,
   Descriptions,
-  Dropdown,
   Empty,
   Input,
   Modal,
-  Pagination,
   Segmented,
   Select,
   Space,
@@ -28,18 +26,16 @@ import {
 import {
   CloudUploadOutlined,
   DownloadOutlined,
-  LinkOutlined,
   RedoOutlined,
   ReloadOutlined,
   SettingOutlined,
   SlidersOutlined,
 } from "@ant-design/icons";
-import DocCardView, { fileTypeIcon, formatSize } from "@/components/DocCardView";
+import DocCardView, { STATE_LABEL, fileTypeIcon, formatSize } from "@/components/DocCardView";
 import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
 import DocDetailDrawer from "@/components/DocDetailDrawer";
 import DocBuildProcessDrawer from "@/components/DocBuildProcessDrawer";
-import UrlImportModal from "@/components/UrlImportModal";
 import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 import KBConfigModal from "@/components/KBConfigModal";
 import {
@@ -50,7 +46,6 @@ import {
   apiGetKb,
   apiListDocuments,
   apiReparseDocument,
-  apiUploadDocumentByUrl,
   apiUploadDocumentWithProgress,
   apiVerifyChunks,
   ChunkVerifyReport,
@@ -85,7 +80,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   const [docStatus, setDocStatus] = useState("");
   const [docType, setDocType] = useState("");
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
-  const [urlOpen, setUrlOpen] = useState(false);
   // 切片核对（向量库 ↔ MySQL）
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [verifyReport, setVerifyReport] = useState<ChunkVerifyReport | null>(null);
@@ -276,17 +270,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
     });
   };
 
-  const onUploadByUrl = async (url: string, fname: string) => {
-    const res = await apiUploadDocumentByUrl(kbId, url.trim(), fname.trim() || undefined);
-    if (res.success) {
-      message.success("链接已抓取，后台解析中");
-      setDocPage(1);
-      void load();
-    } else {
-      message.error(res.message || "URL 导入失败");
-    }
-  };
-
   // 带进度上报的知识库文档上传（本地上传 & 全局拖放复用；经 uploadTask 事件驱动任务浮层）
   const startDocUpload = (file: File, taskId?: string) => {
     const id = taskId ?? makeUploadTaskId("kb-upload");
@@ -306,6 +289,9 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
         if (res.success) {
           emitUploadTask({ id, name: file.name, size: file.size, status: "success", progress: 100 });
           message.success(`「${file.name}」已上传，后台解析中`);
+          // 上传成功后回到第一页并重新查询列表，立即展示新文档
+          setDocPage(1);
+          void load();
         } else {
           emitUploadTask({
             id,
@@ -426,22 +412,13 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             <Button icon={<SlidersOutlined />} onClick={() => void runVerify()}>
               切片核对
             </Button>
-            <Dropdown
-              menu={{
-                items: [
-                  { key: "local", label: "本地上传", icon: <CloudUploadOutlined /> },
-                  { key: "url", label: "URL 导入", icon: <LinkOutlined /> },
-                ],
-                onClick: ({ key }) => {
-                  if (key === "url") setUrlOpen(true);
-                  else if (key === "local") fileInputRef.current?.click();
-                },
-              }}
+            <Button
+              type="primary"
+              icon={<CloudUploadOutlined />}
+              onClick={() => fileInputRef.current?.click()}
             >
-              <Button type="primary" icon={<CloudUploadOutlined />}>
-                上传文档
-              </Button>
-            </Dropdown>
+              上传文档
+            </Button>
             {/* 隐藏的文件选择触发器（本地上传） */}
             <input
               ref={fileInputRef}
@@ -451,11 +428,10 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
               onChange={(e) => {
                 const files = e.target.files;
                 if (files) {
+                  // 逐文件上传，每个文件上传成功后由 startDocUpload 触发列表刷新
                   for (const f of Array.from(files)) {
                     startDocUpload(f);
                   }
-                  setDocPage(1);
-                  void load();
                 }
                 e.target.value = "";
               }}
@@ -489,28 +465,27 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
         )}
         {docView === "card" ? (
           <>
-            <DocCardView
-              items={docs}
-              onOpen={setDetailDoc}
-              onDownload={onDownloadDoc}
-              onReparse={onReparseDoc}
-              onDelete={onDeleteDoc}
-              onTrace={onViewTrace}
-            />
-            {/* 卡片视图补充分页(与列表视图同源 docPage/docPageSize)，否则只能看当前页 */}
-            <div className="mt-3 flex justify-end">
-              <Pagination
-                current={docPage}
-                pageSize={docPageSize}
-                total={docTotal}
-                showSizeChanger
-                showTotal={(t) => `共 ${t} 个文档`}
-                onChange={(p, ps) => {
-                  setDocPage(p);
-                  setDocPageSize(ps);
-                }}
+            <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+              <DocCardView
+                items={docs}
+                onOpen={setDetailDoc}
+                onDownload={onDownloadDoc}
+                onReparse={onReparseDoc}
+                onDelete={onDeleteDoc}
+                onTrace={onViewTrace}
               />
             </div>
+            {/* 卡片视图分页(与列表视图同源 docPage/docPageSize)，统一用 ModoPagination 对齐展示 */}
+            <ModoPagination
+              current={docPage}
+              pageSize={docPageSize}
+              total={docTotal}
+              showTotal={(t) => `共 ${t} 个文档`}
+              onChange={(p, ps) => {
+                setDocPage(p);
+                setDocPageSize(ps);
+              }}
+            />
           </>
         ) : (
           <>
@@ -542,7 +517,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
                   render: (v: string, doc: DocItem) => (
                     <Space size={4}>
                       {["PENDING", "PARSING", "EMBEDDING"].includes(v) && <Spin size="small" />}
-                      <Tag color={PARSE_STATE_COLOR[v] || "default"}>{v}</Tag>
+                      <Tag color={PARSE_STATE_COLOR[v] || "default"}>{STATE_LABEL[v] || v}</Tag>
                       {v === "FAILED" && (
                         <a onClick={() => onViewTrace(doc)}>查看原因</a>
                       )}
@@ -664,13 +639,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
         open={chunkingOpen}
         kbId={kbId}
         onClose={() => setChunkingOpen(false)}
-      />
-
-      {/* URL 导入弹窗（对齐 WeKnora 上传下拉的链接导入） */}
-      <UrlImportModal
-        open={urlOpen}
-        onClose={() => setUrlOpen(false)}
-        onSubmit={onUploadByUrl}
       />
 
       {/* 知识库配置（WeKnora 对齐：索引开关/类型/技能绑定/模型绑定/图谱/FAQ） */}
