@@ -129,6 +129,10 @@ def _advance_impl(run_id: str) -> None:
     steps = _load_steps(run.tape_id)
     results = list(run.step_results or [])
     done = {r["step_id"] for r in results}
+    # 2026-10-09 实测坑: 失败传播缺失——run_script 失败后 print 仍执行。
+    # 语义: 任一 pre 失败 → 后继阻断(skipped 标记,不投递)。
+    failed_ids = {r["step_id"] for r in results if r.get("status") == "failed"}
+    skip_ids = {r["step_id"] for r in results if r.get("status") == "skipped"}
     # bindings 合并：已执行步骤的 body 更新到 run.bindings（def/print 结果）
     bindings = dict(run.bindings or {})
     for r in results:
@@ -137,6 +141,30 @@ def _advance_impl(run_id: str) -> None:
             for k, v in body.items():
                 if k.startswith("set:"):
                     bindings[k[4:]] = v
+
+    # 0) 失败传播：任一 pre 失败的未执行节点 → skipped（阻断链），标记入 done 继续传播
+    newly_skipped = []
+    for sid, s in steps.items():
+        if sid in done or sid in skip_ids:
+            continue
+        if any(p in failed_ids or p in skip_ids for p in s["pre"]):
+            newly_skipped.append(sid)
+    if newly_skipped:
+        for sid in newly_skipped:
+            _append_step_result(run_id, {
+                "step_id": sid, "step_inst": steps[sid]["inst"],
+                "step_label": steps[sid]["label"],
+                "queue": _step_queue(steps, sid), "status": "skipped",
+                "error": None, "duration_ms": 0,
+                "body": None,
+            })
+        logger.info("编排 run=%s 失败传播：%d 个后继节点 skipped", run_id, len(newly_skipped))
+        # 重新取 run（结果已变更），继续推进以标记完整条阻断链
+        run = _get_run(run_id)
+        results = list(run.step_results or [])
+        done = {r["step_id"] for r in results}
+        failed_ids = {r["step_id"] for r in results if r.get("status") == "failed"}
+        skip_ids = {r["step_id"] for r in results if r.get("status") == "skipped"}
 
     # 1) 找就绪节点（所有 pre 已完成 && 自身未执行）
     ready = []
