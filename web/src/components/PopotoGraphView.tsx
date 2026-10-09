@@ -26,16 +26,22 @@ interface PopotoGraphViewProps {
   height?: number;
 }
 
-/** 给 Popoto 生成的 Cypher 注入 kb_id 过滤（KB 隔离）。 */
+/** 给 Popoto 生成的 Cypher 注入 kb_id 过滤（KB 隔离）。
+
+ * 2026-10-08 bug fix: 旧实现把 WHERE 插在 MATCH 之后 —— Popoto 的查询形如
+ * MATCH (entity:`Entity`)-[r]->(x) RETURN ...（单条 MATCH 带完整 pattern），
+ * 插入后变成 MATCH (...) WHERE ..., (..)-[r]->(x) —— Cypher 语法错误 → 500。
+ * 正确做法: 提取首个 MATCH 变量, 有 WHERE 则前插, 否则在 RETURN 前插。
+ */
 function injectKbFilter(statement: string, kbId: string): { statement: string; parameters: Record<string, unknown> } {
   const params: Record<string, unknown> = { kb_id: kbId };
-  // Popoto 生成带反引号的 label：MATCH (entity:`Entity`) → 需匹配 `label` / `Entity` 两种
-  let out = statement.replace(
-    /MATCH\s+\(([a-zA-Z]\w*):`?Entity`?\)/g,
-    (m0, varName) => `${m0} WHERE ${varName}.kb_id = $kb_id`,
-  );
-  if (!out.includes("$kb_id") && /\bWHERE\b/i.test(out)) {
-    out = out.replace(/\bWHERE\b/i, "WHERE n.kb_id = $kb_id AND");
+  const m = statement.match(/MATCH\s*\(([a-zA-Z]\w*):/);
+  const varName = m ? m[1] : "n";
+  let out = statement;
+  if (/\bWHERE\b/i.test(out)) {
+    out = out.replace(/\bWHERE\b/i, `WHERE ${varName}.kb_id = $kb_id AND `);
+  } else if (/\bRETURN\b/i.test(out)) {
+    out = out.replace(/\bRETURN\b/i, `WHERE ${varName}.kb_id = $kb_id RETURN `);
   }
   return { statement: out, parameters: params };
 }
@@ -92,8 +98,25 @@ export default function PopotoGraphView({ kbId, height = 640 }: PopotoGraphViewP
             });
             const json = await resp.json();
             if (!resp.ok) throw new Error(json?.detail || `cypher proxy ${resp.status}`);
-            if (json?.results?.length) out.push(...json.results);
-            else out.push({ columns: [], data: [] });
+            const resultsArr = json?.results?.length ? json.results : [{ columns: [], data: [] }];
+            // 2026-10-08 fix(Taxonomy 计数): Popoto updateCount 用驱动风格
+            // records[0].get("count")——给每个结果附加 records 兼容对象
+            for (const res of resultsArr) {
+              (res as any).records = ((res.data || []) as any[]).map((d: any) => ({
+                get: (col: string) => {
+                  const i = (res.columns || []).indexOf(col);
+                  return i >= 0 ? d.row?.[i] : undefined;
+                },
+                toObject: () => {
+                  const obj: Record<string, unknown> = {};
+                  (res.columns || []).forEach((c: string, i: number) => {
+                    obj[c] = d.row?.[i];
+                  });
+                  return obj;
+                },
+              }));
+            }
+            out.push(...resultsArr);
           }
           return out;
         };
