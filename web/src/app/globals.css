@@ -1162,3 +1162,207 @@ body {
 .kb-chat-md-spacer {
   height: 6px;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   Wiki 关系图谱 —— 像素级对齐 WeKnora WikiBrowser.vue view='graph'
+   （.wiki-graph / .wiki-graph-canvas / .wiki-graph-search-container /
+    .wiki-graph-legend / .wiki-graph-drawer）。
+   布局形态：全屏画布 + 浮层覆盖（搜索左上、图例左下），
+   而非 Card 包装（Card 会压缩画布高度、工具栏占位）。
+   ═══════════════════════════════════════════════════════════════ */
+
+.kb-wikigraph {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #fafafa;
+}
+
+/* 全屏画布 */
+.kb-wikigraph-canvas {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.kb-wikigraph-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #fafafa;
+  border-radius: 6px;
+  cursor: grab;
+}
+
+.kb-wikigraph-svg:active {
+  cursor: grabbing;
+}
+
+.kb-wikigraph-loading {
+  text-align: center;
+  padding: 60px 0;
+}
+
+.kb-wikigraph-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+  height: 100%;
+}
+
+.kb-wikigraph-empty-icon {
+  color: rgba(0, 0, 0, 0.15);
+  margin-bottom: 12px;
+}
+
+.kb-wikigraph-empty-desc {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.30);
+  margin: 0;
+}
+
+/* ── 搜索覆盖层（顶部浮层） ── */
+.kb-wikigraph-search-container {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.kb-wikigraph-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 360px;
+  max-width: 100%;
+  pointer-events: auto;
+}
+
+.kb-wikigraph-search .ant-select-selector {
+  background: rgba(255, 255, 255, 0.92) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  border-radius: 8px !important;
+}
+
+.kb-wikigraph-help {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.kb-wikigraph-help:hover {
+  color: #1677ff;
+  background: #fff;
+}
+
+/* ── 图例覆盖层（底部浮层） ── */
+.kb-wikigraph-legend {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 10;
+  max-width: 420px;
+  background: rgba(255, 255, 255, 0.94);
+  border-radius: 10px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.10);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kb-wikigraph-legend-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.kb-wikigraph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.88);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.kb-wikigraph-legend-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.kb-wikigraph-legend-item.disabled {
+  opacity: 0.4;
+}
+
+.kb-wikigraph-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.kb-wikigraph-legend-divider {
+  height: 1px;
+  background: #dcdcdc;
+}
+
+.kb-wikigraph-legend-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.kb-wikigraph-legend-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.65);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.kb-wikigraph-legend-action:hover {
+  color: #1677ff;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.kb-wikigraph-legend-action-icon {
+  font-size: 14px;
+}
+
+/* 状态卡 */
+.kb-wikigraph-status-card {
+  padding-top: 6px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.kb-wikigraph-status-primary {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.88);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kb-wikigraph-status-secondary {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.30);
+  margin-top: 2px;
+}

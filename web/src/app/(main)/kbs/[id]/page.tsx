@@ -27,9 +27,12 @@ export default function KbDetailPage() {
   const kbId = id;
   const searchParams = useSearchParams();
   // 旧入口（wiki 内「图谱中查看」）带 ?wiki=graph 时直接定位到知识图谱页签
-  const [activeTab, setActiveTab] = useState(
-    searchParams.get("wiki") === "graph" ? "graph" : "docs",
-  );
+  const [activeTab, setActiveTab] = useState(() => {
+    const w = searchParams.get("wiki");
+    if (w === "graph") return "wiki-graph"; // wiki 页「在图谱中查看」→ wiki 关系图
+    if (w === "neo4j") return "graph"; // 显式要 Neo4j 图谱
+    return "docs";
+  });
   const [urlFocus] = useState(searchParams.get("focus") || undefined);
   // 图谱聚焦页：URL 深链（urlFocus）或 wiki 页内点击「在图谱中查看」传入的 slug。
   // 有值 = wiki 关联关系图（ego 邻域）；无值 = Neo4j 全库图谱。
@@ -39,7 +42,7 @@ export default function KbDetailPage() {
   /** Wiki 页内「在图谱中查看」：带上当前页 slug → wiki 关联图 ego 模式 */
   const handleOpenGraph = (slug?: string) => {
     setGraphFocus(slug || undefined);
-    setActiveTab("graph");
+    setActiveTab("wiki-graph");
   };
 
   return (
@@ -77,11 +80,13 @@ export default function KbDetailPage() {
             key: "graph",
             label: "知识图谱",
             closable: false,
-            children: graphFocus ? (
-              <WikiGraphView kbId={kbId} focusSlug={graphFocus} />
-            ) : (
-              <KbGraphPane kbId={kbId} />
-            ),
+            children: <KbGraphPane kbId={kbId} />,
+          },
+          {
+            key: "wiki-graph",
+            label: "wiki 关系图",
+            closable: false,
+            children: <WikiGraphView kbId={kbId} focusSlug={graphFocus} />,
           },
         ]}
       />

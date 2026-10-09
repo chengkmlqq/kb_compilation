@@ -16,15 +16,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
-  Card,
   Drawer,
-  Empty,
   Popover,
   Select,
   Space,
   Spin,
   Tag,
-  Tooltip,
   Typography,
 } from "antd";
 import {
@@ -758,18 +755,31 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
   );
 
   return (
-    <Card
-      title={
-        <Space>
-          <AppstoreOutlined /> Wiki 知识图谱
-          <Tag color="blue">{mode === "overview" ? "全库视图" : `邻域: ${center}`}</Tag>
-        </Space>
-      }
-      extra={
-        <Space>
+    <div className="kb-wikigraph">
+      {/* 画布（全屏，对齐 .wiki-graph-canvas） */}
+      <div className="kb-wikigraph-canvas">
+        {loading ? (
+          <div className="kb-wikigraph-loading">
+            <Spin />
+          </div>
+        ) : !data || data.nodes.length === 0 ? (
+          <div className="kb-wikigraph-empty">
+            <div className="kb-wikigraph-empty-icon">
+              <AppstoreOutlined style={{ fontSize: 48 }} />
+            </div>
+            <p className="kb-wikigraph-empty-desc">暂无 wiki 页面，无法生成图谱</p>
+          </div>
+        ) : (
+          <svg ref={svgRef} className="kb-wikigraph-svg" />
+        )}
+      </div>
+
+      {/* 搜索覆盖层（对齐 .wiki-graph-search-container） */}
+      <div className="kb-wikigraph-search-container">
+        <div className="kb-wikigraph-search-row">
           <Select
-            style={{ width: 220 }}
-            placeholder="搜索节点（远程）"
+            className="kb-wikigraph-search"
+            placeholder="搜索 wiki 页面"
             showSearch
             allowClear
             filterOption={false}
@@ -779,64 +789,76 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
             value={undefined}
             onChange={(v: string) => handleGraphSearchSelect(v)}
           />
-          <Tooltip title="操作帮助">
-            <Popover content={helpContent} trigger="click" placement="bottomRight">
-              <Button icon={<QuestionCircleOutlined />} />
-            </Popover>
-          </Tooltip>
-          <Button icon={<FullscreenOutlined />} onClick={fitToView}>
-            适应屏幕
-          </Button>
-          {mode === "ego" && (
-            <Button icon={<ExpandOutlined />} loading={loading} onClick={() => void growFrontier()}>
-              扩展前沿
-            </Button>
-          )}
-          <Button icon={<ReloadOutlined />} onClick={() => void load(mode, center)}>
-            刷新
-          </Button>
-          <Button icon={<ExportOutlined />} onClick={toOverview}>
-            全库
-          </Button>
-        </Space>
-      }
-    >
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
-        {presentTypes.map((t) => (
-          <Tag
-            key={t}
-            color={isTypeOn(t) ? PAGE_TYPE_COLORS[t] : "default"}
-            style={{ cursor: "pointer" }}
-            onClick={() => toggleType(t)}
-          >
-            {PAGE_TYPE_LABELS[t] || t}
-          </Tag>
-        ))}
-        <span style={{ marginLeft: "auto", fontSize: 12, color: "#999" }}>
-          节点 {data?.meta.returned ?? 0} · 边 {data?.edges.length ?? 0} · 全库页面{" "}
-          {data?.meta.total ?? 0}
-          {data?.meta.truncated ? " · 已截断（显示链接最多的节点）" : ""}
-        </span>
+          <Popover content={helpContent} trigger="click" placement="bottomRight">
+            <Button type="text" icon={<QuestionCircleOutlined />} className="kb-wikigraph-help" />
+          </Popover>
+        </div>
       </div>
 
-      <div style={{ position: "relative", height: 560 }}>
-        {loading ? (
-          <div style={{ textAlign: "center", padding: 60 }}>
-            <Spin />
-          </div>
-        ) : !data || data.nodes.length === 0 ? (
-          <Empty description="暂无 wiki 页面，无法生成图谱" style={{ paddingTop: 60 }} />
-        ) : (
-          <svg
-            ref={svgRef}
-            width="100%"
-            height="100%"
-            style={{ background: "#fafafa", borderRadius: 6, cursor: "grab" }}
-          />
-        )}
-        <div style={{ position: "absolute", bottom: 8, left: 12, fontSize: 12, color: "#999" }}>
-          拖拽节点固定 · 滚轮缩放 · 拖动空白平移 · 单击详情 · 双击下钻 · 图例/箭头/适配见上方工具栏
+      {/* 图例覆盖层（对齐 .wiki-graph-legend） */}
+      <div className="kb-wikigraph-legend">
+        <div className="kb-wikigraph-legend-items">
+          {presentTypes.map((t) => (
+            <div
+              key={t}
+              className={`kb-wikigraph-legend-item${isTypeOn(t) ? "" : " disabled"}`}
+              onClick={() => toggleType(t)}
+            >
+              <span className="kb-wikigraph-legend-dot" style={{ background: PAGE_TYPE_COLORS[t] }} />
+              {PAGE_TYPE_LABELS[t] || t}
+            </div>
+          ))}
         </div>
+        <div className="kb-wikigraph-legend-divider" />
+        <div className="kb-wikigraph-legend-actions">
+          <div className="kb-wikigraph-legend-action" onClick={fitToView} title="适应屏幕">
+            <FullscreenOutlined className="kb-wikigraph-legend-action-icon" />
+            <span>适应屏幕</span>
+          </div>
+          <div
+            className="kb-wikigraph-legend-action"
+            onClick={() => setArrowsVisible((v) => !v)}
+            title="显示/隐藏箭头"
+          >
+            <AppstoreOutlined className="kb-wikigraph-legend-action-icon" />
+            <span>{arrowsVisible ? "隐藏箭头" : "显示箭头"}</span>
+          </div>
+          {mode === "ego" && (
+            <div
+              className="kb-wikigraph-legend-action"
+              onClick={() => void growFrontier()}
+              title="批量扩展当前邻域前沿"
+            >
+              <ExpandOutlined className="kb-wikigraph-legend-action-icon" />
+              <span>扩展前沿</span>
+            </div>
+          )}
+          {mode === "ego" && (
+            <div className="kb-wikigraph-legend-action" onClick={toOverview} title="返回全库视图">
+              <ReloadOutlined className="kb-wikigraph-legend-action-icon" />
+              <span>返回全库</span>
+            </div>
+          )}
+          <div
+            className="kb-wikigraph-legend-action"
+            onClick={() => void load(mode, center)}
+            title="刷新"
+          >
+            <ExportOutlined className="kb-wikigraph-legend-action-icon" />
+            <span>刷新</span>
+          </div>
+        </div>
+        {/* 状态卡（对齐 .wiki-graph-status-card） */}
+        {data && (
+          <div className="kb-wikigraph-status-card">
+            <div className="kb-wikigraph-status-primary">
+              节点 {data.meta.returned ?? 0} · 边 {data.edges.length ?? 0} · 全库页面 {data.meta.total ?? 0}
+            </div>
+            {data.meta.truncated && (
+              <div className="kb-wikigraph-status-secondary">已截断（显示链接最多的节点）</div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 详情抽屉 */}
@@ -861,22 +883,24 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
           )
         }
       >
-        {selected && (
-          <div style={{ marginBottom: 8 }}>
-            <Tag color={PAGE_TYPE_COLORS[selected.page_type] || "default"}>
-              {PAGE_TYPE_LABELS[selected.page_type] || selected.page_type}
-            </Tag>
-            <Tag>关联 {selected.link_count}</Tag>
-            {selected.summary && (
-              <div style={{ marginTop: 4, color: "#888" }}>{selected.summary}</div>
-            )}
+        {/* 对齐 WeKnora .wiki-reader-meta + .wiki-reader-body */}
+        <div className="kb-wiki-reader-meta" style={{ marginBottom: 8 }}>
+          {selected && (
+            <>
+              <Tag color={PAGE_TYPE_COLORS[selected.page_type] || "default"}>
+                {PAGE_TYPE_LABELS[selected.page_type] || selected.page_type}
+              </Tag>
+              <span className="kb-wiki-reader-meta-text">关联 {selected.link_count}</span>
+            </>
+          )}
+        </div>
+        {selected?.summary && (
+          <div className="kb-wiki-reader-aliases" style={{ marginBottom: 10 }}>
+            <span className="kb-wiki-alias-label">{selected.summary}</span>
           </div>
         )}
-        <div
-          style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 13 }}
-          dangerouslySetInnerHTML={{ __html: detailHtml }}
-        />
+        <div className="kb-wiki-reader-body" dangerouslySetInnerHTML={{ __html: detailHtml }} />
       </Drawer>
-    </Card>
+    </div>
   );
 }
