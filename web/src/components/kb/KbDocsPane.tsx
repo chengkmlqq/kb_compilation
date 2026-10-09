@@ -11,25 +11,27 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   App,
   Button,
-  Card,
   Descriptions,
   Empty,
   Input,
   Modal,
-  Segmented,
   Select,
   Space,
   Spin,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import {
+  AppstoreOutlined,
   CloudUploadOutlined,
   DownloadOutlined,
   RedoOutlined,
   ReloadOutlined,
+  SearchOutlined,
   SettingOutlined,
   SlidersOutlined,
+  UnorderedListOutlined,
 } from "@ant-design/icons";
 import DocCardView, { STATE_LABEL, fileTypeIcon, formatSize } from "@/components/DocCardView";
 import ModoTable from "@/components/biz/modo-table";
@@ -88,6 +90,17 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   const [docView, setDocView] = useState<"card" | "list">(
     () => (localStorage.getItem("kb.docs.viewMode") as "card" | "list") || "card",
   );
+
+  /** 视图模式切换 + localStorage 持久化（对齐 WeKnora doc-view-toggle） */
+  const setDocViewPersist = (mode: "card" | "list") => {
+    setDocView(mode);
+    try {
+      localStorage.setItem("kb.docs.viewMode", mode);
+    } catch {
+      /* ignore */
+    }
+  };
+
   const [detailDoc, setDetailDoc] = useState<DocItem | null>(null);
   const [chunkingOpen, setChunkingOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
@@ -332,74 +345,46 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      <Card
-        title={`知识库文档（${docTotal}）`}
-        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
-        extra={
-          <Space wrap>
-            <Input
-              allowClear
-              placeholder="按文件名筛选"
-              style={{ width: 160 }}
-              value={docKeyword}
-              onChange={(e) => {
-                setDocKeyword(e.target.value);
-                setDocPage(1);
-              }}
-              onPressEnter={() => void load()}
-              suffix={
-                docKeyword ? (
-                  <ReloadOutlined onClick={() => { setDocKeyword(""); setDocPage(1); }} />
-                ) : null
-              }
-            />
-            <Select
-              allowClear
-              placeholder="解析状态"
-              style={{ width: 130 }}
-              value={docStatus || undefined}
-              onChange={(v) => {
-                setDocStatus(v || "");
-                setDocPage(1);
-                void load();
-              }}
-              options={["PENDING", "PARSING", "EMBEDDING", "READY", "FAILED"].map((s) => ({
-                label: s,
-                value: s,
-              }))}
-            />
-            <Select
-              allowClear
-              placeholder="文件类型"
-              style={{ width: 120 }}
-              value={docType || undefined}
-              onChange={(v) => {
-                setDocType(v || "");
-                setDocPage(1);
-                void load();
-              }}
-              options={["md", "pdf", "docx", "xlsx", "pptx", "txt", "epub"].map((t) => ({
-                label: t.toUpperCase(),
-                value: t,
-              }))}
-            />
-            <Segmented
-              value={docView}
-              onChange={(v) => {
-                const mode = v as "card" | "list";
-                setDocView(mode);
-                try {
-                  localStorage.setItem("kb.docs.viewMode", mode);
-                } catch {
-                  /* ignore */
-                }
-              }}
-              options={[
-                { value: "card", label: "卡片" },
-                { value: "list", label: "列表" },
-              ]}
-            />
+      {/* 对齐 WeKnora .doc-card-area + .doc-filter-bar：去 Card 包装，
+          搜索独占 search 栅格、视图切换+操作在 trailing、筛选项在 filters 行 */}
+      <div className="kb-doc-area">
+        <div className="kb-doc-filter-bar">
+          <Input
+            className="kb-doc-search-input"
+            allowClear
+            placeholder="搜索文档"
+            prefix={<SearchOutlined style={{ color: "#bfbfbf" }} />}
+            value={docKeyword}
+            onChange={(e) => {
+              setDocKeyword(e.target.value);
+              setDocPage(1);
+            }}
+            onPressEnter={() => void load()}
+          />
+          <div className="kb-doc-filter-trailing">
+            {/* 视图切换（对齐 .doc-view-toggle：28×24 图标按钮组） */}
+            <div className="kb-doc-view-toggle" role="group">
+              <Tooltip title="卡片视图">
+                <button
+                  type="button"
+                  className={`kb-doc-view-toggle-btn${docView === "card" ? " active" : ""}`}
+                  aria-pressed={docView === "card"}
+                  onClick={() => setDocViewPersist("card")}
+                >
+                  <AppstoreOutlined />
+                </button>
+              </Tooltip>
+              <Tooltip title="列表视图">
+                <button
+                  type="button"
+                  className={`kb-doc-view-toggle-btn${docView === "list" ? " active" : ""}`}
+                  aria-pressed={docView === "list"}
+                  onClick={() => setDocViewPersist("list")}
+                >
+                  <UnorderedListOutlined />
+                </button>
+              </Tooltip>
+            </div>
             <Button icon={<ReloadOutlined />} onClick={() => void load()}>
               刷新
             </Button>
@@ -436,9 +421,44 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
                 e.target.value = "";
               }}
             />
-          </Space>
-        }
-      >
+          </div>
+          <div className="kb-doc-filter-fields">
+            <div className="kb-doc-filter-field">
+              <Select
+                className="kb-doc-filter-control"
+                allowClear
+                placeholder="解析状态"
+                value={docStatus || undefined}
+                onChange={(v) => {
+                  setDocStatus(v || "");
+                  setDocPage(1);
+                  void load();
+                }}
+                options={["PENDING", "PARSING", "EMBEDDING", "READY", "FAILED"].map((s) => ({
+                  label: s,
+                  value: s,
+                }))}
+              />
+            </div>
+            <div className="kb-doc-filter-field">
+              <Select
+                className="kb-doc-filter-control"
+                allowClear
+                placeholder="文件类型"
+                value={docType || undefined}
+                onChange={(v) => {
+                  setDocType(v || "");
+                  setDocPage(1);
+                  void load();
+                }}
+                options={["md", "pdf", "docx", "xlsx", "pptx", "txt", "epub"].map((t) => ({
+                  label: t.toUpperCase(),
+                  value: t,
+                }))}
+              />
+            </div>
+          </div>
+        </div>
         {selectedList.length > 0 && (
           <Space
             style={{
@@ -614,7 +634,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             />
           </>
         )}
-      </Card>
+      </div>
 
       {/* 文档详情抽屉（对齐 WeKnora DocContent：元数据 + AI 摘要 + 分块预览 + 下载/重解析/删除） */}
       <DocDetailDrawer

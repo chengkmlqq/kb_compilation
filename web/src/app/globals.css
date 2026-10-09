@@ -1366,3 +1366,126 @@ body {
   color: rgba(0, 0, 0, 0.30);
   margin-top: 2px;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   知识库文档（文件）列表 —— 像素级对齐 WeKnora KnowledgeBase.vue
+   documents 页签（.doc-card-area / .doc-filter-bar / .doc-view-toggle /
+   .doc-scroll-container / .doc-batch-bar-anchor）。
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 文档区（去 Card 包装，全高 flex） ── */
+.kb-doc-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+/* ── 筛选栏：grid 'search trailing' / 'filters filters' ── */
+.kb-doc-filter-bar {
+  padding: 0 0 12px 0;
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    'search trailing'
+    'filters filters';
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.kb-doc-search-input {
+  grid-area: search;
+  min-width: 0;
+  width: 100%;
+}
+
+.kb-doc-filter-trailing {
+  grid-area: trailing;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.kb-doc-filter-fields {
+  grid-area: filters;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  -webkit-overflow-scrolling: touch;
+}
+
+.kb-doc-filter-field {
+  width: 140px;
+  flex-shrink: 0;
+}
+
+.kb-doc-filter-control {
+  width: 100%;
+}
+
+@media (min-width: 1280px) {
+  .kb-doc-filter-bar {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 12px;
+  }
+
+  .kb-doc-filter-fields {
+    flex: 0 1 auto;
+    overflow-x: visible;
+  }
+}
+
+/* ── 视图切换（28×24 图标按钮组，secondarycontainer 底） ── */
+.kb-doc-view-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  background: #f3f3f3;
+  border-radius: 6px;
+  gap: 0;
+}
+
+.kb-doc-view-toggle-btn {
+  width: 28px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+  color: rgba(0, 0, 0, 0.65);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.kb-doc-view-toggle-btn:hover {
+  color: rgba(0, 0, 0, 0.88);
+}
+
+.kb-doc-view-toggle-btn.active {
+  background: #fff;
+  color: #1677ff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* ── 滚动容器 ── */
+.kb-doc-scroll-container {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
