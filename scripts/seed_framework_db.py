@@ -67,6 +67,7 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("chat", "chat", "智能问答", "/chat", "grp_ai", "CommentOutlined", 1),
     ("agents", "agents", "智能体配置", "/agents", "grp_ai", "RobotOutlined", 2),
     ("d83aee0d1d8a4fce8a6bd121b6efc5fa", "websearch", "联网搜索", "/websearch", "grp_ai", "SearchOutlined", 3),
+    ("weknora_embed_test", "weknora_embed_test", "WeKnora嵌入测试", "/weknora-embed", "grp_ai", "GlobalOutlined", 4),
     # ---- 数据与任务（纯目录，顶级） ----
     ("grp_data", "grp_data", "数据与任务", None, None, "FolderOutlined", 3),
     ("datasources", "datasources", "数据源", "/datasources", "grp_data", "DatabaseOutlined", 1),
