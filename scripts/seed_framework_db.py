@@ -36,8 +36,10 @@ from api.models.framework import (
     UserRoleRela,
 )
 
-# 种子账号（README: huqiang/sys）
-SEED_USER_ID = os.getenv("KB_SEED_USER_ID", "huqiang")
+# 种子账号（README: admin/sys）
+# 2026-10-08: 默认账号由 huqiang 改为 admin（可用 KB_SEED_USER_ID 覆盖）。
+# 注意：已部署环境里的旧账号不会被 seed 改名/删除（会破坏其知识库归属等外键引用）。
+SEED_USER_ID = os.getenv("KB_SEED_USER_ID", "admin")
 SEED_PASSWORD = os.getenv("KB_SEED_PASSWORD", "sys")
 SEED_TEAM = os.getenv("KB_SEED_TEAM", "默认团队")
 # 种子角色：默认与已部署环境一致（kb_role），已存在则复用不重建。
