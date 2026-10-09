@@ -33,9 +33,15 @@ class GraphReader:
         return "ENTITY" + kb_id.replace("-", "_")
 
     def _scope(self, kb_id: str, alias: str = "n") -> str:
-        """节点范围 WHERE 条件：技能 ENTITY<kb> label（主）∪ 平台 Entity {kb_id}（兼容）。"""
+        """节点范围 WHERE 条件：技能 ENTITY<kb> label（主）∪ 平台 Entity {kb_id}（兼容）。
+
+        2026-10-09 修复：整体必须加括号。Cypher 中 OR 优先级低于 AND，
+        无括号时 `scope AND <其他条件>` 被解析为
+        `A OR (B AND <其他条件>)` —— 第一个分支绕过其他条件，
+        导致 graph/search 关键词过滤失效（搜"登记机关"返回全库高 degree 节点）。
+        """
         l1 = self._entity_label(kb_id)
-        return f'{alias}:{l1} OR ({alias}:Entity AND {alias}.kb_id = $kb_id)'
+        return f'({alias}:{l1} OR ({alias}:Entity AND {alias}.kb_id = $kb_id))'
 
     def _run(self, query: str, params: dict | None = None, **kwargs: Any) -> list[dict]:
         from neo4j import GraphDatabase
