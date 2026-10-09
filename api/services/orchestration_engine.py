@@ -244,6 +244,78 @@ class RunScriptStep(BaseStep):
             return StepResponse.fail(f"脚本执行异常: {e}")
 
 
+class _AtomScriptStep(RunScriptStep):
+    """业务原子基类（2026-10-09）：把业务配置翻译成 orch_atoms.py CLI 调用。
+
+    设计：wiki 构建的 LLM 抽取/知识入库等动作实现在 worker 内置脚本
+    orch_atoms.py。业务 Step 继承 RunScriptStep 的进程组/超时/杀组语义，
+    但 handle 前先把 config 翻译成 orch_atoms CLI：写临时 cfg.json + 拼接
+    command。子类只需声明 ATOM_NAME 与需要透传的字段。
+    """
+
+    ATOM_NAME: str = ""
+    SCRIPTS_DIR = "/srv/kb/worker/builtin_engine/scripts"
+
+    def _build_command(self, context: TapeRuntimeContext) -> list:
+        cfg = {}
+        for k, v in (self.config or {}).items():
+            if k in ("command", "script_path", "args", "env", "timeout_sec", "queue", "workdir"):
+                continue  # 调度字段不传给业务配置
+            if isinstance(v, str):
+                v = context.render(v)
+            cfg[k] = v
+        # 写临时 cfg.json（worker /tmp 共享）
+        import os as _os
+        import tempfile
+        fd, cfg_path = tempfile.mkstemp(suffix=".json", prefix=f"orch_{self.ATOM_NAME}_")
+        with _os.fdopen(fd, "w") as f:
+            json.dump(cfg, f, ensure_ascii=False)
+        self._cfg_path = cfg_path
+        return [sys.executable, f"{self.SCRIPTS_DIR}/orch_atoms.py",
+                self.ATOM_NAME, "--config", cfg_path]
+
+    def handle(self, context: TapeRuntimeContext) -> StepResponse:
+        self._cfg_path = None
+        try:
+            cmd = self._build_command(context)
+            # 复用 RunScriptStep 的 command 路径（临时把 command 塞进 config）
+            saved = self.config
+            self.config = dict(saved)
+            self.config["command"] = cmd
+            try:
+                return super().handle(context)
+            finally:
+                self.config = saved
+        finally:
+            if getattr(self, "_cfg_path", None):
+                try:
+                    import os as _os2
+                    _os2.remove(self._cfg_path)
+                except (OSError, NameError):
+                    pass
+
+
+class LlmExtractStep(_AtomScriptStep):
+    """'llm_extract' LLM 结构化抽取（2026-10-09 业务原子）。
+
+    config 字段见 orch_atoms.py llm_extract：source/source_key/prompt/
+    prompt_file/output/output_shape/batch_size/max_workers/max_tokens/
+    retries/dedupe_field。
+    """
+
+    ATOM_NAME = "llm_extract"
+
+
+class WikiPublishStep(_AtomScriptStep):
+    """'wiki_publish' 幂等知识入库（2026-10-09 业务原子）。
+
+    config 字段见 orch_atoms.py wiki_publish：source/folder/page_type/
+    slug_prefix/slug_hash_field/title_field/content_template/source_ref/dry_run。
+    """
+
+    ATOM_NAME = "wiki_publish"
+
+
 class IfStep(BaseStep):
     """'if' 条件分支：condition 为真走 next_step_ids，为假走 fail 后继。"""
 
@@ -283,6 +355,9 @@ ATOM_MAP: Dict[str, Callable[[str, str, str, Optional[dict]], BaseStep]] = {
     "run_script": RunScriptStep,
     "if": IfStep,
     "loop": LoopStep,
+    # 业务原子（2026-10-09）：wiki 构建拆出的通用组件，实现在 orch_atoms.py
+    "llm_extract": LlmExtractStep,
+    "wiki_publish": WikiPublishStep,
 }
 
 
