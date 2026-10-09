@@ -281,26 +281,6 @@ body {
   flex: 1;
   min-height: 0;
 }
-/* antd Tabs 内容区 flex 链路打穿：Tabs 内嵌表格时占满剩余高度 */
-.kb-flex-tabs {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.kb-flex-tabs .ant-tabs-content-holder {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.kb-flex-tabs .ant-tabs-content,
-.kb-flex-tabs .ant-tabs-tabpane {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
 
 /* ===== kb chat thinking 脉冲指示器（对齐 WeKnora deepThink） ===== */
 .kb-think-indicator {

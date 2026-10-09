@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   App,
   Button,
@@ -32,7 +32,6 @@ import {
   PushpinOutlined,
   SlidersOutlined,
 } from "@ant-design/icons";
-import { useRouter } from "next/navigation";
 import {
   apiCreateKb,
   apiDeleteKb,
@@ -51,6 +50,9 @@ import ModoPagination from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 import KBConfigModal from "@/components/KBConfigModal";
+import KbDocsPane from "@/components/kb/KbDocsPane";
+import KbWikiPane from "@/components/kb/KbWikiPane";
+import KbGraphPane from "@/components/kb/KbGraphPane";
 
 const PIPELINE_OPTIONS = [
   { label: "向量检索", value: "vector", default: true },
@@ -69,12 +71,19 @@ const getPinned = (): Set<string> => {
   }
 };
 
-/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
-type KbTab = { key: string; title: string; children: ReactNode };
+/** 知识库详情分段：文档 / Wiki / 知识图谱，各自成为顶层动态选项卡 */
+type KbSection = "docs" | "wiki" | "graph";
+/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务分段 */
+type KbSectionTab = { key: string; title: string; kbId: string; section: KbSection };
+
+const SECTION_LABEL: Record<KbSection, string> = {
+  docs: "文档",
+  wiki: "Wiki",
+  graph: "图谱",
+};
 
 export default function KbsPage() {
   const { message, modal } = App.useApp();
-  const router = useRouter();
   const [kbs, setKbs] = useState<KbItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -93,14 +102,50 @@ export default function KbsPage() {
   const [searchForm] = Form.useForm<{ keyword: string }>();
 
   // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
-  // 首个 tab「知识库管理」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
-  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
-  const [tabs, setTabs] = useState<KbTab[]>([]);
+  // 首个 tab「知识库管理」= 页面标题 + 列表，不可关闭；后续把知识库的
+  // 「文档 / Wiki / 知识图谱」各自作为一个可关闭选项卡打开（扁平拆分）。
+  const [tabs, setTabs] = useState<KbSectionTab[]>([]);
   const [activeTab, setActiveTab] = useState("home");
 
   const closeTab = (key: string) => {
     setTabs((prev) => prev.filter((t) => t.key !== key));
     if (activeTab === key) setActiveTab("home");
+  };
+
+  /** 打开某知识库的某个分段选项卡：已存在则仅激活，否则新增后激活 */
+  const openKbSection = (kb: KbItem, section: KbSection) => {
+    const key = `kb-${kb.id}-${section}`;
+    setTabs((prev) =>
+      prev.some((t) => t.key === key)
+        ? prev
+        : [
+            ...prev,
+            {
+              key,
+              title: `${SECTION_LABEL[section]} · ${kb.name}`,
+              kbId: kb.id,
+              section,
+            },
+          ]
+    );
+    setActiveTab(key);
+  };
+
+  /** 按分段类型渲染对应 pane（渲染时构造 children，避免把 ReactNode 塞进 state） */
+  const renderKbSection = (t: KbSectionTab) => {
+    if (t.section === "wiki") {
+      return (
+        <KbWikiPane
+          kbId={t.kbId}
+          onOpenGraph={() => {
+            const kb = kbs.find((k) => k.id === t.kbId);
+            if (kb) openKbSection(kb, "graph");
+          }}
+        />
+      );
+    }
+    if (t.section === "graph") return <KbGraphPane kbId={t.kbId} />;
+    return <KbDocsPane kbId={t.kbId} />;
   };
 
   const customWiki = Form.useWatch("custom_wiki_generation", form) ?? false;
@@ -363,7 +408,7 @@ export default function KbsPage() {
                       size="small"
                       hoverable
                       style={{ height: "100%" }}
-                      onClick={() => router.push(`/kbs/${kb.id}`)}
+                      onClick={() => openKbSection(kb, "docs")}
                       title={
                         <Space>
                           <span
@@ -384,6 +429,8 @@ export default function KbsPage() {
                           menu={{
                             items: [
                               { key: "open", label: "打开知识库" },
+                              { key: "wiki", label: "Wiki" },
+                              { key: "graph", label: "知识图谱" },
                               { key: "config", label: "知识库配置" },
                               { key: "chunking", label: "切片配置" },
                               { type: "divider" },
@@ -395,7 +442,9 @@ export default function KbsPage() {
                             ],
                             onClick: ({ key, domEvent }) => {
                               domEvent.stopPropagation();
-                              if (key === "open") router.push(`/kbs/${kb.id}`);
+                              if (key === "open") openKbSection(kb, "docs");
+                              else if (key === "wiki") openKbSection(kb, "wiki");
+                              else if (key === "graph") openKbSection(kb, "graph");
                               else if (key === "config") setConfigKb(kb);
                               else if (key === "chunking") setChunkingKbId(kb.id);
                               else if (key === "pin") togglePin(kb.id);
@@ -629,7 +678,12 @@ export default function KbsPage() {
         }
         items={[
           { key: "home", label: "知识库管理", children: listPane },
-          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+          ...tabs.map((t) => ({
+            key: t.key,
+            label: t.title,
+            closable: true,
+            children: renderKbSection(t),
+          })),
         ]}
       />
     </div>

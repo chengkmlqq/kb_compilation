@@ -82,9 +82,10 @@ interface Props {
   kbId: string;
   focusSlug?: string;
   onTreeChanged?: () => void;
+  onOpenGraph?: (slug: string) => void;
 }
 
-export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged }: Props) {
+export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenGraph }: Props) {
   const router = useRouter();
   const { message } = App.useApp();
   const [treeData, setTreeData] = useState<TreeDataNode[]>([]);
@@ -406,7 +407,9 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged }: Props
                   size="small"
                   icon={<ApartmentOutlined />}
                   onClick={() =>
-                    router.push(`/kbs/${kbId}?wiki=graph&focus=${encodeURIComponent(page.slug)}`)
+                    onOpenGraph
+                      ? onOpenGraph(page.slug)
+                      : router.push(`/kbs/${kbId}?wiki=graph&focus=${encodeURIComponent(page.slug)}`)
                   }
                 >
                   图谱中查看
