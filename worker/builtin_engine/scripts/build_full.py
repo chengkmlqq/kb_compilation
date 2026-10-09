@@ -182,6 +182,15 @@ def build(kid, family, version, source_file, file_format=None, skip_final=False,
         json.dump(chunks, f, ensure_ascii=False, indent=2)
     print(f"[4] 切片: {len(chunks)} chunks")
 
+    # 跨阶段共享变量（2026-10-09 --stages 拆分）：
+    # ls_path/ls_all/kid_prefix 被 entities 等后续阶段使用，不能只在
+    # long_sentences 块内赋值——否则 `--stages entities` 单独跑会
+    # UnboundLocalError（实测踩坑）。这里无条件初始化，
+    # long_sentences 跳过时从落盘文件恢复 ls_all。
+    ls_path = f'/tmp/ls_{kid[:8]}.json'
+    kid_prefix = md5_kid[:10]
+    ls_all = []
+
     if _stage_enabled(ns, 'long_sentences'):
         # 5. Long sentence split (v3: 整篇理解 + 知识单元, LLM)
         cand_path = f'/tmp/cand_{kid[:8]}.json'
@@ -198,9 +207,7 @@ def build(kid, family, version, source_file, file_format=None, skip_final=False,
         print(f"    候选: {len(candidates)}")
 
         # 6. Build long sentence pages
-        kid_prefix = md5_kid[:10]
         created = skipped = 0
-        ls_all = []
         for c in candidates:
             text = c.get('text', '').strip()
             title = c.get('title', '').strip()
@@ -224,7 +231,6 @@ def build(kid, family, version, source_file, file_format=None, skip_final=False,
                 tool('update_wiki_page', slug=slug, title=title, content=content,
                      folder_id=leaf['长句原文'], source_refs=[sref])
             ls_all.append({"text": text, "title": title, "slug": slug, "source_refs": [sref]})
-        ls_path = f'/tmp/ls_{kid[:8]}.json'
         with open(ls_path, 'w', encoding='utf-8') as f:
             json.dump(ls_all, f, ensure_ascii=False, indent=2)
         print(f"[6] 长句建页: created={created} skipped={skipped}")
