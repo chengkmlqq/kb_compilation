@@ -8,6 +8,8 @@ Three management surfaces backed by api.services.system_config:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -84,7 +86,10 @@ def read_platform_config(db: Session = Depends(get_db)) -> dict:
 
 @router.put("/platform-config")
 def write_platform_config(req: PlatformConfigSaveRequest, db: Session = Depends(get_db)) -> dict:
-    result = save_platform_config(db, [{"code": i.code, "value": i.value} for i in req.items])
+    try:
+        result = save_platform_config(db, [{"code": i.code, "value": i.value} for i in req.items])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return {"success": True, "data": result}
 
 
@@ -182,8 +187,11 @@ def read_retrieval_config(db: Session = Depends(get_db)) -> dict:
 def write_retrieval_config(
     req: ModelConfigSaveRequest, db: Session = Depends(get_db)
 ) -> dict:
-    items = [{"code": i.code, "value": i.value} for i in req.items]
-    return {"success": True, "data": save_retrieval_config(db, items)}
+    try:
+        items = [{"code": i.code, "value": i.value} for i in req.items]
+        return {"success": True, "data": save_retrieval_config(db, items)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +256,8 @@ def set_engine_enabled(
 
 @router.get("/system/info")
 def get_system_info(db: Session = Depends(get_db)) -> dict:
+    from api.services.parser_registry import list_engines
+
     settings = get_settings()
     engines = list_engines()
     now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")

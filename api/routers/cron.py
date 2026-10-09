@@ -114,7 +114,7 @@ def create_cron_task(
         id=uuid.uuid4().hex,
         name=req.name.strip(),
         label=req.label.strip(),
-        cron_expression=req.cronExpression.strip(),
+        cron_expression=_validate_cron_expression(req.cronExpression),
         task_class=req.taskClass.strip(),
         state=req.state or "1",
         fire_params=req.fireParams,
@@ -139,7 +139,7 @@ def update_cron_task(
         raise HTTPException(status_code=404, detail=f"定时任务不存在: {task_id}")
     task.name = req.name.strip()
     task.label = req.label.strip()
-    task.cron_expression = req.cronExpression.strip()
+    task.cron_expression = _validate_cron_expression(req.cronExpression)
     task.task_class = req.taskClass.strip()
     task.state = req.state or "1"
     task.fire_params = req.fireParams
@@ -224,6 +224,27 @@ def cron_registered_tasks(
         tasks = []
     tasks.sort(key=lambda t: t["taskClass"])
     return {"success": True, "data": tasks}
+
+
+def _validate_cron_expression(expr: str) -> str:
+    """校验 cron 表达式合法性（2026-10-09 回归修复）。
+
+    原实现只查 min_length=1，非法表达式（如 "99 99 * * *"）能入库，
+    后果是 worker 调度器每轮扫描都抛
+    `scan_cron_tasks failed to parse cron expr` 刷屏刷日志，且该任务永不触发。
+    worker 侧用 croniter，这里同一依赖前置校验，非法直接 400。
+    """
+    text = str(expr or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="cron 表达式不能为空")
+    try:
+        from croniter import croniter
+
+        if not croniter.is_valid(text):
+            raise HTTPException(status_code=400, detail=f"cron 表达式非法: {text}")
+    except ImportError:  # croniter 不可用则跳过校验，不阻断保存
+        pass
+    return text
 
 
 def _validate_fire_params(fire_params: str | None) -> None:

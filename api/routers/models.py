@@ -191,6 +191,15 @@ def import_models(
     """批量导入模型配置（幂等 upsert：同 name+type 更新，否则创建）。"""
     from sqlalchemy import select
 
+    # 2026-10-09 回归修复：原实现只判断 `mode == "create"`，其余任意值
+    # （含拼错的 "upser"/"bad"/""）都静默走 upsert——用户以为"仅新建"
+    # 实际覆盖了已有模型，属配置错配的静默失效。改白名单校验。
+    if req.mode not in ("upsert", "create"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"导入 mode 取值非法: {req.mode}（可选 upsert/create）",
+        )
+
     created = 0
     updated = 0
     errors: list[dict] = []

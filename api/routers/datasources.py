@@ -46,7 +46,12 @@ def _caller_id(
     x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
 ) -> str:
     identity = decode_identity_cookie(x_next_identity or "")
-    return identity.user_id if identity and identity.user_id else "system"
+    # 2026-10-09 回归修复：原先未登录回落成 "system" 用户继续执行 —
+    # 实测未登录 POST /open/datasources 返回 200 并真的建了库（越权写入）。
+    # decode 成功但取不到身份 = 未登录，必须 401（同 kbs.py 6ea8f75 的修法）。
+    if not identity or not identity.user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+    return identity.user_id
 
 
 class TestDatasourceRequest(BaseModel):
