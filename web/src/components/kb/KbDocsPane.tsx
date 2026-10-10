@@ -4,17 +4,15 @@
  * 知识库 · 文档面板（KbDocsPane）
  *
  * 从 kbs/[id]/page.tsx 抽出，供「动态选项卡」与详情路由复用：
- * KB 概览 + 文档工具条（筛选/上传/知识库配置(含切片配置)/切片核对）+ 文档卡片视图/表格 + 分页。
+ * KB 概览 + 文档工具条（筛选/上传/知识库配置(含切片配置)）+ 文档卡片视图/表格 + 分页。
  * 仅依赖 kbId prop，自包含（自带文档列表与上传相关 state、Drawer、Modal）。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   App,
   Button,
-  Descriptions,
   Empty,
   Input,
-  Modal,
   Select,
   Space,
   Spin,
@@ -30,7 +28,6 @@ import {
   ReloadOutlined,
   SearchOutlined,
   SettingOutlined,
-  SlidersOutlined,
   UnorderedListOutlined,
 } from "@ant-design/icons";
 import DocCardView, {
@@ -46,14 +43,11 @@ import KBConfigModal from "@/components/KBConfigModal";
 import {
   apiDeleteDocument,
   apiDownloadDocument,
-  apiFixChunks,
   apiGenerateDocSummary,
   apiGetKb,
   apiListDocuments,
   apiReparseDocument,
   apiUploadDocumentWithProgress,
-  apiVerifyChunks,
-  ChunkVerifyReport,
   DocItem,
   KbItem,
 } from "@/lib/api";
@@ -85,11 +79,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   const [docStatus, setDocStatus] = useState("");
   const [docType, setDocType] = useState("");
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
-  // 切片核对（向量库 ↔ MySQL）
-  const [verifyOpen, setVerifyOpen] = useState(false);
-  const [verifyReport, setVerifyReport] = useState<ChunkVerifyReport | null>(null);
-  const [verifyLoading, setVerifyLoading] = useState(false);
-  const [verifyFixing, setVerifyFixing] = useState(false);
   const [docView, setDocView] = useState<"card" | "list">(
     () => (localStorage.getItem("kb.docs.viewMode") as "card" | "list") || "card",
   );
@@ -187,36 +176,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
         setAutoTick((t) => t + 1);
       });
   }, [docs, kbId, kb?.summary_model_id, autoTick]);
-
-  // 切片核对：立即核对 MySQL 切片 ↔ 向量库
-  const runVerify = async () => {
-    setVerifyOpen(true);
-    setVerifyLoading(true);
-    setVerifyReport(null);
-    try {
-      const res = await apiVerifyChunks(kbId);
-      if (res.success && res.data) setVerifyReport(res.data);
-      else message.error(res.message || "核对失败");
-    } catch (e) {
-      message.error(`核对失败: ${String(e).slice(0, 80)}`);
-    } finally {
-      setVerifyLoading(false);
-    }
-  };
-
-  // 一键修复：投递 worker 任务（清孤儿向量 + 重嵌入缺失切片）
-  const runFix = async () => {
-    setVerifyFixing(true);
-    try {
-      const res = await apiFixChunks(kbId);
-      if (res.success) message.success("修复任务已投递，请在任务监控页查看进度");
-      else message.error(res.message || "投递失败");
-    } catch (e) {
-      message.error(`投递失败: ${String(e).slice(0, 80)}`);
-    } finally {
-      setVerifyFixing(false);
-    }
-  };
 
   const onDeleteDoc = async (doc: DocItem) => {
     const res = await apiDeleteDocument(kbId, doc.id);
@@ -394,9 +353,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             </Button>
             <Button icon={<SettingOutlined />} onClick={() => setConfigOpen(true)}>
               知识库配置
-            </Button>
-            <Button icon={<SlidersOutlined />} onClick={() => void runVerify()}>
-              切片核对
             </Button>
             <Button
               type="primary"
@@ -666,48 +622,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
         docTitle={buildDoc?.file_name}
         onClose={() => setBuildDoc(null)}
       />
-
-      {/* 切片核对弹窗（MySQL doc_chunk ↔ 向量库） */}
-      <Modal
-        title="切片核对"
-        open={verifyOpen}
-        onCancel={() => setVerifyOpen(false)}
-        width={640}
-        footer={
-          <Space>
-            <Button onClick={() => setVerifyOpen(false)}>关闭</Button>
-            <Button type="primary" danger loading={verifyFixing} onClick={() => void runFix()}>
-              一键修复
-            </Button>
-          </Space>
-        }
-      >
-        {verifyLoading ? (
-          <div style={{ padding: 24, textAlign: "center" }}>核对中…</div>
-        ) : verifyReport ? (
-          <Descriptions bordered size="small" column={2}>
-            <Descriptions.Item label="MySQL 切片数">{verifyReport.doc_chunks}</Descriptions.Item>
-            <Descriptions.Item label="向量库切片数">{verifyReport.vector_chunks}</Descriptions.Item>
-            <Descriptions.Item label="未向量化（缺失）">
-              <span style={{ color: verifyReport.missing_in_vector ? "#faad14" : "#52c41a" }}>
-                {verifyReport.missing_in_vector}
-              </span>
-            </Descriptions.Item>
-            <Descriptions.Item label="孤儿向量">
-              <span style={{ color: verifyReport.orphan_vectors ? "#faad14" : "#52c41a" }}>
-                {verifyReport.orphan_vectors}
-              </span>
-            </Descriptions.Item>
-            <Descriptions.Item label="结论" span={2}>
-              <span style={{ color: verifyReport.ok ? "#52c41a" : "#faad14" }}>
-                {verifyReport.ok ? "一致，无需修复" : "存在不一致，可点击右下角「一键修复」"}
-              </span>
-            </Descriptions.Item>
-          </Descriptions>
-        ) : (
-          <div style={{ padding: 24, textAlign: "center" }}>核对失败或未执行</div>
-        )}
-      </Modal>
     </div>
   );
 }

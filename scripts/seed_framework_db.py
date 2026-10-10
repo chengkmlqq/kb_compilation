@@ -76,6 +76,7 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_data", "TableOutlined", 5),
     ("orch_tapes", "orch_tapes", "编排管理", "/orchestrations", "grp_data", "ApartmentOutlined", 6),
     ("orch_defines", "orch_defines", "编排组件", "/orchestrations/steps", "grp_data", "BlockOutlined", 7),
+    ("chunk_verify", "chunk_verify", "切片核对", "/chunk-verify", "grp_data", "SafetyOutlined", 8),
     # ---- 系统管理（分组兼页面，顶级：点击自身跳 /system → 重定向到默认子页 /system/users）。
     # 用户/角色/团队/菜单/日志均为独立页面路由（对齐 ds system/* 独立页面，无顶部 Tab 聚合页）。
     ("system", "system", "系统管理", "/system", None, "SettingOutlined", 4),

@@ -2857,6 +2857,7 @@ export function apiProcessingTimeline(
 
 export interface ChunkVerifyReport {
   kb_id: string;
+  kb_name?: string;
   doc_chunks: number;
   vector_chunks: number;
   missing_in_vector: number;
@@ -2864,6 +2865,31 @@ export interface ChunkVerifyReport {
   missing_samples?: string[];
   orphan_samples?: string[];
   ok: boolean;
+  error?: string;
+}
+
+export interface ChunkVerifyAllResult {
+  total: number;
+  ok: number;
+  unhealthy: number;
+  items: ChunkVerifyReport[];
+}
+
+export async function apiVerifyAllChunks(
+  kbIds?: string[]
+): Promise<ApiEnvelope<ChunkVerifyAllResult>> {
+  const res = await fetch(`/api/v1/kbs/chunks/verify-all`, {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(kbIds?.length ? { kb_ids: kbIds } : {}),
+  });
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { success: false, message: text.slice(0, 200) } as ApiEnvelope<ChunkVerifyAllResult>;
+  }
 }
 
 export async function apiVerifyChunks(kbId: string): Promise<ApiEnvelope<ChunkVerifyReport>> {

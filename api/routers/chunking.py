@@ -180,6 +180,66 @@ def get_parser_engines(caller: Caller = Depends(_require_caller)) -> dict:
     return {"success": True, "data": list_engines()}
 
 
+class VerifyAllRequest(BaseModel):
+    """批量核对过滤条件（全部可选；不传 = 核对当前用户可见的全部知识库）。"""
+    kb_ids: list[str] | None = None
+
+
+@router.post("/kbs/chunks/verify-all")
+def verify_all_chunks(
+    req: VerifyAllRequest | None = None,
+    caller: Caller = Depends(_require_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """整体健康检查：一次核对可见知识库切片 ↔ 向量库，返回逐库报告 + 汇总。
+
+    与单库 verify 同实现（chunk_verify.verify_kb），只是按可见性批量遍历；
+    不传 kb_ids 时核对全部可见库（admin 可见全部 system+own+team）。
+    """
+    from sqlalchemy import select
+
+    from api.models.knowledge import KbDatasource
+    from api.services.chunk_verify import verify_kb
+    from api.services.kb_admin import kb_visible_clauses
+
+    stmt = select(KbDatasource.id, KbDatasource.name).where(KbDatasource.state == "1")
+    clauses = kb_visible_clauses(caller.user_id, caller.team_name, caller.is_admin)
+    if clauses:
+        stmt = stmt.where(clauses[0])
+    if req and req.kb_ids:
+        stmt = stmt.where(KbDatasource.id.in_(req.kb_ids))
+    kb_rows = db.execute(stmt).all()
+
+    reports = []
+    for kid, kb_name in kb_rows:
+        try:
+            report = verify_kb(kid)
+        except Exception as e:  # noqa: BLE001 — 单库失败不阻断整体检查
+            report = {
+                "kb_id": kid,
+                "doc_chunks": 0,
+                "vector_chunks": 0,
+                "missing_in_vector": 0,
+                "orphan_vectors": 0,
+                "missing_samples": [],
+                "orphan_samples": [],
+                "ok": False,
+                "error": str(e),
+            }
+        report["kb_name"] = kb_name or ""
+        reports.append(report)
+    ok_count = sum(1 for r in reports if r.get("ok"))
+    return {
+        "success": True,
+        "data": {
+            "total": len(reports),
+            "ok": ok_count,
+            "unhealthy": len(reports) - ok_count,
+            "items": reports,
+        },
+    }
+
+
 @router.post("/kbs/{kb_id}/chunks/verify")
 def verify_chunks(kb_id: str, caller: Caller = Depends(_require_caller)) -> dict:
     """立即核对：MySQL 切片 ↔ 向量库（通用实现，不依赖 pgvector/ES）。"""

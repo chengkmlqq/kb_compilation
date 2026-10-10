@@ -52,6 +52,7 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "jobs", menu_name: "jobs", menu_label: "任务监控", route: "/jobs", parent_id: "grp_data", menu_icon: "DashboardOutlined", sort_num: 2, state: "1" },
   { menu_id: "cron", menu_name: "cron", menu_label: "任务管理", route: "/cron", parent_id: "grp_data", menu_icon: "ScheduleOutlined", sort_num: 3, state: "1" },
   { menu_id: "workers", menu_name: "workers", menu_label: "主机监控", route: "/workers", parent_id: "grp_data", menu_icon: "CloudServerOutlined", sort_num: 4, state: "1" },
+  { menu_id: "chunk_verify", menu_name: "chunk_verify", menu_label: "切片核对", route: "/chunk-verify", parent_id: "grp_data", menu_icon: "SafetyOutlined", sort_num: 8, state: "1" },
   { menu_id: "system", menu_name: "system", menu_label: "系统管理", route: "/system", parent_id: null, menu_icon: "SettingOutlined", sort_num: 4, state: "1" },
   { menu_id: "sys_users", menu_name: "sys_users", menu_label: "用户管理", route: "/system/users", parent_id: "system", menu_icon: "TeamOutlined", sort_num: 1, state: "1" },
   { menu_id: "sys_roles", menu_name: "sys_roles", menu_label: "角色管理", route: "/system/roles", parent_id: "system", menu_icon: "SafetyOutlined", sort_num: 2, state: "1" },
