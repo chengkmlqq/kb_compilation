@@ -59,14 +59,30 @@ class GraphReader:
     # ---- shape builders ----
     @staticmethod
     def _to_nodes(rows: list[dict]) -> list[dict]:
+        # 业务类别白名单：节点 attributes 里可能出现"规则《xxx》涉及/工具"等
+        # 规则语境标签（graph_export 给对象端点打）。取 entity_type 时跳过
+        # 规则《 开头的标签，优先返回真业务类别（2026-10-09 修复污染）。
+        BIZ_CATS = {
+            "法律法规", "监管对象", "许可事项", "违法行为", "行政处罚",
+            "监管职责", "标准规范", "程序事项", "时限要求", "法规文档",
+        }
+
+        def _pick_entity_type(attrs: list) -> str:
+            for a in attrs:
+                a = str(a).strip()
+                if a in BIZ_CATS:
+                    return a
+            # 无业务类别：这些是纯对象端点副本（attributes 只有规则语境标签，
+            # 如 规则《xxx》涉及/工具），标中性值而非把规则名当类别
+            return "规则对象" if attrs else ""
+
         nodes = []
         for r in rows:
             attrs = r.get("attributes") or []
             nodes.append(
                 {
                     "name": r.get("name", ""),
-                    # 业务类别：技能写入存 attributes[0]（如 监管对象/处罚规则）
-                    "entity_type": r.get("entity_type") or (attrs[0] if attrs else ""),
+                    "entity_type": r.get("entity_type") or _pick_entity_type(attrs),
                     "description": r.get("description")
                     or (" ".join(str(a) for a in attrs[1:4]) if len(attrs) > 1 else ""),
                     "degree": r.get("degree", 0),
