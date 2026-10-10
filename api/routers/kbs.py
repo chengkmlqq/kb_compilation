@@ -526,10 +526,14 @@ async def upload_document(
 
 
 def _enqueue_document_process(kb_id: str, document_id: str) -> None:
-    """Create a modo_job row (trigger=API) and send the Celery task.
+    """Create-or-reset a modo_job row (trigger=API) and send the Celery task.
 
     Runs on the framework session (modo_job lives on the shared store);
     mirrors the scheduler's CRON dispatch but with trigger_type=API.
+
+    幂等：job_id 固定为 DOC_{document_id}，重新解析时该行已存在 → 直接
+    insert 会撞主键(IntegrityError 1062)导致入队失败。改为先查后改——
+    存在则重置为 PENDING 并清空上一轮执行痕迹，不存在则新建。
     """
     from worker.celery_app import celery_app
 
@@ -541,17 +545,32 @@ def _enqueue_document_process(kb_id: str, document_id: str) -> None:
 
     framework_db = get_sessionmaker()()
     try:
-        framework_db.add(
-            Job(
-                id=job_id,
-                task_id=document_id,
-                task_class=task_class,
-                queue_name="default",
-                task_params=task_params,
-                trigger_type="API",
-                state="PENDING",
+        existing = framework_db.get(Job, job_id)
+        if existing is None:
+            framework_db.add(
+                Job(
+                    id=job_id,
+                    task_id=document_id,
+                    task_class=task_class,
+                    queue_name="default",
+                    task_params=task_params,
+                    trigger_type="API",
+                    state="PENDING",
+                )
             )
-        )
+        else:
+            # 重跑：重置为待执行，清掉上一轮的结束状态/错误/耗时
+            existing.task_id = document_id
+            existing.task_class = task_class
+            existing.queue_name = "default"
+            existing.task_params = task_params
+            existing.trigger_type = "API"
+            existing.state = "PENDING"
+            existing.start_time = None
+            existing.end_time = None
+            existing.duration_ms = None
+            existing.error_message = None
+            existing.log_path = None
         framework_db.commit()
     finally:
         framework_db.close()
@@ -1191,7 +1210,15 @@ def reparse_document(
     doc.parse_error = None
     doc.chunk_count = 0
     db.commit()
-    _enqueue_document_process(kb_id, document_id)
+    try:
+        _enqueue_document_process(kb_id, document_id)
+    except Exception as exc:  # noqa: BLE001
+        # 入队失败不裸 500：回滚文档状态（已清 chunks + 置 PENDING），
+        # 返回明确错误供前端提示，文档可再次重试。
+        logger.exception("failed to enqueue reparse task for doc %s", document_id)
+        db.execute(delete(DocChunk).where(DocChunk.document_id == document_id))
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"重新解析入队失败: {exc}") from exc
     return {"success": True, "data": {"id": document_id, "parse_state": "PENDING"}}
 
 
