@@ -10,10 +10,10 @@
  *  - 默认视图：file 且可预览 → preview；音频 → merged（播放器内嵌）；其他 → merged
  *  - 音频播放器固定显示在内容区顶部（任何视图都可见，对齐 WeKnora audio-player-section）
  */
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { App, Button, Descriptions, Drawer, Empty, List, Pagination, Space, Spin, Tag, Typography } from "antd";
 import { DeleteOutlined, DownloadOutlined, RedoOutlined, RobotOutlined } from "@ant-design/icons";
-import { apiGenerateDocSummary, apiGetDocumentChunks, DocChunkItem, DocItem } from "@/lib/api";
+import { apiGetDocumentChunks, DocChunkItem, DocItem } from "@/lib/api";
 import { PARSE_STATE_COLOR, STATE_LABEL, fileTypeIcon, formatSize, formatTime } from "./DocCardView";
 import DocPreviewModal, { canPreviewExt } from "./DocPreviewModal";
 import ProcessingTimeline from "./ProcessingTimeline";
@@ -21,25 +21,22 @@ import ProcessingTimeline from "./ProcessingTimeline";
 interface Props {
   kbId: string;
   doc: DocItem | null;
-  hasSummaryModel: boolean;
   onClose: () => void;
   onDownload: (doc: DocItem) => void;
   onReparse: (doc: DocItem) => void;
   onDelete: (doc: DocItem) => void;
-  onSummaryUpdated?: (docId: string, summary: string, status: string) => void;
 }
 
 type ViewMode = "preview" | "merged" | "chunks";
 
 const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "flac", "ogg", "aac", "opus"]);
 
-export default function DocDetailDrawer({ kbId, doc, hasSummaryModel, onClose, onDownload, onReparse, onDelete, onSummaryUpdated }: Props) {
+export default function DocDetailDrawer({ kbId, doc, onClose, onDownload, onReparse, onDelete }: Props) {
   const { message } = App.useApp();
   const [chunks, setChunks] = useState<DocChunkItem[]>([]);
   const [chunkTotal, setChunkTotal] = useState(0);
   const [chunkPage, setChunkPage] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [summarizing, setSummarizing] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("merged");
 
   const isAudio = doc ? AUDIO_EXTS.has((doc.file_ext || "").toLowerCase()) : false;
@@ -79,24 +76,6 @@ export default function DocDetailDrawer({ kbId, doc, hasSummaryModel, onClose, o
       setLoading(false);
     }
   };
-
-  const generateSummary = useCallback(async () => {
-    if (!doc) return;
-    setSummarizing(true);
-    try {
-      const res = await apiGenerateDocSummary(kbId, doc.id);
-      if (res.success && res.data) {
-        message.success("摘要生成完成");
-        onSummaryUpdated?.(doc.id, res.data.summary, res.data.summary_status);
-      } else {
-        message.error(res.message || "摘要生成失败");
-      }
-    } catch {
-      message.error("摘要生成失败");
-    } finally {
-      setSummarizing(false);
-    }
-  }, [doc, kbId, message, onSummaryUpdated]);
 
   const summaryReady = doc?.summary_status === "READY" && doc.summary;
   const summaryFailed = doc?.summary_status === "FAILED";
@@ -262,7 +241,7 @@ export default function DocDetailDrawer({ kbId, doc, hasSummaryModel, onClose, o
             </div>
           )}
 
-          {/* AI 摘要（保持原有，位于内容底部） */}
+          {/* AI 摘要（展示；2026-10-10 移除「生成/重新生成」按钮，摘要改走 wiki 构建任务生成） */}
           {doc.parse_state === "READY" ? (
             <div
               style={{
@@ -272,37 +251,20 @@ export default function DocDetailDrawer({ kbId, doc, hasSummaryModel, onClose, o
                 background: "#fafafa",
               }}
             >
-              <Space style={{ justifyContent: "space-between", width: "100%", marginBottom: summaryReady || summaryFailed ? 8 : 0 }}>
-                <Space>
-                  <RobotOutlined style={{ color: "#1677ff" }} />
-                  <Typography.Text strong>AI 摘要</Typography.Text>
-                </Space>
-                <Button
-                  size="small"
-                  loading={summarizing}
-                  disabled={!hasSummaryModel}
-                  title={hasSummaryModel ? "" : "知识库未配置大语言模型（LLM），请在知识库配置中选择"}
-                  onClick={() => void generateSummary()}
-                >
-                  {summaryFailed ? "重试" : summaryReady ? "重新生成" : "生成摘要"}
-                </Button>
+              <Space style={{ marginBottom: summaryReady || summaryFailed ? 8 : 0 }}>
+                <RobotOutlined style={{ color: "#1677ff" }} />
+                <Typography.Text strong>AI 摘要</Typography.Text>
               </Space>
-              {summarizing ? (
-                <div style={{ textAlign: "center", padding: 16 }}>
-                  <Spin size="small" /> <Typography.Text type="secondary">正在生成摘要…</Typography.Text>
-                </div>
-              ) : summaryReady ? (
+              {summaryReady ? (
                 <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                   {doc.summary}
                 </Typography.Paragraph>
               ) : summaryFailed ? (
                 <Typography.Text type="danger" style={{ wordBreak: "break-word" }}>
-                  {doc.summary_error || "摘要生成失败，请重试"}
+                  {doc.summary_error || "摘要生成失败"}
                 </Typography.Text>
               ) : (
-                <Typography.Text type="secondary">
-                  {hasSummaryModel ? "解析完成后点击「生成摘要」，用知识库配置的 LLM 自动生成文档摘要。" : "知识库未配置大语言模型（LLM），创建/编辑知识库时选择后可生成摘要。"}
-                </Typography.Text>
+                <Typography.Text type="secondary">暂无摘要</Typography.Text>
               )}
             </div>
           ) : null}

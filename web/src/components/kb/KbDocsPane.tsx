@@ -168,13 +168,15 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
     apiGenerateDocSummary(kbId, target.id)
       .then((res) => {
         if (res.success && res.data) {
-          setDocs((prev) =>
-            prev.map((d) =>
-              d.id === target.id
-                ? { ...d, summary: res.data?.summary ?? null, summary_status: res.data?.summary_status ?? "READY" }
-                : d,
-            ),
-          );
+          const updated = {
+            ...target,
+            summary: res.data?.summary ?? null,
+            summary_status: res.data?.summary_status ?? "READY",
+            summary_error: null,
+          };
+          setDocs((prev) => prev.map((d) => (d.id === target.id ? updated : d)));
+          // 抽屉正打开该文档时同步刷新展示（原 onSummaryUpdated 职责，按钮移除后由自动摘要接管）
+          setDetailDoc((prev) => (prev && prev.id === target.id ? updated : prev));
         }
       })
       .catch(() => {
@@ -635,23 +637,14 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
         )}
       </div>
 
-      {/* 文档详情抽屉（对齐 WeKnora DocContent：元数据 + AI 摘要 + 分块预览 + 下载/重解析/删除） */}
+      {/* 文档详情抽屉（对齐 WeKnora DocContent：元数据 + AI 摘要展示 + 三视图 + 下载/重解析/删除） */}
       <DocDetailDrawer
         kbId={kbId}
         doc={detailDoc}
-        hasSummaryModel={!!kb?.summary_model_id}
         onClose={() => setDetailDoc(null)}
         onDownload={onDownloadDoc}
         onReparse={onReparseDoc}
         onDelete={onDeleteDoc}
-        onSummaryUpdated={(docId, summary, status) => {
-          setDetailDoc((prev) =>
-            prev && prev.id === docId ? { ...prev, summary, summary_status: status, summary_error: null } : prev,
-          );
-          setDocs((prev) =>
-            prev.map((d) => (d.id === docId ? { ...d, summary, summary_status: status, summary_error: null } : d)),
-          );
-        }}
       />
 
       {/* 知识库配置（WeKnora 对齐：索引开关/类型/技能绑定/模型绑定/图谱/FAQ + 切片配置） */}
