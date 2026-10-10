@@ -1389,6 +1389,12 @@ body {
    ═══════════════════════════════════════════════════════════════ */
 
 /* ── 文档区（去 Card 包装，全高 flex） ── */
+/* ── 文档详情抽屉：标题超长省略号（header-title 已 min-width:0，补齐 title 收缩与截断）── */
+.kb-doc-drawer .ant-drawer-title {
+  min-width: 0;
+  overflow: hidden;
+}
+
 .kb-doc-area {
   flex: 1;
   display: flex;

@@ -82,12 +82,24 @@ export default function DocDetailDrawer({ kbId, doc, hasSummaryModel, onClose, o
     <>
     <Drawer
       title={
-        <Space>
-          <span style={{ fontSize: 18 }}>{doc ? fileTypeIcon(doc.file_ext) : null}</span>
-          {doc?.file_name || "文档详情"}
-        </Space>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1 }}>
+            {doc ? fileTypeIcon(doc.file_ext) : null}
+          </span>
+          <span
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              minWidth: 0,
+            }}
+          >
+            {doc?.file_name || "文档详情"}
+          </span>
+        </div>
       }
       width={680}
+      rootClassName="kb-doc-drawer"
       open={doc != null}
       onClose={onClose}
       extra={
