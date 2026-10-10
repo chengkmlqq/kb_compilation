@@ -83,7 +83,25 @@ def process_document(document_id: str, file_content: bytes, parser_engine: str |
             document.parse_error = str(exc)[:200]
             db.commit()
             return {"success": False, "error": f"embedding 模型不可用: {exc}"}
-        return ingest_document(db, document, file_content, client, parser_engine=parser_engine)
+
+        # 文件级处理配置（对齐 WeKnora upload process_config）：上传/重解析时
+        # 可携带，覆盖 KB 级默认切片/解析引擎配置。JSON 字符串存 kb_document.process_config。
+        process_config = None
+        if document.process_config:
+            try:
+                parsed = json.loads(document.process_config)
+                if isinstance(parsed, dict):
+                    process_config = parsed
+            except (TypeError, json.JSONDecodeError):
+                logger.warning("document %s has invalid process_config, ignored", document_id)
+        return ingest_document(
+            db,
+            document,
+            file_content,
+            client,
+            parser_engine=parser_engine,
+            process_config=process_config,
+        )
     finally:
         db.close()
 

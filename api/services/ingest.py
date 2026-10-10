@@ -240,31 +240,55 @@ def ingest_document(
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
     parser_engine: str | None = None,
     chunk_cfg: ChunkConfig | None = None,
+    process_config: dict | None = None,
 ) -> dict:
     """Full pipeline for one document. Returns a summary dict.
 
     - kb_db: business-store session (doc_chunk / kb_document live on the
       framework relational store)
     - file_content: raw bytes of the document
-    - chunk_cfg: optional KB-level chunking config (parent-child aware).
-      When omitted, falls back to chunk_size/chunk_overlap.
+    - chunk_cfg: optional explicit chunking config (highest priority)
+    - process_config: optional file-level processing overrides (对齐 WeKnora
+      upload process_config). Shape: {"chunking": {...}, "parser_engine_rules": [...]}.
+      切片配置优先级：文件级 chunking（merge 到 KB 级之上）> KB 级 indexing_strategy.chunking
+      > 默认值。解析引擎规则：文件级 parser_engine_rules > KB 级。
+      为 None/空时按 KB 级配置走（此前 process_document 不传 chunk_cfg，导致 KBConfigModal
+      设置的切片配置未生效，本函数内补上 KB 级回落）。
     """
     result: dict = {"document_id": document.id, "chunks": 0, "parse_state": "FAILED"}
 
-    # resolve chunking config: explicit cfg > legacy size/overlap args
-    if chunk_cfg is None:
-        chunk_cfg = ChunkConfig(
-            chunk_size=chunk_size, chunk_overlap=chunk_overlap, strategy="auto"
-        )
+    pc: dict = process_config if isinstance(process_config, dict) else {}
+    pc_chunking = pc.get("chunking") if isinstance(pc.get("chunking"), dict) else None
+    pc_rules = pc.get("parser_engine_rules") if isinstance(pc.get("parser_engine_rules"), list) else None
+
+    # resolve chunking config: 文件级 > KB 级 > 默认
+    try:
+        from api.services.kb_chunking import load_chunking
+        from api.services.chunking import ChunkConfig as _CC
+
+        if pc_chunking is not None:
+            merged_raw = load_chunking(kb_db, document.kb_id)
+            for key, val in pc_chunking.items():
+                if val is not None:
+                    merged_raw[key] = val
+            chunk_cfg = _CC.from_dict(merged_raw)
+        elif chunk_cfg is None:
+            chunk_cfg = _CC.from_dict(load_chunking(kb_db, document.kb_id))
+    except Exception:  # noqa: BLE001 - config lookup must not block ingest
+        if chunk_cfg is None:
+            chunk_cfg = ChunkConfig(
+                chunk_size=chunk_size, chunk_overlap=chunk_overlap, strategy="auto"
+            )
 
     # load the KB's engine rules (type -> engine); resolution happens in the
     # dispatcher, which also applies the availability fallback
-    engine_rules: list[dict] | None = None
+    engine_rules: list[dict] | None = pc_rules
     vlm_server_url = ""
     try:
-        from api.services.kb_chunking import load_engine_rules
+        if engine_rules is None:
+            from api.services.kb_chunking import load_engine_rules
 
-        engine_rules = load_engine_rules(kb_db, document.kb_id)
+            engine_rules = load_engine_rules(kb_db, document.kb_id)
         # 2026-10-07: VLM（图表语义理解）——KB 级 vlm_config.server_url 注入解析
         from api.models.knowledge import KbDatasource
 

@@ -122,6 +122,9 @@ class KbDocument(Base):
     parse_state: Mapped[str] = mapped_column(String(32), default="PENDING")  # PENDING/PARSING/EMBEDDING/READY/FAILED
     parse_error: Mapped[str | None] = mapped_column(Text)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    # 上传时文件级处理配置（对齐 WeKnora process_config：JSON 字符串，含
+    # chunking 切片配置 / parser_engine_rules 等，覆盖 KB 级默认；空=用 KB 配置）
+    process_config: Mapped[str | None] = mapped_column(Text)
     # LLM 生成的文档摘要（对齐 WeKnora：知识库配置 summary_model_id 后上传文档自动/手动生成）
     summary: Mapped[str | None] = mapped_column(Text)
     # ""（未生成）/READY/FAILED

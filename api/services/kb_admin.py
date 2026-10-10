@@ -552,6 +552,8 @@ def create_document(
     sys_file_id: str | None = None,
     created_by: str | None = None,
     folder_id: str = "",
+    process_config: str | None = None,
+
 ) -> KbDocument:
     doc = KbDocument(
         id=_uuid(),
@@ -561,6 +563,7 @@ def create_document(
         file_size=file_size,
         storage_path=storage_path,
         sys_file_id=sys_file_id,
+        process_config=process_config,
         parse_state="PENDING",
         chunk_count=0,
         created_by=created_by,

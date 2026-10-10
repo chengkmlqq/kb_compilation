@@ -20,7 +20,7 @@ import os
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
@@ -462,6 +462,8 @@ async def upload_document(
     url: str = Query(default="", max_length=2000),
     file_name: str = Query(default="", max_length=255),
     folder_id: str = Query(default="", max_length=64),
+    process_config: str = Form(default=""),
+
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -471,6 +473,11 @@ async def upload_document(
     row (PENDING) -> modo_job row + Celery send_task (KbDocumentProcessTask).
     URL mode fetches the remote document with a 20s timeout and the same size
     cap as file uploads.
+
+    process_config: 可选的**文件级处理配置**（对齐 WeKnora 上传确认弹窗
+    KnowledgeProcessOverrides），JSON 字符串，形如
+    {"chunking": {"chunk_size": 500, ...}, "parser_engine_rules": [...]}，
+    存 kb_document.process_config，解析时覆盖 KB 级默认配置。
     """
     _kb_manage(kb_id, caller, db)
 
@@ -523,6 +530,16 @@ async def upload_document(
         logger.exception("failed to persist uploaded bytes")
         raise HTTPException(status_code=500, detail=f"文件存储失败: {exc}") from exc
 
+    # --- 文件级处理配置归一化（非法 JSON 忽略，不阻塞上传）---
+    pc_json = ""
+    if (process_config or "").strip():
+        try:
+            parsed_pc = json.loads(process_config)
+            if isinstance(parsed_pc, dict) and parsed_pc:
+                pc_json = json.dumps(parsed_pc, ensure_ascii=False)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("upload %s: invalid process_config ignored", kb_id)
+
     # --- kb_document row ---
     doc = create_document(
         db,
@@ -532,6 +549,8 @@ async def upload_document(
         file_size=len(content),
         storage_path=storage_path,
         folder_id=folder_id,
+        process_config=pc_json or None,
+
     )
 
     # --- enqueue Celery job (modo_job row + send_task) ---
@@ -1308,14 +1327,25 @@ def download_document(
     raise HTTPException(status_code=404, detail="物理文件缺失")
 
 
+class ReparseRequest(BaseModel):
+    """重新解析可携带文件级处理配置（对齐 WeKnora 重解析换配置）。"""
+    process_config: str | None = None
+
+
 @router.post("/{kb_id}/documents/{document_id}/reparse")
 def reparse_document(
     kb_id: str,
     document_id: str,
+    body: ReparseRequest | None = None,
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    """重新解析文档：清旧 chunks + 重置状态 + 重新入队（对齐 WeKnora 重新解析）。"""
+    """重新解析文档：清旧 chunks + 重置状态 + 重新入队（对齐 WeKnora 重新解析）。
+
+    可选 body.process_config：JSON 字符串（文件级处理配置，形如
+    {"chunking": {...}}），传入则更新 kb_document.process_config，本次及后续
+    解析均按新配置走；不传则沿用文档原配置。
+    """
     _kb_manage(kb_id, caller, db)
     from api.models.knowledge import DocChunk, KbDocument
 
@@ -1326,6 +1356,16 @@ def reparse_document(
     ).scalars().first()
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
+
+    # 可选：更新文件级配置（合法 JSON 才写入；空串/非法忽略保留原值）
+    if body and body.process_config and (body.process_config or "").strip():
+        try:
+            parsed_pc = json.loads(body.process_config)
+            if isinstance(parsed_pc, dict):
+                doc.process_config = json.dumps(parsed_pc, ensure_ascii=False)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("reparse %s: invalid process_config ignored", document_id)
+
     db.execute(delete(DocChunk).where(DocChunk.document_id == document_id))
     doc.parse_state = "PENDING"
     doc.parse_error = None

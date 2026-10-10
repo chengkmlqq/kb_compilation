@@ -344,10 +344,16 @@ export function apiUploadDocumentWithProgress(
   file: File,
   onProgress?: (percent: number) => void,
   folderId?: string,
+  processConfig?: Record<string, unknown> | null,
 ) {
   const form = new FormData();
   form.append("file", file);
   if (folderId) form.append("folder_id", folderId);
+  // 文件级处理配置（对齐 WeKnora upload process_config：上传确认弹窗选定的
+  // 切片/解析引擎配置，JSON 字符串覆盖 KB 默认）
+  if (processConfig && Object.keys(processConfig).length > 0) {
+    form.append("process_config", JSON.stringify(processConfig));
+  }
   return requestUpload<DocItem>(`/api/v1/kbs/${kbId}/documents/upload`, form, onProgress);
 }
 

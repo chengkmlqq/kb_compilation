@@ -40,6 +40,7 @@ import DocCardView, {
 import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
 import DocDetailDrawer from "@/components/DocDetailDrawer";
+import UploadConfirmDialog, { UploadProcessConfig } from "@/components/UploadConfirmDialog";
 import DocBuildProcessDrawer from "@/components/DocBuildProcessDrawer";
 import KBConfigModal from "@/components/KBConfigModal";
 import {
@@ -110,6 +111,9 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   };
 
   const [detailDoc, setDetailDoc] = useState<DocItem | null>(null);
+  // 上传确认弹窗（对齐 WeKnora：选文件 → 弹确认框可选处理配置 → 确认后上传）
+  const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
+  const [uploadConfirmOpen, setUploadConfirmOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [buildDoc, setBuildDoc] = useState<DocItem | null>(null);
 
@@ -431,7 +435,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   };
 
   // 带进度上报的知识库文档上传（本地上传 & 全局拖放复用；经 uploadTask 事件驱动任务浮层）
-  const startDocUpload = (file: File, taskId?: string, folderId = docFolderId) => {
+  const startDocUpload = (file: File, taskId?: string, folderId = docFolderId, processConfig?: UploadProcessConfig | null) => {
     const id = taskId ?? makeUploadTaskId("kb-upload");
     emitUploadTask({
       id,
@@ -450,6 +454,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             emitUploadTask({ id, name: file.name, size: file.size, status: "uploading", progress: pct });
           },
           folderId || undefined,
+          processConfig as Record<string, unknown> | null | undefined,
         );
         if (res.success) {
           emitUploadTask({ id, name: file.name, size: file.size, status: "success", progress: 100 });
@@ -561,11 +566,10 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
               style={{ display: "none" }}
               onChange={(e) => {
                 const files = e.target.files;
-                if (files) {
-                  // 逐文件上传，每个文件上传成功后由 startDocUpload 触发列表刷新
-                  for (const f of Array.from(files)) {
-                    startDocUpload(f);
-                  }
+                if (files && files.length > 0) {
+                  // 对齐 WeKnora：先收集到确认弹窗，用户可选处理配置后确认上传
+                  setPendingUploadFiles((prev) => [...prev, ...Array.from(files)]);
+                  setUploadConfirmOpen(true);
                 }
                 e.target.value = "";
               }}
@@ -801,6 +805,23 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
           </>
         )}
       </div>
+
+      {/* 上传确认弹窗（对齐 WeKnora：文件列表 + 处理配置，确认后逐文件上传） */}
+      <UploadConfirmDialog
+        open={uploadConfirmOpen}
+        initialFiles={pendingUploadFiles}
+        onCancel={() => {
+          setUploadConfirmOpen(false);
+          setPendingUploadFiles([]);
+        }}
+        onConfirm={({ files: filesToUpload, processConfig }) => {
+          setUploadConfirmOpen(false);
+          setPendingUploadFiles([]);
+          for (const f of filesToUpload) {
+            startDocUpload(f, undefined, docFolderId, processConfig);
+          }
+        }}
+      />
 
       {/* 文档详情抽屉（对齐 WeKnora DocContent：元数据 + AI 摘要展示 + 三视图 + 下载/重解析/删除） */}
       <DocDetailDrawer
