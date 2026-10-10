@@ -51,6 +51,7 @@ import KBConfigModal from "@/components/KBConfigModal";
 import KbDocsPane from "@/components/kb/KbDocsPane";
 import KbWikiPane from "@/components/kb/KbWikiPane";
 import KbGraphPane from "@/components/kb/KbGraphPane";
+import WikiGraphView from "@/components/WikiGraphView";
 
 const PIPELINE_OPTIONS = [
   { label: "向量检索", value: "vector", default: true },
@@ -59,15 +60,23 @@ const PIPELINE_OPTIONS = [
   { label: "知识图谱", value: "graph", default: false },
 ];
 
-/** 知识库详情分段：文档 / Wiki / 知识图谱，各自成为顶层动态选项卡 */
-type KbSection = "docs" | "wiki" | "graph";
+/** 知识库详情分段：文档 / Wiki / 知识图谱(Neo4j) / wiki 关系图，各自成为顶层动态选项卡 */
+type KbSection = "docs" | "wiki" | "graph" | "wiki-graph";
 /** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务分段 */
-type KbSectionTab = { key: string; title: string; kbId: string; section: KbSection };
+type KbSectionTab = {
+  key: string;
+  title: string;
+  kbId: string;
+  section: KbSection;
+  /** wiki 关系图 ego 聚焦页（从 wiki 页「在图谱中查看」传入） */
+  focusSlug?: string;
+};
 
 const SECTION_LABEL: Record<KbSection, string> = {
   docs: "文档",
   wiki: "Wiki",
-  graph: "图谱",
+  graph: "知识图谱",
+  "wiki-graph": "wiki 关系图",
 };
 
 export default function KbsPage() {
@@ -99,21 +108,26 @@ export default function KbsPage() {
   };
 
   /** 打开某知识库的某个分段选项卡：已存在则仅激活，否则新增后激活 */
-  const openKbSection = (kb: KbItem, section: KbSection) => {
+  const openKbSection = (kb: KbItem, section: KbSection, focusSlug?: string) => {
     const key = `kb-${kb.id}-${section}`;
-    setTabs((prev) =>
-      prev.some((t) => t.key === key)
-        ? prev
-        : [
-            ...prev,
-            {
-              key,
-              title: `${SECTION_LABEL[section]} · ${kb.name}`,
-              kbId: kb.id,
-              section,
-            },
-          ]
-    );
+    setTabs((prev) => {
+      const exists = prev.find((t) => t.key === key);
+      if (exists) {
+        // 已存在：仅更新 focusSlug（wiki 关系图 ego 聚焦），不重复开
+        if (exists.focusSlug === focusSlug) return prev;
+        return prev.map((t) => (t.key === key ? { ...t, focusSlug } : t));
+      }
+      return [
+        ...prev,
+        {
+          key,
+          title: `${SECTION_LABEL[section]} · ${kb.name}`,
+          kbId: kb.id,
+          section,
+          focusSlug,
+        },
+      ];
+    });
     setActiveTab(key);
   };
 
@@ -123,14 +137,17 @@ export default function KbsPage() {
       return (
         <KbWikiPane
           kbId={t.kbId}
-          onOpenGraph={() => {
+          onOpenGraph={(slug?: string) => {
             const kb = kbs.find((k) => k.id === t.kbId);
-            if (kb) openKbSection(kb, "graph");
+            if (kb) openKbSection(kb, "wiki-graph", slug);
           }}
         />
       );
     }
     if (t.section === "graph") return <KbGraphPane kbId={t.kbId} />;
+    if (t.section === "wiki-graph") {
+      return <WikiGraphView kbId={t.kbId} focusSlug={t.focusSlug} />;
+    }
     return <KbDocsPane kbId={t.kbId} />;
   };
 
@@ -397,6 +414,7 @@ export default function KbsPage() {
                               { key: "open", label: "打开知识库" },
                               { key: "wiki", label: "Wiki" },
                               { key: "graph", label: "知识图谱" },
+                              { key: "wiki-graph", label: "wiki 关系图" },
                               { key: "config", label: "知识库配置" },
                               { type: "divider" },
                               { key: "delete", label: "删除", danger: true },
@@ -406,6 +424,7 @@ export default function KbsPage() {
                               if (key === "open") openKbSection(kb, "docs");
                               else if (key === "wiki") openKbSection(kb, "wiki");
                               else if (key === "graph") openKbSection(kb, "graph");
+                              else if (key === "wiki-graph") openKbSection(kb, "wiki-graph");
                               else if (key === "config") setConfigKb(kb);
                               else if (key === "delete") onDelete(kb);
                             },
