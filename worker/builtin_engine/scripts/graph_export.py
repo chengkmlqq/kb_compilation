@@ -288,7 +288,7 @@ def graph_payloads_for_doc(biz_pages, rule_pages, kid, kb):
             meta['attrs'].append(attr)
         return c
 
-    def _rel(s, t, typ, rule_title=''):
+    def _rel(s, t, typ, rule=None):
         # 端点统一 canonicalize：_edge_for 返回的 subject 可能是未剥壳原始名，
         # 与 _node 注册的 canonical 名不一致会让 graph_add 自动补建无 attributes 哑节点
         s, t = canonicalize(s), canonicalize(t)
@@ -296,9 +296,22 @@ def graph_payloads_for_doc(biz_pages, rule_pages, kid, kb):
             return
         if s == t:
             return  # 自环无意义
-        relations.append({'node1': s, 'node2': t, 'type': typ[:REL_TYPE_MAX]})
+        # 2026-10-09 边证据链：规则卡标题 + 原文 slug 随边写入 Neo4j 属性，
+        # 否则边只有语义动词、无法回溯到规则卡/原文（用户明确要求的证据链）
+        props = {}
+        if isinstance(rule, dict):
+            if rule.get('title'):
+                props['rule_title'] = str(rule['title'])[:128]
+            srcs = rule.get('sources') or []
+            if srcs:
+                props['source_slugs'] = [str(x)[:64] for x in srcs[:10]]
+        if props:
+            relations.append({'node1': s, 'node2': t, 'type': typ[:REL_TYPE_MAX],
+                              'properties': props})
+        else:
+            relations.append({'node1': s, 'node2': t, 'type': typ[:REL_TYPE_MAX]})
         stats['edges'] += 1
-        stats['edge_to_rule'][rule_title] += 1
+        stats['edge_to_rule'][(rule or {}).get('title', '')] += 1
 
     # 1) 业务实体节点
     for p in biz_pages:
@@ -333,7 +346,7 @@ def graph_payloads_for_doc(biz_pages, rule_pages, kid, kb):
             # nodes 里——漏注册会让 graph_add 自动补建无 attributes 哑节点）
             _node(s, f"规则《{r['title']}》{role or '涉及'}"[:80])
             _node(t, f"规则《{r['title']}》{role or '涉及'}"[:80])
-            _rel(s, t, typ, r['title'])
+            _rel(s, t, typ, r)
             if role and role != '客体':
                 stats['role_edges'] += 1
             made = True
@@ -355,7 +368,7 @@ def graph_payloads_for_doc(biz_pages, rule_pages, kid, kb):
             s = canonicalize(r['subject'])
             if s and s != dnode and s not in seen:
                 seen.add(s)
-                _rel(s, dnode, '制定于', '')
+                _rel(s, dnode, '制定于')
 
     for cname, meta in node_meta.items():
         nodes.append({'name': cname, 'attributes': meta['attrs'], 'chunks': []})

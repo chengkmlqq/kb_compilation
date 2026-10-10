@@ -740,12 +740,30 @@ def _graph_call(name, args):
                         typ = str(rl.get('type') or 'related')[:60]
                         if not n1 or not n2:
                             continue
-                        sess.run(
-                            f"MATCH (a:{label} {{name: $n1}}), (b:{label} {{name: $n2}}) "
-                            f"MERGE (a)-[r:{typ}]->(b)",
-                            n1=n1, n2=n2,
-                        )
                         total_rels += 1
+                        # 2026-10-09 边证据链：写关系属性（rule_title/source_slugs），
+                        # 让边能回溯规则卡与原文。Neo4j 关系属性只接受标量/标量数组，
+                        # 不能存 Map → 摊平成独立 SET 子句（此前只 MERGE 不 SET，
+                        # 导致全库边属性为空、无法回溯证据）。
+                        props = rl.get('properties') or rl.get('attributes') or {}
+                        flat = {
+                            str(k): v for k, v in props.items()
+                            if isinstance(v, (str, int, float, bool, list))
+                        }
+                        if flat:
+                            set_clause = " SET " + ", ".join(
+                                f"r.{k} = ${k}" for k in flat)
+                            sess.run(
+                                f"MATCH (a:{label} {{name: $n1}}), (b:{label} {{name: $n2}}) "
+                                f"MERGE (a)-[r:{typ}]->(b){set_clause}",
+                                n1=n1, n2=n2, **flat,
+                            )
+                        else:
+                            sess.run(
+                                f"MATCH (a:{label} {{name: $n1}}), (b:{label} {{name: $n2}}) "
+                                f"MERGE (a)-[r:{typ}]->(b)",
+                                n1=n1, n2=n2,
+                            )
                 return {'data': {'nodes': total_nodes, 'relations': total_rels}}
         finally:
             driver.close()
