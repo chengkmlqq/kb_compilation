@@ -7,7 +7,7 @@
  * KB 概览 + 文档工具条（筛选/上传/知识库配置(含切片配置)）+ 文档卡片视图/表格 + 分页。
  * 仅依赖 kbId prop，自包含（自带文档列表与上传相关 state、Drawer、Modal）。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   App,
   Button,
@@ -19,13 +19,18 @@ import {
   Spin,
   Tag,
   Tooltip,
+  Tree,
   Typography,
 } from "antd";
 import {
   AppstoreOutlined,
   CloudUploadOutlined,
+  DeleteOutlined,
   DownloadOutlined,
+  EditOutlined,
+  FolderAddOutlined,
   FolderOutlined,
+  PlusOutlined,
   RedoOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -89,8 +94,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   // 文档多级目录（doc_folder）：选中目录 id（"" = 全部/根），递归子树浏览
   const [docFolders, setDocFolders] = useState<DocFolderItem[]>([]);
   const [docFolderId, setDocFolderId] = useState("");
-  // 目录管理弹窗（新建/重命名/删除）
-  const [folderManageOpen, setFolderManageOpen] = useState(false);
   // 移至目录（批量）
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveFolderId, setMoveFolderId] = useState("");
@@ -158,23 +161,48 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
     return out;
   })();
 
-  // 目录树行（缩进展示，目录管理弹窗用）
-  const folderTreeRows = (() => {
+  // 目录树展开状态（antd Tree 受控展开）
+  const [folderExpandedKeys, setFolderExpandedKeys] = useState<string[]>([]);
+  useEffect(() => {
+    // 目录加载后默认展开第一层
+    const roots = docFolders.filter((f) => !f.parent_id);
+    setFolderExpandedKeys((prev) => [...prev, ...roots.map((f) => f.id)]);
+  }, [docFolders]);
+
+  // 树形数据（antd Tree 用）：节点 = 目录，title 带文档数 + 操作按钮
+  const folderTreeData = (() => {
     const byParent = new Map<string, DocFolderItem[]>();
     for (const f of docFolders) {
       const key = f.parent_id || "";
       if (!byParent.has(key)) byParent.set(key, []);
       byParent.get(key)!.push(f);
     }
-    const out: (DocFolderItem & { label: string })[] = [];
-    const walk = (parentId: string, depth: number) => {
-      for (const f of byParent.get(parentId) || []) {
-        out.push({ ...f, label: "　".repeat(depth) + f.name });
-        walk(f.id, depth + 1);
-      }
-    };
-    walk("", 0);
-    return out;
+    const build = (parentId: string): { key: string; title: ReactNode; children?: unknown[] }[] =>
+      (byParent.get(parentId) || []).map((f) => ({
+        key: f.id,
+        title: (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%" }}>
+            <FolderOutlined style={{ color: "#faad14", fontSize: 13 }} />
+            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {f.name}
+            </span>
+            <span style={{ color: "#999", fontSize: 11 }}>{f.child_count || 0}</span>
+            <span className="kb-doc-folder-actions" style={{ display: "none", gap: 2 }}>
+              <Tooltip title="新建子目录">
+                <FolderAddOutlined style={{ fontSize: 12 }} onClick={(e) => { e.stopPropagation(); createFolder(f.id); }} />
+              </Tooltip>
+              <Tooltip title="重命名">
+                <EditOutlined style={{ fontSize: 12 }} onClick={(e) => { e.stopPropagation(); renameFolder(f); }} />
+              </Tooltip>
+              <Tooltip title="删除">
+                <DeleteOutlined style={{ fontSize: 12, color: "#ff4d4f" }} onClick={(e) => { e.stopPropagation(); deleteFolder(f); }} />
+              </Tooltip>
+            </span>
+          </div>
+        ),
+        children: build(f.id),
+      }));
+    return build("");
   })();
 
   useEffect(() => {
@@ -501,9 +529,76 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   }, [kbId, kb?.name, load]);
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      {/* 对齐 WeKnora .doc-card-area + .doc-filter-bar：去 Card 包装，
-          搜索独占 search 栅格、视图切换+操作在 trailing、筛选项在 filters 行 */}
+    <div style={{ height: "100%", display: "flex", overflow: "hidden", minHeight: 0 }}>
+      {/* 左侧：文档目录树（多级，点选递归筛选） */}
+      <div
+        className="kb-doc-folder-sidebar"
+        style={{
+          width: 230,
+          flex: "0 0 auto",
+          borderRight: "1px solid var(--kb-border, rgba(5, 5, 5, 0.08))",
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          padding: "10px 8px",
+          boxSizing: "border-box",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, padding: "0 4px" }}>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>文档目录</span>
+          <Space size={4}>
+            <Tooltip title="新建根目录">
+              <Button size="small" type="text" icon={<PlusOutlined />} onClick={() => createFolder("")} />
+            </Tooltip>
+          </Space>
+        </div>
+        <div className="kb-doc-folder-tree" style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+          {/* 全部文档（根层级） */}
+          <div
+            className="kb-doc-folder-root"
+            onClick={() => {
+              setDocFolderId("");
+              setDocPage(1);
+            }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "5px 6px",
+              borderRadius: 4,
+              cursor: "pointer",
+              background: docFolderId === "" ? "var(--kb-primary-light, rgba(22,119,255,0.1))" : undefined,
+              color: docFolderId === "" ? "#1677ff" : undefined,
+            }}
+          >
+            <FolderOutlined style={{ color: "#faad14" }} />
+            <span style={{ fontSize: 13 }}>全部文档</span>
+          </div>
+          {docFolders.length === 0 ? (
+            <div style={{ padding: "12px 8px", color: "#999", fontSize: 12 }}>
+              暂无目录，点击右上角 + 新建
+            </div>
+          ) : (
+            <Tree
+              blockNode
+              showLine={{ showLeafIcon: false }}
+              selectedKeys={docFolderId ? [docFolderId] : []}
+              expandedKeys={folderExpandedKeys}
+              onExpand={(keys) => setFolderExpandedKeys(keys as string[])}
+              onSelect={(keys) => {
+                const key = keys[0] as string | undefined;
+                setDocFolderId(key || "");
+                setDocPage(1);
+              }}
+              treeData={folderTreeData as any}
+              style={{ background: "transparent" }}
+            />
+          )}
+        </div>
+      </div>
+
+      {/* 右侧：文档内容区（筛选 + 列表） */}
+      <div style={{ flex: 1, minWidth: 0, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div className="kb-doc-area">
         <div className="kb-doc-filter-bar">
           <Input
@@ -555,9 +650,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             >
               上传文档
             </Button>
-            <Button icon={<FolderOutlined />} onClick={() => setFolderManageOpen(true)}>
-              目录管理
-            </Button>
             {/* 隐藏的文件选择触发器（本地上传） */}
             <input
               ref={fileInputRef}
@@ -608,20 +700,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
                   label: t.toUpperCase(),
                   value: t,
                 }))}
-              />
-            </div>
-            <div className="kb-doc-filter-field">
-              <Select
-                className="kb-doc-filter-control"
-                allowClear
-                placeholder="文档目录"
-                value={docFolderId || undefined}
-                onChange={(v) => {
-                  setDocFolderId(v || "");
-                  setDocPage(1);
-                  void load();
-                }}
-                options={folderOptions}
               />
             </div>
           </div>
@@ -805,6 +883,8 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
           </>
         )}
       </div>
+      </div>
+      {/* 右侧内容区结束: 上面的 </div> 闭合 kb-doc-area, 这句闭合右侧 flex wrapper */}
 
       {/* 上传确认弹窗（对齐 WeKnora：文件列表 + 处理配置，确认后逐文件上传） */}
       <UploadConfirmDialog
@@ -876,62 +956,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             options={folderOptions}
           />
         </Space>
-      </Modal>
-
-      {/* 目录管理：新建/重命名/删除（多级目录树，缩进展示层级） */}
-      <Modal
-        title="目录管理"
-        open={folderManageOpen}
-        onCancel={() => setFolderManageOpen(false)}
-        footer={
-          <Space>
-            <Button onClick={() => setFolderManageOpen(false)}>关闭</Button>
-            <Button type="primary" onClick={() => createFolder("")}>
-              + 新建根目录
-            </Button>
-          </Space>
-        }
-        width={440}
-      >
-        <div style={{ maxHeight: 380, overflowY: "auto" }}>
-          {docFolders.length === 0 ? (
-            <Empty description="暂无目录，点击「新建根目录」开始分类" />
-          ) : (
-            <div>
-              {folderTreeRows.map((f) => (
-                <div
-                  key={f.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "4px 8px",
-                    borderRadius: 6,
-                    marginBottom: 2,
-                    background: docFolderId === f.id ? "#e6f4ff" : undefined,
-                  }}
-                >
-                  <FolderOutlined style={{ color: "#faad14" }} />
-                  <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {f.label}
-                  </span>
-                  <span style={{ flex: 1 }} />
-                  <Space size={2}>
-                    <Button size="small" type="link" onClick={() => createFolder(f.id)}>
-                      子目录
-                    </Button>
-                    <Button size="small" type="link" onClick={() => renameFolder(f)}>
-                      重命名
-                    </Button>
-                    <Button size="small" type="link" danger onClick={() => deleteFolder(f)}>
-                      删除
-                    </Button>
-                  </Space>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
       </Modal>
     </div>
   );

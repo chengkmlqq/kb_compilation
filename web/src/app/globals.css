@@ -1403,6 +1403,31 @@ body {
   position: relative;
 }
 
+/* ── 文档目录侧边栏（左侧树）── */
+.kb-doc-folder-sidebar {
+  background: var(--kb-bg-subtle, #fafafa);
+}
+.kb-doc-folder-tree .ant-tree-treenode {
+  padding: 2px 0;
+}
+.kb-doc-folder-tree .ant-tree-node-content-wrapper {
+  min-width: 0;
+  flex: 1;
+}
+.kb-doc-folder-tree .ant-tree-node-content-wrapper .ant-tree-title {
+  width: 100%;
+}
+.kb-doc-folder-tree .ant-tree-node-content-wrapper:hover .kb-doc-folder-actions,
+.kb-doc-folder-tree .ant-tree-treenode-selected .kb-doc-folder-actions {
+  display: inline-flex !important;
+}
+.kb-doc-folder-actions span {
+  cursor: pointer;
+}
+.kb-doc-folder-tree .ant-tree-switcher {
+  width: 18px;
+}
+
 /* ── 筛选栏：grid 'search trailing' / 'filters filters' ── */
 .kb-doc-filter-bar {
   padding: 0 0 12px 0;
