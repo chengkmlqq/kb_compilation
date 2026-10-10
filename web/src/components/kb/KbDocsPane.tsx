@@ -33,7 +33,11 @@ import {
   SlidersOutlined,
   UnorderedListOutlined,
 } from "@ant-design/icons";
-import DocCardView, { STATE_LABEL, fileTypeIcon, formatSize } from "@/components/DocCardView";
+import DocCardView, {
+  STATE_LABEL,
+  fileTypeIcon,
+  formatSize,
+} from "@/components/DocCardView";
 import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
 import DocDetailDrawer from "@/components/DocDetailDrawer";
@@ -430,7 +434,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
                   void load();
                 }}
                 options={["PENDING", "PARSING", "EMBEDDING", "READY", "FAILED"].map((s) => ({
-                  label: s,
+                  label: STATE_LABEL[s] || s,
                   value: s,
                 }))}
               />
