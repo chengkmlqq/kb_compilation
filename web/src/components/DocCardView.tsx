@@ -143,9 +143,36 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
 
   const menuOf = (d: DocItem) => ({
     items: [
-      { key: "download", icon: <DownloadOutlined />, label: "下载原文件", onClick: () => onDownload(d) },
-      { key: "reparse", icon: <RedoOutlined />, label: "重新解析", onClick: () => onReparse(d) },
-      { key: "delete", icon: <DeleteOutlined />, label: "删除", danger: true, onClick: () => onDelete(d) },
+      {
+        key: "download",
+        icon: <DownloadOutlined />,
+        label: "下载原文件",
+        // Dropdown 菜单经 portal 渲染但仍按组件树冒泡：必须停掉冒泡，
+        // 否则点菜单项会穿透到 Card 的 onClick 打开详情抽屉
+        onClick: ({ domEvent }: { domEvent: { stopPropagation: () => void } }) => {
+          domEvent.stopPropagation();
+          onDownload(d);
+        },
+      },
+      {
+        key: "reparse",
+        icon: <RedoOutlined />,
+        label: "重新解析",
+        onClick: ({ domEvent }: { domEvent: { stopPropagation: () => void } }) => {
+          domEvent.stopPropagation();
+          onReparse(d);
+        },
+      },
+      {
+        key: "delete",
+        icon: <DeleteOutlined />,
+        label: "删除",
+        danger: true,
+        onClick: ({ domEvent }: { domEvent: { stopPropagation: () => void } }) => {
+          domEvent.stopPropagation();
+          onDelete(d);
+        },
+      },
     ],
   });
 
