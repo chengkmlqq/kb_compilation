@@ -1611,3 +1611,67 @@ body {
 .kb-citation-float__muted {
   color: rgba(0, 0, 0, 0.65);
 }
+
+
+/* ── 文档预览 docx/excel/mermaid 样式（补齐 WeKnora 对齐批次）──────────── */
+.kb-docx-preview {
+  background: #fff;
+  padding: 24px 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(0, 0, 0, 0.88);
+}
+.kb-docx-preview .docx-wrapper {
+  background: #fff;
+  padding: 0;
+  box-shadow: none;
+}
+.kb-docx-preview .docx-wrapper > section.docx {
+  margin-bottom: 16px;
+  box-shadow: none;
+  border: 1px solid #f0f0f0;
+}
+.kb-docx-preview table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.kb-docx-preview table td,
+.kb-docx-preview table th {
+  border: 1px solid #dcdcdc;
+  padding: 6px 8px;
+}
+
+.kb-excel-preview {
+  padding: 12px 16px;
+}
+.kb-excel-sheet {
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+.kb-excel-sheet-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.88);
+  margin-bottom: 6px;
+}
+.kb-excel-sheet table {
+  border-collapse: collapse;
+  font-size: 13px;
+  width: 100%;
+}
+.kb-excel-sheet table td,
+.kb-excel-sheet table th {
+  border: 1px solid #dcdcdc;
+  padding: 4px 8px;
+  text-align: left;
+}
+.kb-excel-sheet table tr:first-child td,
+.kb-excel-sheet table th {
+  background: #fafafa;
+  font-weight: 600;
+}
+
+.kb-markdown-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}

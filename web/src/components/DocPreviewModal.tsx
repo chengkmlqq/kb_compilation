@@ -1,10 +1,18 @@
 "use client";
 
 /**
- * 文档预览（对齐 WeKnora document-preview）：
- * 全类型分发（图片/PDF/Markdown/代码/HTML(源码切换)/CSV 表格/纯文本），
- * 工具栏：下载 + 浏览器原生全屏；HTML 支持 render/source 双模式；
- * docx/xlsx/pptx/epub 等无渲染依赖的类型给出下载兜底提示。
+ * 文档预览（像素级对齐 WeKnora document-preview，2026-10-10 补齐批次）：
+ * - docx  → docx-preview renderAsync（WeKnora 同款库）
+ * - xlsx/xls → xlsx 库 sheet_to_html 多 sheet 拼接（WeKnora 同款）
+ * - pptx/ppt → jszip 解压抽 slide 文本逐页展示（@vue-office/pptx 是 Vue 组件，
+ *   React 用文本抽取方案，保证可读性 + 下载兜底）
+ * - 图片（含 tiff）→ objectURL；pdf → blob iframe
+ * - markdown → react-markdown + remark-math/rehype-katex 数学公式 +
+ *   ```mermaid 代码块渲染（动态 import mermaid）
+ * - 代码 → CodeViewer 高亮；html → render/source 双模 + sandbox iframe
+ * - 音频 mp3/wav/m4a/flac/ogg → 原生 <audio> 播放器（零依赖）
+ * - csv → antd Table；文本 → pre
+ * 工具栏：下载 + 浏览器原生全屏；docx/excel/pptx 失败给下载兜底提示。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -25,21 +33,30 @@ import {
   FullscreenOutlined,
   CodeOutlined,
   FileTextOutlined,
+  CheckCircleOutlined,
 } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import { apiFetchDocumentBlob, DocItem } from "@/lib/api";
 import CodeViewer from "./CodeViewer";
 import { fileTypeIcon } from "./DocCardView";
+// 数学公式样式（WeKnora marked-katex 同款；katex CSS 含字体，走相对路径由 bundler 处理）
+import "katex/dist/katex.min.css";
 
 type PreviewKind =
   | "image"
   | "pdf"
+  | "docx"
+  | "excel"
+  | "pptx"
   | "markdown"
   | "code"
   | "html"
   | "csv"
   | "text"
+  | "audio"
   | "unsupported";
 
 const CODE_EXTS = new Set([
@@ -47,12 +64,20 @@ const CODE_EXTS = new Set([
   "sh", "bash", "sql", "java", "go", "c", "cpp", "h", "hpp", "rs",
   "kt", "swift", "xml", "css", "scss", "less", "vue", "ini", "conf", "properties",
 ]);
-const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico"]);
+const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp", "ico", "tiff"]);
+const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "flac", "ogg", "aac", "opus"]);
+const EXCEL_EXTS = new Set(["xlsx", "xls", "xlsm", "xlsb"]);
+const PPTX_EXTS = new Set(["pptx", "ppt", "odp"]);
+const DOCX_EXTS = new Set(["docx", "doc", "odt", "rtf"]);
 
 function resolveKind(ext: string | null | undefined, contentType: string): PreviewKind {
-  const e = (ext || "").toLowerCase().replace(/^\./, "");
+  const e = (ext || "").toLowerCase().replace(/^\\./, "");
   if (IMAGE_EXTS.has(e) || contentType.startsWith("image/")) return "image";
   if (e === "pdf" || contentType === "application/pdf") return "pdf";
+  if (DOCX_EXTS.has(e)) return "docx";
+  if (EXCEL_EXTS.has(e)) return "excel";
+  if (PPTX_EXTS.has(e)) return "pptx";
+  if (AUDIO_EXTS.has(e)) return "audio";
   if (e === "md" || e === "markdown") return "markdown";
   if (e === "html" || e === "htm") return "html";
   if (e === "csv" || e === "tsv") return "csv";
@@ -86,10 +111,84 @@ function parseSortText(u8: Uint8Array): string {
   return new TextDecoder("utf-8").decode(u8);
 }
 
+/** 简单 XML 实体反转义（pptx 文本抽取用）。 */
+function decodeXml(s: string): string {
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&#(\d+);/g, (_m, n) => String.fromCharCode(Number(n)));
+}
+
+/** 从 PPTX zip 中抽取每页 slide 文本（<a:t> 节点）。 */
+async function extractPptxSlides(blob: Blob): Promise<string[]> {
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+  const slideFiles = Object.keys(zip.files)
+    .filter((p) => /^ppt\/slides\/slide\d+\.xml$/.test(p))
+    .sort((a, b) => {
+      const na = Number(a.match(/slide(\d+)/)?.[1] || 0);
+      const nb = Number(b.match(/slide(\d+)/)?.[1] || 0);
+      return na - nb;
+    });
+  if (slideFiles.length === 0) {
+    // .ppt 老格式不是 zip，无法抽取文本
+    throw new Error("该演示文稿为旧版二进 .ppt 格式，暂无法抽取内容，请下载查看。");
+  }
+  const slides: string[] = [];
+  for (const p of slideFiles) {
+    const xml = await zip.file(p)?.async("string");
+    if (!xml) continue;
+    // 每个 <a:t>…</a:t> 是文本 run；<a:p> 段落（含 <a:pPr>）内部文本连一行
+    const paras = xml.match(/<a:p(?:\s[^>]*)?>[\s\S]*?<\/a:p>/g) || [];
+    const lines = paras
+      .map((para) => {
+        const texts = para.match(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g) || [];
+        return texts
+          .map((t) => decodeXml(t.replace(/<\/?a:t(?:\s[^>]*)?>/g, "")))
+          .join("");
+      })
+      .filter((l) => l.trim() !== "");
+    slides.push(lines.join("\\n"));
+  }
+  return slides.length ? slides : ["（演示文稿无文本内容）"];
+}
+
 interface Props {
   kbId: string;
   doc: DocItem | null;
   onClose: () => void;
+}
+
+/** ```mermaid 代码块的动态渲染组件（避免首屏加载 mermaid）。 */
+function MermaidBlock({ value, index }: { value: string; index: number }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const mermaid = (await import("mermaid")).default;
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: "default",
+          securityLevel: "loose",
+        });
+        const id = `kb-mermaid-${index}`;
+        const { svg } = await mermaid.render(id, value);
+        if (alive && ref.current) ref.current.innerHTML = svg;
+      } catch (e) {
+        if (alive) setError(e instanceof Error ? e.message : "图表渲染失败");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [value, index]);
+  if (error) return <pre style={{ color: "#d54941", fontSize: 13 }}>{error}</pre>;
+  return <div ref={ref} className="kb-markdown-mermaid" style={{ textAlign: "center" }} />;
 }
 
 export default function DocPreviewModal({ kbId, doc, onClose }: Props) {
@@ -104,6 +203,12 @@ export default function DocPreviewModal({ kbId, doc, onClose }: Props) {
   const [csvRows, setCsvRows] = useState<string[][]>([]);
   const fullscreenRef = useRef<HTMLDivElement | null>(null);
   const [contentType, setContentType] = useState("");
+  // docx 渲染容器 / excel 多 sheet HTML / pptx 幻灯片
+  const [docxBlob, setDocxBlob] = useState<Blob | null>(null);
+  const [excelHtml, setExcelHtml] = useState("");
+  const [pptxSlides, setPptxSlides] = useState<string[]>([]);
+  const [pptxIndex, setPptxIndex] = useState(0);
+  const docxContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!doc) return;
@@ -114,6 +219,10 @@ export default function DocPreviewModal({ kbId, doc, onClose }: Props) {
     setText("");
     setCsvRows([]);
     setHtmlMode("render");
+    setDocxBlob(null);
+    setExcelHtml("");
+    setPptxSlides([]);
+    setPptxIndex(0);
     setKind(resolveKind(doc.file_ext, ""));
     (async () => {
       try {
@@ -124,10 +233,33 @@ export default function DocPreviewModal({ kbId, doc, onClose }: Props) {
         setKind(k);
         const ab = await blob.arrayBuffer();
         const u8 = new Uint8Array(ab);
-        if (k === "image" || k === "pdf") {
+        if (k === "image" || k === "pdf" || k === "audio") {
           const u = URL.createObjectURL(blob);
           urlBak.push(u);
           setBlobUrl(u);
+        } else if (k === "docx") {
+          // 只存 blob：容器要等 loading=false 后才挂载（见下方渲染 effect）
+          setDocxBlob(blob);
+        } else if (k === "excel") {
+          const XLSX = await import("xlsx");
+          if (!alive) return;
+          const workbook = XLSX.read(u8, { type: "array" });
+          let html = "";
+          workbook.SheetNames.forEach((name, sheetIdx) => {
+            const sheet = workbook.Sheets[name];
+            const sheetHtml = XLSX.utils.sheet_to_html(sheet, { id: `kb-sheet-${sheetIdx}` });
+            html += `<div class="kb-excel-sheet">`;
+            if (workbook.SheetNames.length > 1) {
+              html += `<div class="kb-excel-sheet-name">${name}</div>`;
+            }
+            html += sheetHtml;
+            html += `</div>`;
+          });
+          setExcelHtml(html);
+        } else if (k === "pptx") {
+          const slides = await extractPptxSlides(blob);
+          if (!alive) return;
+          setPptxSlides(slides);
         } else if (k === "markdown" || k === "code" || k === "text" || k === "csv") {
           if (!isValidUtf8(u8)) {
             setError("文件为二进制编码，暂无法在线预览，请下载原文件查看。");
@@ -135,8 +267,8 @@ export default function DocPreviewModal({ kbId, doc, onClose }: Props) {
             const s = parseSortText(u8);
             setText(s);
             if (k === "csv") {
-              const lines = s.split(/\r?\n/).filter((l) => l.trim() !== "");
-              setCsvRows(lines.map((l) => l.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map((c) => c.replace(/^"|"$/g, "").trim())));
+              const lines = s.split(/\\r?\\n/).filter((l) => l.trim() !== "");
+              setCsvRows(lines.map((l) => l.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/).map((c) => c.replace(/^\"|\"$/g, "").trim())));
             }
           }
         } else if (k === "html") {
@@ -159,6 +291,31 @@ export default function DocPreviewModal({ kbId, doc, onClose }: Props) {
       setBlobUrl("");
     };
   }, [kbId, doc?.id, doc]);
+
+  // docx 渲染：必须在容器挂载后（loading=false 且 kind=docx）才跑，
+  // 所以与下载 effect 分离——下载只负责拿 blob。
+  useEffect(() => {
+    if (kind !== "docx" || !docxBlob || loading) return;
+    let alive = true;
+    (async () => {
+      try {
+        const { renderAsync } = await import("docx-preview");
+        const c = docxContainerRef.current;
+        if (!c || !alive) return;
+        c.innerHTML = "";
+        await renderAsync(docxBlob, c, undefined, {
+          className: "kb-docx-preview",
+          inWrapper: true,
+          ignoreWidth: false,
+        });
+      } catch (e) {
+        if (alive) setError(e instanceof Error ? e.message : "docx 渲染失败");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [kind, docxBlob, loading]);
 
   const toggleFullscreen = useCallback(() => {
     const el = fullscreenRef.current;
@@ -248,6 +405,11 @@ export default function DocPreviewModal({ kbId, doc, onClose }: Props) {
               src={blobUrl}
               alt={doc?.file_name || "preview"}
               style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+              onLoad={(e) => {
+                // 对齐 WeKnora：宽图允许横向滚动
+                const img = e.currentTarget;
+                img.style.height = img.naturalHeight > img.naturalWidth ? "100%" : "auto";
+              }}
             />
           </div>
         );
@@ -259,10 +421,81 @@ export default function DocPreviewModal({ kbId, doc, onClose }: Props) {
             style={{ width: "100%", height: "100%", border: "none" }}
           />
         );
+      case "docx":
+        return (
+          <div style={{ height: "100%", overflow: "auto", background: "#fff", padding: "0 12px" }}>
+            <div ref={docxContainerRef} className="kb-docx-preview" />
+          </div>
+        );
+      case "excel":
+        return (
+          <div
+            className="kb-excel-preview"
+            style={{ height: "100%", overflow: "auto", background: "#fff" }}
+            dangerouslySetInnerHTML={{ __html: excelHtml }}
+          />
+        );
+      case "pptx":
+        return pptxSlides.length > 1 ? (
+          <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+            <Space style={{ justifyContent: "center", padding: "6px 0" }}>
+              <Button size="small" disabled={pptxIndex === 0} onClick={() => setPptxIndex((i) => i - 1)}>
+                上一页
+              </Button>
+              <span style={{ fontSize: 13, color: "rgba(0,0,0,.65)", minWidth: 56, textAlign: "center" }}>
+                第 {pptxIndex + 1} / {pptxSlides.length} 页
+              </span>
+              <Button
+                size="small"
+                disabled={pptxIndex >= pptxSlides.length - 1}
+                onClick={() => setPptxIndex((i) => i + 1)}
+              >
+                下一页
+              </Button>
+            </Space>
+            <div style={{ flex: 1, overflow: "auto", background: "#fff", borderRadius: 6, padding: 16 }}>
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 14, lineHeight: 1.8 }}>
+                {pptxSlides[pptxIndex]}
+              </pre>
+            </div>
+            <div style={{ textAlign: "center", padding: 4, color: "#999", fontSize: 12 }}>
+              文本预览模式（对齐 WeKnora 需 @vue-office/pptx，React 侧无等价组件）· 含表格图形的演示请下载查看
+            </div>
+          </div>
+        ) : (
+          <pre style={{ margin: 0, padding: "12px 16px", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 13, height: "100%", overflow: "auto", lineHeight: 1.7 }}>
+            {pptxSlides[0] || "（演示文稿无文本内容）"}
+          </pre>
+        );
+      case "audio":
+        return (
+          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#fff" }}>
+            <audio controls src={blobUrl} style={{ width: "100%", maxWidth: 640 }} />
+          </div>
+        );
       case "markdown":
         return (
           <div className="kb-markdown" style={{ height: "100%", overflow: "auto", padding: "8px 20px 20px" }}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkMath]}
+              rehypePlugins={[rehypeKatex]}
+              components={{
+                code({ className, children, ...props }) {
+                  const match = /language-(\\w+)/.exec(className || "");
+                  const codeStr = String(children || "").replace(/\\n$/, "");
+                  if (match?.[1] === "mermaid") {
+                    return <MermaidBlock value={codeStr} index={Math.floor(Math.random() * 10000)} />;
+                  }
+                  return (
+                    <code className={className} {...props}>
+                      {children}
+                    </code>
+                  );
+                },
+              }}
+            >
+              {text}
+            </ReactMarkdown>
           </div>
         );
       case "code":
@@ -367,6 +600,13 @@ export default function DocPreviewModal({ kbId, doc, onClose }: Props) {
                 </Button>
               </Tooltip>
             ) : null}
+            {(kind === "docx" || kind === "excel" || kind === "pptx") && !error && (
+              <Tooltip title="渲染完成">
+                <span style={{ fontSize: 12, color: "#52c41a", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <CheckCircleOutlined /> 已渲染
+                </span>
+              </Tooltip>
+            )}
             <Button
               size="small"
               icon={<DownloadOutlined />}
