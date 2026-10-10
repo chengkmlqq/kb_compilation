@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from api.config import get_settings
 from api.models.knowledge import (
     DocChunk,
+    DocFolder,
     KbDatasource,
     KbDocument,
     WikiFeedback,
@@ -497,6 +498,7 @@ def list_documents(
     keyword: str = "",
     file_type: str = "",
     parse_status: str = "",
+    folder_id: str = "",
 ) -> dict:
     stmt = select(KbDocument).where(KbDocument.kb_id == kb_id)
     if keyword:
@@ -505,6 +507,10 @@ def list_documents(
         stmt = stmt.where(KbDocument.file_ext == file_type.lstrip(".").lower())
     if parse_status:
         stmt = stmt.where(KbDocument.parse_state == parse_status.upper())
+    # 递归子树浏览：folder 及其全部子孙目录的文档都算
+    if folder_id:
+        subtree = _doc_subtree_ids(db, kb_id, folder_id)
+        stmt = stmt.where(KbDocument.folder_id.in_(subtree))
     total = len(db.execute(stmt).scalars().all())
     rows = (
         db.execute(
@@ -528,6 +534,7 @@ def list_documents(
             "summary": d.summary,
             "summary_status": d.summary_status,
             "summary_error": d.summary_error,
+            "folder_id": d.folder_id or "",
             "created_at": d.created_at.isoformat() if d.created_at else None,
         }
         for d in rows
@@ -544,6 +551,7 @@ def create_document(
     storage_path: str | None = None,
     sys_file_id: str | None = None,
     created_by: str | None = None,
+    folder_id: str = "",
 ) -> KbDocument:
     doc = KbDocument(
         id=_uuid(),
@@ -556,6 +564,7 @@ def create_document(
         parse_state="PENDING",
         chunk_count=0,
         created_by=created_by,
+        folder_id=folder_id,
     )
     db.add(doc)
     db.commit()
@@ -853,6 +862,241 @@ def _remove_local_file(storage_path: str | None) -> None:
         storage_delete(storage_path)
     except Exception as exc:  # noqa: BLE001
         logger.warning("failed to remove stored file %s: %s", storage_path, exc)
+
+
+# ---------------------------------------------------------------------------
+# Doc folders (文档多级目录, doc_folder + kb_document.folder_id)
+# 决策（2026-10-10）：单归属 / 递归子树浏览 / 非空禁删 / 仅浏览不参与检索
+# ---------------------------------------------------------------------------
+
+
+def doc_folders(db: Session, kb_id: str) -> list[dict]:
+    """全量文档目录元数据（轻量，管理面板/树构建用）。"""
+    folders = db.execute(
+        select(DocFolder).where(DocFolder.kb_id == kb_id).order_by(DocFolder.created_at)
+    ).scalars().all()
+    counts = _doc_child_counts(db, kb_id)
+    return [
+        {
+            "id": f.id,
+            "name": f.name,
+            "parent_id": f.parent_id or "",
+            "child_count": counts.get(f.id, 0),
+        }
+        for f in folders
+    ]
+
+
+def _doc_child_counts(db: Session, kb_id: str) -> dict[str, int]:
+    """每个 folder 的直接子项数（子目录 + 子文档），懒加载树判断展开箭头用。"""
+    sub_folders = db.execute(
+        select(func.coalesce(DocFolder.parent_id, ""), func.count())
+        .where(DocFolder.kb_id == kb_id)
+        .group_by(func.coalesce(DocFolder.parent_id, ""))
+    ).all()
+    sub_docs = db.execute(
+        select(func.coalesce(KbDocument.folder_id, ""), func.count())
+        .where(KbDocument.kb_id == kb_id)
+        .group_by(func.coalesce(KbDocument.folder_id, ""))
+    ).all()
+    counts: dict[str, int] = {}
+    for fid, n in list(sub_folders) + list(sub_docs):
+        counts[fid or ""] = counts.get(fid or "", 0) + int(n)
+    return counts
+
+
+def doc_branch(
+    db: Session, kb_id: str, folder_id: str = "", page: int = 1, page_size: int = 50
+) -> dict:
+    """懒加载分支（对齐 wiki_branch）：folder_id='' 返回根级直接子目录 + 直接子文档。
+
+    每目录带 child_count（子目录+子文档数，前端据此显示展开箭头）。
+    """
+    fid = folder_id or ""
+    folders = db.execute(
+        select(DocFolder)
+        .where(DocFolder.kb_id == kb_id, func.coalesce(DocFolder.parent_id, "") == fid)
+        .order_by(DocFolder.created_at)
+    ).scalars().all()
+    docs_q = select(KbDocument).where(
+        KbDocument.kb_id == kb_id,
+        func.coalesce(KbDocument.folder_id, "") == fid,
+    )
+    total_docs = len(db.execute(docs_q).scalars().all())
+    rows = db.execute(
+        docs_q.order_by(KbDocument.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).scalars().all()
+    counts = _doc_child_counts(db, kb_id)
+    return {
+        "kb_id": kb_id,
+        "folder_id": fid,
+        "folders": [
+            {
+                "id": f.id,
+                "name": f.name,
+                "parent_id": f.parent_id or "",
+                "child_count": counts.get(f.id, 0),
+            }
+            for f in folders
+        ],
+        "documents": [
+            {
+                "id": d.id,
+                "file_name": d.file_name,
+                "file_ext": d.file_ext,
+                "file_size": d.file_size,
+                "parse_state": d.parse_state,
+                "folder_id": d.folder_id or "",
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+            }
+            for d in rows
+        ],
+        "page": page,
+        "page_size": page_size,
+        "has_more": page * page_size < total_docs,
+        "total_docs": total_docs,
+        "total_folders": len(folders),
+    }
+
+
+def _doc_subtree_ids(db: Session, kb_id: str, folder_id: str) -> list[str]:
+    """folder 及全部子孙目录的 id 集合（递归）。用于递归子树浏览。"""
+    all_folders = db.execute(
+        select(DocFolder).where(DocFolder.kb_id == kb_id)
+    ).scalars().all()
+    parent_of: dict[str, str] = {f.id: f.parent_id or "" for f in all_folders}
+    ids = [folder_id]
+    for f in all_folders:
+        if f.id == folder_id:
+            continue
+        cur = f.parent_id or ""
+        while cur:
+            if cur == folder_id:
+                ids.append(f.id)
+                break
+            cur = parent_of.get(cur, "")
+    return ids
+
+
+def doc_create_folder(
+    db: Session, kb_id: str, data: dict, user_id: str | None = None
+) -> dict:
+    """创建文档目录。parent_id 缺省为根。"""
+    name = str(data.get("name") or "").strip()
+    if not name:
+        raise ValueError("name 不能为空")
+    parent_id = str(data.get("parent_id") or "")
+    if parent_id:
+        parent = db.execute(
+            select(DocFolder).where(
+                DocFolder.kb_id == kb_id, DocFolder.id == parent_id
+            )
+        ).scalars().first()
+        if not parent:
+            raise ValueError(f"父目录不存在: {parent_id}")
+    # 同级同名唯一
+    dup = db.execute(
+        select(DocFolder).where(
+            DocFolder.kb_id == kb_id,
+            func.coalesce(DocFolder.parent_id, "") == parent_id,
+            DocFolder.name == name,
+        )
+    ).scalars().first()
+    if dup:
+        raise ValueError(f"同级下已存在同名目录: {name}")
+    folder = DocFolder(
+        id=_uuid(),
+        kb_id=kb_id,
+        name=name,
+        parent_id=parent_id,
+        created_by=user_id,
+    )
+    db.add(folder)
+    db.commit()
+    return {"id": folder.id, "name": folder.name, "parent_id": folder.parent_id or ""}
+
+
+def doc_update_folder(db: Session, kb_id: str, folder_id: str, data: dict) -> dict:
+    """重命名 / 移动文档目录。"""
+    folder = db.execute(
+        select(DocFolder).where(DocFolder.kb_id == kb_id, DocFolder.id == folder_id)
+    ).scalars().first()
+    if not folder:
+        raise ValueError(f"目录不存在: {folder_id}")
+    if "name" in data:
+        n = str(data["name"]).strip()
+        if not n:
+            raise ValueError("name 不能为空")
+        folder.name = n
+    if "parent_id" in data:
+        new_parent = str(data["parent_id"] or "")
+        if new_parent == folder.id:
+            raise ValueError("不能将目录移动到自身")
+        # 防环：新父目录不能是自己的子孙
+        subtree = _doc_subtree_ids(db, kb_id, folder.id)
+        if new_parent in subtree:
+            raise ValueError("不能将目录移动到自己的子目录下")
+        folder.parent_id = new_parent
+    db.commit()
+    return {"id": folder.id, "name": folder.name, "parent_id": folder.parent_id or ""}
+
+
+def doc_delete_folder(db: Session, kb_id: str, folder_id: str) -> dict:
+    """删除文档目录：仅当目录下无子目录、无文档时允许（非空禁删）。"""
+    folder = db.execute(
+        select(DocFolder).where(DocFolder.kb_id == kb_id, DocFolder.id == folder_id)
+    ).scalars().first()
+    if not folder:
+        raise ValueError(f"目录不存在: {folder_id}")
+    child_folders = db.execute(
+        select(DocFolder).where(
+            DocFolder.kb_id == kb_id, DocFolder.parent_id == folder_id
+        )
+    ).scalars().all()
+    if child_folders:
+        raise ValueError(f"目录下仍有 {len(child_folders)} 个子目录，请先移走")
+    child_docs = db.execute(
+        select(KbDocument).where(
+            KbDocument.kb_id == kb_id, KbDocument.folder_id == folder_id
+        )
+    ).scalars().all()
+    if child_docs:
+        raise ValueError(f"目录下仍有 {len(child_docs)} 个文档，请先移走")
+    db.delete(folder)
+    db.commit()
+    return {"deleted": True, "folder_id": folder_id}
+
+
+def doc_move_documents(
+    db: Session, kb_id: str, document_ids: list[str], folder_id: str
+) -> dict:
+    """批量移动文档到目录（folder_id="" = 移出所有目录到根层级）。
+
+    单归属语义：folder_id 整体替换文档原目录。所有 id 必须属于本 KB。
+    """
+    if not document_ids:
+        return {"moved": 0}
+    if folder_id:
+        folder = db.execute(
+            select(DocFolder).where(
+                DocFolder.kb_id == kb_id, DocFolder.id == folder_id
+            )
+        ).scalars().first()
+        if not folder:
+            raise ValueError(f"目录不存在: {folder_id}")
+    docs = db.execute(
+        select(KbDocument).where(
+            KbDocument.kb_id == kb_id, KbDocument.id.in_(document_ids)
+        )
+    ).scalars().all()
+    if len(docs) != len(set(document_ids)):
+        raise ValueError("部分文档不存在或不属于当前知识库")
+    for d in docs:
+        d.folder_id = folder_id
+    db.commit()
+    return {"moved": len(docs)}
 
 
 # ---------------------------------------------------------------------------

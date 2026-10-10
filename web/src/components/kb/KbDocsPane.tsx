@@ -13,6 +13,7 @@ import {
   Button,
   Empty,
   Input,
+  Modal,
   Select,
   Space,
   Spin,
@@ -24,6 +25,7 @@ import {
   AppstoreOutlined,
   CloudUploadOutlined,
   DownloadOutlined,
+  FolderOutlined,
   RedoOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -41,13 +43,18 @@ import DocDetailDrawer from "@/components/DocDetailDrawer";
 import DocBuildProcessDrawer from "@/components/DocBuildProcessDrawer";
 import KBConfigModal from "@/components/KBConfigModal";
 import {
+  apiCreateDocFolder,
+  apiDeleteDocFolder,
   apiDeleteDocument,
   apiDownloadDocument,
   apiGenerateDocSummary,
   apiGetKb,
+  apiListDocFolders,
   apiListDocuments,
+  apiMoveDocumentsToFolder,
   apiReparseDocument,
   apiUploadDocumentWithProgress,
+  DocFolderItem,
   DocItem,
   KbItem,
 } from "@/lib/api";
@@ -78,6 +85,15 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   const [docKeyword, setDocKeyword] = useState("");
   const [docStatus, setDocStatus] = useState("");
   const [docType, setDocType] = useState("");
+  // 文档多级目录（doc_folder）：选中目录 id（"" = 全部/根），递归子树浏览
+  const [docFolders, setDocFolders] = useState<DocFolderItem[]>([]);
+  const [docFolderId, setDocFolderId] = useState("");
+  // 目录管理弹窗（新建/重命名/删除）
+  const [folderManageOpen, setFolderManageOpen] = useState(false);
+  // 移至目录（批量）
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [moveFolderId, setMoveFolderId] = useState("");
+  const [moveBusy, setMoveBusy] = useState(false);
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
   const [docView, setDocView] = useState<"card" | "list">(
     () => (localStorage.getItem("kb.docs.viewMode") as "card" | "list") || "card",
@@ -103,6 +119,60 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
     if (res?.success && res.data) setKb(res.data);
   }, [kbId]);
 
+  // 文档目录树（多级）：全量轻量元数据，前端按 parent_id 构建缩进树
+  const loadDocFolders = useCallback(async () => {
+    try {
+      const res = await apiListDocFolders(kbId);
+      if (res.success) {
+        const data = res.data as unknown;
+        const folders = Array.isArray(data)
+          ? data
+          : (data as { folders?: DocFolderItem[] })?.folders || [];
+        setDocFolders(folders);
+      }
+    } catch (e) {
+      console.error("load doc folders failed", e);
+    }
+  }, [kbId]);
+
+  // 目录下拉选项：按 parent 树缩进（"-" 前缀），用于筛选/移动/上传目标
+  const folderOptions = (() => {
+    const byParent = new Map<string, DocFolderItem[]>();
+    for (const f of docFolders) {
+      const key = f.parent_id || "";
+      if (!byParent.has(key)) byParent.set(key, []);
+      byParent.get(key)!.push(f);
+    }
+    const out: { label: string; value: string }[] = [];
+    const walk = (parentId: string, depth: number) => {
+      for (const f of byParent.get(parentId) || []) {
+        out.push({ label: `${"　".repeat(depth)}${f.name}`, value: f.id });
+        walk(f.id, depth + 1);
+      }
+    };
+    walk("", 0);
+    return out;
+  })();
+
+  // 目录树行（缩进展示，目录管理弹窗用）
+  const folderTreeRows = (() => {
+    const byParent = new Map<string, DocFolderItem[]>();
+    for (const f of docFolders) {
+      const key = f.parent_id || "";
+      if (!byParent.has(key)) byParent.set(key, []);
+      byParent.get(key)!.push(f);
+    }
+    const out: (DocFolderItem & { label: string })[] = [];
+    const walk = (parentId: string, depth: number) => {
+      for (const f of byParent.get(parentId) || []) {
+        out.push({ ...f, label: "　".repeat(depth) + f.name });
+        walk(f.id, depth + 1);
+      }
+    };
+    walk("", 0);
+    return out;
+  })();
+
   useEffect(() => {
     void loadKb();
   }, [loadKb]);
@@ -114,6 +184,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
         keyword: docKeyword.trim() || undefined,
         parseStatus: docStatus || undefined,
         fileType: docType || undefined,
+        folderId: docFolderId || undefined,
       });
       if (res.success) {
         setDocs(res.data?.items || []);
@@ -122,11 +193,15 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
     } finally {
       setDocsLoading(false);
     }
-  }, [kbId, docPage, docPageSize, docKeyword, docStatus, docType]);
+  }, [kbId, docPage, docPageSize, docKeyword, docStatus, docType, docFolderId]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void loadDocFolders();
+  }, [loadDocFolders]);
 
   // Auto-poll while any document is still being parsed (PENDING/PARSING/EMBEDDING).
   const hasInFlight = docs.some((d) =>
@@ -246,8 +321,117 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
     });
   };
 
+  // ---- 文档目录：管理（新建/重命名/删除）+ 批量移动 ----
+  const createFolder = (parentId: string) => {
+    let name = "";
+    modal.confirm({
+      title: parentId ? "新建子目录" : "新建根目录",
+      content: (
+        <Input
+          placeholder="目录名称"
+          autoFocus
+          onChange={(e) => {
+            name = e.target.value;
+          }}
+        />
+      ),
+      okText: "创建",
+      onOk: async () => {
+        if (!name.trim()) {
+          message.warning("请输入目录名称");
+          return;
+        }
+        try {
+          await apiCreateDocFolder(kbId, { name: name.trim(), parent_id: parentId || undefined });
+          message.success("目录已创建");
+          await loadDocFolders();
+        } catch (e) {
+          message.error((e as Error).message || "创建失败");
+          throw e;
+        }
+      },
+    });
+  };
+
+  const renameFolder = (folder: DocFolderItem) => {
+    let name = folder.name;
+    modal.confirm({
+      title: "重命名目录",
+      content: (
+        <Input
+          defaultValue={folder.name}
+          autoFocus
+          onChange={(e) => {
+            name = e.target.value;
+          }}
+        />
+      ),
+      okText: "保存",
+      onOk: async () => {
+        if (!name.trim() || name.trim() === folder.name) return;
+        try {
+          const { apiUpdateDocFolder } = await import("@/lib/api");
+          await apiUpdateDocFolder(kbId, folder.id, { name: name.trim() });
+          message.success("目录已更新");
+          await loadDocFolders();
+        } catch (e) {
+          message.error((e as Error).message || "重命名失败");
+          throw e;
+        }
+      },
+    });
+  };
+
+  const deleteFolder = (folder: DocFolderItem) => {
+    modal.confirm({
+      title: `删除目录「${folder.name}」？`,
+      content: "仅空目录可删除；若目录下仍有子目录或文档，请先移走。",
+      okText: "删除",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await apiDeleteDocFolder(kbId, folder.id);
+          message.success("目录已删除");
+          if (docFolderId === folder.id) setDocFolderId("");
+          await loadDocFolders();
+          void load();
+        } catch (e) {
+          message.error((e as Error).message || "删除失败");
+          throw e;
+        }
+      },
+    });
+  };
+
+  const openMove = () => {
+    setMoveFolderId(docFolderId);
+    setMoveOpen(true);
+  };
+
+  const confirmMove = async () => {
+    const ids = [...selectedDocs];
+    if (ids.length === 0) return;
+    setMoveBusy(true);
+    try {
+      const res = await apiMoveDocumentsToFolder(kbId, ids, moveFolderId);
+      if (res.success) {
+        message.success(`已移动 ${res.data?.moved ?? ids.length} 个文档`);
+        setMoveOpen(false);
+        setSelectedDocs(new Set());
+        await loadDocFolders();
+        void load();
+      } else {
+        message.error(res.message || "移动失败");
+      }
+    } catch (e) {
+      message.error((e as Error).message || "移动失败");
+    } finally {
+      setMoveBusy(false);
+    }
+  };
+
   // 带进度上报的知识库文档上传（本地上传 & 全局拖放复用；经 uploadTask 事件驱动任务浮层）
-  const startDocUpload = (file: File, taskId?: string) => {
+  const startDocUpload = (file: File, taskId?: string, folderId = docFolderId) => {
     const id = taskId ?? makeUploadTaskId("kb-upload");
     emitUploadTask({
       id,
@@ -259,9 +443,14 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
     });
     void (async () => {
       try {
-        const res = await apiUploadDocumentWithProgress(kbId, file, (pct) => {
-          emitUploadTask({ id, name: file.name, size: file.size, status: "uploading", progress: pct });
-        });
+        const res = await apiUploadDocumentWithProgress(
+          kbId,
+          file,
+          (pct) => {
+            emitUploadTask({ id, name: file.name, size: file.size, status: "uploading", progress: pct });
+          },
+          folderId || undefined,
+        );
         if (res.success) {
           emitUploadTask({ id, name: file.name, size: file.size, status: "success", progress: 100 });
           message.success(`「${file.name}」已上传，后台解析中`);
@@ -361,6 +550,9 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             >
               上传文档
             </Button>
+            <Button icon={<FolderOutlined />} onClick={() => setFolderManageOpen(true)}>
+              目录管理
+            </Button>
             {/* 隐藏的文件选择触发器（本地上传） */}
             <input
               ref={fileInputRef}
@@ -414,6 +606,20 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
                 }))}
               />
             </div>
+            <div className="kb-doc-filter-field">
+              <Select
+                className="kb-doc-filter-control"
+                allowClear
+                placeholder="文档目录"
+                value={docFolderId || undefined}
+                onChange={(v) => {
+                  setDocFolderId(v || "");
+                  setDocPage(1);
+                  void load();
+                }}
+                options={folderOptions}
+              />
+            </div>
           </div>
         </div>
         {selectedList.length > 0 && (
@@ -431,6 +637,9 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             </Typography.Text>
             <Button size="small" icon={<RedoOutlined />} onClick={() => void onBatchReparse()}>
               批量重建
+            </Button>
+            <Button size="small" icon={<FolderOutlined />} onClick={openMove}>
+              移至目录
             </Button>
             <Button size="small" danger icon={<DownloadOutlined />} onClick={onBatchDelete}>
               批量删除
@@ -622,6 +831,87 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
         docTitle={buildDoc?.file_name}
         onClose={() => setBuildDoc(null)}
       />
+
+      {/* 移至目录（批量移动文档到目录） */}
+      <Modal
+        title="移至目录"
+        open={moveOpen}
+        onCancel={() => setMoveOpen(false)}
+        onOk={() => void confirmMove()}
+        okText="移动"
+        okButtonProps={{ loading: moveBusy }}
+        width={400}
+      >
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            已选 {selectedList.length} 个文档；选择目标目录（不选 = 移出所有目录到根层级）
+          </Typography.Text>
+          <Select
+            style={{ width: "100%" }}
+            allowClear
+            placeholder="选择目录（留空 = 根层级）"
+            value={moveFolderId || undefined}
+            onChange={(v) => setMoveFolderId(v || "")}
+            options={folderOptions}
+          />
+        </Space>
+      </Modal>
+
+      {/* 目录管理：新建/重命名/删除（多级目录树，缩进展示层级） */}
+      <Modal
+        title="目录管理"
+        open={folderManageOpen}
+        onCancel={() => setFolderManageOpen(false)}
+        footer={
+          <Space>
+            <Button onClick={() => setFolderManageOpen(false)}>关闭</Button>
+            <Button type="primary" onClick={() => createFolder("")}>
+              + 新建根目录
+            </Button>
+          </Space>
+        }
+        width={440}
+      >
+        <div style={{ maxHeight: 380, overflowY: "auto" }}>
+          {docFolders.length === 0 ? (
+            <Empty description="暂无目录，点击「新建根目录」开始分类" />
+          ) : (
+            <div>
+              {folderTreeRows.map((f) => (
+                <div
+                  key={f.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "4px 8px",
+                    borderRadius: 6,
+                    marginBottom: 2,
+                    background: docFolderId === f.id ? "#e6f4ff" : undefined,
+                  }}
+                >
+                  <FolderOutlined style={{ color: "#faad14" }} />
+                  <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {f.label}
+                  </span>
+                  <span style={{ flex: 1 }} />
+                  <Space size={2}>
+                    <Button size="small" type="link" onClick={() => createFolder(f.id)}>
+                      子目录
+                    </Button>
+                    <Button size="small" type="link" onClick={() => renameFolder(f)}>
+                      重命名
+                    </Button>
+                    <Button size="small" type="link" danger onClick={() => deleteFolder(f)}>
+                      删除
+                    </Button>
+                  </Space>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }

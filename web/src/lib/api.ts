@@ -246,13 +246,22 @@ export interface DocItem {
   summary_error?: string | null;
   created_at?: string | null;
   wiki_build?: { state: string; duration_ms: number | null; job_id: string } | null;
+  /** 文档目录（doc_folder.id，"" = KB 根层级） */
+  folder_id?: string;
+}
+
+export interface DocFolderItem {
+  id: string;
+  name: string;
+  parent_id: string;
+  child_count: number;
 }
 
 export function apiListDocuments(
   kbId: string,
   page = 1,
   pageSize = 20,
-  opts: { keyword?: string; fileType?: string; parseStatus?: string } = {}
+  opts: { keyword?: string; fileType?: string; parseStatus?: string; folderId?: string } = {}
 ) {
   const params = new URLSearchParams({
     page: String(page),
@@ -261,7 +270,63 @@ export function apiListDocuments(
   if (opts.keyword) params.set("keyword", opts.keyword);
   if (opts.fileType) params.set("file_type", opts.fileType);
   if (opts.parseStatus) params.set("parse_status", opts.parseStatus);
+  if (opts.folderId) params.set("folder_id", opts.folderId);
   return request<PageList<DocItem>>(`/api/v1/kbs/${kbId}/documents?${params.toString()}`);
+}
+
+/** 全量文档目录元数据（轻量；树构建 / 上传选目录下拉用） */
+export function apiListDocFolders(kbId: string) {
+  return request<{ folders?: DocFolderItem[] } | DocFolderItem[]>(
+    `/api/v1/kbs/${kbId}/doc-folders`
+  );
+}
+
+/** 懒加载文档目录分支：folder_id='' 返回根级直接子目录 + 直接子文档 */
+export function apiDocFolderBranch(kbId: string, folderId = "", page = 1, pageSize = 50) {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (folderId) params.set("folder_id", folderId);
+  return request<{
+    folder_id: string;
+    folders: DocFolderItem[];
+    documents: DocItem[];
+    has_more: boolean;
+    total_folders: number;
+    total_docs: number;
+  }>(`/api/v1/kbs/${kbId}/doc-folders/branch?${params.toString()}`);
+}
+
+/** 创建文档目录 */
+export function apiCreateDocFolder(kbId: string, data: { name: string; parent_id?: string }) {
+  return request<DocFolderItem>(`/api/v1/kbs/${kbId}/doc-folders`, {
+    method: "POST",
+    body: JSON.stringify(data),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** 重命名 / 移动文档目录 */
+export function apiUpdateDocFolder(kbId: string, folderId: string, data: { name?: string; parent_id?: string }) {
+  return request<DocFolderItem>(`/api/v1/kbs/${kbId}/doc-folders/${folderId}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** 删除文档目录（非空目录后端拒绝） */
+export function apiDeleteDocFolder(kbId: string, folderId: string) {
+  return request<{ deleted: boolean }>(`/api/v1/kbs/${kbId}/doc-folders/${folderId}`, {
+    method: "DELETE",
+  });
+}
+
+/** 批量移动文档到目录（folder_id="" = 移出所有目录到根层级） */
+export function apiMoveDocumentsToFolder(kbId: string, documentIds: string[], folderId: string) {
+  return request<{ moved: number }>(`/api/v1/kbs/${kbId}/documents/move`, {
+    method: "PUT",
+    body: JSON.stringify({ folder_id: folderId, document_ids: documentIds }),
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 export function apiUploadDocument(kbId: string, file: File) {
@@ -278,15 +343,18 @@ export function apiUploadDocumentWithProgress(
   kbId: string,
   file: File,
   onProgress?: (percent: number) => void,
+  folderId?: string,
 ) {
   const form = new FormData();
   form.append("file", file);
+  if (folderId) form.append("folder_id", folderId);
   return requestUpload<DocItem>(`/api/v1/kbs/${kbId}/documents/upload`, form, onProgress);
 }
 
-export function apiUploadDocumentByUrl(kbId: string, url: string, fileName?: string) {
+export function apiUploadDocumentByUrl(kbId: string, url: string, fileName?: string, folderId?: string) {
   const params = new URLSearchParams({ url });
   if (fileName) params.set("file_name", fileName);
+  if (folderId) params.set("folder_id", folderId);
   return request<DocItem>(`/api/v1/kbs/${kbId}/documents/upload?${params.toString()}`, {
     method: "POST",
   });

@@ -127,6 +127,8 @@ class KbDocument(Base):
     # ""（未生成）/READY/FAILED
     summary_status: Mapped[str] = mapped_column(String(16), default="")
     summary_error: Mapped[str | None] = mapped_column(Text)
+    # 文档目录（doc_folder.id，"" = KB 根层级）。单归属：一个文档只能在一个目录。
+    folder_id: Mapped[str] = mapped_column(String(64), default="", index=True)
 
     created_by: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime | None] = mapped_column(
@@ -186,6 +188,28 @@ class KbEmbedding(KnowledgeBase):
     chunk_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     embedding = mapped_column(_vector_type(), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class DocFolder(Base):
+    """Multi-level document directory tree (single placement).
+
+    One document belongs to exactly one folder (kb_document.folder_id, ""
+    = KB root). parent_id forms an adjacency-list tree ("" = root) so any
+    depth is supported. Decisions (2026-10-10): single placement, recursive
+    subtree browsing, non-empty folders cannot be deleted, browsing-only
+    (does not affect retrieval), upload can target a folder.
+    """
+
+    __tablename__ = "doc_folder"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kb_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    parent_id: Mapped[str | None] = mapped_column(String(64), default="")
+    created_by: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=text("CURRENT_TIMESTAMP")
     )

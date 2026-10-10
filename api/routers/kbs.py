@@ -42,6 +42,12 @@ from api.services.kb_admin import (
     create_kb,
     delete_document,
     delete_kb,
+    doc_branch,
+    doc_create_folder,
+    doc_delete_folder,
+    doc_folders,
+    doc_move_documents,
+    doc_update_folder,
     generate_document_summary,
     get_kb,
     get_wiki_page,
@@ -146,6 +152,23 @@ class WikiFolderCreate(BaseModel):
 class WikiFolderUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     parent_id: str | None = Field(default=None)
+
+
+class DocFolderCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    parent_id: str | None = Field(default=None)
+
+
+class DocFolderUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    parent_id: str | None = Field(default=None)
+
+
+class DocMoveRequest(BaseModel):
+    """批量移动文档到目录（folder_id="" = 移出所有目录到根层级）。"""
+
+    folder_id: str = Field(default="")
+    document_ids: list[str] = Field(..., min_length=1)
 
 
 class WikiFeedbackCreate(BaseModel):
@@ -377,16 +400,18 @@ def get_documents(
     kb_id: str,
     caller: dict = Depends(_require_kb_caller),
     page: int = Query(1, ge=1),
-    page_size: int = 20,
+    page_size: int = Query(20, ge=1, le=200),
     keyword: str = "",
     file_type: str = "",
     parse_status: str = "",
+    folder_id: str = "",
     db: Session = Depends(get_db),
 ) -> dict:
     _kb_visible(kb_id, caller, db)
     data = list_documents(
         db, kb_id, page, page_size,
         keyword=keyword, file_type=file_type, parse_status=parse_status,
+        folder_id=folder_id,
     )
     _attach_wiki_build_status(db, kb_id, data.get("items") or [])
     return {"success": True, "data": data}
@@ -436,6 +461,7 @@ async def upload_document(
     file: UploadFile | None = None,
     url: str = Query(default="", max_length=2000),
     file_name: str = Query(default="", max_length=255),
+    folder_id: str = Query(default="", max_length=64),
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -505,6 +531,7 @@ async def upload_document(
         file_ext=ext,
         file_size=len(content),
         storage_path=storage_path,
+        folder_id=folder_id,
     )
 
     # --- enqueue Celery job (modo_job row + send_task) ---
@@ -837,6 +864,100 @@ def _require_wiki_user(
     if not identity or not identity.user_id:
         raise HTTPException(status_code=401, detail="未登录")
     return identity.user_id
+
+
+# ---- 文档多级目录（doc_folder + kb_document.folder_id）----
+# 决策（2026-10-10）：单归属 / 递归子树浏览 / 非空禁删 / 仅浏览不参与检索
+
+
+@router.get("/{kb_id}/doc-folders")
+def get_doc_folders(kb_id: str, caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db)) -> dict:
+    """全量文档目录元数据（轻量；懒加载树深链定位 / 上传选目录下拉用）。"""
+    _kb_visible(kb_id, caller, db)
+    return {"success": True, "data": doc_folders(db, kb_id)}
+
+
+@router.get("/{kb_id}/doc-folders/branch")
+def get_doc_branch(
+    kb_id: str,
+    folder_id: str = "",
+    page: int = Query(1, ge=1),
+    page_size: int = 50,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """懒加载文档目录分支：folder_id='' 返回根级直接子目录 + 直接子文档。"""
+    _kb_visible(kb_id, caller, db)
+    page_size = min(max(page_size, 1), 200)
+    data = doc_branch(db, kb_id, folder_id or "", max(page, 1), page_size)
+    return {"success": True, "data": data}
+
+
+@router.post("/{kb_id}/doc-folders")
+def create_doc_folder(
+    kb_id: str,
+    req: DocFolderCreate,
+    user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    _kb_manage(kb_id, caller, db)
+    try:
+        data = doc_create_folder(db, kb_id, req.model_dump(exclude_none=True), user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.put("/{kb_id}/doc-folders/{folder_id}")
+def update_doc_folder(
+    kb_id: str,
+    folder_id: str,
+    req: DocFolderUpdate,
+    user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    _kb_manage(kb_id, caller, db)
+    try:
+        data = doc_update_folder(db, kb_id, folder_id, req.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "不存在" in str(e) else 400, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.delete("/{kb_id}/doc-folders/{folder_id}")
+def delete_doc_folder(
+    kb_id: str,
+    folder_id: str,
+    user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    _kb_manage(kb_id, caller, db)
+    try:
+        data = doc_delete_folder(db, kb_id, folder_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.put("/{kb_id}/documents/move")
+def move_documents(
+    kb_id: str,
+    req: DocMoveRequest,
+    user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """批量移动文档到目录（folder_id="" = 移出所有目录到根层级）。"""
+    _kb_manage(kb_id, caller, db)
+    try:
+        data = doc_move_documents(db, kb_id, req.document_ids, req.folder_id or "")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "data": data}
 
 
 @router.get("/{kb_id}/wiki/stats")
