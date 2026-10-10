@@ -89,6 +89,15 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("ont_schemas", "ont_schemas", "本体Schema", "/ontology-schemas", "system", "ApartmentOutlined", 10),
     ("sys_engines", "sys_engines", "引擎与存储", "/system/engines", "system", "CloudServerOutlined", 13),
     ("sys_dims", "sys_dims", "参数管理", "/system/dims", "system", "DatabaseOutlined", 14),
+    (
+        "sys_metadata_collection",
+        "sys_metadata_collection",
+        "元数据采集",
+        "/system/metadata-collection",
+        "system",
+        "DatabaseOutlined",
+        15,
+    ),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，

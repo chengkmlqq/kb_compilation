@@ -3090,3 +3090,141 @@ export function apiGetTapeRun(runId: string) {
     method: "GET",
   });
 }
+
+// ---- 元数据采集（迁移 data-synth metadata-collection，2026-10-10）----
+export interface MetadataDatasourceItem {
+  id: string;
+  name: string;
+  label: string;
+  dsType: string;
+  dsTypeGroup: string;
+  tableCount: number;
+  lastCollectionTime?: string | null;
+  collectionStatus: "UNCOLLECTED" | "COLLECTED" | "COLLECTING" | "FAILED";
+  lastError?: string | null;
+}
+
+export interface MetadataCollectionRun {
+  job_id: string;
+  state: string;
+  datasource_id?: string;
+  collection_mode?: string;
+  targets_count?: number;
+  summary?: Record<string, unknown> | null;
+  create_time?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_ms?: number | null;
+  error_message?: string | null;
+}
+
+export interface MetadataTableItem {
+  id: string;
+  datasource_id: string;
+  schemaName?: string | null;
+  tableName: string;
+  tableType?: string | null;
+  tableComment?: string | null;
+  rowCount?: number | null;
+  tableSize?: number | null;
+  createTime?: string | null;
+  updateTime?: string | null;
+  collectionTime?: string | null;
+  state?: string | null;
+  columnCount: number;
+}
+
+export interface MetadataColumnItem {
+  id: string;
+  columnName: string;
+  columnType?: string | null;
+  dataType?: string | null;
+  columnLength?: number | null;
+  columnPrecision?: number | null;
+  columnScale?: number | null;
+  isNullable?: string | null;
+  columnDefault?: string | null;
+  columnComment?: string | null;
+  ordinalPosition?: number | null;
+  isPrimaryKey: number;
+  isUnique: number;
+}
+
+export interface MetadataListResp<T> {
+  items: T[];
+  total: number;
+}
+
+export function apiListMetadataDatasources() {
+  return request<{ items: MetadataDatasourceItem[]; total: number }>("/api/v1/metadata/datasources");
+}
+
+/** 提交采集：full=全量重采（清旧），incremental+targets=定向采集 */
+export function apiSubmitMetadataCollection(
+  datasourceId: string,
+  collectionMode: "full" | "incremental" = "full",
+  targets?: Array<Record<string, unknown>>,
+) {
+  return request<{ job_id: string }>("/api/v1/metadata/collection", {
+    method: "POST",
+    body: JSON.stringify({ datasource_id: datasourceId, collection_mode: collectionMode, targets }),
+  });
+}
+
+export function apiGetMetadataCollectionStatus(jobId: string) {
+  return request<MetadataCollectionRun>(`/api/v1/metadata/collection/${jobId}`);
+}
+
+export function apiListMetadataRuns(datasourceId = "", page = 1, pageSize = 20) {
+  const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (datasourceId) qs.set("datasource_id", datasourceId);
+  return request<MetadataListResp<MetadataCollectionRun>>(`/api/v1/metadata/runs?${qs}`);
+}
+
+export function apiListMetadataTables(params: {
+  datasourceId?: string;
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  const qs = new URLSearchParams({
+    page: String(params.page ?? 1),
+    page_size: String(params.pageSize ?? 20),
+  });
+  if (params.datasourceId) qs.set("datasource_id", params.datasourceId);
+  if (params.keyword) qs.set("keyword", params.keyword);
+  return request<MetadataListResp<MetadataTableItem>>(`/api/v1/metadata/tables?${qs}`);
+}
+
+export function apiListMetadataColumns(tableId: string) {
+  return request<MetadataListResp<MetadataColumnItem>>(`/api/v1/metadata/tables/${tableId}/columns`);
+}
+
+export function apiDeleteMetadataByDatasource(datasourceId: string) {
+  return request<Record<string, unknown>>(`/api/v1/metadata/datasources/${datasourceId}`, {
+    method: "DELETE",
+  });
+}
+
+export function apiGetMetadataConfig() {
+  return request<{ fullCollectionEnabled: boolean }>("/api/v1/metadata/config");
+}
+
+/** 下载导入模板（xlsx 二进制，需 blob 下载不走 request envelope） */
+export async function apiDownloadMetadataTemplate(datasourceId: string): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(`/api/v1/metadata/template?datasource_id=${encodeURIComponent(datasourceId)}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`下载模板失败 (${res.status})`);
+  return { blob: await res.blob(), filename: "metadata_import_template.xlsx" };
+}
+
+/** 上传 xlsx 导入定向采集配置 */
+export function apiImportMetadataCollection(datasourceId: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return requestUpload<{ job_id: string; targetCount: number }>(
+    `/api/v1/metadata/import/${datasourceId}`,
+    form,
+  );
+}

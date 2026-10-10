@@ -14,5 +14,9 @@ from api.models import mcp_skill  # noqa: F401  (registers kb_mcp_server / kb_sk
 from api.models import websearch  # noqa: F401  (registers kb_websearch_provider)
 from api.models import ontology  # noqa: F401  (registers ontology_schema / kb_ontology_schema)
 from api.models import orchestration  # noqa: F401  (registers kb_step_define / kb_tape / kb_tape_step)
+from api.models import metadata  # noqa: F401  (registers kb_metadata_table / kb_metadata_column)
 
-__all__ = ["framework", "knowledge", "chat_session", "model", "mcp_skill", "websearch", "ontology", "orchestration"]
+__all__ = [
+    "framework", "knowledge", "chat_session", "model", "mcp_skill",
+    "websearch", "ontology", "orchestration", "metadata",
+]
