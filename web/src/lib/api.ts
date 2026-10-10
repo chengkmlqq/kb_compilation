@@ -998,6 +998,28 @@ export function apiDatagridViews(dsName: string, schemaName?: string): Promise<D
   }) as unknown as Promise<DatagridMetaResult>;
 }
 
+export function apiDatagridFunctions(dsName: string, schemaName?: string): Promise<DatagridMetaResult> {
+  return request<{ success: boolean; rows?: Array<Record<string, unknown>> }>("/api/v1/datagrid/functions", {
+    method: "POST",
+    body: JSON.stringify({ dsName, schemaName }),
+  }) as unknown as Promise<DatagridMetaResult>;
+}
+
+export function apiDatagridProcedures(dsName: string, schemaName?: string): Promise<DatagridMetaResult> {
+  return request<{ success: boolean; rows?: Array<Record<string, unknown>> }>("/api/v1/datagrid/procedures", {
+    method: "POST",
+    body: JSON.stringify({ dsName, schemaName }),
+  }) as unknown as Promise<DatagridMetaResult>;
+}
+
+export function apiDatagridSequences(dsName: string, schemaName?: string): Promise<DatagridMetaResult> {
+  return request<{ success: boolean; rows?: Array<Record<string, unknown>> }>("/api/v1/datagrid/sequences", {
+    method: "POST",
+    body: JSON.stringify({ dsName, schemaName }),
+  }) as unknown as Promise<DatagridMetaResult>;
+}
+
+
 export function apiListTeamDsAuth(teamName: string) {
   return request<TeamDsMapItem[]>(
     `/api/v1/open/datasources/team-auth/${encodeURIComponent(teamName)}`,
