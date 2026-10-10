@@ -52,6 +52,9 @@ class ChunkHit:
     vector_rank: int | None = None
     keyword_rank: int | None = None
     meta: dict = field(default_factory=dict)
+    # 文档文件名（kb_document.file_name）——引用胶囊的显示名，对齐 WeKnora
+    # 的 <kb doc="文件名"/>：模型看不到 UUID，只能拿到可读文件名。
+    document_title: str = ""
 
 
 @dataclass
@@ -325,6 +328,7 @@ def keyword_search(db: Session, kb_id: str, query: str, cfg: RetrievalConfig) ->
     for idx, hit in enumerate(scored[: cfg.top_k], start=1):
         hit.keyword_rank = idx
         hits.append(hit)
+    _fill_document_titles(db, hits)
     return hits
 
 
@@ -391,6 +395,10 @@ def hydrate_metadata(db: Session, hits: list[ChunkHit]) -> list[ChunkHit]:
     Parent-child chunking: when a chunk carries `parent_content` in its meta
     (child matched, parent returned for context — mirroring WeKnora), the hit's
     content is promoted to the parent text.
+
+    Also backfills `document_title` from kb_document.file_name for every hit
+    that knows its document_id — the citation pill in the chat answer needs a
+    readable file name, not a bare UUID (WeKnora's <kb doc="...">).
     """
     missing = [h for h in hits if not h.content]
     rows_by_id = {}
@@ -413,7 +421,24 @@ def hydrate_metadata(db: Session, hits: list[ChunkHit]) -> list[ChunkHit]:
         parent = (h.meta or {}).get("parent_content")
         if parent:
             h.content = str(parent)
+    _fill_document_titles(db, hits)
     return hits
+
+
+def _fill_document_titles(db: Session, hits: list[ChunkHit]) -> None:
+    """Batch-fill hit.document_title from kb_document.file_name (one query)."""
+    from api.models.knowledge import KbDocument
+
+    doc_ids = {h.document_id for h in hits if h.document_id and not h.document_title}
+    if not doc_ids:
+        return
+    rows = db.execute(
+        select(KbDocument.id, KbDocument.file_name).where(KbDocument.id.in_(doc_ids))
+    ).all()
+    titles = {r.id: (r.file_name or "") for r in rows}
+    for h in hits:
+        if not h.document_title and h.document_id:
+            h.document_title = titles.get(h.document_id, "")
 
 
 def hybrid_search(

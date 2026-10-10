@@ -130,6 +130,8 @@ export default function ChatPage() {
     open: boolean;
     refs: ChatRefItem[];
     answer: string;
+    /** 点击正文引用胶囊命中的 chunk_id（抽屉内高亮定位，WeKnora 同款交互） */
+    activeChunk?: string;
   }>({ open: false, refs: [], answer: "" });
   // 切页续传：记录当前流 id 与已收事件数（localStorage），回来时 resume
   const [resuming, setResuming] = useState(false);
@@ -1173,7 +1175,18 @@ export default function ChatPage() {
                     ) : m.role === "assistant" ? (
                       <div>
                         {m.content ? (
-                          <MarkdownViewer text={m.content} />
+                          <MarkdownViewer
+                            text={m.content}
+                            refs={m.refs}
+                            onCitationClick={(payload) =>
+                              setRefDrawer({
+                                open: true,
+                                refs: m.refs || [],
+                                answer: m.content,
+                                activeChunk: payload.chunkId,
+                              })
+                            }
+                          />
                         ) : m.streaming ? (
                           "思考中…"
                         ) : (
@@ -1646,14 +1659,25 @@ export default function ChatPage() {
             共 {refDrawer.refs.length} 条引用 · 点击跳转 wiki 页面
           </Text>
           {refDrawer.refs.map((r, i) => (
-            <Card key={i} size="small" title={`引用 ${i + 1} · 相似度 ${(r.score || 0).toFixed(2)}`}>
+            <Card
+              key={i}
+              size="small"
+              title={`引用 ${i + 1} · 相似度 ${(r.score || 0).toFixed(2)}`}
+              style={
+                r.chunk_id && r.chunk_id === refDrawer.activeChunk
+                  ? { borderColor: "#1677ff", boxShadow: "0 0 0 2px rgba(22,119,255,.12)" }
+                  : undefined
+              }
+            >
               <Space direction="vertical" size={4} style={{ display: "flex" }}>
                 {r.content && (
                   <Text style={{ fontSize: 13 }}>{r.content.slice(0, 400)}{r.content.length > 400 ? "…" : ""}</Text>
                 )}
                 <Space size={8} wrap>
-                  {r.meta?.source_file && (
-                    <Tag color="geekblue"><FileTextOutlined /> {r.meta.source_file}</Tag>
+                  {(r.document_title || r.meta?.source_file) && (
+                    <Tag color="geekblue">
+                      <FileTextOutlined /> {r.document_title || r.meta?.source_file}
+                    </Tag>
                   )}
                   <Button
                     size="small"

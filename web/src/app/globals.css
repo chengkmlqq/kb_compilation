@@ -1504,3 +1504,110 @@ body {
   overflow-x: hidden;
   padding-right: 4px;
 }
+
+
+/* ── 问答引用胶囊（像素级对齐 WeKnora chat-citations.less）──────────────
+   WeKnora：模型输出 <kb doc=... chunk_id=.../>，前端渲染成可点击胶囊显示
+   文档名。kb 用 TDesign→antd hex 映射（见 ui-parity token 表）写死值：
+   --td-text-color-primary=rgba(0,0,0,.88)、hover 底 = 4%/7% 黑。
+   ─────────────────────────────────────────────────────────────────── */
+.kb-citation {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  vertical-align: baseline;
+  box-sizing: border-box;
+  border-radius: 999px;
+  padding: 0 5px;
+  font-size: 0.72em;
+  line-height: 1.45;
+  margin: 0 0.06em;
+  background-clip: padding-box;
+  transform: translateY(-0.04em);
+}
+
+.kb-citation-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+  background-color: currentColor;
+  opacity: 0.68;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+}
+
+/* 书籍图标：WeKnora 用 ziliao.svg mask；kb 无该资源，用 CSS 画的小书本形状 */
+.kb-citation-icon--book {
+  mask-image: none;
+  -webkit-mask-image: none;
+  position: relative;
+  border: 1.5px solid currentColor;
+  border-radius: 1px;
+  opacity: 0.7;
+  box-sizing: border-box;
+}
+
+.kb-citation-text {
+  line-height: 1.45;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-citation-kb {
+  background: rgba(0, 0, 0, 0.04);
+  color: rgba(0, 0, 0, 0.88);
+  border: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  white-space: nowrap;
+  position: relative;
+  transition: background 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
+
+.kb-citation-kb:hover {
+  background: rgba(0, 0, 0, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+  color: rgba(0, 0, 0, 0.88);
+}
+
+.kb-citation-kb:focus-visible {
+  outline: 2px solid #dcdcdc;
+  outline-offset: 2px;
+}
+
+/* 点击引用弹出的片段浮层（对齐 WeKnora .chat-citation-float） */
+.kb-citation-float {
+  position: absolute;
+  z-index: 10000;
+  max-width: 320px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(0, 0, 0, 0.88);
+}
+
+.kb-citation-float__title {
+  font-weight: 600;
+  color: #1677ff;
+  margin-bottom: 4px;
+}
+
+.kb-citation-float__body {
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.kb-citation-float__muted {
+  color: rgba(0, 0, 0, 0.65);
+}

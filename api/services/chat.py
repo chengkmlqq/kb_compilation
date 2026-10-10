@@ -110,9 +110,12 @@ def load_chat_config(
 def serialize_context(hits: list[ChunkHit]) -> str:
     """Serialize retrieval hits into the model-visible context block.
 
-    Mirrors WeKnora's search_results display block: each row carries chunk_id,
-    knowledge refs and the chunk content. The model is instructed to cite
-    [chunk_id] markers, which the frontend renders as public citations.
+    Mirrors WeKnora's <chunk chunk_id knowledge_id knowledge_title> rows:
+    each row carries chunk_id, knowledge refs, the READABLE document title
+    and the chunk content. The model is instructed to cite
+    <kb doc="文件名" chunk_id=".." kb_id=".."/> markers (WeKnora's citation
+    tag), which the frontend renders as document-name citation pills
+    instead of bare UUIDs.
     """
     if not hits:
         return ""
@@ -121,6 +124,7 @@ def serialize_context(hits: list[ChunkHit]) -> str:
         rows.append(
             {
                 "chunk_id": hit.chunk_id,
+                "document_name": hit.document_title or hit.document_id,
                 "document_id": hit.document_id,
                 "kb_id": hit.kb_id,
                 "content": hit.content,
@@ -134,12 +138,23 @@ def serialize_context(hits: list[ChunkHit]) -> str:
     return json.dumps(block, ensure_ascii=False)
 
 
+# 引用规范 —— 对齐 WeKnora：模型输出 <kb doc=... chunk_id=.../> 标签，
+# 前端 MarkdownViewer 把它渲染成「显示文档名」的引用胶囊（可点击看片段内容）。
+# 注意：不要让模型输出裸 chunk_id（32 位乱码）——用户看到的是一串 ID，不是链接。
+CITATION_INSTRUCTIONS = (
+    "引用规范（必须遵守）：在引用某片段内容的位置，输出引用标签：\n"
+    '<kb doc="片段的 document_name" chunk_id="片段的 chunk_id" kb_id="片段的 kb_id" />\n'
+    "其中 doc 必须照抄检索结果里的 document_name（文档文件名），"
+    "chunk_id/kb_id 照抄对应字段。标签前后不加多余括号或编号；"
+    "正文里不要输出裸的 chunk_id / document_id（纯 32 位乱码用户看不懂）。"
+)
+
+
 SYSTEM_PROMPT = (
     "你是一个知识库问答助手。请仅依据下方提供的检索片段回答问题，"
-    "不得编造片段中不存在的内容。回答时在引用处标注来源片段编号，"
-    "格式为 [chunk_id]。若检索片段不足以回答，请明确说明。\n\n"
-    "以下是检索到的知识片段：\n"
-    "{context}"
+    "不得编造片段中不存在的内容。\n"
+    + CITATION_INSTRUCTIONS
+    + "\n\n以下是检索到的知识片段：\n{context}"
 )
 
 
@@ -168,9 +183,15 @@ def build_messages(
             parts.append(f"以下为本次会话上传的附件文档内容：\n{extra_context}")
         base = (
             "你是一个知识库问答助手。请优先依据提供的检索片段和附件文档回答问题；"
-            "若信息不足，请明确说明。"
+            "若信息不足，请明确说明。\n"
+            + CITATION_INSTRUCTIONS
         )
-        system = (agent_prompt or base) + "\n\n" + "\n\n".join(parts)
+        # agent 人设也要带引用规范，否则 agent 路径的引用仍是裸 id
+        system = (
+            (base if not agent_prompt else agent_prompt + "\n\n" + CITATION_INSTRUCTIONS)
+            + "\n\n"
+            + "\n\n".join(parts)
+        )
     else:
         system = agent_prompt or "你是一个知识库问答助手。若检索片段不足以回答，请明确说明。"
     messages = [ChatMessage(role="system", content=system)]

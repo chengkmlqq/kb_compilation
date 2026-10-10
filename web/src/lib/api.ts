@@ -1954,6 +1954,8 @@ export interface ChatRefItem {
   document_id?: string;
   kb_id?: string;
   meta?: Record<string, string>;
+  /** 文档文件名（kb_document.file_name）——引用胨节显示名，避免裸 UUID） */
+  document_title?: string;
 }
 
 export interface ChatMessageItem {
