@@ -8,7 +8,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Descriptions,
   Dropdown,
   Empty,
   Form,
@@ -333,7 +332,7 @@ export default function SystemTeamsPage() {
         key: "add",
         label: (
           <Space size={6}>
-            <span>＋</span> 新增
+            <span>＋</span> 新增子团队
           </Space>
         ),
         onClick: () => {
@@ -451,49 +450,17 @@ export default function SystemTeamsPage() {
                       style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
                       styles={{
                         header: { flexShrink: 0 },
-                        body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" },
-                        content: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" },
+                        body: { height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" },
+                        // 注意：content 样式会透传到每个 TabPane 的 inline style，
+                        // 不能设 display/flexDirection（会盖过 .ant-tabs-content-hidden 的 display:none 导致所有 tab 同时显示）。
+                        content: { flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" },
                       }}
                       items={[
-                {
-                  key: "info",
-                  label: "团队信息",
-                  children: (
-                    <div>
-                      <Descriptions
-                        bordered
-                        size="small"
-                        column={1}
-                        items={[
-                          { key: "name", label: "团队编码", children: selectedTeam.team_name },
-                          { key: "label", label: "团队名称", children: selectedTeam.label || "-" },
-                          { key: "parent", label: "父团队", children: selectedTeam.parent_team_name || "-" },
-                          { key: "descr", label: "描述", children: selectedTeam.descr || "-" },
-                          {
-                            key: "state",
-                            label: "状态",
-                            children: <StateTag value={selectedTeam.state} />,
-                          },
-                          { key: "create", label: "创建时间", children: selectedTeam.create_dt || "-" },
-                        ]}
-                      />
-                      <Space style={{ marginTop: 12 }}>
-                        <Button type="primary" onClick={() => openEdit(selectedTeam)}>
-                          编辑
-                        </Button>
-                        <Button danger onClick={() => confirmDelete(selectedTeam)}>
-                          删除
-                        </Button>
-                        <Button onClick={() => openCreate(selectedTeam)}>新增子团队</Button>
-                      </Space>
-                    </div>
-                  ),
-                },
                 {
                   key: "members",
                   label: "团队成员",
                   children: (
-                    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                    <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>
                       <Space style={{ marginBottom: 12, flexShrink: 0 }}>
                         <Button type="primary" onClick={() => void openMemberModal()}>
                           添加成员
@@ -525,7 +492,7 @@ export default function SystemTeamsPage() {
                   key: "dsAuth",
                   label: "数据源授权",
                   children: (
-                    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                    <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>
                       <Space style={{ marginBottom: 12, flexShrink: 0 }}>
                         <Button type="primary" loading={savingAuth} onClick={() => void doSaveAuth()}>
                           保存授权
