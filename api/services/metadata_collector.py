@@ -296,7 +296,13 @@ def _columns_sql(ds_type: str, schema: str, table: str) -> str:
 # 采集执行
 # ---------------------------------------------------------------------------
 def default_schema_for(ds_type: str, url: str, ds_conf: str | None) -> str:
-    """推断默认 schema：ds_conf.dsSchema 优先，其次从 URL 取库名。"""
+    """推断默认 schema：ds_conf.dsSchema 优先，其次按方言取。
+
+    ⚠️ 从 URL 取库名当 schema 只适用于 mysql/goldendb（MySQL 的 schema=数据库）；
+    PostgreSQL/kingbasees 等 schema 是独立命名空间（public），数据库名 ≠ schema，
+    取库名当 schema 会 `n.nspname='mydb'` 查不到任何表（实测 2026-10-11：pg-temp
+    采集 tableCount=0 的真因）。Oracle 用 USER 兜底（_tables_sql 内部处理）。
+    """
     try:
         conf = json.loads(ds_conf) if ds_conf else {}
         s = str(conf.get("dsSchema") or "").strip()
@@ -304,9 +310,9 @@ def default_schema_for(ds_type: str, url: str, ds_conf: str | None) -> str:
             return s
     except (TypeError, ValueError):
         pass
-    # 从 URL 取库名：mysql://u:p@h:3306/mydb?... / jdbc:postgresql://h/db
+    # 从 URL 取库名（仅 MySQL 系：schema=数据库；PG 系不可用）
     u = url or ""
-    if "://" in u:
+    if "://" in u and ds_type in ("mysql", "goldendb"):
         tail = u.split("://", 1)[1]
         path = tail.split("?", 1)[0]
         if "/" in path:

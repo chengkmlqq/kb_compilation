@@ -21,14 +21,25 @@ logger = logging.getLogger(__name__)
 TASK_CLASS_METADATA = "KbMetadataCollectionTask"
 
 
-def _handle_metadata_collection(job_id: str, task_params: dict | None = None) -> dict:
+def _params(task_params: str | None) -> dict:
+    """execute_modo_job 传 task_params 是 JSON 字符串（modo_job.task_params Text 列），
+    统一解析成 dict；解析失败回退空 dict（对齐 agent_gateway._params 模式）。"""
+    if isinstance(task_params, dict):
+        return task_params
+    try:
+        return json.loads(task_params) if task_params else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _handle_metadata_collection(job_id: str, task_params: str | None = None) -> dict:
     """execute_modo_job 分发的 handler：采集数据源表结构 + 字段元数据。"""
     from api.db import session_scope
     from api.models.framework import Job
     from api.services.metadata_collector import run_metadata_collection
     from sqlalchemy import select
 
-    params = task_params or {}
+    params = _params(task_params)
     datasource_id = params.get("datasource_id") or params.get("datasourceId") or ""
     mode = params.get("collection_mode") or params.get("collectionMode") or "full"
     targets = params.get("targets") or []

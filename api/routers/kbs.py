@@ -1399,23 +1399,42 @@ def list_table_candidates(
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    """可绑定表清单（元数据采集已入库的 kb_metadata_table，按 ds_name/关键字过滤）。"""
+    """可绑定表清单（元数据采集已入库的 kb_metadata_table，按 ds_name/关键字过滤）。
+
+    ⚠️ ds_name 语义 = 数据源 name（datagrid._find_entry 按 name 查；前端下拉也传
+    name）。2026-10-11 修复：此前按 datasource_id 过滤/返回 id，导致绑定后
+    table_ingest 按 name 找不到数据源。统一走 Datasource.name。
+    """
     _kb_visible(kb_id, caller, db)
+    from api.models.framework import Datasource
     from api.models.metadata import MetadataTable
     from sqlalchemy import select
 
-    q = select(MetadataTable).where(MetadataTable.state == "active")
+    # 数据源 name → id 映射（过滤 + 回填 name）
+    ds_id_by_name: dict[str, str] = {}
     if ds_name:
-        q = q.where(MetadataTable.datasource_id == ds_name)
+        ds_rows = db.execute(
+            select(Datasource.id, Datasource.name).where(Datasource.name == ds_name)
+        ).all()
+        ds_id_by_name = {n: i for i, n in ds_rows}
+        if not ds_id_by_name:
+            return {"success": True, "data": []}
+
+    q = select(MetadataTable).where(MetadataTable.state == "active")
+    if ds_id_by_name:
+        q = q.where(MetadataTable.datasource_id.in_(ds_id_by_name.values()))
     if keyword:
         q = q.where(MetadataTable.table_name.like(f"%{keyword}%"))
     rows = db.execute(q.order_by(MetadataTable.table_name).limit(500)).scalars().all()
+    # 全量数据源 id→name（返回项用 name，前端绑定原样回传，worker 按 name 找）
+    all_ds = db.execute(select(Datasource.id, Datasource.name)).all()
+    ds_name_by_id = {i: n or "" for i, n in all_ds}
     return {
         "success": True,
         "data": [
             {
                 "id": r.id,
-                "ds_name": r.datasource_id,
+                "ds_name": ds_name_by_id.get(r.datasource_id, r.datasource_id),
                 "schema": r.schema_name,
                 "table_name": r.table_name,
                 "table_comment": r.table_comment,
