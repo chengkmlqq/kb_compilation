@@ -111,8 +111,11 @@ def test_resolve_kb_scope_none(agent_db) -> None:
 
 
 def test_resolve_qa_overrides(agent_db) -> None:
+    # 2026-10-08 fix(agent) 键映射修正：编辑器存 embedding_top_k / vector_threshold，
+    # resolve_agent_qa_overrides 读的就是这两个键（原用例用旧键 top_k/threshold，
+    # 与编辑器实际写入不符，读不到即回落默认值）。
     agent = create_agent(agent_db, "助手", team_name="T1", created_by="admin")
-    update_agent(agent_db, agent.id, {"config": {"top_k": 3, "threshold": 0.5}})
+    update_agent(agent_db, agent.id, {"config": {"embedding_top_k": 3, "vector_threshold": 0.5}})
     agent = agent_db.get(KbAgent, agent.id)
     overrides = resolve_agent_qa_overrides(agent)
     assert overrides["top_k"] == 3

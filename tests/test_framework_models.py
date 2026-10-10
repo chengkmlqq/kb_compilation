@@ -98,8 +98,25 @@ WEBSEARCH_TABLES = {
     "kb_websearch_provider",
 }
 
+# Orchestration domain (kb_tape / kb_tape_run / kb_tape_step / kb_step_define)
+# — migrated from data-synth algorithm/tapes onto the framework store.
+ORCHESTRATION_TABLES = {
+    "kb_tape",
+    "kb_tape_run",
+    "kb_tape_step",
+    "kb_step_define",
+}
+
 # Everything expected on the framework base.
-EXPECTED_TABLES = FRAMEWORK_TABLES | KNOWLEDGE_BUSINESS_TABLES | CHAT_TABLES | MODEL_TABLES | MCP_SKILL_TABLES | WEBSEARCH_TABLES
+EXPECTED_TABLES = (
+    FRAMEWORK_TABLES
+    | KNOWLEDGE_BUSINESS_TABLES
+    | CHAT_TABLES
+    | MODEL_TABLES
+    | MCP_SKILL_TABLES
+    | WEBSEARCH_TABLES
+    | ORCHESTRATION_TABLES
+)
 
 # Legacy business tables (data-synthesis domain) that MUST NOT be present
 # after extraction. Names are the REAL table names in the source DB — they
