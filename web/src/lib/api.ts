@@ -2953,21 +2953,38 @@ export interface TapeStepItem {
   next_step_ids: string[];
 }
 
-export interface TapeExecuteResult {
-  task_id: string;
+/** 执行提交结果（异步契约 2026-10-09）：接口立即返回 run_id，实际执行在 worker。 */
+export interface TapeExecuteAccepted {
+  success: boolean;
+  run_id: string;
+  tape_id: string;
+  status: string; // queued
+}
+
+/** 单步执行结果（写进 TapeRun.step_results） */
+export interface TapeStepResult {
+  step_id: string;
+  step_inst: string;
+  step_label: string;
+  queue?: string;
+  status: string; // success | failed | skipped
+  duration_ms?: number;
+  body?: unknown;
+  error?: string | null;
+}
+
+/** 执行记录详情（GET /orchestrations/runs/{run_id}） */
+export interface TapeRunDetail {
+  id: string;
   tape_id: string;
   tape_name: string;
-  success: boolean;
-  steps: {
-    step_id: string;
-    step_label: string;
-    step_inst: string;
-    status: string;
-    duration_ms: number;
-    body?: unknown;
-    error?: string | null;
-  }[];
-  bindings: Record<string, string>;
+  status: string; // queued | running | success | failed | cancelled
+  inputs?: Record<string, unknown>;
+  step_results: TapeStepResult[];
+  bindings?: Record<string, unknown>;
+  error?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export function apiListStepDefines(page = 1, pageSize = 20, keyword = "", groupType = "") {
@@ -3059,8 +3076,15 @@ export function apiOfflineTape(id: string) {
 }
 
 export function apiExecuteTape(id: string, inputs: Record<string, unknown> = {}) {
-  return request<TapeExecuteResult>(`/api/v1/orchestrations/${id}/execute`, {
+  return request<TapeExecuteAccepted & { success?: boolean }>(`/api/v1/orchestrations/${id}/execute`, {
     method: "POST",
     body: JSON.stringify({ inputs }),
+  });
+}
+
+/** 执行记录详情（异步执行 2026-10-09：execute 返回 run_id，前端轮询本接口拿逐步日志） */
+export function apiGetTapeRun(runId: string) {
+  return request<TapeRunDetail>(`/api/v1/orchestrations/runs/${runId}`, {
+    method: "GET",
   });
 }

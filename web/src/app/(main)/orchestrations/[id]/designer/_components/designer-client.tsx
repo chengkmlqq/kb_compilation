@@ -32,10 +32,11 @@ import {
   apiSaveTapeDesign,
   apiPublishTape,
   apiExecuteTape,
+  apiGetTapeRun,
   apiExportTapeDraft,
   apiImportTapeDraft,
 } from '@/lib/api';
-import type { StepDefineItem, TapeDetail, TapeExecuteResult } from '@/lib/api';
+import type { StepDefineItem, TapeDetail, TapeRunDetail } from '@/lib/api';
 
 import { LeftSidebar } from './left-sidebar';
 import { RightPanel } from './right-panel';
@@ -162,10 +163,12 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // 执行结果弹窗
+  // 执行结果弹窗（异步执行 2026-10-09：execute 返回 run_id，轮询 runs/{run_id} 拿逐步日志）
   const [execLoading, setExecLoading] = useState(false);
-  const [execResult, setExecResult] = useState<TapeExecuteResult | null>(null);
   const [execOpen, setExecOpen] = useState(false);
+  const [execRun, setExecRun] = useState<TapeRunDetail | null>(null);
+  const [polling, setPolling] = useState(false);
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 导入弹窗
   const [importOpen, setImportOpen] = useState(false);
@@ -379,7 +382,7 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
     }
   };
 
-  /** 执行：先静默保存，同步执行后弹窗展示逐步日志 */
+  /** 执行：先静默保存，再异步提交执行（API 返回 run_id），轮询逐步日志弹窗展示 */
   const handleExecute = async () => {
     if (!tape) return;
     setExecLoading(true);
@@ -390,9 +393,36 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
         return;
       }
       const res = await apiExecuteTape(tapeId, {});
-      if (res.success && res.data) {
-        setExecResult(res.data);
+      if (res.success && res.data?.run_id) {
+        const runId = res.data.run_id;
         setExecOpen(true);
+        setExecRun({
+          id: runId,
+          tape_id: tapeId,
+          tape_name: tape.tape_name,
+          status: 'queued',
+          step_results: [],
+          bindings: {},
+        });
+        setPolling(true);
+        // 轮询执行进度：queued/running → 逐步日志；终态（success/failed/cancelled）停止
+        pollTimer.current = setInterval(async () => {
+          try {
+            const r = await apiGetTapeRun(runId);
+            if (r.success && r.data) {
+              setExecRun(r.data);
+              if (['success', 'failed', 'cancelled'].includes(r.data.status)) {
+                if (pollTimer.current) {
+                  clearInterval(pollTimer.current);
+                  pollTimer.current = null;
+                }
+                setPolling(false);
+              }
+            }
+          } catch {
+            // 轮询失败不中断：下次 tick 重试，直至弹窗关闭
+          }
+        }, 1500);
       } else {
         message.error(res.message || '执行失败');
       }
@@ -400,6 +430,17 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
       setExecLoading(false);
     }
   };
+
+  // 卸载时清理轮询定时器
+  useEffect(
+    () => () => {
+      if (pollTimer.current) {
+        clearInterval(pollTimer.current);
+        pollTimer.current = null;
+      }
+    },
+    [],
+  );
 
   /** 导出：先静默保存当前草稿，再拉取导出 JSON 并触发浏览器下载 */
   const handleExport = async () => {
@@ -574,31 +615,53 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
         onConfigChange={handleConfigChange}
       />
 
-      {/* ============ 执行结果弹窗 ============ */}
+      {/* ============ 执行结果弹窗（异步执行：轮询 runs/{run_id} 展示逐步日志） ============ */}
       <Modal
-        title={`执行结果 · ${execResult?.tape_name || ''}`}
+        title={`执行结果 · ${execRun?.tape_name || ''}`}
         open={execOpen}
-        onCancel={() => setExecOpen(false)}
-        footer={<Button onClick={() => setExecOpen(false)}>关闭</Button>}
+        onCancel={() => {
+          if (pollTimer.current) {
+            clearInterval(pollTimer.current);
+            pollTimer.current = null;
+          }
+          setPolling(false);
+          setExecOpen(false);
+        }}
+        footer={<Button onClick={() => {
+          if (pollTimer.current) {
+            clearInterval(pollTimer.current);
+            pollTimer.current = null;
+          }
+          setPolling(false);
+          setExecOpen(false);
+        }}>关闭</Button>}
         width={680}
       >
-        {execResult && (
+        {execRun && (
           <div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
-              <Tag color={execResult.success ? 'green' : 'red'}>{execResult.success ? '全部成功' : '存在失败'}</Tag>
-              <Text type="secondary" style={{ fontSize: 12 }}>task_id: {execResult.task_id}</Text>
+              <Tag color={execRun.status === 'success' ? 'green' : execRun.status === 'failed' ? 'red' : 'blue'}>
+                {execRun.status === 'success' ? '成功' : execRun.status === 'failed' ? '失败' : execRun.status === 'cancelled' ? '已取消' : '执行中'}
+              </Tag>
+              <Text type="secondary" style={{ fontSize: 12 }}>run_id: {execRun.id}</Text>
+              {polling && <Text type="secondary" style={{ fontSize: 12 }}>（轮询中…）</Text>}
             </div>
+            {execRun.error && (
+              <pre style={{ margin: '0 0 8px', fontSize: 12, color: '#cf1322', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflow: 'auto' }}>
+                {execRun.error}
+              </pre>
+            )}
             <div style={{ maxHeight: 360, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>
-              {execResult.steps.map((s, i) => (
-                <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 0', borderBottom: '1px dashed #f5f5f5' }}>
-                  <Tag color={s.status === 'success' ? 'green' : 'red'} style={{ width: 62, textAlign: 'center', margin: 0, flexShrink: 0 }}>
-                    {s.status === 'success' ? '成功' : '失败'}
+              {(execRun.step_results || []).map((s, i) => (
+                <div key={s.step_id || i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 0', borderBottom: '1px dashed #f5f5f5' }}>
+                  <Tag color={s.status === 'success' ? 'green' : s.status === 'skipped' ? 'orange' : 'red'} style={{ width: 62, textAlign: 'center', margin: 0, flexShrink: 0 }}>
+                    {s.status === 'success' ? '成功' : s.status === 'skipped' ? '跳过' : '失败'}
                   </Tag>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <Text strong style={{ fontSize: 13 }}>
                       [{s.step_inst}] {s.step_label}
                     </Text>
-                    <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>{s.duration_ms}ms</Text>
+                    <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>{s.duration_ms ?? 0}ms</Text>
                     {s.error ? (
                       <pre style={{ margin: '4px 0 0', fontSize: 12, color: '#cf1322', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflow: 'auto' }}>
                         {s.error}
@@ -613,12 +676,15 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
                   </div>
                 </div>
               ))}
+              {(execRun.step_results || []).length === 0 && (
+                <Text type="secondary">尚无步骤日志{execRun.status === 'queued' ? '（排队中）' : '（执行中）'}…</Text>
+              )}
             </div>
-            {execResult.bindings && Object.keys(execResult.bindings).length > 0 && (
+            {execRun.bindings && Object.keys(execRun.bindings).length > 0 && (
               <div style={{ marginTop: 10 }}>
                 <Text strong style={{ fontSize: 12 }}>最终变量</Text>
                 <pre style={{ margin: '4px 0 0', fontSize: 12, background: '#fafafa', padding: 8, borderRadius: 6, maxHeight: 140, overflow: 'auto' }}>
-                  {JSON.stringify(execResult.bindings, null, 2)}
+                  {JSON.stringify(execRun.bindings, null, 2)}
                 </pre>
               </div>
             )}
