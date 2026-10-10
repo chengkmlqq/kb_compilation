@@ -113,6 +113,11 @@ METADATA_TABLES = {
     "kb_metadata_column",
 }
 
+# Doc-folder tables (doc_folder / kb_document.folder_id migration 0004) — framework store.
+DOC_FOLDER_TABLES = {
+    "doc_folder",
+}
+
 # Everything expected on the framework base.
 EXPECTED_TABLES = (
     FRAMEWORK_TABLES
@@ -123,6 +128,7 @@ EXPECTED_TABLES = (
     | WEBSEARCH_TABLES
     | ORCHESTRATION_TABLES
     | METADATA_TABLES
+    | DOC_FOLDER_TABLES
 )
 
 # Legacy business tables (data-synthesis domain) that MUST NOT be present
