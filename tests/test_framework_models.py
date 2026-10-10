@@ -107,6 +107,12 @@ ORCHESTRATION_TABLES = {
     "kb_step_define",
 }
 
+# Metadata-collection tables (kb_metadata_table / kb_metadata_column) — framework store.
+METADATA_TABLES = {
+    "kb_metadata_table",
+    "kb_metadata_column",
+}
+
 # Everything expected on the framework base.
 EXPECTED_TABLES = (
     FRAMEWORK_TABLES
@@ -116,6 +122,7 @@ EXPECTED_TABLES = (
     | MCP_SKILL_TABLES
     | WEBSEARCH_TABLES
     | ORCHESTRATION_TABLES
+    | METADATA_TABLES
 )
 
 # Legacy business tables (data-synthesis domain) that MUST NOT be present

@@ -38,10 +38,10 @@ class MetadataTable(Base):
     state: Mapped[str | None] = mapped_column(String(16), default="active")
 
     __table_args__ = (
-        Index("idx_metadata_datasource_id", "datasource_id"),
-        Index("idx_metadata_table_name", "table_name"),
+        Index("idx_kb_metadata_datasource_id", "datasource_id"),
+        Index("idx_kb_metadata_table_name", "table_name"),
         UniqueConstraint(
-            "datasource_id", "schema_name", "table_name", name="unique_metadata_table_key"
+            "datasource_id", "schema_name", "table_name", name="unique_kb_metadata_table_key"
         ),
     )
 
@@ -69,6 +69,6 @@ class MetadataColumn(Base):
     collection_time: Mapped[str] = mapped_column(String(32), nullable=False)
 
     __table_args__ = (
-        Index("idx_metadata_column_table_id", "metadata_table_id"),
-        Index("idx_metadata_column_name", "column_name"),
+        Index("idx_kb_metadata_column_table_id", "metadata_table_id"),
+        Index("idx_kb_metadata_column_name", "column_name"),
     )
