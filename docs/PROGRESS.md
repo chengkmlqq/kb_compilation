@@ -2,7 +2,17 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-03（改造）
+最后更新：2026-10-10（菜单重新划分）
+
+## 5. 当前状态（2026-10-10 菜单重新划分）
+
+- **菜单重新划分（方案B，commit c0abe93，已推送）**：
+  - 背景：页面梳理发现 ①数据与任务 8 项/系统管理 13 项分组失衡；②切片核对 /chunk-verify 挂在「数据与任务」但属知识域工具；③前端 FALLBACK_MENUS 与后端 seed KB_MENUS 结构漂移，且残留指向不存在页面的死链（/notification 通知管理、/system/retrieval 检索参数——仅存 API `/api/v1/system/retrieval-config`，无页面）；④FALLBACK_MENUS 缺 datagrid/orchestrations/orch_defines/ont_schemas/sys_dims/sys_metadata_collection 等新页面
+  - 调整（保持 4 顶级分组）：切片核对从 grp_data 移至 **grp_knowledge**（sort=3），数据与任务恢复 7 项；删除两条死链；FALLBACK_MENUS 与 seed KB_MENUS 完全对齐（均 29 项 = 4 分组 + 25 页面）
+  - 改动文件：`scripts/seed_framework_db.py`（KB_MENUS + 注释计数修正）、`web/src/app/(main)/_components/MenuContext.tsx`（FALLBACK_MENUS）
+  - 验证：重跑 seed（`docker cp` 新脚本进 kb-api-server 执行，因容器跑镜像代码）后 my-menus API 返回 29 项、结构正确；pytest **495 passed**；tsc 无新增错误（datagrid 的 @codemirror/lang-sql 缺失为已知基线红）
+  - 注意：`DocCardView.tsx`（Dropdown 冒泡修复）为工作区未提交改动，非本次任务，未纳入提交
+- **代码同步**：从 origin/main 拉取到 bd31f68（文档目录 doc_folder 迁移 + KbDocsPane 更新），推送时 rebase 了他人新提交 690e9cc（上传处理配置）
 
 ## 4. 当前状态（2026-10-03 wiki 构建迁入 worker 改造）
 
