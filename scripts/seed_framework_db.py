@@ -46,7 +46,7 @@ SEED_TEAM = os.getenv("KB_SEED_TEAM", "默认团队")
 # 可用环境变量 KB_SEED_ROLE 覆盖。
 SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 
-# KB 菜单树（4 顶级分组 + 21 页面 = 25 项；sort_num 决定同级顺序）
+# KB 菜单树（4 顶级分组 + 25 页面 = 29 项；sort_num 决定同级顺序）
 # (menu_id, menu_name, menu_label, route, parent_id, menu_icon, sort_num)
 # menu_id 用固定值（workers/mcps/skills/cron 用生产环境已验证的 UUID），
 # 保证多次初始化幂等、且与已部署环境完全一致。
@@ -57,11 +57,15 @@ SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 # 结构：Header 顶级(nav)= 知识管理/智能应用/数据与任务/系统管理 → Sider 分组 → 页面。
 #   - route 留空 = 纯目录分组（只展开不跳转，对齐 ds 的 dir 节点）
 #   - route 有值且带子级 = 分组兼页面（点击自身跳该路由，对齐 ds「系统管理 /system/users」模式）
+#
+# 2026-10-10 调整（方案B）：切片核对 /chunk-verify 从「数据与任务」挪入「知识管理」
+# （文档切片质量核对属知识域工具），数据与任务恢复为 7 项。
 KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     # ---- 知识管理（纯目录，顶级） ----
     ("grp_knowledge", "grp_knowledge", "知识管理", None, None, "FolderOutlined", 1),
     ("kbs", "kbs", "知识库管理", "/kbs", "grp_knowledge", "AppstoreOutlined", 1),
     ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_knowledge", "FileOutlined", 2),
+    ("chunk_verify", "chunk_verify", "切片核对", "/chunk-verify", "grp_knowledge", "SafetyOutlined", 3),
     # ---- 智能应用（纯目录，顶级） ----
     ("grp_ai", "grp_ai", "智能应用", None, None, "FolderOutlined", 2),
     ("chat", "chat", "智能问答", "/chat", "grp_ai", "CommentOutlined", 1),
@@ -76,7 +80,6 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_data", "TableOutlined", 5),
     ("orch_tapes", "orch_tapes", "编排管理", "/orchestrations", "grp_data", "ApartmentOutlined", 6),
     ("orch_defines", "orch_defines", "编排组件", "/orchestrations/steps", "grp_data", "BlockOutlined", 7),
-    ("chunk_verify", "chunk_verify", "切片核对", "/chunk-verify", "grp_data", "SafetyOutlined", 8),
     # ---- 系统管理（分组兼页面，顶级：点击自身跳 /system → 重定向到默认子页 /system/users）。
     # 用户/角色/团队/菜单/日志均为独立页面路由（对齐 ds system/* 独立页面，无顶部 Tab 聚合页）。
     ("system", "system", "系统管理", "/system", None, "SettingOutlined", 4),
