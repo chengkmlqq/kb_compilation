@@ -21,7 +21,9 @@ import {
   EditOutlined,
   MessageOutlined,
   MoreOutlined,
+  PlayCircleOutlined,
   RobotOutlined,
+  StopOutlined,
 } from "@ant-design/icons";
 import {
   apiCopyAgent,
@@ -174,8 +176,8 @@ export default function AgentsPage() {
       { key: "copy", label: "复制", icon: <CopyOutlined /> },
       { type: "divider" as const },
       disabled
-        ? { key: "enable", label: "启用" }
-        : { key: "disable", label: "停用" },
+        ? { key: "enable", label: "启用", icon: <PlayCircleOutlined /> }
+        : { key: "disable", label: "停用", icon: <StopOutlined /> },
       { type: "divider" as const },
       { key: "delete", label: "删除", danger: true, icon: <DeleteOutlined /> },
     ];
