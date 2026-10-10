@@ -132,6 +132,13 @@ class KbDocument(Base):
     summary_error: Mapped[str | None] = mapped_column(Text)
     # 文档目录（doc_folder.id，"" = KB 根层级）。单归属：一个文档只能在一个目录。
     folder_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    # 知识源类型：file=文件（默认，现状）/ table=数据源维度表（表→wiki，2026-10-10）
+    source_type: Mapped[str] = mapped_column(String(16), default="file", index=True)
+    # table 源专属：数据源分类名（dsName）/ 表所在 schema / 表名 / 采集快照行数
+    ds_source_name: Mapped[str | None] = mapped_column(String(64))
+    ds_table_schema: Mapped[str | None] = mapped_column(String(128))
+    ds_table_name: Mapped[str | None] = mapped_column(String(256))
+    row_count: Mapped[int | None] = mapped_column(BigInteger)
 
     created_by: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime | None] = mapped_column(

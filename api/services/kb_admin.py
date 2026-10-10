@@ -535,6 +535,11 @@ def list_documents(
             "summary_status": d.summary_status,
             "summary_error": d.summary_error,
             "folder_id": d.folder_id or "",
+            "source_type": d.source_type or "file",
+            "ds_source_name": d.ds_source_name,
+            "ds_table_schema": d.ds_table_schema,
+            "ds_table_name": d.ds_table_name,
+            "row_count": d.row_count,
             "created_at": d.created_at.isoformat() if d.created_at else None,
         }
         for d in rows
@@ -564,6 +569,11 @@ def create_document(
         storage_path=storage_path,
         sys_file_id=sys_file_id,
         process_config=process_config,
+        source_type=source_type,
+        ds_source_name=ds_source_name,
+        ds_table_schema=ds_table_schema,
+        ds_table_name=ds_table_name,
+        row_count=row_count,
         parse_state="PENDING",
         chunk_count=0,
         created_by=created_by,

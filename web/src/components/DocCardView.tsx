@@ -18,6 +18,7 @@ import {
   FileWordOutlined,
   MoreOutlined,
   RedoOutlined,
+  TableOutlined,
 } from "@ant-design/icons";
 import type { DocItem } from "@/lib/api";
 
@@ -96,6 +97,23 @@ interface Props {
   onTrace: (doc: DocItem) => void;
 }
 
+/** 表源判定（2026-10-10 表→wiki）：source_type === "table" */
+export function isTableDoc(d: DocItem): boolean {
+  return (d.source_type || "file") === "table";
+}
+
+/** 表卡片图标（区别于文件类型图标） */
+function tableIcon() {
+  return <TableOutlined style={{ color: "#1677ff" }} />;
+}
+
+/** 行数友好显示（1.2万 / 3,400） */
+function formatRows(n?: number | null): string {
+  if (n == null) return "—";
+  if (n >= 10000) return `${(n / 10000).toFixed(1)} 万行`;
+  return `${n} 行`;
+}
+
 export default function DocCardView({ items, onOpen, onDownload, onReparse, onDelete, onTrace }: Props) {
   if (items.length === 0) {
     return <Empty description="暂无文档，拖拽文件到右上角上传" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
@@ -135,11 +153,25 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
     <div style={{ maxWidth: 300 }}>
       <Typography.Text strong>{d.file_name}</Typography.Text>
       <div style={{ marginTop: 4, color: "#666", fontSize: 12 }}>
-        <div>类型：{d.file_ext?.toUpperCase() || "—"}</div>
-        <div>大小：{formatSize(d.file_size)}</div>
-        <div>分块：{d.chunk_count != null ? `${d.chunk_count} 个` : "—"}</div>
-        <div>状态：{STATE_LABEL[d.parse_state] || d.parse_state}</div>
-        <div>上传时间：{formatTime(d.created_at)}</div>
+        {isTableDoc(d) ? (
+          <>
+            <div>类型：数据源表</div>
+            <div>数据源：{d.ds_source_name || "—"}</div>
+            <div>库：{d.ds_table_schema || "—"}</div>
+            <div>数据量：{formatRows(d.row_count)}</div>
+            <div>分块：{d.chunk_count != null ? `${d.chunk_count} 个` : "—"}</div>
+            <div>状态：{STATE_LABEL[d.parse_state] || d.parse_state}</div>
+            <div>绑定时间：{formatTime(d.created_at)}</div>
+          </>
+        ) : (
+          <>
+            <div>类型：{d.file_ext?.toUpperCase() || "—"}</div>
+            <div>大小：{formatSize(d.file_size)}</div>
+            <div>分块：{d.chunk_count != null ? `${d.chunk_count} 个` : "—"}</div>
+            <div>状态：{STATE_LABEL[d.parse_state] || d.parse_state}</div>
+            <div>上传时间：{formatTime(d.created_at)}</div>
+          </>
+        )}
         {d.summary ? <div>摘要：{d.summary.slice(0, 160)}</div> : null}
         {d.parse_state === "FAILED" && d.parse_error ? (
           <div style={{ color: "#cf1322" }}>错误：{d.parse_error.slice(0, 120)}</div>
@@ -159,7 +191,7 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
             style={{ cursor: "pointer" }}
             title={
               <Space>
-                <span style={{ fontSize: 18 }}>{fileTypeIcon(d.file_ext)}</span>
+                <span style={{ fontSize: 18 }}>{isTableDoc(d) ? tableIcon() : fileTypeIcon(d.file_ext)}</span>
                 <Typography.Text
                   ellipsis={{ tooltip: d.file_name }}
                   style={{ maxWidth: 150, fontWeight: 600 }}
@@ -195,10 +227,19 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
               </div>
             ) : null}
             <div style={{ marginTop: 6, color: "#8c8c8c", fontSize: 12, lineHeight: "20px" }}>
-              <div>
-                {d.chunk_count != null ? `${d.chunk_count} 个分块` : "—"} · {formatSize(d.file_size)}
-              </div>
-              <div>{formatTime(d.created_at)}</div>
+              {isTableDoc(d) ? (
+                <>
+                  <div>数据量：{formatRows(d.row_count)}</div>
+                  <div>{d.ds_source_name || "—"} · {formatTime(d.created_at)}</div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    {d.chunk_count != null ? `${d.chunk_count} 个分块` : "—"} · {formatSize(d.file_size)}
+                  </div>
+                  <div>{formatTime(d.created_at)}</div>
+                </>
+              )}
             </div>
           </Card>
         </Popover>

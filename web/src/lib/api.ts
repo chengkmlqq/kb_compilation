@@ -248,6 +248,12 @@ export interface DocItem {
   wiki_build?: { state: string; duration_ms: number | null; job_id: string } | null;
   /** 文档目录（doc_folder.id，"" = KB 根层级） */
   folder_id?: string;
+  /** 知识源类型：file=文件 / table=数据源维度表（表→wiki） */
+  source_type?: string;
+  ds_source_name?: string | null;
+  ds_table_schema?: string | null;
+  ds_table_name?: string | null;
+  row_count?: number | null;
 }
 
 export interface DocFolderItem {
@@ -992,6 +998,7 @@ export interface DatagridDsItem {
   dsLabel?: string;
   dsType?: string;
   dsId?: string;
+  dsCategory?: string;
   schema?: string;
 }
 
@@ -3348,5 +3355,38 @@ export function apiImportMetadataCollection(datasourceId: string, file: File) {
   return requestUpload<{ job_id: string; targetCount: number }>(
     `/api/v1/metadata/import/${datasourceId}`,
     form,
+  );
+}
+
+// ---- 表 → wiki（2026-10-10：知识库支持数据源维度表作为知识源） ----
+
+export interface TableCandidateItem {
+  id: string;
+  ds_name: string;
+  schema: string | null;
+  table_name: string;
+  table_comment?: string | null;
+  row_count?: number | null;
+  table_type?: string | null;
+}
+
+export function apiListTableCandidates(kbId: string, dsName?: string, keyword?: string) {
+  const params = new URLSearchParams();
+  if (dsName) params.set("ds_name", dsName);
+  if (keyword) params.set("keyword", keyword);
+  const qs = params.toString();
+  return request<TableCandidateItem[]>(`/api/v1/kbs/${kbId}/tables/candidates${qs ? `?${qs}` : ""}`);
+}
+
+export function apiAddKbTable(
+  kbId: string,
+  payload: { ds_name: string; schema?: string | null; table_name: string; sample_size?: number },
+) {
+  return request<DocItem>(`/api/v1/kbs/${kbId}/tables`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function apiGetTableSample(kbId: string, docId: string, limit = 50) {
+  return request<{ columns: string[]; rows: Record<string, unknown>[]; total: number }>(
+    `/api/v1/kbs/${kbId}/documents/${docId}/sample?limit=${limit}`,
   );
 }

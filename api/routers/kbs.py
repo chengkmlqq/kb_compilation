@@ -1383,6 +1383,175 @@ def reparse_document(
     return {"success": True, "data": {"id": document_id, "parse_state": "PENDING"}}
 
 
+class AddTableRequest(BaseModel):
+    """绑定一张数据源维度表到知识库（表→wiki，2026-10-10）。"""
+    ds_name: str
+    schema: str | None = None
+    table_name: str
+    sample_size: int | None = None  # 默认 500
+
+
+@router.get("/{kb_id}/tables/candidates")
+def list_table_candidates(
+    kb_id: str,
+    ds_name: str = Query(default="", max_length=64),
+    keyword: str = Query(default="", max_length=128),
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """可绑定表清单（元数据采集已入库的 kb_metadata_table，按 ds_name/关键字过滤）。"""
+    _kb_visible(kb_id, caller, db)
+    from api.models.metadata import MetadataTable
+    from sqlalchemy import select
+
+    q = select(MetadataTable).where(MetadataTable.state == "active")
+    if ds_name:
+        q = q.where(MetadataTable.datasource_id == ds_name)
+    if keyword:
+        q = q.where(MetadataTable.table_name.like(f"%{keyword}%"))
+    rows = db.execute(q.order_by(MetadataTable.table_name).limit(500)).scalars().all()
+    return {
+        "success": True,
+        "data": [
+            {
+                "id": r.id,
+                "ds_name": r.datasource_id,
+                "schema": r.schema_name,
+                "table_name": r.table_name,
+                "table_comment": r.table_comment,
+                "row_count": r.row_count,
+                "table_type": r.table_type,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.post("/{kb_id}/tables")
+def add_table_document(
+    kb_id: str,
+    body: AddTableRequest,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """绑定一张表到知识库：建 KbDocument(source_type=table) + 入队 KbTableIngestTask。
+
+    表可绑定到多个知识库（用户拍板 D7：允许重复绑定），每次绑定各建一行，
+    互不影响；文档名 = 表名（可含 schema 前缀避免歧义）。
+    """
+    _kb_manage(kb_id, caller, db)
+    from api.services.kb_admin import create_document
+
+    if not body.ds_name or not body.table_name:
+        raise HTTPException(status_code=400, detail="ds_name 与 table_name 必填")
+
+    fname = body.table_name
+    if body.schema:
+        fname = f"{body.schema}.{body.table_name}"
+    doc = create_document(
+        db,
+        kb_id=kb_id,
+        file_name=fname,
+        file_ext="table",
+        file_size=None,
+        source_type="table",
+        ds_source_name=body.ds_name,
+        ds_table_schema=body.schema or "",
+        ds_table_name=body.table_name,
+        row_count=None,
+    )
+    db.commit()
+
+    # 入队表摄取任务（job_id = TABLE_{document_id}，幂等）
+    from worker.celery_app import celery_app
+
+    job_id = f"TABLE_{doc.id}"
+    task_params = json.dumps(
+        {"kbId": kb_id, "documentId": doc.id, "sampleSize": body.sample_size or 500},
+        ensure_ascii=False,
+    )
+    from api.db import get_sessionmaker
+    from api.models.framework import Job
+
+    fw = get_sessionmaker()()
+    try:
+        existing = fw.get(Job, job_id)
+        if existing is None:
+            fw.add(
+                Job(
+                    id=job_id,
+                    task_id=doc.id,
+                    task_class="KbTableIngestTask",
+                    queue_name="default",
+                    task_params=task_params,
+                    trigger_type="API",
+                    state="PENDING",
+                )
+            )
+        else:
+            existing.task_id = doc.id
+            existing.task_class = "KbTableIngestTask"
+            existing.queue_name = "default"
+            existing.task_params = task_params
+            existing.trigger_type = "API"
+            existing.state = "PENDING"
+            existing.start_time = None
+            existing.end_time = None
+            existing.duration_ms = None
+            existing.error_message = None
+        fw.commit()
+    finally:
+        fw.close()
+    try:
+        celery_app.send_task(
+            "worker.tasks.scheduler.execute_modo_job",
+            args=[job_id],
+            task_id=job_id,
+            queue="default",
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("failed to enqueue table ingest; document kept as PENDING")
+
+    return {
+        "success": True,
+        "data": {
+            "id": doc.id,
+            "file_name": doc.file_name,
+            "source_type": "table",
+            "parse_state": doc.parse_state,
+        },
+    }
+
+
+@router.get("/{kb_id}/documents/{document_id}/sample")
+def get_table_sample(
+    kb_id: str,
+    document_id: str,
+    limit: int = Query(default=50, ge=1, le=500),
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """实时连库读表样例数据（表卡片/详情抽屉「预览」视图用，不落库）。"""
+    _kb_visible(kb_id, caller, db)
+    from api.models.knowledge import KbDocument
+    from sqlalchemy import select
+
+    doc = db.execute(
+        select(KbDocument).where(KbDocument.id == document_id, KbDocument.kb_id == kb_id)
+    ).scalars().first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if (doc.source_type or "file") != "table":
+        raise HTTPException(status_code=400, detail="非表源文档")
+    from worker.tasks.table_ingest import _load_table_rows
+
+    try:
+        rows, columns = _load_table_rows(db, doc, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"取数失败: {exc}") from exc
+    return {"success": True, "data": {"columns": columns, "rows": rows, "total": len(rows)}}
+
+
 @router.post("/{kb_id}/documents/{document_id}/summary")
 def generate_doc_summary(
     kb_id: str,

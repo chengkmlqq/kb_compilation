@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   App,
   Button,
+  Dropdown,
   Empty,
   Input,
   Modal,
@@ -26,6 +27,7 @@ import {
   AppstoreOutlined,
   CloudUploadOutlined,
   DeleteOutlined,
+  DownOutlined,
   DownloadOutlined,
   EditOutlined,
   FolderAddOutlined,
@@ -35,6 +37,7 @@ import {
   ReloadOutlined,
   SearchOutlined,
   SettingOutlined,
+  TableOutlined,
   UnorderedListOutlined,
 } from "@ant-design/icons";
 import DocCardView, {
@@ -46,6 +49,7 @@ import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
 import DocDetailDrawer from "@/components/DocDetailDrawer";
 import UploadConfirmDialog, { UploadProcessConfig } from "@/components/UploadConfirmDialog";
+import SelectTableDialog from "@/components/SelectTableDialog";
 import DocBuildProcessDrawer from "@/components/DocBuildProcessDrawer";
 import KBConfigModal from "@/components/KBConfigModal";
 import {
@@ -117,6 +121,8 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   // 上传确认弹窗（对齐 WeKnora：选文件 → 弹确认框可选处理配置 → 确认后上传）
   const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
   const [uploadConfirmOpen, setUploadConfirmOpen] = useState(false);
+  // 添加表弹窗（表→wiki：从数据源选维度表绑定到知识库）
+  const [selectTableOpen, setSelectTableOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [buildDoc, setBuildDoc] = useState<DocItem | null>(null);
 
@@ -643,13 +649,29 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             <Button icon={<SettingOutlined />} onClick={() => setConfigOpen(true)}>
               知识库配置
             </Button>
-            <Button
-              type="primary"
-              icon={<CloudUploadOutlined />}
-              onClick={() => fileInputRef.current?.click()}
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: "upload",
+                    icon: <CloudUploadOutlined />,
+                    label: "上传文件",
+                    onClick: () => fileInputRef.current?.click(),
+                  },
+                  {
+                    key: "table",
+                    icon: <TableOutlined />,
+                    label: "添加表",
+                    onClick: () => setSelectTableOpen(true),
+                  },
+                ],
+              }}
             >
-              上传文档
-            </Button>
+              <Button type="primary" icon={<CloudUploadOutlined />}>
+                添加知识
+                <DownOutlined style={{ fontSize: 10, marginLeft: 2 }} />
+              </Button>
+            </Dropdown>
             {/* 隐藏的文件选择触发器（本地上传） */}
             <input
               ref={fileInputRef}
@@ -900,6 +922,18 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
           for (const f of filesToUpload) {
             startDocUpload(f, undefined, docFolderId, processConfig);
           }
+        }}
+      />
+
+      {/* 添加表弹窗（表→wiki：选数据源维度表绑定） */}
+      <SelectTableDialog
+        open={selectTableOpen}
+        kbId={kbId}
+        onCancel={() => setSelectTableOpen(false)}
+        onBound={() => {
+          setSelectTableOpen(false);
+          setDocPage(1);
+          void load();
         }}
       />
 
