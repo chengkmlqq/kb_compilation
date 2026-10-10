@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { App, Button, Descriptions, Drawer, Empty, List, Pagination, Space, Spin, Tag, Typography } from "antd";
 import { DeleteOutlined, DownloadOutlined, EyeOutlined, RedoOutlined, RobotOutlined } from "@ant-design/icons";
 import { apiGenerateDocSummary, apiGetDocumentChunks, DocChunkItem, DocItem } from "@/lib/api";
-import { PARSE_STATE_COLOR, STATE_LABEL, fileTypeIcon, formatSize } from "./DocCardView";
+import { PARSE_STATE_COLOR, STATE_LABEL, fileTypeIcon, formatSize, formatTime } from "./DocCardView";
 import DocPreviewModal from "./DocPreviewModal";
 import ProcessingTimeline from "./ProcessingTimeline";
 
@@ -119,7 +119,7 @@ export default function DocDetailDrawer({ kbId, doc, hasSummaryModel, onClose, o
             <Descriptions.Item label="状态">
               <Tag color={PARSE_STATE_COLOR[doc.parse_state] || "default"}>{STATE_LABEL[doc.parse_state] || doc.parse_state}</Tag>
             </Descriptions.Item>
-            <Descriptions.Item label="上传时间">{doc.created_at || "—"}</Descriptions.Item>
+            <Descriptions.Item label="上传时间">{formatTime(doc.created_at)}</Descriptions.Item>
             {doc.parse_state === "FAILED" && doc.parse_error ? (
               <Descriptions.Item label="解析错误" span={2}>
                 <span style={{ color: "#cf1322" }}>{doc.parse_error}</span>

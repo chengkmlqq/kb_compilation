@@ -78,12 +78,13 @@ export function formatSize(bytes?: number | null): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
-function formatTime(iso?: string | null): string {
+export function formatTime(iso?: string | null): string {
   if (!iso) return "--";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "--";
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  // 2026-10-10: 横杠格式 YYYY-MM-DD HH:mm:ss（对齐任务监控页；放弃 toLocaleString 的斜杠输出）
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 interface Props {
