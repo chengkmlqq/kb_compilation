@@ -71,8 +71,10 @@ try:
         chunk_verify,
         doc_process,
         log_cleanup,
+        metadata_collect,
         orch_runner,
         orphan_recovery,
+        table_ingest,
         wiki_build,
         wiki_graph,
     )
