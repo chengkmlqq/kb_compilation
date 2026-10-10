@@ -46,6 +46,10 @@ export function GlobalWatermark({ children }: { children: React.ReactNode }) {
       font={{ color: "rgba(36, 46, 67, 0.06)", fontSize: 16 }}
       rotate={-22}
       gap={[120, 120]}
+      // antd Watermark 外层 wrapper 无高度（仅 position/overflow），
+      // 不补 height 会打断 Layout→Content→page 的 h-full 高度链，
+      // 导致 datagrid 等工作区高度塌陷为 0（页面只剩状态栏一行字）。
+      style={{ height: "100%" }}
     >
       <div style={{ height: "100%" }}>{children}</div>
     </Watermark>

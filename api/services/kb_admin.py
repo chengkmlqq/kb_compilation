@@ -558,7 +558,11 @@ def create_document(
     created_by: str | None = None,
     folder_id: str = "",
     process_config: str | None = None,
-
+    source_type: str = "file",
+    ds_source_name: str | None = None,
+    ds_table_schema: str | None = None,
+    ds_table_name: str | None = None,
+    row_count: int | None = None,
 ) -> KbDocument:
     doc = KbDocument(
         id=_uuid(),
