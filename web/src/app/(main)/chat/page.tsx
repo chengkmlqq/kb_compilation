@@ -30,11 +30,9 @@ import {
   DeleteOutlined,
   EditOutlined,
   FileTextOutlined,
-  MessageOutlined,
   PaperClipOutlined,
   PictureOutlined,
   PlusOutlined,
-  PushpinOutlined,
   ReloadOutlined,
   RobotOutlined,
   SearchOutlined,
@@ -448,15 +446,6 @@ export default function ChatPage() {
       scrollBottom();
     } else {
       toast.error(res.message || "创建会话失败");
-    }
-  };
-
-  // 选择知识库时：若新会话则更新推荐问题
-  const onKbChange = async (id: string) => {
-    setKbId(id);
-    if (!activeSession || msgs.length === 0) {
-      const rec = await apiRecommendQuestions(id);
-      if (rec.success) setRecommendations(rec.data?.questions || []);
     }
   };
 
@@ -912,11 +901,6 @@ export default function ChatPage() {
     }
   };
 
-  const togglePin = async (s: ChatSessionItem) => {
-    await apiUpdateSession(s.id, { pinned: !s.pinned });
-    await loadSessions();
-  };
-
   const renameSession = async () => {
     if (!renameTarget || !renameValue.trim()) return;
     await apiUpdateSession(renameTarget.id, { title: renameValue.trim() });
@@ -956,9 +940,6 @@ export default function ChatPage() {
     }
     return labels;
   }, [filteredSessions]);
-
-  // 2026-10-07 对齐 WeKnora：当前会话流式生成中 → 侧栏指示
-  const activeStreaming = msgs.some((m) => m.streaming && m.role === "assistant");
 
   // 2026-10-07 对齐 WeKnora：@提及多资源（消息级目标覆盖：知识库 / 智能体）
   const [atTarget, setAtTarget] = useState<{ kind: "kb" | "agent"; id: string; name: string } | null>(null);
@@ -1042,20 +1023,6 @@ export default function ChatPage() {
                       }}
                       onClick={() => void openSession(s.id)}
                       actions={[
-                        activeSession === s.id && activeStreaming ? (
-                          <Tag key="streaming" color="processing" style={{ fontSize: 11 }}>
-                            生成中…
-                          </Tag>
-                        ) : null,
-                        <Tooltip key="pin" title={s.pinned ? "取消置顶" : "置顶"}>
-                          <PushpinOutlined
-                            style={{ color: s.pinned ? token.colorPrimary : token.colorTextTertiary }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void togglePin(s);
-                            }}
-                          />
-                        </Tooltip>,
                         <Tooltip key="rename" title="重命名">
                           <EditOutlined
                             style={{ color: token.colorTextTertiary }}
@@ -1079,7 +1046,6 @@ export default function ChatPage() {
                       ].filter(Boolean)}
                     >
                       <List.Item.Meta
-                        avatar={s.pinned ? <PushpinOutlined style={{ color: token.colorPrimary }} /> : <MessageOutlined />}
                         title={<Text ellipsis style={{ maxWidth: 140 }}>{s.title}</Text>}
                         description={<Text type="secondary" style={{ fontSize: 12 }}>{s.updated_at.slice(5, 16).replace("T", " ")}</Text>}
                       />
@@ -1115,40 +1081,6 @@ export default function ChatPage() {
       >
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${token.colorSplit}`, display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
           <Text strong>智能问答（RAG）</Text>
-          <Select
-            style={{ width: 180 }}
-            placeholder="Agent 模式"
-            value={agentMode}
-            allowClear
-            onChange={(v) => {
-              setAgentMode(v || undefined);
-              if (v) {
-                setActiveSession(undefined);
-                setMsgs([]);
-                setRecommendations([]);
-                setAttachments([]);
-              }
-            }}
-            options={agents.map((a) => ({
-              value: a.id,
-              label: (
-                <Space size={4}>
-                  <RobotOutlined />
-                  {a.name}
-                </Space>
-              ),
-            }))}
-          />
-          <Select
-            style={{ width: 240 }}
-            placeholder="选择知识库"
-            value={kbId}
-            onChange={(v) => void onKbChange(v)}
-            options={kbs.map((k) => ({ value: k.id, label: k.name }))}
-          />
-          <Button icon={<SearchOutlined />} onClick={() => setSearchOpen(true)}>
-            搜消息
-          </Button>
           {streaming && (
             <Button size="small" danger icon={<StopOutlined />} onClick={stopGenerating}>
               停止

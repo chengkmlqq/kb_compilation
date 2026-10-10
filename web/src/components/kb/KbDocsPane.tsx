@@ -4,7 +4,7 @@
  * 知识库 · 文档面板（KbDocsPane）
  *
  * 从 kbs/[id]/page.tsx 抽出，供「动态选项卡」与详情路由复用：
- * KB 概览 + 文档工具条（筛选/上传/切片配置/知识库配置/切片核对）+ 文档卡片视图/表格 + 分页。
+ * KB 概览 + 文档工具条（筛选/上传/知识库配置(含切片配置)/切片核对）+ 文档卡片视图/表格 + 分页。
  * 仅依赖 kbId prop，自包含（自带文档列表与上传相关 state、Drawer、Modal）。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -38,7 +38,6 @@ import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
 import DocDetailDrawer from "@/components/DocDetailDrawer";
 import DocBuildProcessDrawer from "@/components/DocBuildProcessDrawer";
-import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 import KBConfigModal from "@/components/KBConfigModal";
 import {
   apiDeleteDocument,
@@ -102,7 +101,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   };
 
   const [detailDoc, setDetailDoc] = useState<DocItem | null>(null);
-  const [chunkingOpen, setChunkingOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [buildDoc, setBuildDoc] = useState<DocItem | null>(null);
 
@@ -388,9 +386,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             <Button icon={<ReloadOutlined />} onClick={() => void load()}>
               刷新
             </Button>
-            <Button icon={<SlidersOutlined />} onClick={() => setChunkingOpen(true)}>
-              切片配置
-            </Button>
             <Button icon={<SettingOutlined />} onClick={() => setConfigOpen(true)}>
               知识库配置
             </Button>
@@ -655,13 +650,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
         }}
       />
 
-      <ChunkingConfigModal
-        open={chunkingOpen}
-        kbId={kbId}
-        onClose={() => setChunkingOpen(false)}
-      />
-
-      {/* 知识库配置（WeKnora 对齐：索引开关/类型/技能绑定/模型绑定/图谱/FAQ） */}
+      {/* 知识库配置（WeKnora 对齐：索引开关/类型/技能绑定/模型绑定/图谱/FAQ + 切片配置） */}
       <KBConfigModal
         kb={kb}
         open={configOpen}

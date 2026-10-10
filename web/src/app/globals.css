@@ -1367,6 +1367,21 @@ body {
   margin-top: 2px;
 }
 
+/* ── 知识库列表卡片视图 ──
+   列表面板本身是白底，而全局 .ant-card 去掉了边框、只剩一层 10% 软阴影，
+   白卡叠白底 → 卡片边界完全不可辨。这里给列表卡片补可见描边 + 投影，
+   hover 时加深，明确卡片边界（只命中 .kb-list-card，不影响面板级卡片）。 */
+.kb-list-card.ant-card {
+  border: 1px solid var(--color-gray-3, #e3e9ef) !important;
+  box-shadow: 0 1px 3px rgba(36, 46, 67, 0.08) !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.kb-list-card.ant-card:hover {
+  border-color: #bfcddd !important;
+  box-shadow: 0 6px 16px rgba(36, 46, 67, 0.14) !important;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    知识库文档（文件）列表 —— 像素级对齐 WeKnora KnowledgeBase.vue
    documents 页签（.doc-card-area / .doc-filter-bar / .doc-view-toggle /

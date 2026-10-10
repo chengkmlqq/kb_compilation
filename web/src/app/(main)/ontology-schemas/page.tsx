@@ -317,7 +317,16 @@ export default function OntologySchemasPage() {
     <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" } }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
       >
             {current && (
               <Descriptions style={{ marginBottom: 16, flexShrink: 0 }} size="small" column={4} bordered>
@@ -452,7 +461,12 @@ export default function OntologySchemasPage() {
 
   return (
       // 一屏自适应（对齐 data-synth）：外层不滚动，卡片内表格占满剩余高度，分页常驻底栏
-      <div style={{ padding: 8, height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      // 高度用 calc(100vh - 45px) 而非 100%：外层包裹（GlobalWatermark/antd Watermark）高度为 auto，
+      // 百分比高度无法解析，flex 链会塌陷成内容高度导致底部留白。
+      <div
+        className="ontology-schemas-page"
+        style={{ padding: 8, height: "calc(100vh - 45px)", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+      >
       <ModoTabs
         type="editable-card"
         hideAdd

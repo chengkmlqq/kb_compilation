@@ -47,7 +47,6 @@ import {
 } from "@/lib/api";
 import ModoPagination from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
-import ChunkingConfigModal from "@/components/ChunkingConfigModal";
 import KBConfigModal from "@/components/KBConfigModal";
 import KbDocsPane from "@/components/kb/KbDocsPane";
 import KbWikiPane from "@/components/kb/KbWikiPane";
@@ -76,7 +75,6 @@ export default function KbsPage() {
   const [kbs, setKbs] = useState<KbItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [chunkingKbId, setChunkingKbId] = useState<string | null>(null);
   const [skills, setSkills] = useState<{ name: string; description?: string }[]>([]);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [vectorStores, setVectorStores] = useState<DatasourceItem[]>([]);
@@ -372,6 +370,7 @@ export default function KbsPage() {
                 return (
                   <Col key={kb.id} xs={24} sm={12} lg={8} xl={6}>
                     <Card
+                      className="kb-list-card"
                       size="small"
                       hoverable
                       style={{ height: "100%" }}
@@ -399,7 +398,6 @@ export default function KbsPage() {
                               { key: "wiki", label: "Wiki" },
                               { key: "graph", label: "知识图谱" },
                               { key: "config", label: "知识库配置" },
-                              { key: "chunking", label: "切片配置" },
                               { type: "divider" },
                               { key: "delete", label: "删除", danger: true },
                             ],
@@ -409,7 +407,6 @@ export default function KbsPage() {
                               else if (key === "wiki") openKbSection(kb, "wiki");
                               else if (key === "graph") openKbSection(kb, "graph");
                               else if (key === "config") setConfigKb(kb);
-                              else if (key === "chunking") setChunkingKbId(kb.id);
                               else if (key === "delete") onDelete(kb);
                             },
                           }}
@@ -589,11 +586,6 @@ export default function KbsPage() {
           </Form>
         </Drawer>
 
-        <ChunkingConfigModal
-          open={chunkingKbId !== null}
-          kbId={chunkingKbId ?? ""}
-          onClose={() => setChunkingKbId(null)}
-        />
         <KBConfigModal
           kb={configKb}
           open={configKb !== null}
