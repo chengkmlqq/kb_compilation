@@ -380,11 +380,6 @@ export default function OntologySchemasPage() {
                     setPageSize(ps);
                   }}
                 />
-                <div style={{ color: "#999", fontSize: 12, flexShrink: 0, marginTop: 4 }}>
-                  提示：每个领域一套 Schema（业务本体 + 规则本体双维度）。分类的 LLM 提示词段决定抽取识别要点；
-                  规则类的 Neo4j 边类型决定图谱关系动词。构建技能运行时按知识库绑定动态读取。
-                  {isRule ? "" : ""}
-                </div>
 
       <Modal
         title={editing ? `编辑分类（${DIM_LABEL[editing.dimension]}）` : `新增分类（${DIM_LABEL[dimTab]}）`}
