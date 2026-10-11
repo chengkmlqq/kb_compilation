@@ -318,36 +318,36 @@ def process_table_ingest(job_id: str, task_params: dict) -> dict:
             logger.warning("table summary skipped doc=%s: %s", document_id, exc)
 
         # 5. wiki 只建表主页（page_type=table）
+            try:
+                # 表注释 / 列注释来自元数据采集（真实信息；缺失不阻塞）
+                table_comment = ""
                 try:
-                    # 表注释 / 列注释来自元数据采集（真实信息；缺失不阻塞）
-                    table_comment = ""
-                    try:
-                        from api.models.framework import Datasource
-                        from api.models.metadata import MetadataTable
-                        import sqlalchemy as _sa
+                    from api.models.framework import Datasource
+                    from api.models.metadata import MetadataTable
+                    import sqlalchemy as _sa
 
-                        if doc.ds_source_name and doc.ds_table_name:
-                            ds_id = db.execute(
-                                _sa.select(Datasource.id).where(Datasource.name == doc.ds_source_name)
+                    if doc.ds_source_name and doc.ds_table_name:
+                        ds_id = db.execute(
+                            _sa.select(Datasource.id).where(Datasource.name == doc.ds_source_name)
+                        ).scalars().first()
+                        if ds_id:
+                            mt = db.execute(
+                                _sa.select(MetadataTable).where(
+                                    MetadataTable.datasource_id == ds_id,
+                                    MetadataTable.table_name == doc.ds_table_name,
+                                    _sa.or_(
+                                        MetadataTable.schema_name == (doc.ds_table_schema or ""),
+                                        MetadataTable.schema_name.is_(None),
+                                    ),
+                                )
                             ).scalars().first()
-                            if ds_id:
-                                mt = db.execute(
-                                    _sa.select(MetadataTable).where(
-                                        MetadataTable.datasource_id == ds_id,
-                                        MetadataTable.table_name == doc.ds_table_name,
-                                        _sa.or_(
-                                            MetadataTable.schema_name == (doc.ds_table_schema or ""),
-                                            MetadataTable.schema_name.is_(None),
-                                        ),
-                                    )
-                                ).scalars().first()
-                                if mt and mt.table_comment:
-                                    table_comment = mt.table_comment
-                    except Exception:  # noqa: BLE001
-                        table_comment = ""
-                    _build_table_wiki(db, doc, columns, rows, col_types, col_comments, table_comment)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("table wiki build skipped doc=%s: %s", document_id, exc)
+                            if mt and mt.table_comment:
+                                table_comment = mt.table_comment
+                except Exception:  # noqa: BLE001
+                    table_comment = ""
+                _build_table_wiki(db, doc, columns, rows, col_types, col_comments, table_comment)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("table wiki build skipped doc=%s: %s", document_id, exc)
 
         return {
             "success": True,
