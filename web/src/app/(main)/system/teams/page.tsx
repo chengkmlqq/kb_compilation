@@ -407,22 +407,25 @@ export default function SystemTeamsPage() {
               }
             />
           ) : (
-            <Tree
-              treeData={treeData}
-              showLine
-              blockNode
-              defaultExpandAll
-              expandedKeys={expandedKeys}
-              onExpand={(keys) => setExpandedKeys(keys)}
-              selectedKeys={selectedKey ? [selectedKey] : []}
-              onSelect={(keys) => setSelectedKey((keys[0] as string) || null)}
-              onRightClick={({ event, node }) => {
-                const team = teams.find((t) => t.team_name === node.key);
-                if (team) setCtx({ x: event.clientX, y: event.clientY, team });
-              }}
-              style={{ flex: 1, minHeight: 0, overflow: "auto" }}
-                          />
-                        )}
+            // antd Tree 的 style 会落到内层 NodeList（rc-tree 行为），root .ant-tree 不接收，
+            // 故把 flex/overflow 放到包裹层，树才能真正占满列高、并在列内滚动。
+            <div className="teams-tree-scroll" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+              <Tree
+                treeData={treeData}
+                showLine
+                blockNode
+                defaultExpandAll
+                expandedKeys={expandedKeys}
+                onExpand={(keys) => setExpandedKeys(keys)}
+                selectedKeys={selectedKey ? [selectedKey] : []}
+                onSelect={(keys) => setSelectedKey((keys[0] as string) || null)}
+                onRightClick={({ event, node }) => {
+                  const team = teams.find((t) => t.team_name === node.key);
+                  if (team) setCtx({ x: event.clientX, y: event.clientY, team });
+                }}
+              />
+            </div>
+          )}
                         <Dropdown
             open={!!ctx}
             onOpenChange={(open) => !open && setCtx(null)}

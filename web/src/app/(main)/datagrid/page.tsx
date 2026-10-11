@@ -14,7 +14,7 @@ import DataGridClient from "./components/client";
 
 export default function DataGridPage() {
   return (
-    <div className="h-full min-h-0 w-full overflow-hidden bg-[#f5f7fa]">
+    <div style={{ height: "100%", minHeight: 0, width: "100%", overflow: "hidden", background: "#f5f7fa" }}>
       <DataGridClient />
     </div>
   );

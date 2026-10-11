@@ -42,7 +42,7 @@ export default function TableStructure({ tab }: TableStructureProps) {
   ];
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2 overflow-hidden bg-white p-2">
+    <div style={{ display: "flex", height: "100%", minHeight: 0, flexDirection: "column", gap: 8, overflow: "hidden", background: "#fff", padding: 8 }}>
       {infoRows.length > 0 && (
         <Row gutter={8} style={{ flexShrink: 0 }}>
           {infoRows.map((info, i) => (
@@ -62,7 +62,7 @@ export default function TableStructure({ tab }: TableStructureProps) {
           ))}
         </Row>
       )}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div style={{ minHeight: 0, flex: 1, overflow: "auto" }}>
         <Table<DatagridColumn>
           size="small"
           rowKey="__key"

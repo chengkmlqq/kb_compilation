@@ -50,6 +50,20 @@
   overflow-x: auto !important;
 }
 
+/* 无 scroll.y（ModoTable 只传 x）时，rc-table 走「一体化表格」分支：
+   .ant-table-container > .ant-table-content > table，不产出 .ant-table-body
+   （rc-table Table.js: fixHeader = scroll.y 存在；仅 x 时进 else 分支渲染 -content）。
+   此时上面的 .ant-table-body 规则全部落空，而 .ant-table-content 是 block 且
+   行内 overflow-y:hidden、高度=表格内容高度 —— 行数一多就顶出容器，表格溢出页面。
+   故把 .ant-table-content 也变成 flex 滚动容器：表体在容器内滚动，页面不滚动。 */
+.modo-table :global(.ant-table-wrapper .ant-table-content) {
+  flex: 1 1 0px !important;
+  min-height: 0;
+  max-height: none !important;
+  overflow-y: auto !important;
+  overflow-x: auto !important;
+}
+
 /* 无 scroll.y 时 antd v6 为一体化结构：container > table（无 .ant-table-body 分离）。
    表格高度默认=内容高度，行数不足时底部留空 → 须让 table 撑满 container，
    使表格白底整体覆盖到容器底部（底部无空白） */

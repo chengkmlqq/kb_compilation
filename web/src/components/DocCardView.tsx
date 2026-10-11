@@ -213,6 +213,7 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
       {items.map((d) => (
         <Popover key={d.id} content={hoverContentOf(d)} placement="right" overlayStyle={{ pointerEvents: "none" }}>
           <Card
+            className="kb-list-card"
             size="small"
             hoverable
             style={{ cursor: "pointer" }}

@@ -12,7 +12,7 @@ import {
 } from '@xyflow/react';
 import type { Edge, NodeChange, EdgeChange, Connection, OnSelectionChangeParams, Viewport } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { App, Button, Modal, Spin, Tag, Tooltip, Typography } from 'antd';
+import { App, Button, Input, Modal, Select, Spin, Tag, Tooltip, Typography } from 'antd';
 import {
   ArrowLeftOutlined,
   SaveOutlined,
@@ -20,6 +20,7 @@ import {
   PlayCircleOutlined,
   DownloadOutlined,
   UploadOutlined,
+  ApartmentOutlined,
   ZoomInOutlined,
   ZoomOutOutlined,
   FullscreenOutlined,
@@ -35,6 +36,8 @@ import {
   apiGetTapeRun,
   apiExportTapeDraft,
   apiImportTapeDraft,
+  apiSaveTapeAsTemplate,
+  apiListTapeTemplateCategories,
 } from '@/lib/api';
 import type { StepDefineItem, TapeDetail, TapeRunDetail } from '@/lib/api';
 
@@ -173,6 +176,15 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
 
   // 导入弹窗
   const [importOpen, setImportOpen] = useState(false);
+
+  // 存为模板弹窗（2026-10-12）
+  const [tplOpen, setTplOpen] = useState(false);
+  const [tplSaving, setTplSaving] = useState(false);
+  const [tplName, setTplName] = useState('');
+  const [tplCategory, setTplCategory] = useState('通用');
+  const [tplDescr, setTplDescr] = useState('');
+  const [tplCategories, setTplCategories] = useState<string[]>([]);
+  const [tplNewCat, setTplNewCat] = useState(false);
 
   // 执行入参弹窗（先填初始调用参数，再提交执行）
   const [execInputOpen, setExecInputOpen] = useState(false);
@@ -368,6 +380,54 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
     router.push('/orchestrations');
   }, [router]);
 
+  /** 存为模板：先静默保存当前草稿，再把骨架存为模板 */
+  const openTplModal = async () => {
+    setTplName(tape?.tape_label || tape?.tape_name || '');
+    setTplDescr(tape?.tape_descr || '');
+    setTplCategory('通用');
+    setTplNewCat(false);
+    try {
+      const res = await apiListTapeTemplateCategories();
+      if (res.success) setTplCategories((res.data || []).map((c) => c.category));
+    } catch {
+      /* 分类拉取失败不阻塞，允许手输 */
+    }
+    setTplOpen(true);
+  };
+
+  const handleSaveAsTemplate = async () => {
+    if (!tplName.trim()) {
+      message.warning('请填写模板名称');
+      return;
+    }
+    if (tplNewCat && !tplCategory.trim()) {
+      message.warning('请填写新分类名');
+      return;
+    }
+    setTplSaving(true);
+    try {
+      const saved = await handleSave(true);
+      if (!saved) {
+        message.error({ content: '草稿保存失败，未存为模板', key: 'tpl' });
+        return;
+      }
+      const res = await apiSaveTapeAsTemplate(tapeId, {
+        name: tplName.trim(),
+        label: tplName.trim(),
+        descr: tplDescr.trim() || undefined,
+        category: tplCategory.trim() || '通用',
+      });
+      if (res.success) {
+        message.success({ content: '已存为模板', key: 'tpl' });
+        setTplOpen(false);
+      } else {
+        message.error({ content: res.message || '存为模板失败', key: 'tpl' });
+      }
+    } finally {
+      setTplSaving(false);
+    }
+  };
+
   /** 保存并发布：先静默保存草稿，再调发布接口，成功返回列表 */
   const handleSaveAndPublish = async () => {
     if (!tape) return;
@@ -535,10 +595,15 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
             </Button>
           </Tooltip>
           <Tooltip title="导出当前草稿为 JSON 文件">
-            <Button icon={<DownloadOutlined />} onClick={() => void handleExport()}>
-              导出
-            </Button>
-          </Tooltip>
+                      <Button icon={<DownloadOutlined />} onClick={() => void handleExport()}>
+                        导出
+                      </Button>
+                    </Tooltip>
+                    <Tooltip title="把当前编排骨架存为模板，可在模板管理中复用">
+                      <Button icon={<ApartmentOutlined />} onClick={() => void openTplModal()}>
+                        存为模板
+                      </Button>
+                    </Tooltip>
           <Tooltip title="从 JSON 文件导入，覆盖当前草稿">
             <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
               导入
@@ -709,14 +774,79 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
       />
 
       {/* ============ 导入弹窗 ============ */}
-      <TapeImportModal
-        open={importOpen}
-        onClose={() => setImportOpen(false)}
-        onImport={(content) => handleImport(content)}
-      />
-    </div>
-  );
-}
+            <TapeImportModal
+              open={importOpen}
+              onClose={() => setImportOpen(false)}
+              onImport={(content) => handleImport(content)}
+            />
+
+            {/* ============ 存为模板弹窗（2026-10-12） ============ */}
+            <Modal
+              open={tplOpen}
+              title="存为模板"
+              okText="保存模板"
+              confirmLoading={tplSaving}
+              onCancel={() => setTplOpen(false)}
+              onOk={() => void handleSaveAsTemplate()}
+              width={480}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 8 }}>
+                <div>
+                  <div style={{ marginBottom: 4, fontSize: 13, color: '#4e5969' }}>模板名称 *</div>
+                  <Input
+                    value={tplName}
+                    onChange={(e) => setTplName(e.target.value)}
+                    placeholder="填写模板名称（如：wiki 批量构建）"
+                    maxLength={64}
+                  />
+                </div>
+                <div>
+                  <div style={{ marginBottom: 4, fontSize: 13, color: '#4e5969' }}>分类</div>
+                  <Select
+                    value={tplNewCat ? '__new__' : tplCategory}
+                    onChange={(v) => {
+                      if (v === '__new__') {
+                        setTplNewCat(true);
+                        setTplCategory('');
+                      } else {
+                        setTplNewCat(false);
+                        setTplCategory(v);
+                      }
+                    }}
+                    style={{ width: '100%' }}
+                    options={[
+                      ...tplCategories.map((c) => ({ value: c, label: c })),
+                      { value: '__new__', label: '＋ 新建分类…' },
+                    ]}
+                    showSearch
+                    placeholder="选择或输入分类"
+                  />
+                  {tplNewCat && (
+                    <Input
+                      style={{ marginTop: 6 }}
+                      value={tplCategory}
+                      onChange={(e) => setTplCategory(e.target.value)}
+                      placeholder="输入新分类名"
+                      maxLength={64}
+                      autoFocus
+                    />
+                  )}
+                </div>
+                <div>
+                  <div style={{ marginBottom: 4, fontSize: 13, color: '#4e5969' }}>描述</div>
+                  <Input.TextArea
+                    value={tplDescr}
+                    onChange={(e) => setTplDescr(e.target.value)}
+                    placeholder="模板用途说明（可选）"
+                    rows={3}
+                    maxLength={2000}
+                  />
+                </div>
+              </div>
+            </Modal>
+          </div>
+        );
+      }
 
 /** 画布核心组件（custom-node 独立导出便于未来按需扩展） */
 export { CustomNode };

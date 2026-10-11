@@ -12,6 +12,7 @@ export interface ActionItem {
   icon?: React.ReactNode;
   danger?: boolean;
   disabled?: boolean;
+  loading?: boolean;
   onClick?: () => void;
   visible?: boolean;
 }
@@ -41,7 +42,8 @@ export const ModoActionGroup: React.FC<ModoActionGroupProps> = ({ actions = [], 
       type="link"
       size="small"
       danger={action.danger}
-      disabled={action.disabled}
+      disabled={action.disabled || action.loading}
+      loading={action.loading}
       onClick={action.onClick}
       style={{ padding: "0 4px" }}
     >

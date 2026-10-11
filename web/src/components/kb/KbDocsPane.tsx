@@ -4,7 +4,7 @@
  * 知识库 · 文档面板（KbDocsPane）
  *
  * 从 kbs/[id]/page.tsx 抽出，供「动态选项卡」与详情路由复用：
- * KB 概览 + 文档工具条（筛选/上传/知识库配置(含切片配置)）+ 文档卡片视图/表格 + 分页。
+ * KB 概览 + 文档工具条（筛选/上传）+ 文档卡片视图/表格 + 分页。
  * 仅依赖 kbId prop，自包含（自带文档列表与上传相关 state、Drawer、Modal）。
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
@@ -37,14 +37,12 @@ import {
   RedoOutlined,
   ReloadOutlined,
   SearchOutlined,
-  SettingOutlined,
   TableOutlined,
   UnorderedListOutlined,
 } from "@ant-design/icons";
 import DocCardView, {
   STATE_LABEL,
   fileTypeIcon,
-  formatSize,
 } from "@/components/DocCardView";
 import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
@@ -52,7 +50,6 @@ import DocDetailDrawer from "@/components/DocDetailDrawer";
 import UploadConfirmDialog, { UploadProcessConfig } from "@/components/UploadConfirmDialog";
 import SelectTableDialog from "@/components/SelectTableDialog";
 import DocBuildProcessDrawer from "@/components/DocBuildProcessDrawer";
-import KBConfigModal from "@/components/KBConfigModal";
 import {
   apiCreateDocFolder,
   apiDeleteDocFolder,
@@ -128,7 +125,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   const [uploadConfirmOpen, setUploadConfirmOpen] = useState(false);
   // 添加表弹窗（表→wiki：从数据源选维度表绑定到知识库）
   const [selectTableOpen, setSelectTableOpen] = useState(false);
-  const [configOpen, setConfigOpen] = useState(false);
   const [buildDoc, setBuildDoc] = useState<DocItem | null>(null);
 
   // 加载知识库详情（含 WeKnora 对齐配置：索引开关/技能绑定/模型绑定等）
@@ -669,9 +665,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             <Button icon={<ReloadOutlined />} onClick={() => void load()}>
               刷新
             </Button>
-            <Button icon={<SettingOutlined />} onClick={() => setConfigOpen(true)}>
-              知识库配置
-            </Button>
             <Dropdown
               menu={{
                 items: [
@@ -750,15 +743,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
           </div>
         </div>
         {selectedList.length > 0 && (
-          <Space
-            style={{
-              display: "flex",
-              marginBottom: 12,
-              padding: "8px 12px",
-              background: "#e6f4ff",
-              borderRadius: 8,
-            }}
-          >
+          <div className="kb-doc-batch-bar">
             <Typography.Text strong>
               已选 {selectedList.length} 个文档
             </Typography.Text>
@@ -774,7 +759,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             <Button size="small" type="link" onClick={() => setSelectedDocs(new Set())}>
               取消选择
             </Button>
-          </Space>
+          </div>
         )}
         {docView === "card" ? (
           <>
@@ -803,6 +788,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
         ) : (
           <>
             <ModoTable<DocItem>
+              containerClassName="kb-doc-table"
               rowKey="id"
               size="small"
               loading={docsLoading}
@@ -838,39 +824,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
                   ),
                 },
                 {
-                  title: "Wiki 构建",
-                  dataIndex: "wiki_build",
-                  width: 150,
-                  render: (v: DocItem["wiki_build"], doc: DocItem) => {
-                    if (!v) return <span style={{ color: "#bbb", fontSize: 12 }}>-</span>;
-                    const dur = v.duration_ms ? `${Math.round(v.duration_ms / 60000)}min` : "";
-                    const colorMap: Record<string, string> = {
-                      SUCCESS: "green",
-                      FAILED: "red",
-                      RUNNING: "blue",
-                      PENDING: "default",
-                    };
-                    const labelMap: Record<string, string> = {
-                      SUCCESS: "成功",
-                      FAILED: "失败",
-                      RUNNING: "构建中",
-                      PENDING: "排队中",
-                    };
-                    return (
-                      <Space size={4}>
-                        {v.state === "RUNNING" && <Spin size="small" />}
-                        <Tag color={colorMap[v.state] || "default"}>{labelMap[v.state] || v.state}</Tag>
-                        {dur && <span style={{ fontSize: 12, color: "#888" }}>{dur}</span>}
-                        {(v.state === "FAILED" || v.state === "SUCCESS") && (
-                          <a style={{ fontSize: 12 }} onClick={() => onViewTrace(doc)}>
-                            详情
-                          </a>
-                        )}
-                      </Space>
-                    );
-                  },
-                },
-                {
                   title: "分块数",
                   dataIndex: "chunk_count",
                   width: 90,
@@ -889,12 +842,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
                         —
                       </Typography.Text>
                     ) : null,
-                },
-                {
-                  title: "大小",
-                  dataIndex: "file_size",
-                  width: 110,
-                  render: (v: number | null) => formatSize(v),
                 },
                 {
                   title: "操作",
@@ -969,16 +916,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
         onDownload={onDownloadDoc}
         onReparse={onReparseDoc}
         onDelete={onDeleteDoc}
-      />
-
-      {/* 知识库配置（WeKnora 对齐：索引开关/类型/技能绑定/模型绑定/图谱/FAQ + 切片配置） */}
-      <KBConfigModal
-        kb={kb}
-        open={configOpen}
-        onClose={(changed) => {
-          setConfigOpen(false);
-          if (changed) void loadKb();
-        }}
       />
 
       {/* 构建过程抽屉：文档列表就地查看 wiki 构建执行轨迹/LLM 明细/日志 */}

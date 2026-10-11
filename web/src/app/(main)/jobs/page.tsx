@@ -209,24 +209,27 @@ export default function JobsPage() {
           <JobStats statistics={stats} />
         </div>
 
-        {/* Filter Area */}
+        {/* Filter Area：视图切换（主任务/全部任务）作为 extra 放到筛选卡片右侧 */}
         <div style={{ flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 4px" }}>
-            <Segmented
-              size="small"
-              value={view}
-              options={[
-                { label: "主任务", value: "parents" },
-                { label: "全部任务", value: "all" },
-              ]}
-              onChange={(v) => {
-                setView(v as "parents" | "all");
-                setPage(1);
-                void load(1, pageSize, filters, v as "parents" | "all");
-              }}
-            />
-            <JobFilter onSearch={handleSearch} onReset={handleReset} />
-          </div>
+          <JobFilter
+            onSearch={handleSearch}
+            onReset={handleReset}
+            extra={
+              <Segmented
+                size="small"
+                value={view}
+                options={[
+                  { label: "主任务", value: "parents" },
+                  { label: "全部任务", value: "all" },
+                ]}
+                onChange={(v) => {
+                  setView(v as "parents" | "all");
+                  setPage(1);
+                  void load(1, pageSize, filters, v as "parents" | "all");
+                }}
+              />
+            }
+          />
         </div>
 
         {/* Table + Pagination Area */}

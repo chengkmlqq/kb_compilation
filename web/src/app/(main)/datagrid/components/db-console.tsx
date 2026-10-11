@@ -89,33 +89,32 @@ export default function DbConsole({ exportShow = true }: DbConsoleProps) {
         label: t.label,
         closable: false,
         children: (
-          <div className="flex h-full min-h-0 w-full bg-white">
+          <div style={{ display: "flex", height: "100%", minHeight: 0, width: "100%", background: "#fff" }}>
             <div
-              className="flex w-[40px] shrink-0 flex-col items-center gap-3 border-r border-[#e8eaed] bg-[#fafafa] py-2"
+              style={{
+                display: "flex",
+                width: 40,
+                flexShrink: 0,
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 12,
+                borderRight: "1px solid #e8eaed",
+                background: "#fafafa",
+                paddingTop: 8,
+                paddingBottom: 8,
+              }}
             >
-              <button
-                className="flex h-7 w-7 items-center justify-center text-[#888] transition-colors hover:text-[#1677ff]"
-                title="导出 Excel"
-                onClick={() => handleExport(tab, false)}
-              >
+              <button className="datagrid-icon-btn" title="导出 Excel" onClick={() => handleExport(tab, false)}>
                 <FileExcelOutlined />
               </button>
-              <button
-                className="flex h-7 w-7 items-center justify-center text-[#888] transition-colors hover:text-[#1677ff]"
-                title="导出 SQL"
-                onClick={() => handleExport(tab, true)}
-              >
+              <button className="datagrid-icon-btn" title="导出 SQL" onClick={() => handleExport(tab, true)}>
                 <DownloadOutlined />
               </button>
-              <button
-                className="flex h-7 w-7 items-center justify-center text-[#888] transition-colors hover:text-[#1677ff]"
-                title="清空日志"
-                onClick={() => clearLogs(tab.id)}
-              >
+              <button className="datagrid-icon-btn" title="清空日志" onClick={() => clearLogs(tab.id)}>
                 <ClearOutlined />
               </button>
             </div>
-            <div className="min-h-0 flex-1 overflow-auto p-2">
+            <div style={{ minHeight: 0, flex: 1, overflow: "auto", padding: 8 }}>
               {output.logs.length === 0 ? (
                 <div style={{ color: "#999", fontSize: 12, padding: 8 }}>暂无日志，执行 SQL 后在此查看输出</div>
               ) : (
@@ -147,7 +146,7 @@ export default function DbConsole({ exportShow = true }: DbConsoleProps) {
           }
         }}
         items={innerItems}
-        className="datagrid-console-inner-tabs h-full"
+        className="datagrid-console-inner-tabs"
         style={{ height: "100%" }}
       />
     );
@@ -161,7 +160,7 @@ export default function DbConsole({ exportShow = true }: DbConsoleProps) {
   }));
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
+    <div style={{ display: "flex", height: "100%", minHeight: 0, flexDirection: "column", overflow: "hidden", background: "#fff" }}>
       <Tabs
         size="small"
         type="editable-card"
@@ -174,7 +173,7 @@ export default function DbConsole({ exportShow = true }: DbConsoleProps) {
           }
         }}
         items={outerItems}
-        className="datagrid-console-tabs h-full"
+        className="datagrid-console-tabs"
         style={{ height: "100%" }}
       />
     </div>

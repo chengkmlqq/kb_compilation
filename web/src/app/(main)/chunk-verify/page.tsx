@@ -54,7 +54,7 @@ export default function ChunkVerifyPage() {
     return () => ro.disconnect();
   }, []);
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (silent = false) => {
     setLoading(true);
     try {
       const res = await apiVerifyAllChunks();
@@ -70,19 +70,26 @@ export default function ChunkVerifyPage() {
           ).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`
         );
         const { total, ok, unhealthy } = res.data;
-        message.success(`核对完成：共 ${total} 个知识库，健康 ${ok} 个，异常 ${unhealthy} 个`);
-      } else {
+        // silent：进入页面自动核对时不弹提示（仅手动点「全部核对」才提示）
+        if (!silent) message.success(`核对完成：共 ${total} 个知识库，健康 ${ok} 个，异常 ${unhealthy} 个`);
+      } else if (!silent) {
         message.error(res.message || "核对失败");
       }
     } catch (e) {
-      message.error(`核对失败: ${String(e).slice(0, 80)}`);
+      if (!silent) message.error(`核对失败: ${String(e).slice(0, 80)}`);
     } finally {
       setLoading(false);
     }
   }, [message]);
 
-  // 进入页面不自动核对（核对会真实扫描 MySQL 切片 ↔ 向量库，开销较大），
-  // 由用户点击「全部核对」触发。
+  // 进入页面自动触发一次全库核对（不弹提示）；核对会真实扫描 MySQL 切片 ↔ 向量库，
+  // 用 ref 守卫确保每次进入只触发一次（含 StrictMode 双调用）。
+  const autoCheckedRef = useRef(false);
+  useEffect(() => {
+    if (autoCheckedRef.current) return;
+    autoCheckedRef.current = true;
+    void loadAll(true);
+  }, [loadAll]);
 
   // 单库核对（点击行内按钮，只刷新该行）
   const handleVerifyOne = async (kbId: string) => {
@@ -162,10 +169,7 @@ export default function ChunkVerifyPage() {
       width: 260,
       ellipsis: true,
       render: (_, row) => (
-        <Space direction="vertical" size={0}>
-          <span style={{ fontWeight: 500 }}>{row.kb_name || "(未命名)"}</span>
-          <span style={{ color: "#8c8c8c", fontSize: 12 }}>{row.kb_id}</span>
-        </Space>
+        <span style={{ fontWeight: 500 }}>{row.kb_name || "(未命名)"}</span>
       ),
     },
     {

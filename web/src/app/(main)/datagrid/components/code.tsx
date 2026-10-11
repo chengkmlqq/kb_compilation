@@ -169,9 +169,9 @@ export default function DbCode({ tab }: DbCodeProps) {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
+    <div style={{ display: "flex", height: "100%", minHeight: 0, flexDirection: "column", overflow: "hidden", background: "#fff" }}>
       {/* 工具条 */}
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[#e8eaed] px-3 py-2">
+      <div style={{ display: "flex", flexShrink: 0, flexWrap: "wrap", alignItems: "center", gap: 8, borderBottom: "1px solid #e8eaed", padding: "8px 12px" }}>
         <Button
           type="primary"
           size="small"
@@ -199,7 +199,7 @@ export default function DbCode({ tab }: DbCodeProps) {
         </Space>
       </div>
       {/* CodeMirror 编辑器 */}
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div style={{ minHeight: 0, flex: 1, overflow: "hidden" }}>
         <CodeMirror
           ref={cmRef}
           value={sql}
@@ -214,7 +214,7 @@ export default function DbCode({ tab }: DbCodeProps) {
         />
       </div>
       {/* 底部状态条 */}
-      <div className="flex shrink-0 items-center justify-between border-t border-[#e8eaed] bg-[#fafafa] px-3 py-1 text-[11px] text-[#999]">
+      <div style={{ display: "flex", flexShrink: 0, alignItems: "center", justifyContent: "space-between", borderTop: "1px solid #e8eaed", background: "#fafafa", padding: "4px 12px", fontSize: 11, color: "#999" }}>
         <span>{tab.dsType || "sql"}</span>
         <span>{sql.length} 字符 · LIMIT {limit}</span>
       </div>

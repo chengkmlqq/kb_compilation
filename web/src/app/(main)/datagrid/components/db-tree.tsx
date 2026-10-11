@@ -266,8 +266,8 @@ export default function DbTree({ data }: DbTreeProps) {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-white">
-      <div className="flex shrink-0 items-center gap-2 border-b border-[#e8eaed] px-3 py-2">
+    <div style={{ display: "flex", height: "100%", minHeight: 0, flexDirection: "column", background: "#fff" }}>
+      <div style={{ display: "flex", flexShrink: 0, alignItems: "center", gap: 8, borderBottom: "1px solid #e8eaed", padding: "8px 12px" }}>
         <Input
           size="small"
           placeholder="搜索表/视图"
@@ -276,15 +276,11 @@ export default function DbTree({ data }: DbTreeProps) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <button
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[#888] transition-colors hover:bg-[#f0f0f0] hover:text-[#1677ff]"
-          title="刷新"
-          onClick={reloadDs}
-        >
+        <button className="datagrid-icon-btn datagrid-icon-btn--sm" title="刷新" onClick={reloadDs}>
           <ReloadOutlined style={{ fontSize: 12 }} />
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto p-2">
+      <div style={{ minHeight: 0, flex: 1, overflow: "auto", padding: 8 }}>
         <DirectoryTree
           treeData={filteredTree}
           loadData={onLoadData}

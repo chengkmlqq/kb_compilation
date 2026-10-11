@@ -15,6 +15,8 @@ interface JobFilterValues {
 interface JobFilterProps {
   onSearch: (values: JobFilterValues) => void;
   onReset: () => void;
+  /** 附加到筛选行右侧的自定义内容（如「主任务/全部任务」视图切换） */
+  extra?: React.ReactNode;
 }
 
 const STATE_OPTIONS = [
@@ -25,7 +27,7 @@ const STATE_OPTIONS = [
   { label: "已停止", value: "STOPPED" },
 ];
 
-function JobFilter({ onSearch, onReset }: JobFilterProps) {
+function JobFilter({ onSearch, onReset, extra }: JobFilterProps) {
   const [form] = Form.useForm<JobFilterValues>();
   const [queueList, setQueueList] = useState<{ label: string; value: string }[]>([]);
 
@@ -105,6 +107,7 @@ function JobFilter({ onSearch, onReset }: JobFilterProps) {
         >
           重置
         </Button>
+        {extra}
       </Space>
     </div>
   );

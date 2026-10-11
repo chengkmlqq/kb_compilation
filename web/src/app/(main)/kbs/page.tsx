@@ -370,8 +370,10 @@ export default function KbsPage() {
           </Form.Item>
         </Form>
 
-        {/* 卡片视图（保留）——flex:1 占满剩余高度，内容超出时内部滚动 */}
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        {/* 卡片视图（保留）——flex:1 占满剩余高度，内容超出时内部滚动。
+            横向隐藏：antd Row 的 gutter 会给行加 -8px 左右外边距，宽出容器 16px，
+            双轴 overflow:auto 会因此常驻横向滚动条（卡片内容本身并未超出）。 */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
           {visibleKbs.length === 0 ? (
             <Empty description="暂无知识库，点击右上角「新建知识库」创建">
               <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>

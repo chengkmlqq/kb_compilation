@@ -3279,6 +3279,83 @@ export function apiGetTapeRun(runId: string) {
   });
 }
 
+// ---- 编排模板（2026-10-12）----
+export interface TapeTemplateItem {
+  id: string;
+  name: string;
+  label: string;
+  descr?: string | null;
+  category: string;
+  status: string; // effective | disabled
+  is_builtin: number;
+  apply_count: number;
+  node_count: number;
+  edge_count: number;
+  create_user?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface TapeTemplateDetail extends TapeTemplateItem {
+  nodes: Record<string, any>[];
+  edges: Record<string, any>[];
+  exec_params: Record<string, unknown>;
+}
+
+export interface TapeTemplateCategory {
+  category: string;
+  total: number;
+  effective: number;
+}
+
+export function apiListTapeTemplates(page = 1, pageSize = 20, keyword = "", category = "", status = "") {
+  return request<{ total: number; items: TapeTemplateItem[] }>(
+    `/api/v1/orchestrations/templates?page=${page}&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}&category=${encodeURIComponent(category)}&status=${encodeURIComponent(status)}`,
+  );
+}
+
+export function apiListTapeTemplateCategories() {
+  return request<TapeTemplateCategory[]>(`/api/v1/orchestrations/templates/categories`);
+}
+
+export function apiGetTapeTemplate(id: string) {
+  return request<TapeTemplateDetail>(`/api/v1/orchestrations/templates/${id}`);
+}
+
+export function apiCreateTapeTemplate(payload: Record<string, unknown>) {
+  return request<TapeTemplateItem>(`/api/v1/orchestrations/templates`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiUpdateTapeTemplate(id: string, payload: Record<string, unknown>) {
+  return request<TapeTemplateItem>(`/api/v1/orchestrations/templates/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiDeleteTapeTemplate(id: string) {
+  return request<{ ok: boolean }>(`/api/v1/orchestrations/templates/${id}`, { method: "DELETE" });
+}
+
+/** 应用模板 → 生成一条新编排（draft），返回新 tape 摘要 */
+export function apiApplyTapeTemplate(id: string, payload: Record<string, unknown> = {}) {
+  return request<TapeItem>(`/api/v1/orchestrations/templates/${id}/apply`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** 把当前编排存为模板 */
+export function apiSaveTapeAsTemplate(tapeId: string, payload: Record<string, unknown> = {}) {
+  return request<TapeTemplateItem>(`/api/v1/orchestrations/${tapeId}/save-as-template`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 // ---- 元数据采集（迁移 data-synth metadata-collection，2026-10-10）----
 export interface MetadataDatasourceItem {
   id: string;

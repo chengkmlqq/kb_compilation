@@ -65,9 +65,9 @@ export default function DbTool() {
   }
 
   return (
-    <div className="db-tool flex h-full min-h-0 flex-col overflow-hidden bg-white">
+    <div className="db-tool" style={{ display: "flex", height: "100%", minHeight: 0, flexDirection: "column", overflow: "hidden", background: "#fff" }}>
       <Tabs
-        className="datagrid-tool-tabs h-full"
+        className="datagrid-tool-tabs"
         type="editable-card"
         activeKey={dbToolActiveTab || undefined}
         onChange={setDbToolActiveTab}

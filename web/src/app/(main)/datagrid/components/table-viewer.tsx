@@ -133,9 +133,9 @@ export default function TableViewer({ tabData }: { tabData: ResultTab }) {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
+    <div style={{ display: "flex", height: "100%", minHeight: 0, flexDirection: "column", overflow: "hidden", background: "#fff" }}>
       {/* 工具条：分页 + 复制/查看行 */}
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[#e8eaed] bg-white px-3 py-1.5">
+      <div style={{ display: "flex", flexShrink: 0, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, borderBottom: "1px solid #e8eaed", background: "#fff", padding: "6px 12px" }}>
         <Pagination
           size="small"
           current={pageNum}
@@ -165,7 +165,7 @@ export default function TableViewer({ tabData }: { tabData: ResultTab }) {
         </div>
       </div>
       {/* Handsontable 网格 */}
-      <div ref={wrapRef} className="datagrid-hot-wrap min-h-0 flex-1 overflow-hidden">
+      <div ref={wrapRef} className="datagrid-hot-wrap" style={{ minHeight: 0, flex: 1, overflow: "hidden" }}>
         {hotHeight > 0 && (
           <HotTable
             ref={hotRef}

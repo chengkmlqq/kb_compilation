@@ -8,6 +8,11 @@
  *
  * 配色：像素级对齐 ds 的 antd token（--color-bg-1=#fff / --color-fill-1=#fafafa /
  * --color-border-2=#e8eaed / --color-primary-6=#1677ff / text-1=rgba(0,0,0,.88) 等）。
+ *
+ * 注（2026-10-11）：原实现用的是 tailwind 工具类（h-full / flex / bg-[#...]），但本项目
+ * 未接入 tailwind，这些类全部无效 → 高度链断裂、布局塌陷。已全部改为内联 style；
+ * hover/transition 等内联表达不了的改用 globals.css 中的 .datagrid-icon-btn /
+ * .datagrid-resize-handle 类。
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { App } from "antd";
@@ -61,65 +66,122 @@ export default function DataGridClient() {
   }, [leftSize]);
 
   return (
-    <div className="datagrid-shell h-full min-h-0 w-full overflow-hidden bg-[#f5f7fa] text-[rgba(0,0,0,0.88)]">
+    <div
+      className="datagrid-shell datagrid-page"
+      style={{
+        height: "100%",
+        minHeight: 0,
+        width: "100%",
+        overflow: "hidden",
+        background: "#f5f7fa",
+        color: "rgba(0,0,0,0.88)",
+        display: "flex",
+        flexDirection: "column",
+        padding: 8,
+      }}
+    >
       <div
-        className="flex h-full min-h-0 flex-col overflow-hidden border border-[#e8eaed] bg-[#f5f7fa]"
-        style={{ margin: 8, borderRadius: 4 }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          border: "1px solid #e8eaed",
+          borderRadius: 4,
+          background: "#f5f7fa",
+        }}
       >
-        <div className="flex min-h-0 flex-1 overflow-hidden">
-          <PanelGroup orientation="vertical" className="h-full min-h-0 w-full">
+        <div style={{ display: "flex", minHeight: 0, flex: 1, overflow: "hidden" }}>
+          <PanelGroup orientation="vertical" style={{ height: "100%", minHeight: 0, width: "100%" }}>
             <Panel defaultSize={consoleShow ? "65%" : "100%"} minSize="20%">
-              <div ref={hWrapRef} className="h-full w-full min-w-0">
-                <PanelGroup key={`h-${key}-${leftSize}`} orientation="horizontal" className="h-full w-full min-w-0">
+              <div ref={hWrapRef} style={{ height: "100%", width: "100%", minWidth: 0 }}>
+                <PanelGroup
+                  key={`h-${key}-${leftSize}`}
+                  orientation="horizontal"
+                  style={{ height: "100%", width: "100%", minWidth: 0 }}
+                >
                   {/* 左：图标竖条 + Database 树 */}
                   <Panel defaultSize={`${leftSize}%`} minSize="12%">
-                    <div className="flex h-full w-full overflow-hidden bg-[#fafafa]">
+                    <div style={{ display: "flex", height: "100%", width: "100%", overflow: "hidden", background: "#fafafa" }}>
                       <div
-                        className="flex w-[34px] shrink-0 flex-col items-center justify-between border-r border-[#e8eaed] bg-[#fafafa] py-3"
+                        style={{
+                          display: "flex",
+                          width: 34,
+                          flexShrink: 0,
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          borderRight: "1px solid #e8eaed",
+                          background: "#fafafa",
+                          paddingTop: 12,
+                          paddingBottom: 12,
+                        }}
                       >
-                        <div className="flex flex-col items-center gap-3">
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
                           <div
-                            className="flex h-7 w-7 items-center justify-center text-[#1677ff]"
-                            style={{ fontSize: 14 }}
+                            style={{
+                              display: "flex",
+                              height: 28,
+                              width: 28,
+                              alignItems: "center",
+                              justifyContent: "center",
+                              color: "#1677ff",
+                              fontSize: 14,
+                            }}
                           >
                             <DatabaseOutlined />
                           </div>
                           <span
-                            className="select-none text-[13px] font-semibold tracking-[0.22em] text-[rgba(0,0,0,0.88)]"
-                            style={{ writingMode: "vertical-rl", textOrientation: "mixed" }}
+                            style={{
+                              userSelect: "none",
+                              fontSize: 13,
+                              fontWeight: 600,
+                              letterSpacing: "0.22em",
+                              color: "rgba(0,0,0,0.88)",
+                              writingMode: "vertical-rl",
+                              textOrientation: "mixed",
+                            }}
                           >
                             Database
                           </span>
                         </div>
-                        <button
-                          className="flex h-7 w-7 items-center justify-center text-[rgba(0,0,0,0.45)] transition-colors hover:text-[#1677ff]"
-                          title="设置"
-                        >
+                        <button className="datagrid-icon-btn datagrid-icon-btn--muted" title="设置">
                           <SettingOutlined style={{ fontSize: 14 }} />
                         </button>
                       </div>
-                      <div className="flex h-full min-w-0 flex-1 flex-col bg-white">
+                      <div style={{ display: "flex", height: "100%", minWidth: 0, flex: 1, flexDirection: "column", background: "#fff" }}>
                         <div
-                          className="flex h-[37.5px] shrink-0 items-center border-b border-[#e8eaed] bg-[#fafafa] px-3 text-[15px] font-semibold text-[rgba(0,0,0,0.65)]"
+                          style={{
+                            display: "flex",
+                            height: 37.5,
+                            flexShrink: 0,
+                            alignItems: "center",
+                            borderBottom: "1px solid #e8eaed",
+                            background: "#fafafa",
+                            paddingLeft: 12,
+                            paddingRight: 12,
+                            fontSize: 15,
+                            fontWeight: 600,
+                            color: "rgba(0,0,0,0.65)",
+                          }}
                         >
                           Database
                         </div>
-                        <div className="min-h-0 flex-1 flex-col overflow-hidden">
+                        <div style={{ minHeight: 0, flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
                           <DbTree data={dsList} />
                         </div>
                       </div>
                     </div>
                   </Panel>
 
-                  <PanelResizeHandle className="group flex w-[10px] shrink-0 cursor-col-resize items-center justify-center border-x border-[#e8eaed] bg-[#f0f0f0] outline-none transition-colors hover:bg-[#e6f4ff]">
-                    <div className="flex h-full w-[10px] items-center justify-center outline-none">
-                      <div className="h-9 w-[4px] rounded-full bg-[#d9d9d9] transition-colors group-hover:bg-[#bae0ff]" />
-                    </div>
+                  <PanelResizeHandle className="datagrid-resize-handle datagrid-resize-handle--h">
+                    <div className="datagrid-resize-handle__bar" />
                   </PanelResizeHandle>
 
                   {/* 右：工作台 */}
                   <Panel defaultSize="80%" minSize="30%">
-                    <div className="flex h-full w-full flex-col overflow-hidden bg-white">
+                    <div style={{ display: "flex", height: "100%", width: "100%", flexDirection: "column", overflow: "hidden", background: "#fff" }}>
                       <DbTool />
                     </div>
                   </Panel>
@@ -129,13 +191,11 @@ export default function DataGridClient() {
 
             {consoleShow && (
               <>
-                <PanelResizeHandle className="group flex h-[10px] shrink-0 cursor-row-resize items-center justify-center border-y border-[#e8eaed] bg-[#f0f0f0] outline-none transition-colors hover:bg-[#e6f4ff]">
-                  <div className="flex h-[10px] w-full items-center justify-center outline-none">
-                    <div className="h-[4px] w-9 rounded-full bg-[#d9d9d9] transition-colors group-hover:bg-[#bae0ff]" />
-                  </div>
+                <PanelResizeHandle className="datagrid-resize-handle datagrid-resize-handle--v">
+                  <div className="datagrid-resize-handle__bar" />
                 </PanelResizeHandle>
                 <Panel defaultSize="35%" minSize="15%">
-                  <div className="flex h-full flex-col overflow-hidden bg-white">
+                  <div style={{ display: "flex", height: "100%", flexDirection: "column", overflow: "hidden", background: "#fff" }}>
                     <DbConsole />
                   </div>
                 </Panel>
@@ -146,7 +206,19 @@ export default function DataGridClient() {
 
         {/* 底部状态栏 */}
         <div
-          className="flex h-[28px] shrink-0 items-center justify-between border-t border-[#e8eaed] bg-[#fafafa] px-4 text-[12px] text-[rgba(0,0,0,0.45)]"
+          style={{
+            display: "flex",
+            height: 28,
+            flexShrink: 0,
+            alignItems: "center",
+            justifyContent: "space-between",
+            borderTop: "1px solid #e8eaed",
+            background: "#fafafa",
+            paddingLeft: 16,
+            paddingRight: 16,
+            fontSize: 12,
+            color: "rgba(0,0,0,0.45)",
+          }}
         >
           <span>用户：系统管理员</span>
           <span>DataGrid Workspace</span>

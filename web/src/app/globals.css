@@ -147,6 +147,89 @@ body {
   text-overflow: ellipsis;
 }
 
+/* 团队管理 · 左侧团队树：树根节点撑满包裹层，使其占满整列高度
+   （antd Tree 的 style 属性只会落到内层 NodeList，root .ant-tree 收不到，
+   故不能靠 <Tree style={{flex:1}}> 让树撑满，需按 DOM 结构定向设置）。 */
+.teams-page .ant-tree {
+  min-height: 100%;
+}
+
+/* 数据查询 · 工作台图标按钮 / 拖拽分隔条。
+   注：该页源文件原用 tailwind 工具类（h-full / flex / bg-[#...] 等），但本项目未接入
+   tailwind，这些类全部无效，导致布局塌陷（只剩底部状态栏）。已改为内联 style；
+   仅 hover/transition 这类内联表达不了的，落到这里用类实现。 */
+.datagrid-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #888;
+  cursor: pointer;
+  transition: color 0.2s, background-color 0.2s;
+}
+.datagrid-icon-btn:hover {
+  color: #1677ff;
+}
+.datagrid-icon-btn--sm {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+}
+.datagrid-icon-btn--sm:hover {
+  background: #f0f0f0;
+}
+.datagrid-icon-btn--muted {
+  color: rgba(0, 0, 0, 0.45);
+}
+.datagrid-icon-btn--muted:hover {
+  color: #1677ff;
+}
+
+.datagrid-resize-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  background: #f0f0f0;
+  outline: none;
+  transition: background-color 0.2s;
+}
+.datagrid-resize-handle:hover {
+  background: #e6f4ff;
+}
+.datagrid-resize-handle--h {
+  width: 10px;
+  border-left: 1px solid #e8eaed;
+  border-right: 1px solid #e8eaed;
+  cursor: col-resize;
+}
+.datagrid-resize-handle--v {
+  height: 10px;
+  border-top: 1px solid #e8eaed;
+  border-bottom: 1px solid #e8eaed;
+  cursor: row-resize;
+}
+.datagrid-resize-handle__bar {
+  background: #d9d9d9;
+  border-radius: 9999px;
+  transition: background-color 0.2s;
+}
+.datagrid-resize-handle:hover .datagrid-resize-handle__bar {
+  background: #bae0ff;
+}
+.datagrid-resize-handle--h .datagrid-resize-handle__bar {
+  width: 4px;
+  height: 36px;
+}
+.datagrid-resize-handle--v .datagrid-resize-handle__bar {
+  width: 36px;
+  height: 4px;
+}
+
 /* Tabs：无底部白边（页面 Tab 直接贴在卡片头下方） */
 .ant-tabs .ant-tabs-nav {
   margin-bottom: 0;
@@ -1429,6 +1512,32 @@ body {
   padding: 12px 16px 0;
 }
 
+/* 表格视图容器：给白底表格补可见边界，避免与白色面板融为一体（对比度不足）。
+   仅作用于知识库详情的文档表格（ModoTable 的 containerClassName）。 */
+.kb-doc-table {
+  border: 1px solid var(--color-gray-3, #e3e9ef);
+  border-radius: 8px;
+}
+
+/* 批量操作条：悬浮在文档内容区底部居中，不占布局高度（原为内联条，会顶掉一截列表高度）。
+   .kb-doc-area 已 position:relative，故用绝对定位悬浮。 */
+.kb-doc-batch-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #ffffff;
+  border: 1px solid var(--color-gray-3, #e3e9ef);
+  border-radius: 999px;
+  box-shadow: 0 6px 16px rgba(36, 46, 67, 0.16);
+  white-space: nowrap;
+}
+
 /* ── 文档目录侧边栏（左侧树）── */
 .kb-doc-folder-sidebar {
   background: var(--kb-bg-subtle, #fafafa);
@@ -1470,7 +1579,10 @@ body {
 .kb-doc-search-input {
   grid-area: search;
   min-width: 0;
-  width: 100%;
+  /* 原先 width:100% 会撑满 grid 的 1fr 列，宽屏下搜索框过长；
+     与其它列表页搜索框一致改为固定宽度（见 kbs/page.tsx width:220） */
+  width: 240px;
+  max-width: 100%;
 }
 
 .kb-doc-filter-trailing {
