@@ -326,6 +326,8 @@ class Job(Base):
     create_time: Mapped[object | None] = mapped_column(
         DateTime, server_default=text("CURRENT_TIMESTAMP")
     )
+    # 父子任务（2026-10-12）：子任务写链头父任务 job id（如 DOC_{docId}）；NULL=父任务
+    parent_id: Mapped[str | None] = mapped_column(String(64), index=True)
 
 
 class JobQueue(Base):

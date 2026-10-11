@@ -169,7 +169,8 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
         if flags["wiki"]:
             try:
                 enqueued = _enqueue_wiki_skill_task(
-                    kb_id, document_id, skill_name=flags["skill"] or None
+                    kb_id, document_id, skill_name=flags["skill"] or None,
+                    parent_job_id=job_id,  # 2026-10-12 父子：挂链头解析任务
                 )
                 result["wiki_skill_triggered"] = enqueued
             except Exception as exc:  # noqa: BLE001 — 触发失败不使文档处理任务失败
@@ -180,14 +181,16 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
             result["wiki_skipped"] = "wiki_enabled=false 或 custom_wiki_generation=true"
         if flags["graph"]:
             try:
-                result["graph_build_triggered"] = _enqueue_graph_build_task(kb_id, document_id)
+                result["graph_build_triggered"] = _enqueue_graph_build_task(
+                    kb_id, document_id, parent_job_id=job_id  # 2026-10-12 父子
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("failed to trigger graph build task: %s", exc)
                 result["graph_build_triggered"] = False
     return result
 
 
-def _enqueue_wiki_build_task(kb_id: str, document_id: str) -> bool:
+def _enqueue_wiki_build_task(kb_id: str, document_id: str, parent_job_id: str | None = None) -> bool:
     """enqueue KbSkillWikiBuildTask（worker 内执行 wiki 构建）。
 
     LLM 配置（WIKI_LLM_BASE_URL/MODEL/API_KEY）由 worker 容器 env 直接读取，
@@ -225,6 +228,7 @@ def _enqueue_wiki_build_task(kb_id: str, document_id: str) -> bool:
                 task_params=task_params,
                 trigger_type="API",
                 state="PENDING",
+                parent_id=parent_job_id,  # 2026-10-12 父子：挂链头解析任务
             )
         )
         db.commit()
@@ -259,7 +263,8 @@ def _agent_task_target() -> tuple[str, str]:
 
 
 def _enqueue_wiki_skill_task(
-    kb_id: str, document_id: str, skill_name: str | None = None
+    kb_id: str, document_id: str, skill_name: str | None = None,
+    parent_job_id: str | None = None,  # 2026-10-12 父子：链头解析任务 job id
 ) -> bool:
     """enqueue wiki 构建的 agent 任务（默认内联 agent worker，见 _agent_task_target）。
 
@@ -331,6 +336,7 @@ def _enqueue_wiki_skill_task(
                 task_params=task_params,
                 trigger_type="API",
                 state="PENDING",
+                parent_id=parent_job_id,  # 2026-10-12 父子：挂链头解析任务
             )
         )
         db.commit()
@@ -353,7 +359,7 @@ def _enqueue_wiki_skill_task(
     return True
 
 
-def _enqueue_graph_build_task(kb_id: str, document_id: str) -> bool:
+def _enqueue_graph_build_task(kb_id: str, document_id: str, parent_job_id: str | None = None) -> bool:
     """enqueue KbGraphBuildTask（Neo4j 知识图谱抽取）。
 
     遵循与 wiki 相同的顺序契约：先 commit Job 行、再投 broker。
@@ -379,6 +385,7 @@ def _enqueue_graph_build_task(kb_id: str, document_id: str) -> bool:
                 task_params=task_params,
                 trigger_type="API",
                 state="PENDING",
+                parent_id=parent_job_id,  # 2026-10-12 父子：挂链头解析任务
             )
         )
         db.commit()

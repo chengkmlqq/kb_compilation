@@ -2272,6 +2272,48 @@ export function apiListJobs(params: {
   );
 }
 
+// ── 2026-10-12 父子任务视图 ──────────────────────────────────────────
+export interface ParentJobItem extends JobItem {
+  /** NULL=父任务；子任务带链头 job id */
+  parent_id?: string | null;
+  /** 子任务数量（父任务视图专用） */
+  child_count?: number;
+  /** 子任务状态聚合：{SUCCESS: 2, RUNNING: 1} */
+  child_states?: Record<string, number>;
+}
+
+export interface JobChildrenResponse {
+  kind: "job" | "orchestration";
+  items: Array<Record<string, unknown>>;
+  total: number;
+}
+
+export function apiListParentJobs(params: {
+  page?: number;
+  page_size?: number;
+  state?: string;
+  keyword?: string;
+  include_system?: boolean;
+} = {}) {
+  const q = new URLSearchParams();
+  if (params.page) q.set("page", String(params.page));
+  if (params.page_size) q.set("page_size", String(params.page_size));
+  if (params.state) q.set("state", params.state);
+  if (params.keyword) q.set("keyword", params.keyword);
+  if (params.include_system) q.set("include_system", "true");
+  const qs = q.toString();
+  return request<{ items: ParentJobItem[]; total: number; page: number; page_size: number }>(
+    `/api/v1/jobs/parents${qs ? `?${qs}` : ""}`,
+  );
+}
+
+/** 父任务的子任务列表：modo_job 子任务 或 编排 run 的 step_results 节点 */
+export function apiListJobChildren(jobId: string) {
+  return request<JobChildrenResponse>(
+    `/api/v1/jobs/${encodeURIComponent(jobId)}/children`,
+  );
+}
+
 export function apiGetJob(jobId: string) {
   return request<JobItem>(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
 }

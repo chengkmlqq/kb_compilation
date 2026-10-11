@@ -58,6 +58,196 @@ def _job_to_dict(job: Job) -> dict:
         "log_path": job.log_path,
         "create_time": job.create_time.isoformat() if job.create_time else None,
         "params": params,
+        # 2026-10-12 父子任务：parent_id（NULL=父任务）+ 子任务计数
+        "parent_id": job.parent_id,
+    }
+
+
+def _parent_job_to_dict(job: Job, child_count: int, child_states: dict) -> dict:
+    """父任务序列化：子任务聚合（数量 + 各状态计数）附加在父任务行上。"""
+    d = _job_to_dict(job)
+    d["child_count"] = child_count
+    d["child_states"] = child_states
+    return d
+
+
+# ── 2026-10-12 父子任务视图 ─────────────────────────────────────────
+# 父任务 = 文档处理链头（modo_job.parent_id IS NULL 的 API 触发任务）+
+# 编排执行（kb_tape_run，虚拟父任务，子任务 = step_results）。
+def _child_agg(db: Session, parent_ids: list[str]) -> dict[str, dict]:
+    """按父任务 id 聚合子任务：{parent_id: {"count": N, "states": {...}}}"""
+    if not parent_ids:
+        return {}
+    rows = db.execute(
+        select(Job.parent_id, Job.state, func.count())
+        .where(Job.parent_id.in_(parent_ids))
+        .group_by(Job.parent_id, Job.state)
+    ).all()
+    agg: dict[str, dict] = {}
+    for pid, state, cnt in rows:
+        a = agg.setdefault(str(pid), {"count": 0, "states": {}})
+        a["count"] += int(cnt)
+        a["states"][str(state or "")] = int(cnt)
+    return agg
+
+
+@router.get("/parents")
+def list_parent_jobs(
+    _user_id: str = Depends(_require_user_id),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    state: str | None = Query(None),
+    keyword: str | None = Query(None, description="job id / 文档 id / 编排名模糊匹配"),
+    include_system: bool = Query(False, description="包含系统周期任务"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """父任务列表（2026-10-12 任务监控首屏）：
+
+    两种父任务统一展示：
+      1. modo_job 链头（parent_id IS NULL 且非系统周期任务）
+      2. 编排执行 kb_tape_run（虚拟父任务，子任务 = step_results 节点）
+
+    每个父任务带 child_count（子任务数）与 child_states（各状态聚合），
+    供前端首屏显示「进度 X/Y 完成」。
+    """
+    from api.models.orchestration import TapeRun
+
+    # ── 1) modo_job 链头父任务
+    stmt = select(Job).where(Job.parent_id.is_(None))
+    count_stmt = select(func.count()).select_from(Job).where(Job.parent_id.is_(None))
+    if not include_system:
+        stmt = stmt.where(Job.task_class.not_in(SYSTEM_TASK_CLASSES))
+        count_stmt = count_stmt.where(Job.task_class.not_in(SYSTEM_TASK_CLASSES))
+    if state:
+        stmt = stmt.where(Job.state == state)
+        count_stmt = count_stmt.where(Job.state == state)
+    if keyword:
+        like = f"%{keyword}%"
+        stmt = stmt.where(Job.id.like(like) | Job.task_id.like(like))
+        count_stmt = count_stmt.where(Job.id.like(like) | Job.task_id.like(like))
+    job_total = db.execute(count_stmt).scalar() or 0
+    jobs = (
+        db.execute(
+            stmt.order_by(Job.create_time.desc(), Job.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        .scalars()
+        .all()
+    )
+
+    # ── 2) 编排 run 虚拟父任务（独立分页：parent 列表第 1 页并置最前）
+    run_total = 0
+    runs: list = []
+    if page == 1:
+        run_stmt = select(TapeRun)
+        run_count_stmt = select(func.count()).select_from(TapeRun)
+        if state:
+            run_stmt = run_stmt.where(TapeRun.status == state)
+            run_count_stmt = run_count_stmt.where(TapeRun.status == state)
+        if keyword:
+            like = f"%{keyword}%"
+            run_stmt = run_stmt.where(TapeRun.id.like(like) | TapeRun.tape_name.like(like))
+            run_count_stmt = run_count_stmt.where(TapeRun.id.like(like) | TapeRun.tape_name.like(like))
+        run_total = db.execute(run_count_stmt).scalar() or 0
+        runs = (
+            db.execute(
+                run_stmt.order_by(TapeRun.created_at.desc(), TapeRun.id.desc())
+                .limit(page_size)
+            )
+            .scalars()
+            .all()
+        )
+
+    # 子任务聚合（modo_job 链头）
+    agg = _child_agg(db, [j.id for j in jobs])
+    items = [
+        _parent_job_to_dict(
+            j,
+            child_count=agg.get(j.id, {}).get("count", 0),
+            child_states=agg.get(j.id, {}).get("states", {}),
+        )
+        for j in jobs
+    ]
+    # 编排 run（子任务 = step_results）
+    for run in runs:
+        steps = run.step_results or []
+        states: dict[str, int] = {}
+        for s in steps:
+            st = str(s.get("status") or "")
+            states[st] = states.get(st, 0) + 1
+        items.append(
+            {
+                "id": run.id,
+                "task_id": run.id,
+                "task_class": "OrchestrationRun",  # 虚拟任务类（前端按此渲染「编排执行」）
+                "queue_name": "orch",
+                "trigger_type": "API",
+                "state": run.status,
+                "start_time": (run.created_at.isoformat() if run.created_at else None),
+                "end_time": (run.updated_at.isoformat() if run.updated_at else None),
+                "duration_ms": None,
+                "error_message": run.error,
+                "log_path": None,
+                "create_time": (run.created_at.isoformat() if run.created_at else None),
+                "params": {"tape_id": run.tape_id, "tape_name": run.tape_name, "inputs": run.inputs or {}},
+                "parent_id": None,
+                "child_count": len(steps),
+                "child_states": states,
+            }
+        )
+
+    return {
+        "success": True,
+        "data": {
+            "items": items,
+            "total": job_total + run_total,
+            "page": page,
+            "page_size": page_size,
+        },
+    }
+
+
+@router.get("/{job_id}/children")
+def list_job_children(
+    job_id: str,
+    _user_id: str = Depends(_require_user_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """父任务的子任务列表（2026-10-12）：
+
+    - modo_job 父任务 → 其 parent_id 指向它的所有子任务
+    - 编排 run（虚拟父任务）→ 其 step_results 节点执行记录
+    """
+    from api.models.orchestration import TapeRun
+
+    # 先查是否编排 run（虚拟父任务）
+    run = db.execute(select(TapeRun).where(TapeRun.id == job_id)).scalars().first()
+    if run:
+        return {
+            "success": True,
+            "data": {
+                "kind": "orchestration",
+                "items": (run.step_results or []),
+                "total": len(run.step_results or []),
+            },
+        }
+    # modo_job 父任务
+    parent = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
+    if not parent:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
+    children = (
+        db.execute(select(Job).where(Job.parent_id == job_id).order_by(Job.create_time.asc()))
+        .scalars()
+        .all()
+    )
+    return {
+        "success": True,
+        "data": {
+            "kind": "job",
+            "items": [_job_to_dict(c) for c in children],
+            "total": len(children),
+        },
     }
 
 

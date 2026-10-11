@@ -604,3 +604,71 @@ def test_post_kb_scope_permission_403(monkeypatch) -> None:
         assert r.status_code == 200, r.text
     finally:
         app.dependency_overrides.clear()
+
+
+def test_parent_child_jobs_view(monkeypatch) -> None:
+    """父子任务视图（2026-10-12）：/parents 只列父任务+子任务聚合，/children 列出子任务。"""
+    db = _make_session()
+    db.query(Job).delete()
+    db.commit()
+
+    # 父任务（链头解析）
+    db.add(Job(id="DOC_doc1", task_id="doc1", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"kbId": "kb1", "documentId": "doc1"}),
+               trigger_type="API", state="SUCCESS"))
+    # 子任务（wiki/graph 挂 parent_id）
+    db.add(Job(id="WIKI_X", task_id="WIKI_X", task_class="KbSkillWikiBuildTask",
+               queue_name="default", task_params=json.dumps({"kbId": "kb1", "documentId": "doc1"}),
+               trigger_type="API", state="RUNNING", parent_id="DOC_doc1"))
+    db.add(Job(id="GRAPH_X", task_id="GRAPH_X", task_class="KbGraphBuildTask",
+               queue_name="graph", task_params=json.dumps({"kbId": "kb1", "documentId": "doc1"}),
+               trigger_type="API", state="PENDING", parent_id="DOC_doc1"))
+    # 独立父任务（无子任务）
+    db.add(Job(id="DOC_doc2", task_id="doc2", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"kbId": "kb2", "documentId": "doc2"}),
+               trigger_type="API", state="SUCCESS"))
+    db.commit()
+
+    # 编排 run（虚拟父任务）
+    from api.models.orchestration import TapeRun
+
+    db.add(TapeRun(id="run1", tape_id="tape1", tape_name="编排A", status="running",
+                   inputs={"kb_id": "kb1"}, step_results=[
+                       {"step_id": "n1", "step_inst": "kb_read_doc", "status": "success"},
+                       {"step_id": "n2", "step_inst": "kb_llm_chat", "status": "running"},
+                   ]))
+    db.commit()
+
+    app.dependency_overrides[get_db] = lambda: db
+    client = _jobs_client(db, monkeypatch)
+    try:
+        # /parents：3 个 modo_job 父任务 + 1 个编排 run
+        r = client.get("/api/v1/jobs/parents")
+        assert r.status_code == 200
+        items = r.json()["data"]["items"]
+        by_id = {it["id"]: it for it in items}
+        # DOC_doc1 是父任务（有 2 个子任务）
+        assert "DOC_doc1" in by_id
+        assert by_id["DOC_doc1"]["child_count"] == 2
+        assert by_id["DOC_doc1"]["child_states"].get("RUNNING") == 1
+        # 编排 run 是虚拟父任务
+        assert "run1" in by_id
+        assert by_id["run1"]["task_class"] == "OrchestrationRun"
+        assert by_id["run1"]["child_count"] == 2
+
+        # /children：modo_job 父任务 → 2 个子任务
+        r = client.get("/api/v1/jobs/DOC_doc1/children")
+        assert r.status_code == 200
+        d = r.json()["data"]
+        assert d["kind"] == "job" and d["total"] == 2
+
+        # /children：编排 run → step_results 节点
+        r = client.get("/api/v1/jobs/run1/children")
+        assert r.status_code == 200
+        d = r.json()["data"]
+        assert d["kind"] == "orchestration" and d["total"] == 2
+
+        # 子任务不带 parent_id 的父任务：child_count=0
+        assert by_id["DOC_doc2"]["child_count"] == 0
+    finally:
+        app.dependency_overrides.clear()

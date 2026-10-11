@@ -6,19 +6,22 @@
  * 数据源 modo_job（list/statistics/queues/stop/delete）。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { App } from "antd";
+import { App, Segmented } from "antd";
 import JobStats from "./job-stats";
 import JobFilter from "./job-filter";
 import JobTable from "./job-table";
+import ParentJobTable from "./parent-job-table";
 import JobLogDrawer from "./job-log-drawer";
 import ModoPagination from "@/components/biz/modo-pagination";
 import {
   apiDeleteJob,
   apiJobStatistics,
   apiListJobs,
+  apiListParentJobs,
   apiStopJob,
   JobItem,
   JobStatistics,
+  ParentJobItem,
 } from "@/lib/api";
 
 type JobFilterValues = {
@@ -38,7 +41,11 @@ const EMPTY_STATS: JobStatistics = {
 
 export default function JobsPage() {
   const { message } = App.useApp();
+  // 2026-10-12 父子任务：首屏默认「主任务」视图（父任务列表+展开子任务），
+  // 可切换「全部任务」退回平铺视图（兼容老习惯）。
+  const [view, setView] = useState<"parents" | "all">("parents");
   const [items, setItems] = useState<JobItem[]>([]);
+  const [parentItems, setParentItems] = useState<ParentJobItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState<JobStatistics>(EMPTY_STATS);
@@ -67,28 +74,44 @@ export default function JobsPage() {
   }, []);
 
   const load = useCallback(
-    async (p = page, size = pageSize, f = filters) => {
+    async (p = page, size = pageSize, f = filters, v = view) => {
       setLoading(true);
       try {
-        const res = await apiListJobs({
-          page: p,
-          page_size: size,
-          state: f.state,
-          keyword: f.keyWord?.trim() || undefined,
-          queue_name: f.queueName,
-        });
-        if (res.success && res.data) {
-          setItems(res.data.items);
-          setTotal(res.data.total);
-          latestQueryRef.current = { page: p, pageSize: size, filters: f };
+        if (v === "parents") {
+          const res = await apiListParentJobs({
+            page: p,
+            page_size: size,
+            state: f.state,
+            keyword: f.keyWord?.trim() || undefined,
+          });
+          if (res.success && res.data) {
+            setParentItems(res.data.items);
+            setTotal(res.data.total);
+            latestQueryRef.current = { page: p, pageSize: size, filters: f };
+          } else {
+            message.error(res.message || "加载主任务失败");
+          }
         } else {
-          message.error(res.message || "加载任务失败");
+          const res = await apiListJobs({
+            page: p,
+            page_size: size,
+            state: f.state,
+            keyword: f.keyWord?.trim() || undefined,
+            queue_name: f.queueName,
+          });
+          if (res.success && res.data) {
+            setItems(res.data.items);
+            setTotal(res.data.total);
+            latestQueryRef.current = { page: p, pageSize: size, filters: f };
+          } else {
+            message.error(res.message || "加载任务失败");
+          }
         }
       } finally {
         setLoading(false);
       }
     },
-    [page, pageSize, filters, message],
+    [page, pageSize, filters, view, message],
   );
 
   const loadStats = useCallback(async () => {
@@ -108,7 +131,10 @@ export default function JobsPage() {
   }, [load, loadStats]);
 
   // agent-gateway 长任务可能运行 10-25 分钟：有 RUNNING 任务时自动刷新
-  const hasRunning = items.some((i) => i.state === "RUNNING");
+  const hasRunning =
+    (view === "parents"
+      ? parentItems.some((i) => i.state === "RUNNING")
+      : items.some((i) => i.state === "RUNNING"));
   useEffect(() => {
     if (!hasRunning) return;
     const timer = setInterval(() => refresh(), 8000);
@@ -185,7 +211,22 @@ export default function JobsPage() {
 
         {/* Filter Area */}
         <div style={{ flexShrink: 0 }}>
-          <JobFilter onSearch={handleSearch} onReset={handleReset} />
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 4px" }}>
+            <Segmented
+              size="small"
+              value={view}
+              options={[
+                { label: "主任务", value: "parents" },
+                { label: "全部任务", value: "all" },
+              ]}
+              onChange={(v) => {
+                setView(v as "parents" | "all");
+                setPage(1);
+                void load(1, pageSize, filters, v as "parents" | "all");
+              }}
+            />
+            <JobFilter onSearch={handleSearch} onReset={handleReset} />
+          </div>
         </div>
 
         {/* Table + Pagination Area */}
@@ -202,14 +243,25 @@ export default function JobsPage() {
           }}
         >
           <div ref={tableBodyRef} style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "0 16px" }}>
-            <JobTable
-              loading={loading}
-              data={items}
-              scrollY={tableBodyHeight}
-              onViewLog={handleViewLog}
-              onStop={handleStop}
-              onDelete={handleDelete}
-            />
+            {view === "parents" ? (
+              <ParentJobTable
+                loading={loading}
+                data={parentItems}
+                scrollY={tableBodyHeight}
+                onViewLog={handleViewLog}
+                onStop={handleStop}
+                onDelete={handleDelete}
+              />
+            ) : (
+              <JobTable
+                loading={loading}
+                data={items}
+                scrollY={tableBodyHeight}
+                onViewLog={handleViewLog}
+                onStop={handleStop}
+                onDelete={handleDelete}
+              />
+            )}
           </div>
           <ModoPagination
             current={page}
