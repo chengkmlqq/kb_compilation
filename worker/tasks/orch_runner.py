@@ -107,7 +107,20 @@ def _append_step_result(run_id: str, result: dict) -> None:
         if not run:
             return
         results = list(run.step_results or [])
-        results.append(result)
+        # 2026-10-12 动态效果：同 (step_id, round) 已存在则替换（running 占位 →
+        # 终态），否则追加——保证每个节点每轮只有一条记录，前端轮询能看到
+        # running → success/failed 的状态流转。
+        step_id = str(result.get("step_id") or "")
+        round_no = str(result.get("round") or "")
+        idx = None
+        for i, existing in enumerate(results):
+            if str(existing.get("step_id") or "") == step_id and str(existing.get("round") or "") == round_no:
+                idx = i
+                break
+        if idx is not None:
+            results[idx] = result
+        else:
+            results.append(result)
         run.step_results = results
         db.commit()
     finally:
@@ -301,6 +314,13 @@ def run_node(run_id: str, step_id: str, bindings: dict, round_no: int = 0) -> di
 
     start = time.time()
     context = TapeRuntimeContext(dict(bindings))
+    # 2026-10-12 动态效果：先写 running 占位（前端画布转圈），
+    # 执行完 _append_step_result 同 step_id 替换为终态。
+    _append_step_result(run_id, {
+        "step_id": step_id, "step_inst": s["inst"], "step_label": s["label"],
+        "queue": _step_queue(steps, step_id), "status": "running",
+        "body": None, "error": None, "duration_ms": 0, "round": round_no,
+    })
     try:
         # 2026-10-12 环境隔离：编排节点执行产生的业务数据（wiki 页/切片等）
         # 一律落开发库——原子内部 get_sessionmaker() 读 contextvar 自动路由。

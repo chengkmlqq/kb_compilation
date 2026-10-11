@@ -147,6 +147,55 @@ def test_wiki_ensure_folder_requires_kb() -> None:
     assert not resp.success and "kb_id" in resp.error
 
 
+def test_step_result_upsert_semantics(monkeypatch) -> None:
+    """step_results 同 (step_id, round) 应替换而非追加（2026-10-12 动态效果）。
+
+    run_node 先写 running 占位、执行完写终态——若追加则每个节点两条记录，
+    前端会看到重复步骤；必须替换。
+    """
+    import json
+
+    from api.models.orchestration import TapeRun
+    from sqlalchemy import select
+
+    from worker.tasks.orch_runner import _append_step_result
+
+    # 用内存 SQLite 模拟（sessionmaker 打桩）
+    from api.db import Base
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    TestSM = sessionmaker(bind=engine)
+    monkeypatch.setattr("worker.tasks.orch_runner._run_db", lambda: TestSM())
+    db = TestSM()
+    run = TapeRun(
+        id="r1", tape_id="t1", tape_name="t", status="running",
+        inputs={}, step_results=[], bindings={},
+    )
+    db.add(run)
+    db.commit()
+
+    _append_step_result("r1", {
+        "step_id": "t1::n1", "step_inst": "kb_read_table", "step_label": "读",
+        "queue": "orch", "status": "running", "body": None, "error": None,
+        "duration_ms": 0, "round": 0,
+    })
+    _append_step_result("r1", {
+        "step_id": "t1::n1", "step_inst": "kb_read_table", "step_label": "读",
+        "queue": "orch", "status": "success", "body": {"rows": 8}, "error": None,
+        "duration_ms": 134, "round": 0,
+    })
+    db2 = TestSM()
+    run2 = db2.execute(select(TapeRun).where(TapeRun.id == "r1")).scalars().first()
+    results = run2.step_results or []
+    assert len(results) == 1, f"同 step_id 应替换为 1 条，实际 {len(results)}"
+    assert results[0]["status"] == "success", f"应为终态 success，实际 {results[0]['status']}"
+    assert results[0]["duration_ms"] == 134
+    db2.close()
+
+
 def test_wiki_build_template_structure() -> None:
     import sys
     sys.path.insert(0, ".")
