@@ -43,8 +43,23 @@ import {
   WikiSearchItem,
 } from "@/lib/api";
 import { useRouter } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const { Text } = Typography;
+
+// [[slug]] / [[slug|别名]] 双链 → markdown 链接（与 WikiBrowseView 一致，href 规整为 wiki 路由）
+function renderWikiLinks(content: string, kbId: string): string {
+  if (!content) return content;
+  const wikiLinkRe = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
+  return content.replace(wikiLinkRe, (_m, slug: string, alias?: string) => {
+    const clean = (slug || "").trim();
+    if (!clean) return _m;
+    const label = (alias || "").trim() || clean;
+    const href = `/kbs/${encodeURIComponent(kbId)}/wiki/${encodeURIComponent(clean)}`;
+    return `[${label}](${href})`;
+  });
+}
 
 // 12 类对齐 WeKnora
 const PAGE_TYPE_COLORS: Record<string, string> = {
@@ -229,6 +244,8 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
   const [selected, setSelected] = useState<WikiGraphNode | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailHtml, setDetailHtml] = useState("");
+  const [detailLinks, setDetailLinks] = useState<{ slug: string; title: string; page_type: string }[]>([]);
+  const [detailInLinks, setDetailInLinks] = useState<{ slug: string; title: string; page_type: string }[]>([]);
   const [arrowsVisible, setArrowsVisible] = useState(true);
   const [searchOptions, setSearchOptions] = useState<{ value: string; label: string }[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -327,6 +344,8 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
       if (res.success && res.data) {
         setSelected(node);
         setDetailHtml(res.data.content || "");
+        setDetailLinks(res.data.links || []);
+        setDetailInLinks(res.data.in_links || []);
         setDetailOpen(true);
       }
     },
@@ -781,10 +800,24 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
           edgeElCache.set(key, line);
         }
         const hovered = !!st.hover && (e.source === st.hover || e.target === st.hover);
-        line.setAttribute("x1", String(a.x));
-        line.setAttribute("y1", String(a.y));
-        line.setAttribute("x2", String(b.x));
-        line.setAttribute("y2", String(b.y));
+        // 终点缩到目标节点边缘（半径 + 箭头余量），避免箭头与节点重叠
+        const rA = radiusOf.get(e.source) || 14;
+        const rB = radiusOf.get(e.target) || 14;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const shrinkB = rB + 6; // 箭头 marker 余量
+        const shrinkA = rA + 2;
+        const ux = dx / dist;
+        const uy = dy / dist;
+        const x2 = b.x - ux * shrinkB;
+        const y2 = b.y - uy * shrinkB;
+        const x1 = a.x + ux * shrinkA;
+        const y1 = a.y + uy * shrinkA;
+        line.setAttribute("x1", String(x1));
+        line.setAttribute("y1", String(y1));
+        line.setAttribute("x2", String(x2));
+        line.setAttribute("y2", String(y2));
         line.setAttribute("stroke", hovered ? "#1677ff" : "#d9d9d9");
         line.setAttribute("stroke-width", hovered ? "2.5" : "1.2");
         line.setAttribute("opacity", hovered ? "0.95" : "0.5");
@@ -1131,11 +1164,74 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
           )}
         </div>
         {selected?.summary && (
-          <div className="kb-wiki-reader-aliases" style={{ marginBottom: 10 }}>
-            <span className="kb-wiki-alias-label">{selected.summary}</span>
-          </div>
-        )}
-        <div className="kb-wiki-reader-body" dangerouslySetInnerHTML={{ __html: detailHtml }} />
+                  <div className="kb-wiki-reader-aliases" style={{ marginBottom: 10 }}>
+                    <span className="kb-wiki-alias-label">{selected.summary}</span>
+                  </div>
+                )}
+                {/* 反向链接（谁引用本页） */}
+                {detailInLinks.length > 0 && (
+                  <div className="kb-wiki-reader-backlinks" style={{ marginBottom: 12 }}>
+                    <span className="kb-wiki-link-label">反向链接</span>
+                    <div className="kb-wiki-backlink-list">
+                      {detailInLinks.map((link) => (
+                        <a
+                          key={link.slug}
+                          className="kb-wiki-backlink-tag"
+                          href={`/kbs/${kbId}/wiki/${encodeURIComponent(link.slug)}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            void selectNode(link.slug);
+                          }}
+                        >
+                          {link.title}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* 正文：Markdown 渲染 + [[slug]] 双链 */}
+                <div className="kb-wiki-reader-body">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      a: (props) => (
+                        <a
+                          {...props}
+                          onClick={(e) => {
+                            const href = (props.href || "").trim();
+                            if (!href.startsWith("/kbs/")) return;
+                            e.preventDefault();
+                            const m = href.match(/\/wiki\/([^/]+)$/);
+                            if (m) void selectNode(decodeURIComponent(m[1]));
+                          }}
+                        />
+                      ),
+                    }}
+                  >
+                    {renderWikiLinks(detailHtml, kbId)}
+                  </ReactMarkdown>
+                </div>
+                {/* 出链（本页引用的其他页面） */}
+                {detailLinks.length > 0 && (
+                  <div className="kb-wiki-reader-sources">
+                    <span className="kb-wiki-link-label">引用</span>
+                    <div className="kb-wiki-source-list">
+                      {detailLinks.map((link) => (
+                        <a
+                          key={link.slug}
+                          className="kb-wiki-source-ref"
+                          href={`/kbs/${kbId}/wiki/${encodeURIComponent(link.slug)}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            void selectNode(link.slug);
+                          }}
+                        >
+                          {link.title}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
       </Drawer>
     </div>
     </Card>
