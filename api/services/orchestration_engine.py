@@ -316,6 +316,28 @@ class WikiPublishStep(_AtomScriptStep):
     ATOM_NAME = "wiki_publish"
 
 
+class LongSentenceExtractStep(_AtomScriptStep):
+    """'long_sentence_extract' 长句原文拆分（2026-10-12 业务原子）。
+
+    包装 WeKnora extract_long_sentences_v2.py（切句→LLM 整篇归组→拼接校验）。
+    config 字段见 orch_atoms.py long_sentence_extract：chunks_file/output/
+    summary_file/summary_slug/max_tokens/model/timeout_sec。
+    """
+
+    ATOM_NAME = "long_sentence_extract"
+
+
+class KeywordExtractStep(_AtomScriptStep):
+    """'keyword_extract' 高频关键词抽取（2026-10-12 业务原子）。
+
+    两步管线：程序统计 discover_terms → LLM 过滤 filter_terms_llm。
+    config 字段见 orch_atoms.py keyword_extract：ls_file/output/min_freq/
+    top/max_len/batch_size/kb/model/dry_run/timeout_sec。
+    """
+
+    ATOM_NAME = "keyword_extract"
+
+
 class KbReadDocStep(BaseStep):
     """'kb_read_doc' 读文档切片（2026-10-12 基础原子）。
 
@@ -631,6 +653,9 @@ ATOM_MAP: Dict[str, Callable[[str, str, str, Optional[dict]], BaseStep]] = {
     # 业务原子（2026-10-09）：wiki 构建拆出的通用组件，实现在 orch_atoms.py
     "llm_extract": LlmExtractStep,
     "wiki_publish": WikiPublishStep,
+    # 业务原子（2026-10-12）：长句拆分 / 关键词抽取——包装 WeKnora 既有脚本
+    "long_sentence_extract": LongSentenceExtractStep,
+    "keyword_extract": KeywordExtractStep,
     # 细粒度基础原子（2026-10-12）：编排自己实现 wiki 构建逻辑（进程内执行，
     # 结果经 bindings 流转）。原子 = 纯基础能力，流程由编排图表达。
     "kb_read_doc": KbReadDocStep,

@@ -43,7 +43,8 @@ def orch_db():
 
 
 def test_atom_map_registered() -> None:
-    for inst in ("kb_read_doc", "kb_llm_chat", "wiki_upsert_page", "wiki_rebuild_links", "wiki_ensure_folder"):
+    for inst in ("kb_read_doc", "kb_llm_chat", "wiki_upsert_page", "wiki_rebuild_links", "wiki_ensure_folder",
+                 "long_sentence_extract", "keyword_extract"):
         assert inst in ATOM_MAP, f"{inst} 未注册到 ATOM_MAP"
 
 
