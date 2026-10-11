@@ -6,6 +6,7 @@ import json
 import uuid
 from datetime import datetime
 
+from api.config import get_settings
 from api.models.orchestration import Tape, TapeRun, TapeStep, StepDefine
 from api.services.orchestration_engine import (
     ATOM_MAP,
@@ -299,6 +300,9 @@ def execute_tape(db, tape_id: str, inputs: dict | None = None) -> dict:
         raise ValueError("编排没有可执行的步骤（请先在设计器保存）")
 
     run_id = uuid.uuid4().hex[:32]
+    run_env = "dev" if get_settings().KB_ENV_ROUTING_ENABLED else "prod"
+    bindings0 = dict(inputs or {})
+    bindings0["__env__"] = run_env  # 2026-10-12 环境隔离：编排执行一律落开发库
     run = TapeRun(
         id=run_id,
         tape_id=tape_id,
@@ -306,7 +310,7 @@ def execute_tape(db, tape_id: str, inputs: dict | None = None) -> dict:
         status="queued",
         inputs=inputs or {},
         step_results=[],
-        bindings=inputs or {},
+        bindings=bindings0,
     )
     db.add(run)
     db.commit()

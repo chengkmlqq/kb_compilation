@@ -199,7 +199,7 @@ def _enqueue_wiki_build_task(kb_id: str, document_id: str, parent_job_id: str | 
     from worker.celery_app import celery_app
 
     task_params = json.dumps(
-        {"kbId": kb_id, "documentId": document_id, "language": "中文"},
+        {"kbId": kb_id, "documentId": document_id, "language": "中文", "env": "prod"},  # 2026-10-12 上传链走生产库
         ensure_ascii=False,
     )
     job_id = f"WIKI_BUILD_{uuid.uuid4().hex[:12]}"
@@ -314,6 +314,7 @@ def _enqueue_wiki_skill_task(
                 "kb_base_url": kb_base_url,
                 **llm_cfg,
             },
+            "env": "prod",  # 2026-10-12 上传链走生产库
         },
         ensure_ascii=False,
     )
@@ -367,7 +368,7 @@ def _enqueue_graph_build_task(kb_id: str, document_id: str, parent_job_id: str |
     from worker.celery_app import celery_app
 
     task_params = json.dumps(
-        {"kbId": kb_id, "documentId": document_id, "language": "中文"},
+        {"kbId": kb_id, "documentId": document_id, "language": "中文", "env": "prod"},  # 2026-10-12 上传链走生产库
         ensure_ascii=False,
     )
     job_id = f"GRAPH_BUILD_{uuid.uuid4().hex[:12]}"

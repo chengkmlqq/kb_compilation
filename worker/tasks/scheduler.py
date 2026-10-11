@@ -359,7 +359,19 @@ def execute_modo_job(job_id: str) -> dict:
         return {"success": False, "error": f"no handler registered for {task_class}"}
 
     try:
-        result = handler(normalized, task_params)
+        # 2026-10-12 环境隔离：任务参数可携带 env（上传链=prod，编排链继承 run）。
+        # handler 内部 get_sessionmaker() 零改动——env_scope 设 contextvar 路由。
+        from api.db import ENV_PROD, env_scope
+        import json as _json
+
+        _env = ENV_PROD
+        try:
+            _params = _json.loads(task_params) if task_params else {}
+        except (TypeError, _json.JSONDecodeError):
+            _params = {}
+        _env = str(_params.get("env") or ENV_PROD)
+        with env_scope(_env):
+            result = handler(normalized, task_params)
     except Exception as e:  # noqa: BLE001
         logger.exception("execute_modo_job failed: job_id=%s", normalized)
         _append_job_log(normalized, f"任务失败: {e}")

@@ -28,6 +28,16 @@ class Settings:
     DB_POOL_PRE_PING: bool = os.getenv("DB_POOL_PRE_PING", "1") == "1"
     # 启动时自动应用 Alembic 迁移（框架库 schema 对齐，见 api/services/migrations.py）
     AUTO_MIGRATE_ON_START: bool = os.getenv("AUTO_MIGRATE_ON_START", "1") == "1"
+    # ── 环境隔离（2026-10-12）：生产/开发双环境 ─────────────────────────
+    # 生产 = DATABASE_URL / KNOWLEDGE_DATABASE_URL；开发 = DEV_*（未配则回落生产）。
+    # 编排执行（手工/设计器/定时）→ 开发环境；知识库上传触发链路 → 生产环境。
+    # 总开关：KB_ENV_ROUTING_ENABLED=0 时全部走生产（零风险回滚开关）。
+    DEV_DATABASE_URL: str = os.getenv("DEV_DATABASE_URL", "")
+    # 开发向量库：同一 PG 实例的独立 schema（connect_args search_path 注入）
+    DEV_KNOWLEDGE_DATABASE_URL: str = os.getenv("DEV_KNOWLEDGE_DATABASE_URL", "")
+    DEV_SCHEMA_NAME: str = os.getenv("DEV_SCHEMA_NAME", "dev")
+    # 0/空 = 环境路由关闭（全生产）；1 = 开启（编排→dev，上传→prod）
+    KB_ENV_ROUTING_ENABLED: bool = os.getenv("KB_ENV_ROUTING_ENABLED", "0") == "1"
 
     # --- Vector store (PostgreSQL + pgvector, for chunk embeddings only) ---
     # The knowledge BUSINESS tables (kb_datasource / kb_document / doc_chunk /

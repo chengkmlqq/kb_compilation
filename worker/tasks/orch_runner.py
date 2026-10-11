@@ -33,12 +33,34 @@ TASK_CLASS_ORCH_ADVANCE = "KbOrchestrationAdvanceTask"
 ORCH_QUEUE = "orch"
 
 
-def _db():
-    return get_sessionmaker()()
+def _db(env: str | None = None):
+    """会话工厂：编排执行数据（TapeRun）落开发库，编排定义（Tape/TapeStep）在生产库。
+
+    2026-10-12 环境隔离：run 的执行记录/step_results/bindings 是「编排执行产生
+    的数据」→ 开发库；编排模板定义（用户拍板 A1 存生产共享）→ 生产库。
+    路由关闭时 dev 回落 prod（get_sessionmaker('dev') 内部 resolve 到 DATABASE_URL）。
+    """
+    from api.db import get_sessionmaker
+
+    return get_sessionmaker(env)()
+
+
+def _run_db():
+    """执行数据会话（开发库）。"""
+    from api.db import ENV_DEV
+
+    return _db(ENV_DEV)
+
+
+def _def_db():
+    """编排定义会话（生产库）。"""
+    from api.db import ENV_PROD
+
+    return _db(ENV_PROD)
 
 
 def _get_run(run_id: str):
-    db = _db()
+    db = _run_db()
     try:
         return db.get(TapeRun, run_id)
     finally:
@@ -46,7 +68,7 @@ def _get_run(run_id: str):
 
 
 def _get_tape(tape_id: str):
-    db = _db()
+    db = _def_db()
     try:
         return db.get(Tape, tape_id)
     finally:
@@ -54,7 +76,7 @@ def _get_tape(tape_id: str):
 
 
 def _load_steps(tape_id: str) -> dict:
-    db = _db()
+    db = _def_db()
     try:
         rows = db.query(TapeStep).filter(TapeStep.tape_id == tape_id).all()
     finally:
@@ -79,7 +101,7 @@ def _step_queue(steps: dict, sid: str) -> str:
 
 
 def _append_step_result(run_id: str, result: dict) -> None:
-    db = _db()
+    db = _run_db()
     try:
         run = db.get(TapeRun, run_id)
         if not run:
@@ -93,7 +115,7 @@ def _append_step_result(run_id: str, result: dict) -> None:
 
 
 def _update_run(run_id: str, **fields) -> None:
-    db = _db()
+    db = _run_db()
     try:
         run = db.get(TapeRun, run_id)
         if not run:
@@ -106,7 +128,7 @@ def _update_run(run_id: str, **fields) -> None:
 
 
 def _bindings_from_run(run_id: str) -> dict:
-    db = _db()
+    db = _run_db()
     try:
         run = db.get(TapeRun, run_id)
         return dict(run.bindings or {})
@@ -280,7 +302,12 @@ def run_node(run_id: str, step_id: str, bindings: dict, round_no: int = 0) -> di
     start = time.time()
     context = TapeRuntimeContext(dict(bindings))
     try:
-        response = step_cls(step_id, s["label"], s["inst"], s["config"]).handle(context)
+        # 2026-10-12 环境隔离：编排节点执行产生的业务数据（wiki 页/切片等）
+        # 一律落开发库——原子内部 get_sessionmaker() 读 contextvar 自动路由。
+        from api.db import ENV_DEV, env_scope
+
+        with env_scope(ENV_DEV):
+            response = step_cls(step_id, s["label"], s["inst"], s["config"]).handle(context)
         status = "success" if response.success else "failed"
         body = response.body if response.success else None
         error = "" if response.success else response.error

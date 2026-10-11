@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from api.config import get_settings
+from api.db import current_env
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +57,23 @@ def parse_remote(storage_path: str) -> tuple[str, str]:
 
 
 def build_remote(bucket: str, key: str) -> str:
-    """(bucket, key) → ``minio://bucket/key``。"""
-    return f"{MINIO_SCHEME}{bucket}/{key.lstrip('/')}"
+    """(bucket, key) → ``minio://bucket/key``。
+
+    2026-10-12 环境隔离：写入 key 自动加当前环境前缀（dev//prod/），读取端
+    parse_remote 原样解析（storage_path 自带前缀，读时无需判断环境）；存量
+    无前缀数据兼容（key 不加前缀直读）。路由关闭/未配置时前缀为空（全 prod）。
+    """
+    env = current_env()
+    if env and env not in ("prod", "dev"):
+        env = ""
+    if not env:
+        return f"{MINIO_SCHEME}{bucket}/{key.lstrip('/')}"
+    prefix = f"{env}/"
+    # key 已带任一环境前缀（prod/ 或 dev/）则不重复加——避免 dev/prod/ 嵌套
+    stripped = key.lstrip("/")
+    if stripped.startswith(("prod/", "dev/")):
+        return f"{MINIO_SCHEME}{bucket}/{stripped}"
+    return f"{MINIO_SCHEME}{bucket}/{prefix}{stripped}"
 
 
 def local_path(storage_path: str) -> Path:
