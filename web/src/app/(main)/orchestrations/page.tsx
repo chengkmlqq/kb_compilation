@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { useRouter } from "next/navigation";
 import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, PauseCircleOutlined } from "@ant-design/icons";
+import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, PauseCircleOutlined, FileAddOutlined } from "@ant-design/icons";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
 import { ModoSelect } from "@/components/biz/modo-select";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
@@ -18,16 +18,19 @@ import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 import { ExecuteInputModal } from "./_components/execute-input-modal";
 import {
+  apiApplyTapeTemplate,
   apiCreateTape,
   apiDeleteTape,
   apiExecuteTape,
   apiGetTapeRun,
   apiListTapes,
+  apiListTapeTemplates,
   apiOfflineTape,
   apiPublishTape,
   apiUpdateTape,
   TapeItem,
   TapeRunDetail,
+  TapeTemplateItem,
 } from "@/lib/api";
 
 const { Text } = Typography;
@@ -71,6 +74,12 @@ export default function OrchestrationsPage() {
   // 执行入参弹窗（先填初始调用参数，再提交执行）
   const [execInputOpen, setExecInputOpen] = useState(false);
   const [execInputTape, setExecInputTape] = useState<TapeItem | null>(null);
+
+  // 从模板新建（2026-10-12）
+  const [tplPickerOpen, setTplPickerOpen] = useState(false);
+  const [tplItems, setTplItems] = useState<TapeTemplateItem[]>([]);
+  const [tplLoading, setTplLoading] = useState(false);
+  const [tplApplying, setTplApplying] = useState<string | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollTimer.current) {
@@ -181,6 +190,41 @@ export default function OrchestrationsPage() {
       void load();
     } else {
       message.error(res.message || "下线失败");
+    }
+  };
+
+  /** 打开模板选择弹窗（从模板新建） */
+  const openTplPicker = async () => {
+    setTplPickerOpen(true);
+    setTplLoading(true);
+    try {
+      const res = await apiListTapeTemplates(1, 100, "", "", "");
+      if (res.success) setTplItems(res.data?.items || []);
+      else message.error(res.message || "加载模板失败");
+    } finally {
+      setTplLoading(false);
+    }
+  };
+
+  /** 应用模板 → 生成新编排草稿 → 跳设计器 */
+  const doApplyTemplate = async (tpl: TapeTemplateItem) => {
+    setTplApplying(tpl.id);
+    try {
+      const res = await apiApplyTapeTemplate(tpl.id, {
+        tape_name: `${tpl.name}_copy`,
+        tape_label: tpl.label || tpl.name,
+        tape_descr: `由模板「${tpl.label || tpl.name}」应用生成`,
+      });
+      if (res.success && res.data?.id) {
+        message.success(`已生成新编排「${res.data.tape_name}」`);
+        setTplPickerOpen(false);
+        void load();
+        router.push(`/orchestrations/${res.data.id}/designer`);
+      } else {
+        message.error(res.message || "应用模板失败");
+      }
+    } finally {
+      setTplApplying(null);
     }
   };
 
@@ -387,10 +431,15 @@ export default function OrchestrationsPage() {
           if (action === "remove") closeTab(String(key));
         }}
         tabBarExtraContent={
-          <Button type="primary" onClick={openCreate}>
-            新建编排
-          </Button>
-        }
+                  <Space>
+                    <Button icon={<FileAddOutlined />} onClick={() => void openTplPicker()}>
+                      从模板新建
+                    </Button>
+                    <Button type="primary" onClick={openCreate}>
+                      新建编排
+                    </Button>
+                  </Space>
+                }
         items={[
           { key: "home", label: "编排管理", children: listPane },
           ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
@@ -425,6 +474,74 @@ export default function OrchestrationsPage() {
           </Form.Item>
         </Form>
       </ModoDrawer>
+
+      {/* 从模板新建：模板选择弹窗（2026-10-12） */}
+      <Modal
+        title="从模板新建编排"
+        open={tplPickerOpen}
+        onCancel={() => setTplPickerOpen(false)}
+        footer={null}
+        width={640}
+      >
+        <Table
+          rowKey="id"
+          size="small"
+          loading={tplLoading}
+          dataSource={tplItems}
+          pagination={false}
+          scroll={{ y: 360 }}
+          locale={{ emptyText: <Empty description="暂无模板，请先在设计器里「存为模板」" /> }}
+          columns={[
+            {
+              title: "模板",
+              dataIndex: "label",
+              render: (v: string, row: TapeTemplateItem) => (
+                <div>
+                  <div>{v || row.name}</div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {row.node_count} 节点 / {row.edge_count} 连线 · 应用 {row.apply_count} 次
+                  </Text>
+                </div>
+              ),
+            },
+            {
+              title: "分类",
+              dataIndex: "category",
+              width: 110,
+              render: (v: string) => <Tag>{v || "未分类"}</Tag>,
+            },
+            {
+              title: "描述",
+              dataIndex: "descr",
+              ellipsis: true,
+              render: (v?: string | null) =>
+                v ? (
+                  <Tooltip title={v}>
+                    <span>{v}</span>
+                  </Tooltip>
+                ) : (
+                  "-"
+                ),
+            },
+            {
+              title: "操作",
+              key: "act",
+              width: 90,
+              render: (_: unknown, row: TapeTemplateItem) => (
+                <Button
+                  type="link"
+                  size="small"
+                  loading={tplApplying === row.id}
+                  onClick={() => void doApplyTemplate(row)}
+                  style={{ padding: "0 4px" }}
+                >
+                  应用
+                </Button>
+              ),
+            },
+          ]}
+        />
+      </Modal>
 
       {/* 执行结果弹窗（异步执行：轮询 runs/{run_id} 展示逐步日志） */}
       <Modal
