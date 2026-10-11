@@ -133,6 +133,8 @@ def _build_default_registry() -> ParserEngineRegistry:
             "ppt": MarkitdownParser,
             "md": MarkdownParser,
             "markdown": MarkdownParser,
+            "txt": MarkdownParser,
+            "csv": MarkdownParser,
             "xlsx": ExcelParser,
             "xls": ExcelParser,
             "epub": EPUBParser,

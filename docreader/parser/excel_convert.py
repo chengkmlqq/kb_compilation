@@ -21,9 +21,11 @@ def detect_excel_format(content: bytes) -> str | None:
     if not content:
         return None
 
+    from io import BytesIO
+
     from pandas.io.excel._base import inspect_excel_format
 
-    ext = inspect_excel_format(content_or_path=content)
+    ext = inspect_excel_format(content_or_path=BytesIO(content))
     if ext in ("xlsx", "xls", "xlsb", "ods"):
         return ext
     if ext == "zip":
