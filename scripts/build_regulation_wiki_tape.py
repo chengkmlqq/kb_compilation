@@ -190,13 +190,12 @@ with open(f"{DIR}/fulltext.txt", encoding='utf-8') as f:
 md5_kid = hashlib.md5(_kid.encode()).hexdigest()
 slug = f"summary/{md5_kid}"
 title = os.path.splitext(_src or _doc)[0]
-# 幂等：已有摘要页直接跳过
+# 幂等：已有摘要页直接跳过（不能用 raise SystemExit —— celery 序列化异常崩）
 r = wr.read_page(slug, kb_id=wr.KB)
 if 'error' not in r and (r.get('content') or '').strip():
     bindings['summary_slug'] = slug
     print(f"[n06] 摘要页已存在，跳过 {slug}")
-    raise SystemExit(0)
-if len(full_text) > 14000:
+elif len(full_text) > 14000:
     full_text = full_text[:10000] + '\\n\\n……（中段省略）……\\n\\n' + full_text[-4000:]
 family_name = _doc or os.path.splitext(_src or '')[0]
 prompt = f"""你是市场监管法律法规知识库的文档摘要专家。请根据下面给定的法规原文切片，生成一张「法规文档卡片」形式的 markdown 摘要。
@@ -839,8 +838,8 @@ RO_NUM_MAP = {'定义规则': 1, '条件规则': 2, '约束规则': 3, '职责�
 rules = esm.get('rules') or []
 if len(rules) > 0:
     print(f"[n12b] 规则实体 {len(rules)} 个，无需补抽")
-    raise SystemExit(0)
-RULE_PROMPT = ('你是市场监管法规解析专家。从以下长句中提取规则本体实体。\\n'
+else:
+    RULE_PROMPT = ('你是市场监管法规解析专家。从以下长句中提取规则本体实体。\\n'
 '规则本体共12类，每条规则一页：\\n'
 '1. 定义规则：术语/概念定义  2. 条件规则：适用条件/前提/触发情形  3. 约束规则：禁止性/限制性规定  4. 职责规则：监管职责分工  5. 审批规则：许可/审批/备案事项及程序  6. 流程规则：流程步骤  7. 引用规则：引用其他法律法规/标准  8. 例外规则：例外/豁免/但书  9. 处罚规则：行政处罚规定  10. 时限规则：期限/期间规定  11. 版本规则：施行/修订/废止/替代  12. 程序规则：通用程序规定\\n'
 '输出JSON：[{"title":"规则标题（≤20字概括）","category":"约束规则","structure":{"主体":"x","条件":"x","动作":"x"},"description":"规则具体内容","constraint":"约束对象业务实体名","evidence":"原文关键片段（逐字）","objects":[{"name":"其他业务对象名","role":"主体/条件/动作/客体"}]}]\\n'

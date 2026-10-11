@@ -149,15 +149,21 @@ class PrintStep(BaseStep):
 
 
 class ScriptStep(BaseStep):
-    """'script' 任意 Python 执行（注入 context/bindings/config）。"""
+    """'script' 任意 Python 执行（注入 context/bindings/config）。
+
+    exec 用「同一命名空间」执行：globals 与 locals 指向同一个 dict —— 与
+    .py 脚本文件的运行语义一致。传空 globals（2026-10 前）会让顶层赋值只进
+    locals，而函数体/listcomp 按 CPython 规则查 globals → `NameError: name
+    'sents' is not defined`（长句抽取节点实测失败）。
+    """
 
     def handle(self, context: TapeRuntimeContext) -> StepResponse:
         code = self.config.get("code")
         if not code:
             return StepResponse.fail("Missing code in configuration")
         try:
-            local_vars = {"context": context, "bindings": context.bindings, "config": self.config}
-            exec(str(code), {}, local_vars)  # noqa: S102  (编排脚本 = 平台管理员授权能力)
+            ns = {"context": context, "bindings": context.bindings, "config": self.config}
+            exec(str(code), ns, ns)  # noqa: S102  (编排脚本 = 平台管理员授权能力)
             return StepResponse.success("Script executed successfully")
         except Exception as e:  # noqa: BLE001
             import traceback
