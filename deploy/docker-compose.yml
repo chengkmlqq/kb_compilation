@@ -112,6 +112,27 @@ services:
     networks:
       - kb-net
 
+  mcp-server:
+    # MCP 服务端（2026-10-12 补完接入）：kb-tools 3 个知识库工具对外暴露
+    # （streamable-http 协议，经 nginx /mcp/ 路由转发）。复用 api-server 镜像
+    # （含 api 代码 + mcp SDK），仅替换启动命令；不映射宿主端口（内网）。
+    image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-api-server:${KB_IMAGE_TAG:-latest}
+    container_name: kb-mcp-server
+    restart: unless-stopped
+    command: ["uvicorn", "api.mcp_http_main:app", "--host", "0.0.0.0", "--port", "18001"]
+    <<: *api-env
+    # 注意：与 worker 一样，不要加独立 environment: 块（`<<:` 浅合并，同名
+    # environment 会被整体覆盖，导致 DATABASE_URL 等丢失）。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      pg:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - kb-net
+
   celery-worker:
     image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-worker:${KB_IMAGE_TAG:-latest}
     container_name: kb-celery-worker
