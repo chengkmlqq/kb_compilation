@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from api.config import get_settings
 from api.db import get_db, get_sessionmaker
 from api.models.framework import Datasource, Dim, Job
 from api.models.metadata import MetadataColumn, MetadataTable
@@ -63,7 +64,9 @@ def _require_identity(
     """当前登录用户（返回 Identity；绝不能把 token 原文当身份返回）。"""
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity or not identity.user_id:
-        raise HTTPException(status_code=401, detail="未登录")
+        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
+            raise HTTPException(status_code=401, detail="未登录")
+        return Identity()
     return identity
 
 

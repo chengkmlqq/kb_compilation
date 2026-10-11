@@ -14,6 +14,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from api.config import get_settings
 from api.db import get_db
 from api.services.identity import decode_identity_cookie
 from api.services.scope import is_admin
@@ -44,7 +45,9 @@ def _require_caller(
 ) -> Caller:
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity or not identity.user_id:
-        raise HTTPException(status_code=401, detail="未登录")
+        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
+            raise HTTPException(status_code=401, detail="未登录")
+        return Caller(user_id="", team_name="", is_admin=False)
     return Caller(
         user_id=identity.user_id,
         team_name=identity.team_name or "",

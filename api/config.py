@@ -49,6 +49,10 @@ class Settings:
     # Comma-separated user ids that bypass the RBAC path check (source
     # proxy's AUTH_ADMIN_USERS equivalent). plat-mgr role also bypasses.
     AUTH_ADMIN_USERS: str = os.getenv("AUTH_ADMIN_USERS", "")
+    # 匿名放行开关（挂载/集成场景临时使用，默认关）：开启后未登录请求
+    # 不再 401，以匿名身份继续（user_id/team 为空，is_admin=False）。
+    # 恢复强制登录只需将此环境变量置 0/删除。
+    AUTH_ANONYMOUS: bool = os.getenv("AUTH_ANONYMOUS", "0") == "1"
 
     # --- Redis / Celery ---
     # All URLs come from env only. If unset, Celery falls back to its own

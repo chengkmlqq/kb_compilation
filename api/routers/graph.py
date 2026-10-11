@@ -21,6 +21,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from api.config import get_settings
 from api.db import get_db
 from api.services.graph_query import get_graph_reader
 from api.services.identity import decode_identity_cookie
@@ -45,7 +46,9 @@ def _require_user(x_next_identity: str | None = Cookie(default=None, alias="x-ne
     """轻量登录校验：图谱接口只需登录态（数据按 kb_id 隔离）。"""
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity or not identity.user_id:
-        raise HTTPException(status_code=401, detail="未登录")
+        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
+            raise HTTPException(status_code=401, detail="未登录")
+        return ""
     return identity.user_id
 
 

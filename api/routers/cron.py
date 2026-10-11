@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from api.config import get_settings
 from api.db import get_db
 from api.models.framework import CronTask, Job
 from api.services.identity import decode_identity_cookie
@@ -34,7 +35,9 @@ def _require_user_id(
 ) -> str:
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity or not identity.user_id:
-        raise HTTPException(status_code=401, detail="未登录")
+        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
+            raise HTTPException(status_code=401, detail="未登录")
+        return ""
     return identity.user_id
 
 

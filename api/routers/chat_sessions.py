@@ -24,6 +24,7 @@ from fastapi import APIRouter, Cookie, Depends, File, HTTPException, Query, Uplo
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from api.config import get_settings
 from api.db import get_db
 from api.models.chat_session import MAX_ATTACHMENT_BYTES
 from api.services.chat_sessions import (
@@ -58,7 +59,9 @@ def _require_user_id(
     """FastAPI dependency: resolve the current user id from the auth cookie."""
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity or not identity.user_id:
-        raise HTTPException(status_code=401, detail="未登录")
+        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
+            raise HTTPException(status_code=401, detail="未登录")
+        return ""
     return identity.user_id
 
 
@@ -70,7 +73,9 @@ def _model_ctx(
     个人/团队/系统级模型。"""
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity or not identity.user_id:
-        raise HTTPException(status_code=401, detail="未登录")
+        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
+            raise HTTPException(status_code=401, detail="未登录")
+        return {"user_id": "", "team_name": "", "is_admin": False}
     from api.services.models import caller_context
 
     return caller_context(db, identity.user_id)

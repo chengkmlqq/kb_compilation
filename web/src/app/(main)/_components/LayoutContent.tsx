@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState } from "react";
 import { App, Layout } from "antd";
-import { useRouter } from "next/navigation";
 import { AppHeader } from "./AppHeader";
 import { AppSider } from "./AppSider";
 import { MenuProvider } from "./MenuContext";
@@ -14,24 +13,24 @@ import { apiMe } from "@/lib/api";
 const { Content } = Layout;
 
 export function LayoutContent({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
   const [checked, setChecked] = useState(false);
 
-  // 登录守卫（客户端校验身份；失败跳 /login）
+  // 登录守卫（客户端校验身份）。
+  // 方案3（2026-10-11）：供 data_supply 菜单 iframe 挂载，改为「匿名放行」——
+  // 未登录不再强制跳 /login，页面正常渲染（与后端 middleware 的
+  // “无身份请求放行”策略对齐）。已知取舍：写操作接口仍依赖身份，
+  // 匿名用户仅可浏览，与平台后续登录加固方向相反，属挂载场景的显式放宽。
   useEffect(() => {
     (async () => {
       try {
-        const me = await apiMe();
-        if (!me.success || !me.data) {
-          router.replace("/login");
-          return;
-        }
-        setChecked(true);
+        await apiMe();
       } catch {
-        router.replace("/login");
+        /* 匿名也放行 */
+      } finally {
+        setChecked(true);
       }
     })();
-  }, [router]);
+  }, []);
 
   if (!checked) {
     return null; // identity check in flight

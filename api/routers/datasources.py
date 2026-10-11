@@ -21,6 +21,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from api.config import get_settings
 from api.db import get_db
 from api.services.datasource import (
     delete_datasource,
@@ -50,7 +51,9 @@ def _caller_id(
     # 实测未登录 POST /open/datasources 返回 200 并真的建了库（越权写入）。
     # decode 成功但取不到身份 = 未登录，必须 401（同 kbs.py 6ea8f75 的修法）。
     if not identity or not identity.user_id:
-        raise HTTPException(status_code=401, detail="未登录")
+        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
+            raise HTTPException(status_code=401, detail="未登录")
+        return ""
     return identity.user_id
 
 
