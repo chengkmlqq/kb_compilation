@@ -10,11 +10,12 @@ import {
   Spin,
   Table,
   Tag,
+  Timeline,
   Tooltip,
   Tree,
   Typography,
 } from "antd";
-import { ReloadOutlined } from "@ant-design/icons";
+import { ArrowLeftOutlined, ReloadOutlined } from "@ant-design/icons";
 import {
   apiGetJob,
   apiGetJobTrace,
@@ -140,6 +141,14 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [job, setJob] = useState<JobItem | null>(null);
+  // 2026-10-12 父子钻取：activeJobId 决定当前展示哪个任务的日志
+  // （父任务 → 默认展示其本身；点子任务步骤流 → 切到该子任务的具体日志）
+  const [activeJobId, setActiveJobId] = useState<string | null>(jobId);
+  // 编排节点详情（childrenKind=orchestration 时点击节点内联展示，无 modo_job 行）
+  const [orchStepDetail, setOrchStepDetail] = useState<Record<string, unknown> | null>(null);
+  // 父任务的子任务列表（父任务打开时拉取，渲染步骤流）
+  const [children, setChildren] = useState<Array<Record<string, unknown>>>([]);
+  const [childrenKind, setChildrenKind] = useState<"job" | "orchestration">("job");
   // SSE 实时日志流状态（对齐 data-synth job-log-drawer）
   const [streamConnected, setStreamConnected] = useState(false);
   const [streamFinished, setStreamFinished] = useState(false);
@@ -187,10 +196,10 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
 
   const fetchDetail = useCallback(
     async (silent = false): Promise<JobItem | null> => {
-      if (!jobId) return null;
+      if (!activeJobId) return null;
       if (!silent) setLoading(true);
       try {
-        const res = await apiGetJob(jobId);
+        const res = await apiGetJob(activeJobId);
         if (res.success && res.data) {
           setJob(res.data);
           onStateChangeRef.current?.(res.data);
@@ -201,17 +210,46 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
         if (!silent) setLoading(false);
       }
     },
-    [jobId],
+    [activeJobId],
   );
 
-  // Agent Trace：jobId 变化/打开时拉取 span 明细；抽屉打开期间每 6s 轮询
+  // 2026-10-12 父子：打开的是父任务（jobId 本身有子任务）时拉取子任务步骤流
+  useEffect(() => {
+    if (!visible || !jobId) {
+      setChildren([]);
+      return;
+    }
+    let alive = true;
+    import("@/lib/api")
+      .then((m) => m.apiListJobChildren(jobId))
+      .then((res) => {
+        if (!alive) return;
+        if (res.success && res.data) {
+          setChildren(res.data.items || []);
+          setChildrenKind(res.data.kind || "job");
+        } else {
+          setChildren([]);
+        }
+      })
+      .catch(() => alive && setChildren([]));
+    return () => {
+      alive = false;
+    };
+  }, [visible, jobId]);
+
+  // 打开抽屉 / 切到子任务时：重置并拉取 activeJobId 的数据 + 启动 SSE
+  useEffect(() => {
+    setActiveJobId((prev) => prev ?? jobId);
+  }, [jobId]);
+
+  // Agent Trace：activeJobId 变化/打开时拉取 span 明细；抽屉打开期间每 6s 轮询
   // （运行中任务的 span 由 worker 每 3s 增量落盘，需轮询才能看到增长）
   useEffect(() => {
-    if (!visible || !jobId) return;
+    if (!visible || !activeJobId) return;
     let cancelled = false;
     const load = async () => {
       try {
-        const res = await apiGetJobTrace(jobId);
+        const res = await apiGetJobTrace(activeJobId);
         if (!cancelled && res.success && res.data) setTrace(res.data);
         else if (!cancelled) setTrace({ spans: [], has_trace: false });
       } catch {
@@ -226,7 +264,7 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [visible, jobId]);
+  }, [visible, activeJobId]);
 
   // 启动 SSE 实时日志流（数据源：error_message 增量 + log_path 文件）
   const startLogStream = useCallback(
@@ -304,18 +342,18 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
   );
 
   useEffect(() => {
-    if (visible && jobId) {
+    if (visible && activeJobId) {
       setJob(null);
       setLogContent("");
       void fetchDetail().then((detail) => {
-        if (!detail || !jobId) return;
+        if (!detail || !activeJobId) return;
         // 已有 error_message 作为初始日志（SSE 从其后增量追加）
         setLogContent(detail.error_message || "");
         streamFinishedRef.current = false;
         // 初始 offset：error_message 已有长度（对齐 ds getByteLength 语义）
         const initOffset = (detail.error_message || "").length;
         const es = new EventSource(
-          `/api/v1/jobs/${encodeURIComponent(jobId)}/log-stream?offset=${initOffset}`,
+          `/api/v1/jobs/${encodeURIComponent(activeJobId)}/log-stream?offset=${initOffset}`,
         );
         eventSourceRef.current = es;
         es.onopen = () => {
@@ -362,7 +400,7 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
     setStreamError(null);
     setStreamFinished(false);
     setLogContent("");
-  }, [visible, jobId, closeStream, fetchDetail]);
+  }, [visible, activeJobId, closeStream, fetchDetail]);
 
   // 日志滚动位置跟踪
   useEffect(() => {
@@ -370,10 +408,10 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
   }, [logContent, visible, updateLogScrollPercent]);
 
   const handleRefresh = () => {
-    if (!jobId) return;
+    if (!activeJobId) return;
     void fetchDetail().then(() => {
       setLogContent("");
-      startLogStream(jobId);
+      startLogStream(activeJobId);
     });
   };
 
@@ -402,12 +440,152 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
         </Space>
       }
       placement="right"
-      width={560}
+      width={620}
       onClose={onClose}
       open={visible}
       destroyOnClose
     >
       <Spin spinning={loading}>
+        {/* 2026-10-12 父子钻取：activeJobId ≠ 打开的 jobId 时显示「返回父任务」 */}
+        {activeJobId !== jobId ? (
+          <div style={{ marginBottom: 12 }}>
+            <Button size="small" onClick={() => setActiveJobId(jobId)} icon={<ArrowLeftOutlined />}>
+              返回主任务
+            </Button>
+            <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+              当前查看子任务：{activeJobId}
+            </Text>
+          </div>
+        ) : null}
+        {activeJobId === jobId && children.length > 0 ? (
+          <div style={{ marginBottom: 24 }}>
+            <div
+              style={{
+                fontWeight: 500,
+                fontSize: 15,
+                marginBottom: 8,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span>子任务执行步骤流</span>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {childrenKind === "orchestration" ? "编排节点" : "文档处理链"}
+                {childrenKind === "orchestration" ? "，点击节点看执行详情" : "，点击子任务查看具体日志"}
+              </Text>
+            </div>
+            <Timeline
+              style={{ marginTop: 4 }}
+              items={children.map((c: Record<string, unknown>, idx) => {
+                const cid = String(c.id || c.step_id || "");
+                const cname =
+                  String(c.step_label || c.task_class || "") ||
+                  (childrenKind === "orchestration" ? String(c.step_inst || cid) : cid);
+                const st = String(c.status || c.state || "");
+                const color =
+                  st === "success" || st === "SUCCESS"
+                    ? "green"
+                    : st === "failed" || st === "FAILED"
+                      ? "red"
+                      : st === "running" || st === "RUNNING"
+                        ? "blue"
+                        : "gray";
+                const isActive =
+                  (childrenKind === "orchestration"
+                    ? orchStepDetail && (orchStepDetail.step_id || orchStepDetail.id) === cid
+                    : activeJobId === cid) || false;
+                return {
+                  color,
+                  dot: (
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 24,
+                        height: 24,
+                        borderRadius: 12,
+                        background: isActive ? "#1677ff" : "#f0f0f0",
+                        color: isActive ? "#fff" : "#666",
+                        fontSize: 11,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {idx + 1}
+                    </span>
+                  ),
+                  children: (
+                    <div
+                      style={{
+                        cursor: "pointer",
+                        padding: "8px 12px",
+                        borderRadius: 6,
+                        background: isActive ? "#e6f4ff" : "#fafafa",
+                        border: isActive ? "1px solid #91caff" : "1px solid #f0f0f0",
+                      }}
+                      onClick={() => {
+                        if (childrenKind === "orchestration") {
+                          // 编排节点：无 modo_job 行，内联展示该步 step_results 详情
+                          setOrchStepDetail(orchStepDetail && (orchStepDetail.step_id || orchStepDetail.id) === cid ? null : c);
+                        } else if (cid) {
+                          setActiveJobId(cid);
+                        }
+                      }}
+                    >
+                      <Space size={8} style={{ flexWrap: "wrap" }}>
+                        <Text strong style={{ fontSize: 13 }}>
+                          {cname}
+                        </Text>
+                        {getStateTag(st)}
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {fmtDur(c.duration_ms as number | null)}
+                        </Text>
+                        {c.start_time ? (
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {fmtTime(String(c.start_time))}
+                          </Text>
+                        ) : null}
+                      </Space>
+                    </div>
+                  ),
+                };
+              })}
+            />
+            {/* 编排节点详情（step_results 单步展开） */}
+            {orchStepDetail ? (
+              <div
+                style={{
+                  marginTop: 12,
+                  background: "#fafafa",
+                  border: "1px solid #f0f0f0",
+                  borderRadius: 6,
+                  padding: 12,
+                }}
+              >
+                <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 8 }}>
+                  节点详情：{String(orchStepDetail.step_label || orchStepDetail.step_inst || orchStepDetail.step_id || "step")}
+                  {getStateTag(String(orchStepDetail.status || ""))}
+                </div>
+                <pre
+                  style={{
+                    background: "#1f2630",
+                    color: "#d7e0ea",
+                    padding: 10,
+                    borderRadius: 6,
+                    fontSize: 12,
+                    maxHeight: 320,
+                    overflow: "auto",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-all",
+                  }}
+                >
+                  {JSON.stringify(orchStepDetail, null, 2)}
+                </pre>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {job ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
             <Descriptions
@@ -566,6 +744,25 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
                   rowKey={(r: AgentTraceSpan) => r.span_id || r.name || String(Math.random())}
                   pagination={false}
                   dataSource={trace.spans}
+                  expandable={{
+                    expandedRowRender: (r: AgentTraceSpan) => (
+                      <pre
+                        style={{
+                          background: "#1f2630",
+                          color: "#d7e0ea",
+                          padding: 10,
+                          borderRadius: 6,
+                          fontSize: 12,
+                          maxHeight: 260,
+                          overflow: "auto",
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-all",
+                        }}
+                      >
+                        {JSON.stringify(r.span_data || r, null, 2)}
+                      </pre>
+                    ),
+                  }}
                   columns={[
                     { title: "Span", dataIndex: "name", width: 260, ellipsis: true },
                     { title: "类型", dataIndex: "type", width: 150 },
@@ -754,7 +951,8 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
             </div>
           </div>
         ) : (
-          !loading && <Empty description="暂无数据" />
+          !loading &&
+            !(activeJobId === jobId && children.length > 0) && <Empty description="暂无数据" />
         )}
       </Spin>
     </Drawer>
