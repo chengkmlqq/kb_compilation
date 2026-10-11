@@ -160,14 +160,18 @@ def _advance_impl(run_id: str) -> None:
                     bindings[k[4:]] = v
     bindings.update(loop_state.get("bindings") or {})  # loop item_var 注入
 
-    # 0) 失败传播：任一 pre 失败的未执行节点 → skipped（阻断链），标记入 done 继续传播
-    newly_skipped = []
-    for sid, s in steps.items():
-        if sid in done or sid in skip_ids:
-            continue
-        if any(p in failed_ids or p in skip_ids for p in s["pre"]):
-            newly_skipped.append(sid)
-    if newly_skipped:
+    # 0) 失败传播：任一 pre 失败/跳过的未执行节点 → skipped（阻断链），
+    #    循环直到无新增（一次 advance 标记完整条阻断链，不能只跳一层——否则
+    #    pre 是 skipped 的节点会被 ready 判定当「已完成」投递真实执行）。
+    while True:
+        newly_skipped = []
+        for sid, s in steps.items():
+            if sid in done or sid in skip_ids:
+                continue
+            if any(p in failed_ids or p in skip_ids for p in s["pre"]):
+                newly_skipped.append(sid)
+        if not newly_skipped:
+            break
         for sid in newly_skipped:
             _append_step_result(run_id, {
                 "step_id": sid, "step_inst": steps[sid]["inst"],
@@ -176,6 +180,8 @@ def _advance_impl(run_id: str) -> None:
                 "error": None, "duration_ms": 0, "round": 0,
                 "body": None,
             })
+            done.add(sid)
+            skip_ids.add(sid)
         logger.info("编排 run=%s 失败传播：%d 个后继节点 skipped", run_id, len(newly_skipped))
         # 重新取 run（结果已变更），继续推进以标记完整条阻断链
         run = _get_run(run_id)
@@ -200,6 +206,9 @@ def _advance_impl(run_id: str) -> None:
     for sid, s in steps.items():
         rnd = orch_loop.round_of(sid, loop_state)
         if (sid, rnd) in pairs:
+            continue
+        # 双保险：pre 中任一 failed/skipped → 不算就绪（防传播遗漏时误投）
+        if any(p in failed_ids or p in skip_ids for p in s["pre"]):
             continue
         if all((p, rnd if p in body_map else 0) in pairs for p in s["pre"]):
             ready.append(sid)
