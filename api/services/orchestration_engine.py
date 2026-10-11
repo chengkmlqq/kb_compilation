@@ -488,6 +488,107 @@ class WikiRebuildLinksStep(BaseStep):
         return StepResponse.success({"kb_id": kb_id, "links_rebuilt": True})
 
 
+class WikiEnsureFolderStep(BaseStep):
+    """'wiki_ensure_folder' 初始化 wiki 目录（2026-10-12 基础原子）。
+
+    细粒度基础能力：**幂等**确保目录存在（同 kb 同级同名已存在则复用，不重复建），
+    支持多级路径（按 sep 逐级建）与批量（paths 数组）。目录 id 写入变量供下游
+    wiki_upsert_page / wiki_publish 的 folder_id 使用。config:
+      - kb_id: 知识库 ID（支持 {{ }} 模板，必填）
+      - path: 单条目录路径（多级用 sep 分隔，如「长句原文/2024」）
+      - paths: 批量目录路径（JSON 数组，可选，与 path 二选一或并存）
+      - sep: 路径分隔符（默认 /）
+      - parent_id: 顶层目录的父级（默认根目录）
+      - output_var: 输出变量名（默认 folder_id；批量时输出 id 列表）
+      - dry_run: 只统计不写库
+    """
+
+    def handle(self, context: TapeRuntimeContext) -> StepResponse:
+        from api.db import get_sessionmaker
+        from api.models.knowledge import WikiFolder
+        from api.services.kb_admin import wiki_create_folder
+        from sqlalchemy import select
+
+        kb_id = str(context.render(self.config.get("kb_id") or "")).strip()
+        if not kb_id:
+            return StepResponse.fail("wiki_ensure_folder 缺 kb_id")
+        sep = str(self.config.get("sep") or "/")
+        parent_id = str(context.render(self.config.get("parent_id") or "")).strip()
+        output_var = str(self.config.get("output_var") or "folder_id")
+        dry_run = bool(self.config.get("dry_run"))
+
+        # 归集要确保的路径列表（path 单条 + paths 批量）
+        raw_paths: list[str] = []
+        single = str(context.render(self.config.get("path") or "")).strip()
+        if single:
+            raw_paths.append(single)
+        batch = self.config.get("paths")
+        if isinstance(batch, str):
+            try:
+                batch = json.loads(batch)
+            except Exception as e:  # noqa: BLE001
+                return StepResponse.fail(f"paths JSON 解析失败: {batch[:80]}（{e}）")
+        if isinstance(batch, list):
+            for p in batch:
+                ps = str(context.render(p) if isinstance(p, str) else (p or "")).strip()
+                if ps:
+                    raw_paths.append(ps)
+        if not raw_paths:
+            return StepResponse.fail("wiki_ensure_folder 缺 path 或 paths")
+
+        db = get_sessionmaker()()
+        created = reused = 0
+        try:
+            folder_ids: list[str] = []
+            for full_path in raw_paths:
+                cur_parent = parent_id
+                segs = [s.strip() for s in full_path.split(sep) if s.strip()]
+                for seg in segs:
+                    row = db.execute(
+                        select(WikiFolder).where(
+                            WikiFolder.kb_id == kb_id,
+                            WikiFolder.name == seg,
+                            (WikiFolder.parent_id == cur_parent) | (WikiFolder.parent_id.is_(None)),
+                        )
+                    ).scalars().first()
+                    if row:
+                        reused += 1
+                        cur_parent = row.id
+                        if seg == segs[-1]:
+                            folder_ids.append(cur_parent)  # 只记末级目录 id
+                        continue
+                    if dry_run:
+                        created += 1
+                        cur_parent = f"[dry]{seg}"
+                        if seg == segs[-1]:
+                            folder_ids.append(cur_parent)
+                        continue
+                    res = wiki_create_folder(
+                        db, kb_id, {"name": seg, "parent_id": cur_parent}, user_id="system"
+                    )
+                    created += 1
+                    cur_parent = str(res["id"])
+                    if seg == segs[-1]:
+                        folder_ids.append(cur_parent)
+            result = {
+                "kb_id": kb_id,
+                "paths": raw_paths,
+                "created": created,
+                "reused": reused,
+                "folder_ids": folder_ids,
+            }
+            if dry_run:
+                return StepResponse.success(result)
+            # 单条路径 → 输出末级目录 id；多条 → 输出 id 列表
+            context.bindings[output_var] = folder_ids[0] if len(folder_ids) == 1 else folder_ids
+            result[f"set:{output_var}"] = context.bindings[output_var]
+            return StepResponse.success(result)
+        except ValueError as e:
+            return StepResponse.fail(f"目录创建失败: {e}")
+        finally:
+            db.close()
+
+
 class IfStep(BaseStep):
     """'if' 条件分支：condition 为真走 next_step_ids，为假走 fail 后继。"""
 
@@ -536,6 +637,7 @@ ATOM_MAP: Dict[str, Callable[[str, str, str, Optional[dict]], BaseStep]] = {
     "kb_llm_chat": KbLlmChatStep,
     "wiki_upsert_page": WikiUpsertPageStep,
     "wiki_rebuild_links": WikiRebuildLinksStep,
+    "wiki_ensure_folder": WikiEnsureFolderStep,
 }
 
 

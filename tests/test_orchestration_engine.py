@@ -18,6 +18,7 @@ from api.services.orchestration_engine import (
     ATOM_MAP,
     KbReadDocStep,
     TapeRuntimeContext,
+    WikiEnsureFolderStep,
     WikiUpsertPageStep,
 )
 from api.models.knowledge import DocChunk
@@ -42,7 +43,7 @@ def orch_db():
 
 
 def test_atom_map_registered() -> None:
-    for inst in ("kb_read_doc", "kb_llm_chat", "wiki_upsert_page", "wiki_rebuild_links"):
+    for inst in ("kb_read_doc", "kb_llm_chat", "wiki_upsert_page", "wiki_rebuild_links", "wiki_ensure_folder"):
         assert inst in ATOM_MAP, f"{inst} 未注册到 ATOM_MAP"
 
 
@@ -92,6 +93,55 @@ def test_wiki_upsert_page_skip_empty() -> None:
 def test_wiki_upsert_page_requires_kb() -> None:
     step = WikiUpsertPageStep("n5", "写摘要页", "wiki_upsert_page",
                               {"title": "t", "slug": "s", "content": "c"})
+    resp = step.handle(TapeRuntimeContext({}))
+    assert not resp.success and "kb_id" in resp.error
+
+
+def test_wiki_ensure_folder_idempotent(orch_db) -> None:
+    import api.db
+    from api.models.knowledge import WikiFolder
+
+    api.db.get_sessionmaker = lambda: __import__("sqlalchemy").orm.sessionmaker(bind=orch_db.bind, expire_on_commit=False)
+    step = WikiEnsureFolderStep("n0", "初始化目录", "wiki_ensure_folder",
+                                {"kb_id": "kb1", "path": "长句原文/2024"})
+    ctx = TapeRuntimeContext({})
+    resp = step.handle(ctx)
+    assert resp.success and resp.body["created"] == 2 and resp.body["reused"] == 0
+    assert ctx.bindings["folder_id"]  # 单条路径 → 输出末级目录 id
+
+    # 幂等：再跑一次 → 全部复用
+    ctx2 = TapeRuntimeContext({})
+    resp2 = step.handle(ctx2)
+    assert resp2.success and resp2.body["created"] == 0 and resp2.body["reused"] == 2
+    assert ctx2.bindings["folder_id"] == ctx.bindings["folder_id"]
+
+    # 校验目录树确实存在（2 层）
+    folders = orch_db.query(WikiFolder).filter(WikiFolder.kb_id == "kb1").all()
+    assert len(folders) == 2
+
+
+def test_wiki_ensure_folder_batch_and_dry_run(orch_db) -> None:
+    import api.db
+
+    api.db.get_sessionmaker = lambda: __import__("sqlalchemy").orm.sessionmaker(bind=orch_db.bind, expire_on_commit=False)
+    # dry_run：只统计不写库
+    step = WikiEnsureFolderStep("n0", "初始化目录", "wiki_ensure_folder",
+                                {"kb_id": "kb1", "paths": ["长句原文", "高频关键词"], "dry_run": True})
+    ctx = TapeRuntimeContext({})
+    resp = step.handle(ctx)
+    assert resp.success and resp.body["created"] == 2 and resp.body["reused"] == 0
+    # 批量：不 dry_run，输出 id 列表
+    step2 = WikiEnsureFolderStep("n0", "初始化目录", "wiki_ensure_folder",
+                                 {"kb_id": "kb1", "paths": ["长句原文", "高频关键词"], "output_var": "folder_ids"})
+    ctx2 = TapeRuntimeContext({})
+    resp2 = step2.handle(ctx2)
+    assert resp2.success and resp2.body["created"] == 2
+    assert isinstance(ctx2.bindings["folder_ids"], list) and len(ctx2.bindings["folder_ids"]) == 2
+
+
+def test_wiki_ensure_folder_requires_kb() -> None:
+    step = WikiEnsureFolderStep("n0", "初始化目录", "wiki_ensure_folder",
+                                {"path": "长句原文"})
     resp = step.handle(TapeRuntimeContext({}))
     assert not resp.success and "kb_id" in resp.error
 

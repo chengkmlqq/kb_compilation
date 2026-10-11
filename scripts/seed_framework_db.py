@@ -240,6 +240,20 @@ ORCH_STEP_DEFINES: list[tuple[str, str, str, str, str, list[dict], int]] = [
     ("wiki_rebuild_links", "重建Wiki互链", "知识构建", "LinkOutlined",
      "重建一个知识库全部 wiki 页之间的互链（无输入输出，纯动作）",
      [{"name": "kb_id", "label": "知识库ID", "type": "input", "required": True, "placeholder": "{{kb_id}}"}], 12),
+    ("wiki_ensure_folder", "初始化Wiki目录", "知识构建", "FolderAddOutlined",
+     "幂等确保目录存在（同名复用不重复建），支持多级路径（sep 分隔）与批量（paths 数组），目录 id 写入变量供下游建页用",
+     [{"name": "kb_id", "label": "知识库ID", "type": "input", "required": True,
+       "placeholder": "{{kb_id}}"},
+      {"name": "path", "label": "目录路径(多级用/分隔)", "type": "input", "required": False,
+       "placeholder": "长句原文/2024"},
+      {"name": "paths", "label": "批量路径(JSON数组,可选)", "type": "textarea", "required": False,
+       "placeholder": '["长句原文", "高频关键词", "业务实体"]', "props": {"rows": 3}},
+      {"name": "sep", "label": "路径分隔符", "type": "input", "required": False, "placeholder": "/"},
+      {"name": "parent_id", "label": "顶层父级ID(默认根)", "type": "input", "required": False,
+       "placeholder": ""},
+      {"name": "output_var", "label": "输出变量名", "type": "input", "required": False,
+       "placeholder": "folder_id（单条输出 id，批量输出列表）"},
+      {"name": "dry_run", "label": "仅统计不写库", "type": "boolean", "required": False}], 13),
 ]
 
 
