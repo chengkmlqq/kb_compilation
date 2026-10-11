@@ -22,12 +22,18 @@ export interface Identity {
 }
 
 async function request<T = unknown>(path: string, init?: RequestInit): Promise<ApiEnvelope<T>> {
+  // content-type 去重（2026-10-11 修复「新建目录 422」）：
+  // request() 的默认小写 "content-type" 与调用方显式的 "Content-Type" 若
+  // 同时存在，新版 Chromium 会把两个键合并成 "application/json,
+  // application/json"；FastAPI 不认该值 → JSON body 按字符串解析 →
+  // 422 model_attributes_type。Headers 大小写不敏感，只在缺失时补默认值。
+  const headers = new Headers(init?.headers);
+  if (!(init?.body instanceof FormData) && !headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  }
   const res = await fetch(path, {
     ...init,
-    headers: {
-      ...(init?.body instanceof FormData ? {} : { "content-type": "application/json" }),
-      ...init?.headers,
-    },
+    headers,
     cache: "no-store",
   });
   const text = await res.text();

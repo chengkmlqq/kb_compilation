@@ -38,6 +38,32 @@ WHITELIST_PREFIXES: tuple[str, ...] = (
 )
 MY_MENUS_PATH = "/api/v1/system/my-menus"
 
+
+def normalize_content_type(request: Request, call_next):
+    """把逗号拼接的重复 content-type 归一化（'application/json, application/json' → 'application/json'）。
+
+    根因（2026-10-11「新建目录 422」）：前端 request() 的默认小写 content-type 与
+    调用方显式的 Content-Type 两个大小写不同的键同时存在时，新版 Chromium 合并成
+    单个逗号值；starlette 不识别 → JSON body 按字符串解析 → 422
+    model_attributes_type。前端已去重；此中间件兼容存量客户端/旧缓存浏览器，
+    使其立即恢复可用。合法单值 content-type 不含逗号，取第一段即可。
+    """
+    raw = request.scope.get("headers", [])
+    new_headers: list[tuple[bytes, bytes]] = []
+    changed = False
+    for key, value in raw:
+        if key.lower() == b"content-type":
+            text = value.decode("latin-1")
+            if "," in text:
+                first = text.split(",", 1)[0].strip()
+                new_headers.append((key, first.encode("latin-1")))
+                changed = True
+                continue
+        new_headers.append((key, value))
+    if changed:
+        request.scope["headers"] = new_headers
+    return call_next(request)
+
 # API path prefix -> frontend page route (modo_menu.route). Longest first.
 API_ROUTE_MAP: tuple[tuple[str, str], ...] = (
     ("/api/v1/kbs", "/kbs"),
