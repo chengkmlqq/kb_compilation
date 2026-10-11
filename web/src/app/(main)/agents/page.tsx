@@ -34,12 +34,17 @@ import {
   AgentItem,
 } from "@/lib/api";
 import AgentEditorModal, { AgentEditorValues } from "@/components/AgentEditorModal";
+import AgentAvatar from "@/components/AgentAvatar";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 
 const modeLabel = (c: Record<string, unknown> | undefined) =>
   c?.agent_mode === "smart-reasoning" ? "智能推理" : "快速问答";
 
-const modeIcon = (c: Record<string, unknown> | undefined, builtin?: boolean) => {
+const modeIcon = (
+  c: Record<string, unknown> | undefined,
+  builtin?: boolean,
+  name?: string,
+) => {
   if (builtin) {
     return c?.agent_mode === "smart-reasoning" ? (
       <RobotOutlined style={{ fontSize: 28, color: "#1677ff" }} />
@@ -47,11 +52,16 @@ const modeIcon = (c: Record<string, unknown> | undefined, builtin?: boolean) => 
       <MessageOutlined style={{ fontSize: 28, color: "#52c41a" }} />
     );
   }
-  return (
-    <span style={{ fontSize: 28 }}>
-      {c?.avatar ? String(c.avatar) : "🤖"}
-    </span>
-  );
+  // 自定义智能体：名称派生的渐变首字头像（对齐 WeKnora AgentAvatar）；
+  // 若后端存了自定义 avatar 字符串（emoji/图标名）则优先用它。
+  if (c?.avatar) {
+    return (
+      <span style={{ fontSize: 28 }}>
+        {String(c.avatar)}
+      </span>
+    );
+  }
+  return <AgentAvatar name={name || ""} size="medium" />;
 };
 
 const featureBadges = (c: Record<string, unknown> | undefined) => {
@@ -253,7 +263,7 @@ export default function AgentsPage() {
                       style={{ height: "100%", opacity: disabled ? 0.55 : 1 }}
                       title={
                         <Space>
-                          {modeIcon(agent.config, agent.is_builtin)}
+                          {modeIcon(agent.config, agent.is_builtin, agent.name)}
                           <Typography.Text strong ellipsis style={{ maxWidth: 120 }}>
                             {agent.name}
                           </Typography.Text>
