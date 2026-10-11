@@ -15,6 +15,7 @@ import {
   Row,
   Select,
   Slider,
+  Space,
   Switch,
   Tabs,
   Typography,
@@ -32,6 +33,7 @@ import {
   ToolOutlined,
 } from "@ant-design/icons";
 import { apiListKbs, apiListMcps, apiListModels, apiListSkillsRegistry, KbItem, ModelItem } from "@/lib/api";
+import AgentAvatar from "@/components/AgentAvatar";
 
 const { TextArea } = Input;
 
@@ -75,6 +77,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
 
   const isEdit = mode === "edit";
   const agentMode = Form.useWatch("agent_mode", form) ?? "quick-answer";
+  const agentName = Form.useWatch("name", form) ?? "";
   const kbMode = Form.useWatch("kb_selection_mode", form) ?? "all";
   const mcpMode = Form.useWatch("mcp_selection_mode", form) ?? "none";
   const skillsMode = Form.useWatch("skills_selection_mode", form) ?? "none";
@@ -245,7 +248,16 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
       <Form form={form} layout="vertical">
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item name="name" label="智能体名称" rules={[{ required: true, message: "请输入名称" }]}>
+            <Form.Item
+              name="name"
+              label={
+                <Space size={6}>
+                  <AgentAvatar name={String(agentName || "").trim() || "?"} size="small" />
+                  <span>智能体名称</span>
+                </Space>
+              }
+              rules={[{ required: true, message: "请输入名称" }]}
+            >
               <Input placeholder="如：制度问答助手" />
             </Form.Item>
           </Col>
