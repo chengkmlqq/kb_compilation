@@ -156,3 +156,11 @@ def test_team_ds_auth_roundtrip(ds_client) -> None:
     assert r.json()["data"]["removed"] == 1
     r = client.get("/api/v1/open/datasources/team-auth/ROOT")
     assert r.json()["data"] == []
+
+
+def test_datasources_page_size_accepts_200(ds_client) -> None:
+    """回归（2026-10-11）：KB 详情「绑定数据源」下拉按 page_size=200 全量拉取，
+    后端此前上限 le=100 → 422；已提到 le=1000。"""
+    client, _ = ds_client
+    r = client.get("/api/v1/open/datasources", params={"page": 1, "page_size": 200})
+    assert r.status_code == 200, r.text

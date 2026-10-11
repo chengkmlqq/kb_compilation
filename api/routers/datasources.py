@@ -73,7 +73,8 @@ class TestDatasourceRequest(BaseModel):
 @router.get("")
 def get_datasources(
     page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100),
+    # le=1000：知识库详情「绑定数据源」下拉 apiListDatasources(1, 200) 全量拉取
+    page_size: int = Query(10, ge=1, le=1000),
     keyword: str = "",
     name: str = "",
     label: str = "",
