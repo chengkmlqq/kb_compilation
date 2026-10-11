@@ -150,11 +150,15 @@ class EmbeddingClient:
     _BATCH_CHAR_BUDGET = 6000
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        # 超长批次递归拆半：xlsx 按行生成 chunk 时个别批次累计字符可超模型
-        # context 上限（bge-m3 8192 token 实测 52675 tokens 被 400 拒绝）。
-        if len(texts) > 1 and sum(len(t) for t in texts) > self._BATCH_CHAR_BUDGET:
-            mid = len(texts) // 2
-            return self._embed_batch(texts[:mid]) + self._embed_batch(texts[mid:])
+        # 超长批次递归拆半 + 单条超长截断：xlsx 按行生成 chunk 时
+        # 个别批次累计字符或单条 chunk 可远超模型 context 上限
+        # （bge-m3 8192 token 实测 52675 tokens 被 400 拒绝）。
+        if sum(len(t) for t in texts) > self._BATCH_CHAR_BUDGET:
+            if len(texts) > 1:
+                mid = len(texts) // 2
+                return self._embed_batch(texts[:mid]) + self._embed_batch(texts[mid:])
+            # 单条超长：截断到预算内（embedding 语义下尾部信息损失可接受）
+            texts = [texts[0][: self._BATCH_CHAR_BUDGET]]
         if (self.cfg.interface_type or "openai").lower() == "oip":
             return self._embed_batch_oip(texts)
         payload = {"model": self.cfg.model, "input": texts}
