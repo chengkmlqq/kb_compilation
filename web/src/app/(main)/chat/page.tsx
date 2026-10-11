@@ -27,7 +27,9 @@ import {
   AimOutlined,
   BulbOutlined,
   CopyOutlined,
+  DatabaseOutlined,
   DeleteOutlined,
+  DownOutlined,
   EditOutlined,
   FileTextOutlined,
   PaperClipOutlined,
@@ -1348,27 +1350,8 @@ export default function ChatPage() {
         </div>
 
         <div style={{ padding: "12px 16px", borderTop: `1px solid ${token.colorSplit}`, flexShrink: 0 }}>
-          {/* 底部内容统一居中列：模型选择 / 附件 / 输入卡片左边缘对齐（与消息列表同宽） */}
+          {/* 底部内容统一居中列：输入卡片与消息列表同宽；模型/智能体选择收敛进卡片控制栏（对齐 WeKnora Input-field） */}
           <div style={{ maxWidth: CONTENT_MAX_WIDTH, margin: "0 auto" }}>
-          {/* 2026-10-06: 模型切换——chat 模型下拉（空=默认模型） */}
-          {chatModels.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <Select
-                value={modelId || undefined}
-                onChange={setModelId}
-                placeholder="默认模型"
-                allowClear
-                style={{ width: 180 }}
-                options={chatModels.map((m) => ({
-                  value: m.id,
-                  label: m.display_name || m.name || m.id,
-                }))}
-              />
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                选择问答模型（留空=系统默认）
-              </Text>
-            </div>
-          )}
           {/* 附件区（会话级已上传附件） */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
         {attachments.map((a) => (
@@ -1435,6 +1418,19 @@ export default function ChatPage() {
             ))}
           </div>
         )}
+        {/* 选中的 @提及目标（本消息级覆盖，常驻在输入框上方，可移除） */}
+        {atTarget && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "4px 0 2px" }}>
+            <Tag
+              closable
+              onClose={() => setAtTarget(null)}
+              color={atTarget.kind === "kb" ? "blue" : "purple"}
+              icon={atTarget.kind === "kb" ? <DatabaseOutlined /> : <RobotOutlined />}
+            >
+              {atTarget.kind === "kb" ? "知识库" : "智能体"}：{atTarget.name}
+            </Tag>
+          </div>
+        )}
         <Input.TextArea
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -1451,7 +1447,7 @@ export default function ChatPage() {
           variant="borderless"
           style={{ padding: "4px 0", background: "transparent", resize: "none", overflow: "auto" }}
         />
-        {/* 控制栏：左 工具按钮 / 右 发送·停止 */}
+        {/* 控制栏：左 智能体选择 + 工具按钮 / 右 模型选择 + 发送·停止（对齐 WeKnora Input-field 布局） */}
         <div
           style={{
             display: "flex",
@@ -1464,6 +1460,22 @@ export default function ChatPage() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+            {/* 左下角：智能体选择（对齐 WeKnora agent-mode-btn） */}
+            <Select
+              value={agentMode || undefined}
+              onChange={(v) => setAgentMode(v || undefined)}
+              placeholder="普通问答"
+              allowClear
+              style={{ minWidth: 130, marginRight: 6 }}
+              suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
+              options={agents.map((a) => ({ value: a.id, label: a.name }))}
+              optionRender={(o) => (
+                <Space size={6}>
+                  <RobotOutlined style={{ color: "#1677ff" }} />
+                  {o.label}
+                </Space>
+              )}
+            />
             <Button
               type="text"
               size="small"
@@ -1487,13 +1499,22 @@ export default function ChatPage() {
               title="上传附件"
               onClick={() => attachmentInputRef.current?.click()}
             />
-            {canUploadImage && (
-              <Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>
-                可传文档或图片（随问答发送）
-              </Text>
-            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {/* 右侧：模型选择（对齐 WeKnora model-selector-trigger） */}
+            {chatModels.length > 0 && (
+              <Select
+                value={modelId || undefined}
+                onChange={setModelId}
+                placeholder="默认模型"
+                allowClear
+                style={{ width: 170 }}
+                options={chatModels.map((m) => ({
+                  value: m.id,
+                  label: m.display_name || m.name || m.id,
+                }))}
+              />
+            )}
             {streaming ? (
               <Button
                 shape="circle"
