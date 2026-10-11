@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -400,6 +401,109 @@ def _resolve_folder(name: str, kb_id: str | None = None) -> str:
     _die(f"未找到目录: {name}")
 
 
+# ──────────────────────────── 长句拆分 / 关键词抽取（2026-10-12）────────────
+# 业务组件：包装既有 WeKnora 脚本（extract_long_sentences_v2 / discover_terms+
+# filter_terms_llm），以 run_script 子进程语义被编排调用。输入输出都是 JSON 文件。
+
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def long_sentence_extract(cfg: dict[str, Any]) -> dict[str, Any]:
+    """长句原文拆分（业务组件）。
+
+    cfg 字段:
+      chunks_file: 输入 chunks JSON 路径（[{seq, content}]）
+      output: 输出 candidates JSON 路径（[{text, title, md5_text, len, keep}]）
+      summary_file: 可选摘要文件路径（--summary-file）
+      summary_slug: 可选摘要页 slug
+      max_tokens: LLM 单次 max_tokens（默认 8000）
+      model: LLM 模型（默认 wr.DEFAULT_MODEL）
+      timeout_sec: 子进程超时（默认 1800）
+    """
+    src = cfg.get("chunks_file") or cfg.get("source")
+    if not src:
+        _die("long_sentence_extract 缺 chunks_file")
+    out = cfg.get("output") or "candidates.json"
+    cmd = [sys.executable, f"{_SCRIPTS_DIR}/extract_long_sentences_v2.py", str(src), "-o", str(out)]
+    if cfg.get("summary_file"):
+        cmd += ["--summary-file", str(cfg["summary_file"])]
+    if cfg.get("summary_slug"):
+        cmd += ["--summary-slug", str(cfg["summary_slug"])]
+    if cfg.get("max_tokens"):
+        cmd += ["--max-tokens", str(cfg["max_tokens"])]
+    if cfg.get("model"):
+        cmd += ["--model", str(cfg["model"])]
+    timeout = float(cfg.get("timeout_sec") or 1800)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0:
+        _die(f"长句拆分失败 rc={r.returncode}: {r.stderr[-500:]}")
+    if not os.path.exists(out):
+        _die(f"长句拆分无输出: {out}")
+    cands = _as_records(_read_json(out))
+    print(f"[long_sentence_extract] 完成: {len(cands)} 条候选 → {out}")
+    return {"success": True, "count": len(cands), "output": out}
+
+
+def keyword_extract(cfg: dict[str, Any]) -> dict[str, Any]:
+    """高频关键词抽取（业务组件，两步：程序统计 discover_terms → LLM 过滤 filter_terms_llm）。
+
+    cfg 字段:
+      ls_file: 输入长句 JSON 路径（candidates 格式 [{text, ...}]）
+      output: 输出过滤后关键词 JSON 路径（[{term, freq, keep}]）
+      min_freq: 最低频次（默认 3）
+      top: 候选 Top N（默认 50）
+      max_len: 最长短语字数（默认 6）
+      batch_size: LLM 过滤每批条数（默认 15）
+      kb: 知识库 ID（LLM 配置来源）
+      model: LLM 模型
+      dry_run: 只统计不写最终过滤文件
+      timeout_sec: 子进程超时（默认 1800）
+    """
+    ls = cfg.get("ls_file") or cfg.get("source")
+    if not ls:
+        _die("keyword_extract 缺 ls_file")
+    terms_tmp = cfg.get("terms_file") or "/tmp/kb_terms.json"
+    out = cfg.get("output") or "/tmp/kb_terms_filtered.json"
+
+    # 步 1：程序统计
+    cmd1 = [sys.executable, f"{_SCRIPTS_DIR}/discover_terms.py", str(ls), "-o", terms_tmp]
+    if cfg.get("min_freq"):
+        cmd1 += ["--min-freq", str(cfg["min_freq"])]
+    if cfg.get("top"):
+        cmd1 += ["--top", str(cfg["top"])]
+    if cfg.get("max_len"):
+        cmd1 += ["--max-len", str(cfg["max_len"])]
+    timeout = float(cfg.get("timeout_sec") or 1800)
+    r1 = subprocess.run(cmd1, capture_output=True, text=True, timeout=timeout)
+    if r1.returncode != 0:
+        _die(f"关键词统计失败 rc={r1.returncode}: {r1.stderr[-500:]}")
+    if not os.path.exists(terms_tmp):
+        _die(f"关键词统计无输出: {terms_tmp}")
+    stats = _as_records(_read_json(terms_tmp))
+    print(f"[keyword_extract] 统计候选 {len(stats)} 条")
+
+    # 步 2：LLM 过滤
+    if cfg.get("dry_run"):
+        print(f"[keyword_extract] dry_run: 跳过 LLM 过滤，候选 {len(stats)} 条")
+        return {"success": True, "candidates": len(stats), "dry_run": True}
+    cmd2 = [sys.executable, f"{_SCRIPTS_DIR}/filter_terms_llm.py",
+            "--terms-file", terms_tmp, "--ls-file", str(ls), "-o", out]
+    if cfg.get("batch_size"):
+        cmd2 += ["--batch-size", str(cfg["batch_size"])]
+    if cfg.get("kb"):
+        cmd2 += ["--kb", str(cfg["kb"])]
+    if cfg.get("model"):
+        cmd2 += ["--model", str(cfg["model"])]
+    r2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=timeout)
+    if r2.returncode != 0:
+        _die(f"关键词过滤失败 rc={r2.returncode}: {r2.stderr[-500:]}")
+    if not os.path.exists(out):
+        _die(f"关键词过滤无输出: {out}")
+    terms = _as_records(_read_json(out))
+    print(f"[keyword_extract] 完成: {len(terms)} 条 → {out}")
+    return {"success": True, "count": len(terms), "output": out}
+
+
 # ──────────────────────────── CLI ────────────────────────────
 
 def main() -> int:
@@ -418,6 +522,10 @@ def main() -> int:
         llm_extract(cfg)
     elif atom == "wiki_publish":
         wiki_publish(cfg)
+    elif atom == "long_sentence_extract":
+        long_sentence_extract(cfg)
+    elif atom == "keyword_extract":
+        keyword_extract(cfg)
     else:
         _die(f"未知原子: {atom}")
     return 0
