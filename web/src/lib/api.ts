@@ -407,10 +407,21 @@ export async function apiDownloadDocument(kbId: string, docId: string, fileName:
   URL.revokeObjectURL(url);
 }
 
-/** 拉取文档原始文件（预览用）：返回 {blob, contentType, size}；失败抛错。 */
+/** 拉取文档预览文件：返回 {blob, contentType, size}；失败抛错。
+ *  走后端 /preview——旧版/非 OOXML Word（.doc/.rtf/.odt）由服务端转成 .docx 后返回，
+ *  其余类型返回原文件。下载仍走 /download 取原文件。 */
 export async function apiFetchDocumentBlob(kbId: string, docId: string) {
-  const res = await fetch(`/api/v1/kbs/${kbId}/documents/${docId}/download`);
-  if (!res.ok) throw new Error(`获取文件失败 (${res.status})`);
+  const res = await fetch(`/api/v1/kbs/${kbId}/documents/${docId}/preview`);
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const data = await res.json();
+      detail = data?.detail || data?.message || "";
+    } catch {
+      /* 非 JSON 响应，退化为状态码提示 */
+    }
+    throw new Error(detail || `获取文件失败 (${res.status})`);
+  }
   const blob = await res.blob();
   return { blob, contentType: res.headers.get("content-type") || "", size: res.headers.get("content-length") || blob.size };
 }

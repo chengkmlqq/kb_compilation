@@ -43,6 +43,7 @@ import { RightPanel } from './right-panel';
 import { CustomNode, nodeTypes } from './custom-node';
 import type { StepFlowNode, StepNodeData } from './custom-node';
 import { TapeImportModal } from './tape-import-modal';
+import { ExecuteInputModal } from '@/app/(main)/orchestrations/_components/execute-input-modal';
 import { parseJsonRecord } from '../_utils/json';
 
 const { Text } = Typography;
@@ -172,6 +173,9 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
 
   // 导入弹窗
   const [importOpen, setImportOpen] = useState(false);
+
+  // 执行入参弹窗（先填初始调用参数，再提交执行）
+  const [execInputOpen, setExecInputOpen] = useState(false);
 
   // 画布重载信号（导入成功后自增触发重新拉取）
   const [reloadKey, setReloadKey] = useState(0);
@@ -383,7 +387,7 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
   };
 
   /** 执行：先静默保存，再异步提交执行（API 返回 run_id），轮询逐步日志弹窗展示 */
-  const handleExecute = async () => {
+  const handleExecute = async (inputs: Record<string, unknown>) => {
     if (!tape) return;
     setExecLoading(true);
     try {
@@ -392,7 +396,7 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
         message.error('保存失败，无法执行');
         return;
       }
-      const res = await apiExecuteTape(tapeId, {});
+      const res = await apiExecuteTape(tapeId, inputs);
       if (res.success && res.data?.run_id) {
         const runId = res.data.run_id;
         setExecOpen(true);
@@ -543,7 +547,7 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
           <Button icon={<RocketOutlined />} loading={saving} onClick={() => void handleSaveAndPublish()}>
             保存并发布
           </Button>
-          <Button icon={<PlayCircleOutlined />} type="primary" ghost loading={execLoading} onClick={() => void handleExecute()}>
+          <Button icon={<PlayCircleOutlined />} type="primary" ghost loading={execLoading} onClick={() => setExecInputOpen(true)}>
             执行
           </Button>
         </div>
@@ -691,6 +695,18 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
           </div>
         )}
       </Modal>
+
+      {/* ============ 执行入参弹窗：填写初始调用参数后提交执行 ============ */}
+      <ExecuteInputModal
+        open={execInputOpen}
+        tapeName={tape?.tape_name || ''}
+        loading={execLoading}
+        onCancel={() => setExecInputOpen(false)}
+        onOk={(inputs) => {
+          setExecInputOpen(false);
+          void handleExecute(inputs);
+        }}
+      />
 
       {/* ============ 导入弹窗 ============ */}
       <TapeImportModal

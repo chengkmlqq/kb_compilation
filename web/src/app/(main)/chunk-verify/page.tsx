@@ -11,10 +11,18 @@
  *   修复结果在任务监控页查看。
  * - 全部修复：对当前不健康的库逐个投递修复任务。
  */
-import { useCallback, useState } from "react";
-import { App, Button, Card, Col, Row, Space, Statistic, Table, Tag } from "antd";
-import { ReloadOutlined } from "@ant-design/icons";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { App, Button, Space, Table, Tag } from "antd";
+import {
+  CheckCircleOutlined,
+  DatabaseOutlined,
+  ExclamationCircleOutlined,
+  FileSearchOutlined,
+  ReloadOutlined,
+  WarningOutlined,
+} from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
+import ModoPagination from "@/components/biz/modo-pagination";
 import {
   apiFixChunks,
   apiVerifyAllChunks,
@@ -29,6 +37,22 @@ export default function ChunkVerifyPage() {
   const [loading, setLoading] = useState(false); // 全部核对/加载中
   const [fixingIds, setFixingIds] = useState<Set<string>>(new Set()); // 修复中(防连点)
   const [lastCheckedAt, setLastCheckedAt] = useState<string>("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+
+  // 对齐任务监控页：表格可用高度实测（统计卡/工具栏高度由内容决定，写死 vh 偏移易失准）
+  const [tableBodyHeight, setTableBodyHeight] = useState<number>();
+  const tableBodyRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = tableBodyRef.current;
+    if (!el) return;
+    const update = () => setTableBodyHeight(el.clientHeight);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -36,6 +60,7 @@ export default function ChunkVerifyPage() {
       const res = await apiVerifyAllChunks();
       if (res.success && res.data) {
         setItems(res.data.items || []);
+        setPage(1);
         const now = new Date();
         setLastCheckedAt(
           `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
@@ -118,6 +143,16 @@ export default function ChunkVerifyPage() {
   const unhealthyCount = items.length - healthyCount;
   const missingCount = items.reduce((acc, it) => acc + (it.missing_in_vector || 0), 0);
   const orphanCount = items.reduce((acc, it) => acc + (it.orphan_vectors || 0), 0);
+
+  const statCards = [
+    { key: "total", label: "知识库总数", value: items.length, icon: <DatabaseOutlined />, color: "#3261CE", bg: "#EAF0FF", valueColor: "#242E43" },
+    { key: "healthy", label: "健康", value: healthyCount, icon: <CheckCircleOutlined />, color: "#2FA84F", bg: "#E8F7EC", valueColor: "#2FA84F" },
+    { key: "unhealthy", label: "不一致", value: unhealthyCount, icon: <WarningOutlined />, color: "#FA8C16", bg: "#FFF3E6", valueColor: unhealthyCount ? "#FA8C16" : "#2FA84F" },
+    { key: "missing", label: "缺失切片", value: missingCount, icon: <FileSearchOutlined />, color: "#FA8C16", bg: "#FFF3E6", valueColor: missingCount ? "#FA8C16" : "#2FA84F" },
+    { key: "orphan", label: "孤儿向量", value: orphanCount, icon: <ExclamationCircleOutlined />, color: "#FA8C16", bg: "#FFF3E6", valueColor: orphanCount ? "#FA8C16" : "#2FA84F" },
+  ];
+
+  const pagedItems = items.slice((page - 1) * pageSize, page * pageSize);
 
   const columns: ColumnsType<ChunkVerifyReport> = [
     {
@@ -202,83 +237,147 @@ export default function ChunkVerifyPage() {
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: 16, background: "#F5F7FA" }}>
-      {/* 顶部统计 + 操作 */}
-      <Row gutter={12} style={{ flexShrink: 0, marginBottom: 12 }}>
-        <Col span={5}>
-          <Card size="small">
-            <Statistic title="知识库总数" value={items.length} />
-          </Card>
-        </Col>
-        <Col span={5}>
-          <Card size="small">
-            <Statistic title="健康" value={healthyCount} valueStyle={{ color: "#52c41a" }} />
-          </Card>
-        </Col>
-        <Col span={5}>
-          <Card size="small">
-            <Statistic title="不一致" value={unhealthyCount} valueStyle={{ color: "#faad14" }} />
-          </Card>
-        </Col>
-        <Col span={5}>
-          <Card size="small">
-            <Statistic title="缺失切片" value={missingCount} valueStyle={{ color: missingCount ? "#faad14" : "#52c41a" }} />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card size="small">
-            <Statistic title="孤儿向量" value={orphanCount} valueStyle={{ color: orphanCount ? "#faad14" : "#52c41a" }} />
-          </Card>
-        </Col>
-      </Row>
-
-      {/* 工具栏 */}
+    // 对齐任务监控页：外层锁定 视口 − 顶栏(45px)，flex 链路有界，
+    // 统计区/工具栏定高，表格区吃满剩余空间，行数再多也不溢出屏幕。
+    <div
+      className="chunk-verify-page"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "calc(100vh - 45px)",
+        minHeight: 0,
+        background: "#F5F7FA",
+        padding: 8,
+        overflow: "hidden",
+      }}
+    >
       <div
         style={{
-          flexShrink: 0,
           display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          background: "#fff",
-          borderRadius: 8,
-          border: "1px solid #E3E9EF",
-          padding: "10px 16px",
-          marginBottom: 12,
-        }}
-      >
-        <span style={{ color: "#8c8c8c", fontSize: 13 }}>
-          {lastCheckedAt ? `上次核对：${lastCheckedAt}` : "尚未核对"}
-        </span>
-        <Space>
-          <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void loadAll()}>
-            全部核对
-          </Button>
-          <Button type="primary" danger loading={loading} onClick={() => void handleFixAll()}>
-            修复所有异常
-          </Button>
-        </Space>
-      </div>
-
-      {/* 表格 */}
-      <div
-        style={{
+          flexDirection: "column",
           flex: 1,
           minHeight: 0,
           overflow: "hidden",
-          background: "#fff",
-          borderRadius: 8,
-          border: "1px solid #E3E9EF",
+          background: "#F5F7FA",
         }}
       >
-        <Table<ChunkVerifyReport>
-          rowKey="kb_id"
-          loading={loading}
-          columns={columns}
-          dataSource={items}
-          size="middle"
-          pagination={items.length > 10 ? { pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 个知识库` } : false}
-          scroll={{ y: "calc(100vh - 340px)" }}
-        />
+        {/* 统计区 */}
+        <div style={{ flexShrink: 0, marginBottom: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16 }}>
+            {statCards.map((s) => (
+              <div
+                key={s.key}
+                className="modo-stat-card"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: 18,
+                  background: "#fff",
+                  borderRadius: 8,
+                  border: "1px solid #E3E9EF",
+                  transition: "box-shadow 0.25s",
+                }}
+              >
+                <div>
+                  <div style={{ color: "#79879C", fontSize: 13, marginBottom: 8, fontWeight: 500 }}>{s.label}</div>
+                  <div
+                    style={{
+                      fontSize: 26,
+                      fontWeight: 700,
+                      lineHeight: "26px",
+                      color: s.valueColor,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {s.value}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    width: 48,
+                    height: 48,
+                    borderRadius: 12,
+                    background: s.bg,
+                    color: s.color,
+                    opacity: 0.75,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <span style={{ fontSize: 22 }}>{s.icon}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 工具栏 */}
+        <div
+          style={{
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 16,
+            flexWrap: "wrap",
+            background: "#fff",
+            borderRadius: 8,
+            border: "1px solid #E3E9EF",
+            padding: "14px 16px",
+            marginBottom: 16,
+          }}
+        >
+          <span style={{ color: "#79879C", fontSize: 13 }}>
+            {lastCheckedAt ? `上次核对：${lastCheckedAt}` : "尚未核对"}
+          </span>
+          <Space>
+            <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void loadAll()}>
+              全部核对
+            </Button>
+            <Button type="primary" danger loading={loading} onClick={() => void handleFixAll()}>
+              修复所有异常
+            </Button>
+          </Space>
+        </div>
+
+        {/* 表格 + 分页 */}
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+            overflow: "hidden",
+            background: "#fff",
+            borderRadius: 8,
+            border: "1px solid #E3E9EF",
+          }}
+        >
+          <div ref={tableBodyRef} style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "0 16px" }}>
+            <Table<ChunkVerifyReport>
+              rowKey="kb_id"
+              loading={loading}
+              columns={columns}
+              dataSource={pagedItems}
+              size="middle"
+              pagination={false}
+              scroll={{ x: 960, y: tableBodyHeight }}
+            />
+          </div>
+          <ModoPagination
+            current={page}
+            pageSize={pageSize}
+            total={items.length}
+            showTotal={(t) => `共 ${t} 条`}
+            onChange={(p, ps) => {
+              setPage(p);
+              setPageSize(ps);
+            }}
+          />
+        </div>
       </div>
     </div>
   );

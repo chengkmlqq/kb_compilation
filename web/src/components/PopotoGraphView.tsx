@@ -18,7 +18,7 @@
  *
  * KB 隔离：runner 包装时对生成的语句注入 kb_id 过滤（WHERE n.kb_id=$kb）。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Spin } from "antd";
 
 interface PopotoGraphViewProps {
@@ -68,6 +68,17 @@ function resetPopotoContainers() {
   }
 }
 
+/** 停掉 Popoto 的 d3 force simulation。
+ *  dist 版未导出 popoto.stop()，但 graph 模块暴露了 `graph.force`（d3.forceSimulation），
+ *  对其调用 stop() 即可停掉 rAF 循环，避免多实例/切 KB 时循环叠加打满 CPU。 */
+function stopPopotoForce(popoto: any) {
+  try {
+    popoto?.graph?.force?.stop?.();
+  } catch {
+    /* 旧实例已释放，忽略 */
+  }
+}
+
 function loadScript(src: string, timeoutMs = 15000): Promise<void> {
   return new Promise((resolve, reject) => {
     const g = globalThis as any;
@@ -108,9 +119,37 @@ function loadScript(src: string, timeoutMs = 15000): Promise<void> {
 export default function PopotoGraphView({ kbId, height = 640 }: PopotoGraphViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  // 所在页签可见性：antd Tabs 不销毁隐藏 pane，隐藏时暂停 d3 力模拟，避免后台空转。
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const visibleRef = useRef(true);
+
+  // 可见性守卫：隐藏时停掉 force simulation，切回时只重启力模拟（节点/连线仍在）
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((ents) => {
+      const vis = ents.some((e) => e.isIntersecting);
+      visibleRef.current = vis;
+      const popoto: any = (globalThis as any).popoto;
+      const force = popoto?.graph?.force;
+      if (!force) return; // 尚未 start()，由 init 完成后按 visibleRef 自行处理
+      if (vis) {
+        try {
+          force.alpha(0.3).restart();
+        } catch {
+          /* ignore */
+        }
+      } else {
+        stopPopotoForce(popoto);
+      }
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
 
   useEffect(() => {
     let disposed = false;
+    let started = false;
     const steps: string[] = [];
 
     (async () => {
@@ -218,28 +257,50 @@ export default function PopotoGraphView({ kbId, height = 640 }: PopotoGraphViewP
         };
         steps.push("provider ok: node=" + (prov.node ? "有" : "无"));
 
-        // 节点文本显示：默认显示 Neo4j internal ID，改为实体 name（回退 entity_type）
-        prov.node.getTextValue = (node: any) => {
-          const p = node?.properties || node || {};
-          return String(p.name ?? p.entity_type ?? p.id ?? "未知实体");
+        // 节点文本显示：画布节点标签 = 实体 name（回退 entity_type/description/label）。
+        // 2026-10-11 修复：旧实现 `prov.node.getTextValue = ...` 覆盖的是 popoto 内部
+        // 派发函数本身（S.node.getTextValue → getProperty(label,"getTextValue")），
+        // 且读取的是不存在的 node.properties → 恒为 undefined → 回退 node.id（popoto
+        // 内部自增数字 id），于是画布节点全是数字和 id，长文本还把节点包围盒撑大。
+        // 正确做法：把 getTextValue 注册到 label 级 provider，由 getProperty 优先命中；
+        // 节点属性挂载在 node.attributes（Neo4j 属性），不是 node.properties。
+        const readProps = (v: any): any => (v && typeof v === "object" ? v.attributes ?? v : v);
+        const pickName = (p: any): string => {
+          const flat = readProps(p);
+          const v = flat?.name ?? flat?.entity_type ?? flat?.description;
+          return v !== undefined && v !== null && String(v).trim() !== "" ? String(v) : "";
         };
-        prov.node.getTooltipText = (node: any) => {
-          const p = node?.properties || node || {};
-          const bits = [p.name, p.entity_type ? `类型: ${p.entity_type}` : null, p.description].filter(Boolean);
-          return bits.join(" · ");
+        const readNodeText = (node: any): string => {
+          // 主节点：属性值聚合在 node.value[]（每项 .attributes）
+          if (Array.isArray(node?.value) && node.value.length) {
+            const names = node.value.map((v: any) => pickName(v)).filter(Boolean);
+            if (names.length) return names.join(" / ");
+          }
+          // 值节点/普通节点：属性在 node.attributes
+          const own = pickName(node?.attributes) || pickName(node);
+          if (own) return own;
+          return String(node?.label ?? "未知实体");
         };
+        prov.node.Provider[kbLabel].getTextValue = readNodeText;
+        prov.node.Provider["Entity"].getTextValue = readNodeText;
 
         // 5) 挂载（start 自动检测 #popoto-graph/#popoto-taxonomy 等）
         // 容器先清空：卸载周期里 Popoto 渲染的 DOM 会残留，二次挂载时错乱
         resetPopotoContainers();
         if (popotoStartedFor !== kbId) {
+          // 切换 KB：先停掉上一个 KB 的 d3 force simulation，避免多个 rAF 循环叠加
+          // （global 单例 popoto 只支持一个实例，旧实例不停会一直空转 → CPU 打满）
+          if (popotoStartedFor !== null) stopPopotoForce(popoto);
           popoto.start(kbLabel);
           popotoStartedFor = kbId;
+          started = true;
           steps.push("start ok");
         } else {
           steps.push("start skipped（已启动，复用单例）");
         }
         setReady(true);
+        // 若挂载时页签不可见，start() 后立即停掉力模拟，避免隐藏页签后台空转
+        if (!visibleRef.current) stopPopotoForce(popoto);
       } catch (e) {
         const err = String(e instanceof Error ? e.stack || e.message : e);
         setError(`Popoto 初始化失败: ${err}\n${steps.join("\n")}`);
@@ -248,6 +309,12 @@ export default function PopotoGraphView({ kbId, height = 640 }: PopotoGraphViewP
 
     return () => {
       disposed = true;
+      // 卸载：若本实例启动了 popoto，停掉其 force simulation 并复位单例标记，
+      // 否则关闭页签后 rAF 仍在后台运行。
+      if (started) {
+        stopPopotoForce((globalThis as any).popoto);
+        if (popotoStartedFor === kbId) popotoStartedFor = null;
+      }
     };
   }, [kbId]);
 
@@ -256,7 +323,7 @@ export default function PopotoGraphView({ kbId, height = 640 }: PopotoGraphViewP
   }
 
   return (
-    <div style={{ minHeight: height }}>
+    <div ref={rootRef} style={{ minHeight: height }}>
       {!ready && <Spin style={{ display: "block", margin: "48px auto" }} />}
       <link rel="stylesheet" href="/wiki/vendor/popoto.min.css" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 260px", gap: 12, minHeight: height }}>

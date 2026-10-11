@@ -145,7 +145,11 @@ def find_soffice() -> Optional[str]:
         if path and os.path.exists(path):
             return path
 
-    result = subprocess.run(["which", "soffice"], capture_output=True, text=True)
+    # `which` 不存在于 Windows：缺失时应返回 None 而非抛 FileNotFoundError
+    try:
+        result = subprocess.run(["which", "soffice"], capture_output=True, text=True)
+    except OSError:
+        return None
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
     return None

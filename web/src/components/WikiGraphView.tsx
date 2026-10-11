@@ -94,6 +94,123 @@ interface Pt {
   pinned: boolean;
 }
 
+// ── Barnes-Hut 四叉树 ──
+// 斥力原为全量两两遍历（O(n²)/帧）：overview 上限 500 → 25 万次/帧，
+// bloom 上限 1500 → 225 万次/帧（含 sqrt），16ms 内算不完直接堵死主线程。
+// 改用四叉树按空间聚簇、远处子树以其质心近似整体斥力，复杂度降到 O(n log n)。
+interface BhCell {
+  cx: number;
+  cy: number;
+  h: number; // 单元中心与半边长
+  mass: number;
+  mx: number; // 子树坐标和（质心 = mx/mass）
+  my: number;
+  slug: string | null; // 叶子占据点（未细分时）
+  px: number;
+  py: number;
+  kids: BhCell[] | null;
+}
+
+// theta 判据（越小越精确越慢）；0.85² ≈ 0.72
+const BH_THETA2 = 0.72;
+// 最大细分深度：重合/极近点（如被夹到画布角）会一直落在同一象限，
+// 需要深度上限兜底，否则无限细分导致栈溢出。
+const BH_MAX_DEPTH = 24;
+
+function bhCell(cx: number, cy: number, h: number): BhCell {
+  return { cx, cy, h, mass: 0, mx: 0, my: 0, slug: null, px: 0, py: 0, kids: null };
+}
+
+function bhQuadrant(c: BhCell, x: number, y: number): number {
+  return (x < c.cx ? 0 : 1) + (y < c.cy ? 0 : 2);
+}
+
+function bhInsert(c: BhCell, slug: string, x: number, y: number, depth = 0): void {
+  if (!c.kids && (c.slug === null || depth >= BH_MAX_DEPTH)) {
+    // 空叶子，或已达深度上限：把点并入本单元作为团聚点
+    if (c.slug === null) {
+      c.slug = slug;
+      c.px = x;
+      c.py = y;
+    }
+    c.mass += 1;
+    c.mx += x;
+    c.my += y;
+    return;
+  }
+  if (!c.kids) {
+    // 单点叶子且仍有细分空间：细分后把旧点与新点一起下放
+    const oldSlug = c.slug as string;
+    const ox = c.px;
+    const oy = c.py;
+    const h = c.h / 2;
+    c.slug = null;
+    c.kids = [
+      bhCell(c.cx - h, c.cy - h, h),
+      bhCell(c.cx + h, c.cy - h, h),
+      bhCell(c.cx - h, c.cy + h, h),
+      bhCell(c.cx + h, c.cy + h, h),
+    ];
+    c.mass = 0;
+    c.mx = 0;
+    c.my = 0;
+    bhInsert(c.kids[bhQuadrant(c, ox, oy)], oldSlug, ox, oy, depth + 1);
+    c.mass = 1;
+    c.mx = ox;
+    c.my = oy;
+  }
+  bhInsert(c.kids![bhQuadrant(c, x, y)], slug, x, y, depth + 1);
+  c.mass += 1;
+  c.mx += x;
+  c.my += y;
+}
+
+function bhAddRepulsion(
+  out: { fx: number; fy: number },
+  x: number,
+  y: number,
+  px: number,
+  py: number,
+  m: number,
+  repulsion: number,
+): void {
+  const ax = x - px;
+  const ay = y - py;
+  const dd = ax * ax + ay * ay + 1;
+  const f = (repulsion * m) / dd;
+  const inv = 0.1 / Math.sqrt(dd);
+  out.fx += ax * f * inv;
+  out.fy += ay * f * inv;
+}
+
+function bhRepulse(
+  c: BhCell,
+  slug: string,
+  x: number,
+  y: number,
+  repulsion: number,
+  out: { fx: number; fy: number },
+): void {
+  if (c.mass === 0) return;
+  if (!c.kids) {
+    if (c.slug === slug) return; // 跳过自身
+    bhAddRepulsion(out, x, y, c.mx / c.mass, c.my / c.mass, c.mass, repulsion);
+    return;
+  }
+  const bx = c.mx / c.mass;
+  const by = c.my / c.mass;
+  const dx = x - bx;
+  const dy = y - by;
+  const d2 = dx * dx + dy * dy + 1;
+  const s = c.h * 2;
+  if ((s * s) / d2 < BH_THETA2) {
+    // 单元足够远：整簇用质心近似
+    bhAddRepulsion(out, x, y, bx, by, c.mass, repulsion);
+    return;
+  }
+  for (const k of c.kids) bhRepulse(k, slug, x, y, repulsion, out);
+}
+
 interface Props {
   kbId: string;
   focusSlug?: string; // 从 wiki 页跳入时定位
@@ -539,10 +656,38 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     const spring = 0.008;
     const restLen = 90;
 
+    // 可见性守卫：切到隐藏页签（display:none）时停帧，避免后台空转。
+    // antd Tabs 默认不销毁隐藏 pane，若不守卫则多开图页签会多实例满帧跑。
+    let visible = true;
+
     const simulate = () => {
+      if (!visible) {
+        st.raf = 0;
+        return;
+      }
       const nodes = st.nodes;
       const entries = Array.from(nodes.entries());
       let totalV = 0;
+
+      // Barnes-Hut：每帧按当前位置建树，斥力由 O(n²) 降到 O(n log n)
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const [, p] of entries) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+      const root = bhCell(
+        (minX + maxX) / 2,
+        (minY + maxY) / 2,
+        Math.max(maxX - minX, maxY - minY, 1) / 2 + 1,
+      );
+      for (const [slug, p] of entries) bhInsert(root, slug, p.x, p.y);
+
+      const acc = { fx: 0, fy: 0 };
       for (const [slug, a] of entries) {
         if (a.pinned) {
           totalV += Math.abs(a.vx) + Math.abs(a.vy);
@@ -550,15 +695,12 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         }
         a.vx *= 0.85;
         a.vy *= 0.85;
-        for (const [, b] of entries) {
-          if (a === b) continue;
-          const dx = a.x - b.x;
-          const dy = a.y - b.y;
-          const d2 = dx * dx + dy * dy + 1;
-          const f = repulsion / d2;
-          a.vx += (dx / Math.sqrt(d2)) * f * 0.1;
-          a.vy += (dy / Math.sqrt(d2)) * f * 0.1;
-        }
+        // 斥力：Barnes-Hut 近似（远处子树以质心代替全量两两遍历）
+        acc.fx = 0;
+        acc.fy = 0;
+        bhRepulse(root, slug, a.x, a.y, repulsion, acc);
+        a.vx += acc.fx;
+        a.vy += acc.fy;
         for (const other of adj.get(slug) || []) {
           const tb = nodes.get(other);
           if (!tb || tb === a) continue;
@@ -800,9 +942,28 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     };
     start();
 
+    // 可见性守卫：观察 SVG 是否在视口内（隐藏页签 display:none → 不交叉）。
+    // 切到隐藏页签即停帧，切回自动恢复，避免后台持续占用主线程。
+    const io =
+      typeof IntersectionObserver !== "undefined"
+        ? new IntersectionObserver((ents) => {
+            const nowVisible = ents.some((e) => e.isIntersecting);
+            if (nowVisible === visible) return;
+            visible = nowVisible;
+            if (nowVisible) {
+              if (!st.raf) st.raf = requestAnimationFrame(simulate);
+            } else if (st.raf) {
+              cancelAnimationFrame(st.raf);
+              st.raf = 0;
+            }
+          })
+        : null;
+    io?.observe(svg);
+
     return () => {
       if (st.raf) cancelAnimationFrame(st.raf);
       st.raf = 0;
+      io?.disconnect();
       svg.removeEventListener("mousedown", onMouseDown);
       svg.removeEventListener("mousemove", onMouseMove);
       svg.removeEventListener("mouseup", onMouseUp);

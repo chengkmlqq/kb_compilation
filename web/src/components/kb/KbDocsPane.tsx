@@ -86,6 +86,10 @@ export interface KbDocsPaneProps {
 export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   const { message, modal } = App.useApp();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // 所在页签可见性：antd Tabs 默认不销毁隐藏 pane，隐藏时应暂停轮询/摘要，
+  // 否则多开页签会各自在后台持续打接口（文档解析中每 3s 一轮）。
+  const paneRef = useRef<HTMLDivElement | null>(null);
+  const [paneActive, setPaneActive] = useState(true);
 
   const [kb, setKb] = useState<KbItem | null>(null);
   const [docs, setDocs] = useState<DocItem[]>([]);
@@ -235,24 +239,36 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   }, [kbId, docPage, docPageSize, docKeyword, docStatus, docType, docFolderId]);
 
   useEffect(() => {
+    if (!paneActive) return;
     void load();
-  }, [load]);
+  }, [load, paneActive]);
 
   useEffect(() => {
     void loadDocFolders();
   }, [loadDocFolders]);
+
+  // 页签可见性守卫：隐藏页签（display:none，rect 为零 → 不交叉）时置 false，停掉轮询与摘要
+  useEffect(() => {
+    const el = paneRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((ents) => {
+      setPaneActive(ents.some((e) => e.isIntersecting));
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
 
   // Auto-poll while any document is still being parsed (PENDING/PARSING/EMBEDDING).
   const hasInFlight = docs.some((d) =>
     ["PENDING", "PARSING", "EMBEDDING"].includes(d.parse_state),
   );
   useEffect(() => {
-    if (!hasInFlight) return;
+    if (!hasInFlight || !paneActive) return;
     const timer = setInterval(() => {
       void load();
     }, 3000);
     return () => clearInterval(timer);
-  }, [hasInFlight, load]);
+  }, [hasInFlight, paneActive, load]);
 
   // 自动生成 AI 摘要（对齐 WeKnora）：KB 配了 LLM 时，解析完成的文档逐个自动补摘要。
   const autoSummaryRunning = useRef(false);
@@ -260,6 +276,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   const [autoTick, setAutoTick] = useState(0);
 
   useEffect(() => {
+    if (!paneActive) return;
     if (!kb?.summary_model_id) return;
     if (autoSummaryRunning.current) return;
     const target = docs.find(
@@ -289,7 +306,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
         autoSummaryRunning.current = false;
         setAutoTick((t) => t + 1);
       });
-  }, [docs, kbId, kb?.summary_model_id, autoTick]);
+  }, [docs, kbId, kb?.summary_model_id, autoTick, paneActive]);
 
   const onDeleteDoc = async (doc: DocItem) => {
     const res = await apiDeleteDocument(kbId, doc.id);
@@ -536,7 +553,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   }, [kbId, kb?.name, load]);
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+    <div ref={paneRef} style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       {/* 白底直角内容面板（标题由页签承担）：左侧目录树贴面板边缘，右侧内容区按系统内边距 12/16 排布 */}
       <Card
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}

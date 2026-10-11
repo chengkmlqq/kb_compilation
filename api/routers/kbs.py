@@ -463,10 +463,15 @@ def _attach_wiki_build_status(db: Session, kb_id: str, items: list[dict]) -> Non
 
     if not items:
         return
+    # 只取提到本 KB 的任务：kb_id 内嵌在 task_params JSON 文本里，先用 LIKE 粗筛
+    # （下方 json.loads 再精确校验 cfg.kb_id），并加 limit 兜底。
+    # 原实现无条件全表扫 WIKI 任务并逐行 json.loads，随任务累积线性变慢 —— 而本函数
+    # 每次文档列表请求都会执行（文档解析中前端每 3s 轮询一次），是详情页卡顿主因之一。
     jobs = db.execute(
         select(Job.id, Job.task_params, Job.state, Job.duration_ms)
-        .where(Job.id.like("WIKI%"))
+        .where(Job.id.like("WIKI%"), Job.task_params.like(f"%{kb_id}%"))
         .order_by(Job.create_time.desc())
+        .limit(3000)
     ).all()
     by_doc: dict[str, dict] = {}
     for jid, tp, state, dur in jobs:
@@ -1362,6 +1367,121 @@ def download_document(
             },
         )
     raise HTTPException(status_code=404, detail="物理文件缺失")
+
+
+# 转换后的 DOCX MIME（前端 docx-preview 只认 OOXML）
+_DOCX_MIME = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
+# 需要服务端转 DOCX 才能渲染的 Word 扩展名
+_WORD_PREVIEW_CONVERT_EXTS = ("doc", "rtf", "odt")
+
+
+def _read_document_bytes(db: Session, doc) -> tuple[bytes, str, str]:
+    """读取文档原始字节（本地 / MinIO 统一），返回 (data, file_name, mime_type)。"""
+    if doc.sys_file_id:
+        f = db.execute(
+            select(SysFile).where(SysFile.id == doc.sys_file_id)
+        ).scalars().first()
+        if f:
+            file_name = f.file_name or doc.file_name or "document.bin"
+            mime = f.mime_type or "application/octet-stream"
+            local_path = _local_fallback_path(f.storage_path)
+            if os.path.exists(local_path):
+                with open(local_path, "rb") as fh:
+                    return fh.read(), file_name, mime
+            if not _is_s3_row(f):
+                raise HTTPException(status_code=404, detail="物理文件缺失")
+            try:
+                return _read_stored_bytes(f), file_name, mime
+            except Exception:  # noqa: BLE001
+                raise HTTPException(status_code=404, detail="物理文件缺失") from None
+    if doc.storage_path:
+        from api.services import storage as storage_svc
+
+        try:
+            data = storage_svc.get_bytes(doc.storage_path)
+        except Exception:  # noqa: BLE001
+            raise HTTPException(status_code=404, detail="物理文件缺失") from None
+        return data, doc.file_name or "document.bin", "application/octet-stream"
+    raise HTTPException(status_code=404, detail="物理文件缺失")
+
+
+@router.get("/{kb_id}/documents/{document_id}/preview")
+def preview_document(
+    kb_id: str,
+    document_id: str,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+):
+    """文档预览字节：旧版/非 OOXML Word（.doc/.rtf/.odt）用 LibreOffice 转成
+    .docx 后返回，其余类型返回原文件（本地优先 / MinIO 流式回退）。
+
+    docx-preview 只能渲染 OOXML；服务端先转换，浏览器才能在线预览旧版文档。
+    """
+    _kb_visible(kb_id, caller, db)
+    from api.models.knowledge import KbDocument
+
+    doc = db.execute(
+        select(KbDocument).where(
+            KbDocument.id == document_id, KbDocument.kb_id == kb_id
+        )
+    ).scalars().first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    ext = (doc.file_ext or "").lstrip(".").lower()
+    if ext in _WORD_PREVIEW_CONVERT_EXTS:
+        from docreader.parser.doc_convert import (
+            convert_doc_to_docx_bytes,
+            needs_doc_to_docx_conversion,
+        )
+
+        data, file_name, mime = _read_document_bytes(db, doc)
+        # 扩展名是 .doc 但内容实为 OOXML（WPS/Word 另存）→ 原样返回即可渲染
+        if needs_doc_to_docx_conversion(data, ext):
+            converted = convert_doc_to_docx_bytes(data, suffix=f".{ext}")
+            if converted is None:
+                raise HTTPException(
+                    status_code=415,
+                    detail=(
+                        "该 Word 文档为旧版/非 OOXML 格式，服务端缺少 LibreOffice "
+                        "无法转换，请下载原文件查看。"
+                    ),
+                )
+            stem = Path(file_name).stem or "document"
+            return StreamingResponse(
+                io.BytesIO(converted),
+                media_type=_DOCX_MIME,
+                headers={"Content-Disposition": _content_disposition(f"{stem}.docx")},
+            )
+        return StreamingResponse(
+            io.BytesIO(data),
+            media_type=mime,
+            headers={"Content-Disposition": _content_disposition(file_name)},
+        )
+
+    # 其他类型：与 download 一致（本地文件走 FileResponse，MinIO 走字节流）
+    if doc.sys_file_id:
+        f = db.execute(
+            select(SysFile).where(SysFile.id == doc.sys_file_id)
+        ).scalars().first()
+        if f:
+            local_path = _local_fallback_path(f.storage_path)
+            if os.path.exists(local_path):
+                return FileResponse(
+                    local_path,
+                    media_type=f.mime_type or "application/octet-stream",
+                    filename=f.file_name,
+                )
+            if not _is_s3_row(f):
+                raise HTTPException(status_code=404, detail="物理文件缺失")
+    data, file_name, mime = _read_document_bytes(db, doc)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=mime,
+        headers={"Content-Disposition": _content_disposition(file_name)},
+    )
 
 
 class ReparseRequest(BaseModel):

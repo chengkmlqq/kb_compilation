@@ -375,7 +375,7 @@ def _enqueue_graph_build_task(kb_id: str, document_id: str) -> bool:
                 id=job_id,
                 task_id=job_id,
                 task_class="KbGraphBuildTask",
-                queue_name="default",
+                queue_name="graph",
                 task_params=task_params,
                 trigger_type="API",
                 state="PENDING",
@@ -393,7 +393,7 @@ def _enqueue_graph_build_task(kb_id: str, document_id: str) -> bool:
             "worker.tasks.scheduler.execute_modo_job",
             args=[job_id],
             task_id=job_id,
-            queue="default",
+            queue="graph",
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("failed to enqueue graph build task: %s", exc)

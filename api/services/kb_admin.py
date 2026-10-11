@@ -100,7 +100,8 @@ def list_kbs(
     if scope:
         stmt = stmt.where(KbDatasource.scope == scope)
 
-    total = len(db.execute(stmt).scalars().all())
+    # 计数走 SQL count（原 len(...all()) 会把整表 ORM 对象物化出来，KB 越多越慢）
+    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
     rows = (
         db.execute(
             stmt.order_by(KbDatasource.created_at.desc(), KbDatasource.id.desc())
@@ -111,21 +112,35 @@ def list_kbs(
         .all()
     )
 
-    items = []
-    for kb in rows:
-        doc_count = (
+    # 文档/Wiki 页计数：原实现每个 KB 行 2 次 count 查询（一页 20 个 = 40 次额外查询），
+    # 改为对当前页 kb_id 集合各做一次 group by 聚合（消除 N+1）。
+    kb_ids = [kb.id for kb in rows]
+    doc_counts: dict[str, int] = {}
+    page_counts: dict[str, int] = {}
+    if kb_ids:
+        doc_counts = dict(
             db.execute(
-                select(func.count()).select_from(KbDocument).where(KbDocument.kb_id == kb.id)
-            ).scalar()
-            or 0
+                select(KbDocument.kb_id, func.count())
+                .where(KbDocument.kb_id.in_(kb_ids))
+                .group_by(KbDocument.kb_id)
+            ).all()
         )
-        page_count = (
+        page_counts = dict(
             db.execute(
-                select(func.count()).select_from(WikiPage).where(WikiPage.kb_id == kb.id)
-            ).scalar()
-            or 0
+                select(WikiPage.kb_id, func.count())
+                .where(WikiPage.kb_id.in_(kb_ids))
+                .group_by(WikiPage.kb_id)
+            ).all()
         )
-        items.append(_kb_dict(kb, doc_count=doc_count, page_count=page_count))
+
+    items = [
+        _kb_dict(
+            kb,
+            doc_count=doc_counts.get(kb.id, 0),
+            page_count=page_counts.get(kb.id, 0),
+        )
+        for kb in rows
+    ]
     return {"items": items, "total": total, "page": page, "pageSize": page_size}
 
 
@@ -512,7 +527,7 @@ def list_documents(
     if folder_id:
         subtree = _doc_subtree_ids(db, kb_id, folder_id)
         stmt = stmt.where(KbDocument.folder_id.in_(subtree))
-    total = len(db.execute(stmt).scalars().all())
+    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
     rows = (
         db.execute(
             stmt.order_by(KbDocument.created_at.desc(), KbDocument.id.desc())
@@ -1339,51 +1354,84 @@ def wiki_graph(
 
     mode=overview 返回全库图（受 limit 截断）；mode=ego 以 center slug 为中心
     返回 depth 跳邻域。types 过滤 page_type。
+
+    性能：只取图谱所需列（不加载 content 等大字段）；度数用 SQL 聚合；
+    edges 在 SQL 侧按选中集过滤（避免全表读 + Python 逐条筛选）。
     """
     allowed_types = [t for t in (types or []) if t in GRAPH_PAGE_TYPES]
     type_filter = set(allowed_types) if allowed_types else set(GRAPH_PAGE_TYPES)
 
     pages = db.execute(
-        select(WikiPage).where(WikiPage.kb_id == kb_id, WikiPage.status == "active")
-    ).scalars().all()
-    by_id = {p.id: p for p in pages}
-    page_ids = {p.id for p in pages}
-
-    # 统计每页链接数（出+入）
-    link_counts: dict[str, int] = {}
-    slug_by_id = {p.id: p.slug for p in pages}
-    link_rows = db.execute(
-        select(WikiLink.from_page_id, WikiLink.to_page_id).where(WikiLink.kb_id == kb_id)
+        select(
+            WikiPage.id,
+            WikiPage.slug,
+            WikiPage.title,
+            WikiPage.page_type,
+            WikiPage.summary,
+        ).where(WikiPage.kb_id == kb_id, WikiPage.status == "active")
     ).all()
-    edges: list[dict] = []
-    for frm, to in link_rows:
-        if frm in page_ids and to in page_ids:
-            link_counts[frm] = link_counts.get(frm, 0) + 1
-            link_counts[to] = link_counts.get(to, 0) + 1
-            edges.append({"source": slug_by_id[frm], "target": slug_by_id[to]})
+    total_pages = len(pages)
+    page_ids = {p.id for p in pages}
+    slug_by_id = {p.id: p.slug for p in pages}
+    if not page_ids:
+        return {"nodes": [], "edges": [], "meta": {"mode": mode, "total": 0, "returned": 0, "truncated": False}}
+
+    # 度数（出+入）：SQL 分组聚合，避免把每条边都拉进 Python 再逐条判断。
+    # join 保证另一端也是本 KB 的 active 页（与原 `frm in page_ids and to in page_ids` 语义一致）。
+    link_counts: dict[str, int] = {}
+    for pid, cnt in db.execute(
+        select(WikiLink.from_page_id, func.count())
+        .join(WikiPage, WikiPage.id == WikiLink.to_page_id)
+        .where(
+            WikiLink.kb_id == kb_id,
+            WikiPage.kb_id == kb_id,
+            WikiPage.status == "active",
+        )
+        .group_by(WikiLink.from_page_id)
+    ).all():
+        if pid in page_ids:
+            link_counts[pid] = link_counts.get(pid, 0) + cnt
+    for pid, cnt in db.execute(
+        select(WikiLink.to_page_id, func.count())
+        .join(WikiPage, WikiPage.id == WikiLink.from_page_id)
+        .where(
+            WikiLink.kb_id == kb_id,
+            WikiPage.kb_id == kb_id,
+            WikiPage.status == "active",
+        )
+        .group_by(WikiLink.to_page_id)
+    ).all():
+        if pid in page_ids:
+            link_counts[pid] = link_counts.get(pid, 0) + cnt
 
     # 选择节点集
     if mode == "ego" and center:
-        center_page = db.execute(
-            select(WikiPage).where(
-                WikiPage.kb_id == kb_id, WikiPage.slug == center, WikiPage.status == "active"
-            )
-        ).scalars().first()
+        center_page = next((p for p in pages if p.slug == center), None)
         if not center_page:
             return {"nodes": [], "edges": [], "meta": {"mode": "ego", "total": 0, "returned": 0, "truncated": False}}
         selected: set[str] = {center_page.id}
         frontier: set[str] = {center_page.id}
         for _ in range(max(1, depth)):
+            if not frontier:
+                break
+            # 只查与当前前沿相邻的边（SQL 侧过滤），不再遍历全量 link_rows
+            rows = db.execute(
+                select(WikiLink.from_page_id, WikiLink.to_page_id).where(
+                    WikiLink.kb_id == kb_id,
+                    or_(
+                        WikiLink.from_page_id.in_(frontier),
+                        WikiLink.to_page_id.in_(frontier),
+                    ),
+                )
+            ).all()
             next_frontier: set[str] = set()
-            for frm, to in link_rows:
+            for frm, to in rows:
                 if frm in frontier and to in page_ids and to not in selected:
                     next_frontier.add(to)
                 if to in frontier and frm in page_ids and frm not in selected:
                     next_frontier.add(frm)
             selected |= next_frontier
             frontier = next_frontier
-            if not frontier:
-                break
     else:
         # overview：按链接数取 top-N（默认全库，limit 截断）
         ranked = sorted(
@@ -1393,31 +1441,39 @@ def wiki_graph(
         )
         selected = {p.id for p in ranked[:limit]}
 
-    nodes = []
-    for p in pages:
-        if p.id not in selected or p.page_type not in type_filter:
-            continue
-        nodes.append(
-            {
-                "slug": p.slug,
-                "title": p.title,
-                "page_type": p.page_type,
-                "link_count": link_counts.get(p.id, 0),
-                "summary": p.summary,
-            }
-        )
+    nodes = [
+        {
+            "slug": p.slug,
+            "title": p.title,
+            "page_type": p.page_type,
+            "link_count": link_counts.get(p.id, 0),
+            "summary": p.summary,
+        }
+        for p in pages
+        if p.id in selected and p.page_type in type_filter
+    ]
 
-    node_slugs = {p.slug for p in pages if p.id in selected}
-    edges = [e for e in edges if e["source"] in node_slugs and e["target"] in node_slugs]
+    # edges 只在选中集之间取（选中集 ≤ limit，IN 参数规模可控）
+    edges: list[dict] = []
+    sel_ids = [p.id for p in pages if p.id in selected]
+    if sel_ids:
+        for frm, to in db.execute(
+            select(WikiLink.from_page_id, WikiLink.to_page_id).where(
+                WikiLink.kb_id == kb_id,
+                WikiLink.from_page_id.in_(sel_ids),
+                WikiLink.to_page_id.in_(sel_ids),
+            )
+        ).all():
+            edges.append({"source": slug_by_id[frm], "target": slug_by_id[to]})
 
     return {
         "nodes": nodes,
         "edges": edges,
         "meta": {
             "mode": mode,
-            "total": len(pages),
+            "total": total_pages,
             "returned": len(nodes),
-            "truncated": len(pages) > limit and mode != "ego",
+            "truncated": total_pages > limit and mode != "ego",
         },
     }
 

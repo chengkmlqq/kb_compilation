@@ -17,9 +17,11 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /srv/kb
 
 # system deps used by docreader's PDF/HTML engines and playwright
+# libreoffice-writer: 文档预览/解析时把旧版 .doc/.rtf/.odt 转成 .docx
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         fonts-liberation \
+        libreoffice-writer \
         libnss3 \
         libnspr4 \
         libatk1.0-0 \

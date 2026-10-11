@@ -16,6 +16,7 @@ import { ModoDrawer } from "@/components/biz/modo-drawer";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
+import { ExecuteInputModal } from "./_components/execute-input-modal";
 import {
   apiCreateTape,
   apiDeleteTape,
@@ -67,6 +68,9 @@ export default function OrchestrationsPage() {
   const [execRun, setExecRun] = useState<TapeRunDetail | null>(null);
   const [polling, setPolling] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 执行入参弹窗（先填初始调用参数，再提交执行）
+  const [execInputOpen, setExecInputOpen] = useState(false);
+  const [execInputTape, setExecInputTape] = useState<TapeItem | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollTimer.current) {
@@ -180,10 +184,10 @@ export default function OrchestrationsPage() {
     }
   };
 
-  const doExecute = async (row: TapeItem) => {
+  const doExecute = async (row: TapeItem, inputs: Record<string, unknown>) => {
     setRunning(true);
     try {
-      const res = await apiExecuteTape(row.id, {});
+      const res = await apiExecuteTape(row.id, inputs);
       if (res.success && res.data?.run_id) {
         const runId = res.data.run_id;
         setExecOpen(true);
@@ -282,7 +286,7 @@ export default function OrchestrationsPage() {
             ...(row.status === "effective"
               ? [{ key: "offline", label: "下线", icon: <PauseCircleOutlined />, onClick: () => doOffline(row) }]
               : [{ key: "publish", label: "发布", icon: <ExportOutlined />, onClick: () => doPublish(row) }]),
-            { key: "run", label: running ? "执行中…" : "执行", icon: <CheckCircleOutlined />, onClick: () => doExecute(row) },
+            { key: "run", label: running ? "执行中…" : "执行", icon: <CheckCircleOutlined />, onClick: () => { setExecInputTape(row); setExecInputOpen(true); } },
             { key: "del", label: "删除", danger: true, onClick: () => doDelete(row) },
           ]}
         />
@@ -490,6 +494,19 @@ export default function OrchestrationsPage() {
           </div>
         )}
       </Modal>
+
+      {/* 执行入参弹窗：填写初始调用参数后提交执行 */}
+      <ExecuteInputModal
+        open={execInputOpen}
+        tapeName={execInputTape?.tape_name || ""}
+        loading={running}
+        onCancel={() => setExecInputOpen(false)}
+        onOk={(inputs) => {
+          const row = execInputTape;
+          setExecInputOpen(false);
+          if (row) void doExecute(row, inputs);
+        }}
+      />
     </div>
   );
 }

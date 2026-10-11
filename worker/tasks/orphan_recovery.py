@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # task_class -> 队列（对齐 doc_process._agent_task_target 的默认 inline 映射）
 QUEUE_BY_TASK_CLASS: dict[str, str] = {
     "KbDocumentProcessTask": "default",
-    "KbGraphBuildTask": "default",
+    "KbGraphBuildTask": "graph",
     "KbAgentWikiBuildTask": "agent",
     "KbSkillDirectBuildTask": "build",
     "KbAgentGatewayTask": "default",
@@ -32,6 +32,9 @@ _ORPHAN_AFTER_MINUTES = 10
 _ORPHAN_AFTER_MINUTES_BY_CLASS: dict[str, int] = {
     "KbSkillDirectBuildTask": 60,
     "KbAgentWikiBuildTask": 60,
+    # 图谱构建同为 LLM 长任务（全库 chunk 抽取），文档多时远超 10min，
+    # 不豁免会被反复误判孤儿重投 → 双实例并发重算同一 KB。
+    "KbGraphBuildTask": 60,
 }
 
 

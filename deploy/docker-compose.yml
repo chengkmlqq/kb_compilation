@@ -4,7 +4,8 @@
 #   nginx          统一入口（:80），转发到 web
 #   web            Next.js 16 前端（:3000，standalone），内部代理 /api/* 到 api-server
 #   api-server     FastAPI（:8000），23 端点
-#   celery-worker  Celery 任务 worker（文档解析/向量化/wiki/图谱）
+#   celery-worker  Celery 任务 worker（文档解析/向量化，default 队列）
+#   celery-graph-worker  图谱构建 worker（graph 队列，与解析隔离）
 #   celery-beat    Celery beat（扫描 modo_cron_task）
 #   redis          Celery broker + result backend
 #   pg             PostgreSQL + pgvector（知识库存储）
@@ -191,6 +192,28 @@ services:
     container_name: kb-celery-build-worker
     restart: unless-stopped
     command: ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info", "--concurrency=4", "-Q", "build"]
+    <<: *api-env
+    volumes:
+      - kb-docs:/data/kb_documents
+    depends_on:
+      redis:
+        condition: service_started
+      pg:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - kb-net
+
+  celery-graph-worker:
+    # 图谱构建 worker（2026-10）：只消费 graph 队列。KbGraphBuildTask 是 LLM 重活
+    # （全库 chunk 实体/关系抽取 + Neo4j 写入，单任务可达数分钟），此前与文档解析
+    # 同挤在 celery-worker(default, 并发2) → 解析被长任务饿死。独立队列 + 独立
+    # worker 后与解析物理隔离、可独立扩容，Flower 原生可见。
+    image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-worker:${KB_IMAGE_TAG:-latest}
+    container_name: kb-celery-graph-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info", "--concurrency=2", "-Q", "graph"]
     <<: *api-env
     volumes:
       - kb-docs:/data/kb_documents
