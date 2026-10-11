@@ -76,20 +76,29 @@ def _load_table_rows(db, doc: KbDocument, limit: int = SAMPLE_ROWS_LIMIT) -> tup
 # --------------------------------------------------------------------------- #
 
 
-def _markdown_meta(doc: KbDocument, columns: list[str], col_comments: dict[str, str]) -> str:
-    """表元数据 markdown（列定义表 + 表说明）。"""
+def _markdown_meta(
+    doc: KbDocument,
+    columns: list[str],
+    col_comments: dict[str, str],
+    col_types: dict[str, str] | None = None,
+    row_count: int | None = None,
+) -> str:
+    """表元数据 markdown（列定义表 + 表说明）。
+
+    row_count 传实际采样行数（len(rows)）；col_types 传 data_type 映射
+    （来自元数据采集 kb_metadata_column.data_type），缺省回落 '-'。
+    """
     lines = [f"# {doc.ds_table_name or doc.file_name}"]
     if doc.file_name and doc.file_name != doc.ds_table_name:
         lines.append(f"> 表注释：{doc.file_name}")
-    lines.append(f"> 行数：{doc.row_count or 0} · 列数：{len(columns)}")
+    lines.append(f"> 行数：{row_count if row_count is not None else (doc.row_count or 0)} · 列数：{len(columns)}")
     if columns:
         lines.append("\n## 列定义\n")
         lines.append("| 列名 | 类型 | 注释 |")
         lines.append("|------|------|------|")
-        # 类型从 ds_table_schema 无法推断，这里用 doc_chunk.meta 存真实列类型？不——
-        # 我们从元数据采集表拿列定义，但为免跨服务依赖，此处以列名 + 注释为主
+        types = col_types or {}
         for c in columns:
-            lines.append(f"| {c} | - | {col_comments.get(c, '')} |")
+            lines.append(f"| {c} | {types.get(c, '-')} | {col_comments.get(c, '')} |")
     return "\n".join(lines)
 
 
@@ -142,11 +151,12 @@ def _build_chunks(
     columns: list[str],
     col_comments: dict[str, str],
     chunk_cfg: ChunkConfig,
+    col_types: dict[str, str] | None = None,
 ) -> list[tuple[int, str]]:
     """切片：元数据块（seq 0 起）+ 行级块（每行 1 块）。"""
     chunks: list[tuple[int, str]] = []
-    # 元数据块：表说明 + 列定义
-    meta = _markdown_meta(doc, columns, col_comments)
+    # 元数据块：表说明 + 列定义（含类型/注释；行数显示实际采样数）
+    meta = _markdown_meta(doc, columns, col_comments, col_types, row_count=len(rows))
     if meta.strip():
         chunks.append((len(chunks), meta))
     # 样例数据块（seq 1）
@@ -213,21 +223,48 @@ def process_table_ingest(job_id: str, task_params: dict) -> dict:
             db.commit()
             return {"success": False, "error": "表无列或取数为空"}
 
-        # 2. 切片（列注释从元数据采集表补全，缺失不阻塞）
+        # 2. 切片（列注释/类型从元数据采集表补全，缺失不阻塞）
+        # ⚠️ metadata_table_id 是「元数据采集表」的 id，不是文档 id——按
+        # (数据源名→id, schema, table_name) 关联采集表，再取列定义。
         col_comments: dict[str, str] = {}
+        col_types: dict[str, str] = {}
         try:
-            from api.models.metadata import MetadataColumn
+            from api.models.framework import Datasource
+            from api.models.metadata import MetadataColumn, MetadataTable
             import sqlalchemy as _sa
 
-            mt = db.execute(
-                _sa.select(MetadataColumn.metadata_table_id, MetadataColumn.column_name, MetadataColumn.column_comment)
-                .where(MetadataColumn.metadata_table_id == doc.id)
-            ).all()
-            for _tid, cname, ccomment in mt:
-                if cname and ccomment:
-                    col_comments[cname] = ccomment
+            mt_id = None
+            if doc.ds_source_name and doc.ds_table_name:
+                ds_id = db.execute(
+                    _sa.select(Datasource.id).where(Datasource.name == doc.ds_source_name)
+                ).scalars().first()
+                if ds_id:
+                    mt_id = db.execute(
+                        _sa.select(MetadataTable.id).where(
+                            MetadataTable.datasource_id == ds_id,
+                            MetadataTable.table_name == doc.ds_table_name,
+                            _sa.or_(
+                                MetadataTable.schema_name == (doc.ds_table_schema or ""),
+                                MetadataTable.schema_name.is_(None),
+                            ),
+                        )
+                    ).scalars().first()
+            if mt_id:
+                cols_meta = db.execute(
+                    _sa.select(
+                        MetadataColumn.column_name,
+                        MetadataColumn.column_comment,
+                        MetadataColumn.data_type,
+                    ).where(MetadataColumn.metadata_table_id == mt_id)
+                ).all()
+                for cname, ccomment, ctype in cols_meta:
+                    if cname and ccomment:
+                        col_comments[cname] = ccomment
+                    if cname and ctype:
+                        col_types[cname] = str(ctype)
         except Exception:  # noqa: BLE001
             col_comments = {}
+            col_types = {}
 
         chunk_cfg = ChunkConfig()
         try:
@@ -236,7 +273,7 @@ def process_table_ingest(job_id: str, task_params: dict) -> dict:
         except Exception:  # noqa: BLE001
             chunk_cfg = ChunkConfig()
 
-        chunks = _build_chunks(doc, rows, columns, col_comments, chunk_cfg)
+        chunks = _build_chunks(doc, rows, columns, col_comments, chunk_cfg, col_types)
         if not chunks:
             update_document_state(db, document_id, "FAILED", error="无有效数据")
             db.commit()
@@ -272,7 +309,7 @@ def process_table_ingest(job_id: str, task_params: dict) -> dict:
 
         # 5. wiki 只建表主页（page_type=table）
         try:
-            _build_table_wiki(db, doc, columns, rows)
+            _build_table_wiki(db, doc, columns, rows, col_types)
         except Exception as exc:  # noqa: BLE001
             logger.warning("table wiki build skipped doc=%s: %s", document_id, exc)
 
@@ -288,7 +325,7 @@ def process_table_ingest(job_id: str, task_params: dict) -> dict:
         db.close()
 
 
-def _build_table_wiki(db, doc: KbDocument, columns: list[str], rows: list[dict]) -> dict:
+def _build_table_wiki(db, doc: KbDocument, columns: list[str], rows: list[dict], col_types: dict[str, str] | None = None) -> dict:
     """建一张表主页 wiki 页（含列定义/数据量/样例/摘要）+ 触发互链重建。"""
     from worker.tasks.wiki_build import _upsert_wiki_page
 
@@ -296,8 +333,8 @@ def _build_table_wiki(db, doc: KbDocument, columns: list[str], rows: list[dict])
     table_name = doc.ds_table_name or doc.file_name
     slug = f"table-{doc.ds_table_schema or ''}-{table_name}" if doc.ds_table_schema else f"table-{table_name}"
 
-    # 正文：列定义 + 样例（复用 markdown 拼接）
-    body_parts = [_markdown_meta(doc, columns, {})]
+    # 正文：列定义 + 样例（复用 markdown 拼接；行数显示实际采样数）
+    body_parts = [_markdown_meta(doc, columns, {}, col_types, row_count=len(rows))]
     sample = _markdown_rows(rows)
     if sample:
         body_parts.append(sample)

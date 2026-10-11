@@ -138,7 +138,8 @@ def _upsert_wiki_page(db, kb_id: str, title: str, content: str, slug: str, page_
         return {"slug": slug, "page_type": page_type, "created": True}
     except ValueError as e:
         if "已存在" in str(e) or "exists" in str(e).lower():
-            wiki_update_page(db, kb_id, slug, {"title": title, "content": content})
+            # 已存在则更新；同时恢复 status=active（软删/归档的页重建时重新激活）
+            wiki_update_page(db, kb_id, slug, {"title": title, "content": content, "status": "active"})
             return {"slug": slug, "page_type": page_type, "updated": True}
         raise
 
