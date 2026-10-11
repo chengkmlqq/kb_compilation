@@ -65,6 +65,7 @@ KNOWLEDGE_BUSINESS_TABLES = {
     "wiki_link",
     "wiki_operation_log",
     "wiki_feedback",
+    "wiki_page_issue",
     "kb_agent",
     "ontology_schema",
     "kb_ontology_schema",
