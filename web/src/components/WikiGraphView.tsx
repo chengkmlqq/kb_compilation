@@ -1,7 +1,15 @@
 "use client";
 
 /**
- * Wiki 知识图谱视图 —— SVG 力导向图（零第三方依赖，与 WeKnora 同方案）。
+ * Wiki 知识图谱视图 —— Canvas 2D 力导向图（零第三方依赖）。
+ *
+ * 架构（2026-10-11 由 SVG DOM 改为 Canvas 2D）：
+ * SVG 方案在节点多时（数百~上千）每帧要对每个 `<circle>/<line>/<text>` 写属性，
+ * 是上万次 DOM 写 + 字符串分配，主线程必堵。改为 Canvas：一次 `fill/stroke` 画完，
+ * 无 DOM 节点数量上限，命中检测用坐标反算 + 线性扫描（≤1500 节点足够）。
+ * 交互（拖拽固定 / 空白平移 / 滚轮缩放 / hover 高亮 / 单击详情 / 双击下钻 /
+ * 双击空白适应屏幕 / 箭头开关 / 图例过滤 / 开花邻域 / 扩展前沿）与样式类名
+ * （`.kb-wikigraph-*`）全部保持不变。
  *
  * 对齐 WeKnora（2026-10）：
  * - 12 类图例动态渲染（仅显示实际存在的类型，服务端过滤）
@@ -98,6 +106,10 @@ const GRAPH_OVERVIEW_LIMIT = 500;
 const GRAPH_EGO_LIMIT = 500;
 const BLOOM_MAX_NODES = 1500;
 const GROW_FRONTIER_CONCURRENCY = 6;
+// 安全上限：即便未达速度阈值，最多模拟这么多帧后强制收停（防抖动不收敛长期占 CPU）
+const SIM_MAX_FRAMES = 1200;
+// 缩放到该比例以下不再绘制标签（文字绘制最贵，且极小尺寸下本就不可读）
+const LABEL_MIN_SCALE = 0.4;
 // 全库索引类页面（index/log）：连线指向全库，参与单点扩展但不参与 frontier 批量生长
 const GRAPH_SYSTEM_PAGE_TYPES = new Set(["index", "log"]);
 
@@ -233,7 +245,7 @@ interface Props {
 
 export default function WikiGraphView({ kbId, focusSlug }: Props) {
   const router = useRouter();
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [data, setData] = useState<WikiGraphData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -558,11 +570,11 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
 
   // ── 适应屏幕 ──
   const fitToView = useCallback(() => {
-    const svg = svgRef.current;
+    const canvas = canvasRef.current;
     const st = stateRef.current;
-    if (!svg || st.nodes.size === 0) return;
-    const W = svg.clientWidth || 800;
-    const H = svg.clientHeight || 600;
+    if (!canvas || st.nodes.size === 0) return;
+    const W = canvas.clientWidth || 800;
+    const H = canvas.clientHeight || 600;
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -593,17 +605,34 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
 
   const isTypeOn = (t: string) => (filterTypes.size === 0 ? true : filterTypes.has(t));
 
-  // ---- SVG 渲染（力导向模拟）----
+  // ---- Canvas 渲染（力导向模拟）----
   useEffect(() => {
-    const svg = svgRef.current;
+    const canvas = canvasRef.current;
     const st = stateRef.current;
-    if (!svg) return;
-    svg.innerHTML = "";
-    const W = svg.clientWidth || 800;
-    const H = svg.clientHeight || 600;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
     if (!data) return;
+
+    // 画布尺寸 / DPR：CSS 尺寸决定逻辑坐标，物理像素 ×dpr 保证清晰
+    let W = canvas.clientWidth || 800;
+    let H = canvas.clientHeight || 600;
+    let dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+
+    const resize = () => {
+      const w = canvas.clientWidth || 800;
+      const h = canvas.clientHeight || 600;
+      dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+      W = w;
+      H = h;
+      const pw = Math.max(1, Math.round(w * dpr));
+      const ph = Math.max(1, Math.round(h * dpr));
+      if (canvas.width !== pw) canvas.width = pw;
+      if (canvas.height !== ph) canvas.height = ph;
+    };
+    resize();
+
     const nodeList = data.nodes;
-    const ns = "http://www.w3.org/2000/svg";
 
     // 布点：数据收缩删除多余；全新 → 黄金角螺旋（按面积均匀铺满画布；原单环布点在节点多时
     // 会挤成一个密集的圈 → 视觉上「全部重叠」）；增量（bloom/frontier merge）→ 新节点贴着当前质心补充
@@ -662,15 +691,7 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
       adj.get(e.target)!.push(e.source);
     }
 
-    // DOM 复用缓存：根 g / 箭头定义 / 节点 / 边只创建一次，之后每帧只改属性。
-    // （原实现每帧 innerHTML="" 重建整棵 SVG 并重绑事件，数百节点时帧率跌到个位数，
-    //   力导向几乎不收敛 → 节点停在初始布点上不动，表现为「不分散」。）
-    let rootG: SVGGElement | null = null;
-    let defsEl: SVGDefsElement | null = null;
-    const nodeElCache = new Map<string, SVGGElement>();
-    const edgeElCache = new Map<string, SVGLineElement>();
-
-    // 力导向模拟：斥力 + 弹簧
+    // 力导向模拟：斥力 + 弹簧（常量与 SVG 版一致，保证布局行为不变）
     const repulsion = 900;
     const spring = 0.008;
     const restLen = 90;
@@ -678,6 +699,95 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     // 可见性守卫：切到隐藏页签（display:none）时停帧，避免后台空转。
     // antd Tabs 默认不销毁隐藏 pane，若不守卫则多开图页签会多实例满帧跑。
     let visible = true;
+    let simFrames = 0;
+
+    // 画布坐标变换（世界坐标 → 屏幕）：ctx.setTransform(dpr*s, 0, 0, dpr*s, dpr*viewX, dpr*viewY)
+    const applyTransform = () => {
+      ctx.setTransform(dpr * st.scale, 0, 0, dpr * st.scale, dpr * st.viewX, dpr * st.viewY);
+    };
+
+    // 箭头（近似 SVG marker：tip 在端点前 ~1.75、底边在其后 ~5.25、半高 3.5）
+    const drawArrowHead = (x: number, y: number, ux: number, uy: number, color: string) => {
+      const tipX = x + ux * 1.75;
+      const tipY = y + uy * 1.75;
+      const baseX = x - ux * 5.25;
+      const baseY = y - uy * 5.25;
+      const px = -uy * 3.5;
+      const py = ux * 3.5;
+      ctx.beginPath();
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(baseX + px, baseY + py);
+      ctx.lineTo(baseX - px, baseY - py);
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+    };
+
+    // 渲染：单次清屏 + 变换后整图重画（无 DOM 节点，节点/边数量不产生属性写开销）
+    const render = () => {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      applyTransform();
+
+      const drawArrow = arrowsVisible && st.scale > 0.55;
+
+      // edges（先画，节点覆盖其上）
+      for (const e of data.edges) {
+        const a = st.nodes.get(e.source);
+        const b = st.nodes.get(e.target);
+        if (!a || !b) continue;
+        const hovered = !!st.hover && (e.source === st.hover || e.target === st.hover);
+        // 终点缩到目标节点边缘（半径 + 箭头余量），避免箭头与节点重叠
+        const rA = radiusOf.get(e.source) || 14;
+        const rB = radiusOf.get(e.target) || 14;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const ux = dx / dist;
+        const uy = dy / dist;
+        const x2 = b.x - ux * (rB + 6);
+        const y2 = b.y - uy * (rB + 6);
+        const x1 = a.x + ux * (rA + 2);
+        const y1 = a.y + uy * (rA + 2);
+        ctx.globalAlpha = hovered ? 0.95 : 0.5;
+        ctx.strokeStyle = hovered ? "#1677ff" : "#d9d9d9";
+        ctx.lineWidth = hovered ? 2.5 : 1.2;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        if (drawArrow) drawArrowHead(x2, y2, ux, uy, hovered ? "#1677ff" : "#bfbfbf");
+      }
+
+      // nodes
+      const showLabel = st.scale >= LABEL_MIN_SCALE;
+      if (showLabel) {
+        ctx.textAlign = "center";
+        ctx.textBaseline = "alphabetic";
+      }
+      for (const n of nodeList) {
+        const p = st.nodes.get(n.slug);
+        if (!p) continue;
+        const isHover = st.hover === n.slug;
+        const radius = radiusOf.get(n.slug) || 14;
+        ctx.globalAlpha = isHover ? 0.95 : 0.85;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = PAGE_TYPE_COLORS[n.page_type] || "#999";
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = isHover ? "#333" : "#fff";
+        ctx.stroke();
+        if (showLabel) {
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = isHover ? "#1677ff" : "#555";
+          ctx.font = `${isHover ? "bold " : ""}12px sans-serif`;
+          const title = n.title.length > 10 ? n.title.slice(0, 10) + "…" : n.title;
+          ctx.fillText(title, p.x, p.y + radius + 14);
+        }
+      }
+      ctx.globalAlpha = 1;
+    };
 
     const simulate = () => {
       if (!visible) {
@@ -738,161 +848,41 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         totalV += Math.abs(a.vx) + Math.abs(a.vy);
       }
       render();
-      st.raf = requestAnimationFrame(simulate);
+      simFrames += 1;
       // 稳定即停帧（省 CPU）；hover / 拖拽 / 平移缩放后按需唤醒。
       // 收敛后自动「适应屏幕」一次，保证整体居中且完整可见。
-      if (entries.length > 5 && totalV < 0.5) {
-        cancelAnimationFrame(st.raf);
+      const converged = entries.length > 5 && totalV < 0.5;
+      if (converged || simFrames >= SIM_MAX_FRAMES) {
         st.raf = 0;
-        if (!autoFitRef.current) {
+        if (!autoFitRef.current && converged) {
           autoFitRef.current = true;
           fitToView();
           render();
         }
+        return;
       }
+      st.raf = requestAnimationFrame(simulate);
     };
 
-    // 渲染（DOM 复用：只更新属性，不重建元素）
-    const render = () => {
-      if (!rootG) {
-        rootG = document.createElementNS(ns, "g");
-        svg.appendChild(rootG);
-      }
-      rootG.setAttribute(
-        "transform",
-        `translate(${st.viewX},${st.viewY}) scale(${st.scale})`,
-      );
+    const wake = () => {
+      if (!st.raf) st.raf = requestAnimationFrame(simulate);
+    };
 
-      const drawArrow = arrowsVisible && st.scale > 0.55;
-      // 箭头 marker 定义只建一次（原实现每帧重建 <defs>）
-      if (!defsEl) {
-        defsEl = document.createElementNS(ns, "defs");
-        const mk = (id: string, color: string) => {
-          const m = document.createElementNS(ns, "marker");
-          m.setAttribute("id", id);
-          m.setAttribute("viewBox", "0 -4 8 8");
-          m.setAttribute("refX", "6");
-          m.setAttribute("refY", "0");
-          m.setAttribute("markerWidth", "7");
-          m.setAttribute("markerHeight", "7");
-          m.setAttribute("orient", "auto");
-          const path = document.createElementNS(ns, "path");
-          path.setAttribute("d", "M0,-4L8,0L0,4Z");
-          path.setAttribute("fill", color);
-          m.appendChild(path);
-          defsEl!.appendChild(m);
-        };
-        mk("wiki-arrow-head", "#bfbfbf");
-        mk("wiki-arrow-head-hot", "#1677ff");
-        rootG.appendChild(defsEl);
-      }
-
-      // edges（line + 方向箭头）
-      for (const e of data.edges) {
-        const a = st.nodes.get(e.source);
-        const b = st.nodes.get(e.target);
-        if (!a || !b) continue;
-        const key = `${e.source}\u2192${e.target}`;
-        let line = edgeElCache.get(key);
-        if (!line) {
-          line = document.createElementNS(ns, "line");
-          rootG.appendChild(line);
-          edgeElCache.set(key, line);
-        }
-        const hovered = !!st.hover && (e.source === st.hover || e.target === st.hover);
-        // 终点缩到目标节点边缘（半径 + 箭头余量），避免箭头与节点重叠
-        const rA = radiusOf.get(e.source) || 14;
-        const rB = radiusOf.get(e.target) || 14;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const dist = Math.hypot(dx, dy) || 1;
-        const shrinkB = rB + 6; // 箭头 marker 余量
-        const shrinkA = rA + 2;
-        const ux = dx / dist;
-        const uy = dy / dist;
-        const x2 = b.x - ux * shrinkB;
-        const y2 = b.y - uy * shrinkB;
-        const x1 = a.x + ux * shrinkA;
-        const y1 = a.y + uy * shrinkA;
-        line.setAttribute("x1", String(x1));
-        line.setAttribute("y1", String(y1));
-        line.setAttribute("x2", String(x2));
-        line.setAttribute("y2", String(y2));
-        line.setAttribute("stroke", hovered ? "#1677ff" : "#d9d9d9");
-        line.setAttribute("stroke-width", hovered ? "2.5" : "1.2");
-        line.setAttribute("opacity", hovered ? "0.95" : "0.5");
-        line.setAttribute(
-          "marker-end",
-          drawArrow ? `url(#wiki-arrow-head${hovered ? "-hot" : ""})` : "none",
-        );
-      }
-
-      // nodes
-      for (const n of nodeList) {
+    // 命中检测：屏幕坐标 → 世界坐标 → 反序线性扫描（后画者在上，优先命中）
+    const hitNode = (clientX: number, clientY: number): string | null => {
+      const rect = canvas.getBoundingClientRect();
+      const wx = (clientX - rect.left - st.viewX) / st.scale;
+      const wy = (clientY - rect.top - st.viewY) / st.scale;
+      for (let i = nodeList.length - 1; i >= 0; i--) {
+        const n = nodeList[i];
         const p = st.nodes.get(n.slug);
         if (!p) continue;
-        const isHover = st.hover === n.slug;
-        const radius = radiusOf.get(n.slug) || 14;
-        let group = nodeElCache.get(n.slug);
-        if (!group) {
-          group = document.createElementNS(ns, "g");
-          group.setAttribute("data-slug", n.slug);
-          group.style.cursor = "pointer";
-
-          let clickTimer: number | null = null;
-          group.addEventListener("mouseenter", () => {
-            st.hover = n.slug;
-            render();
-            if (!st.raf) st.raf = requestAnimationFrame(simulate);
-          });
-          group.addEventListener("mouseleave", () => {
-            st.hover = "";
-            render();
-          });
-          group.addEventListener("mousedown", (ev) => {
-            ev.stopPropagation(); // 不触发画布 pan
-          });
-          group.addEventListener("click", (ev) => {
-            if (st.dragged) {
-              st.dragged = false;
-              return;
-            }
-            ev.stopPropagation();
-            if (clickTimer) clearTimeout(clickTimer);
-            clickTimer = window.setTimeout(() => void selectNode(n.slug), 220);
-          });
-          group.addEventListener("dblclick", (ev) => {
-            ev.stopPropagation();
-            if (clickTimer) {
-              clearTimeout(clickTimer);
-              clickTimer = null;
-            }
-            focusEgo(n.slug);
-          });
-
-          const circle = document.createElementNS(ns, "circle");
-          circle.setAttribute("r", String(radius));
-          circle.setAttribute("fill", PAGE_TYPE_COLORS[n.page_type] || "#999");
-          circle.setAttribute("stroke-width", "1.5");
-          group.appendChild(circle);
-
-          const label = document.createElementNS(ns, "text");
-          label.setAttribute("text-anchor", "middle");
-          label.setAttribute("y", String(radius + 14));
-          label.setAttribute("font-size", "12");
-          group.appendChild(label);
-          nodeElCache.set(n.slug, group);
-          rootG.appendChild(group);
-        }
-        group.setAttribute("transform", `translate(${p.x},${p.y})`);
-        const circle = group.childNodes[0] as SVGCircleElement;
-        circle.setAttribute("opacity", isHover ? "0.95" : "0.85");
-        circle.setAttribute("stroke", isHover ? "#333" : "#fff");
-        const label = group.childNodes[1] as SVGTextElement;
-        label.setAttribute("fill", isHover ? "#1677ff" : "#555");
-        label.setAttribute("font-weight", isHover ? "bold" : "normal");
-        label.textContent = n.title.length > 10 ? n.title.slice(0, 10) + "…" : n.title;
+        const r = radiusOf.get(n.slug) || 14;
+        const dx = wx - p.x;
+        const dy = wy - p.y;
+        if (dx * dx + dy * dy <= r * r) return n.slug;
       }
+      return null;
     };
 
     // 画布交互：pan / wheel / dblclick 重置 / 节点拖拽固定
@@ -900,16 +890,15 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     let panning = false;
     let dragNode: string | null = null;
     let dragOfs = { x: 0, y: 0 };
+    let clickTimer: number | null = null;
 
     const onMouseDown = (ev: MouseEvent) => {
-      const t = ev.target as Element;
-      const nodeEl = t.closest("[data-slug]");
-      if (nodeEl && svg.contains(nodeEl)) {
-        const slug = nodeEl.getAttribute("data-slug")!;
-        const p = st.nodes.get(slug);
+      const hit = hitNode(ev.clientX, ev.clientY);
+      if (hit) {
+        const p = st.nodes.get(hit);
         if (!p) return;
-        dragNode = slug;
-        const rect = svg.getBoundingClientRect();
+        dragNode = hit;
+        const rect = canvas.getBoundingClientRect();
         dragOfs = {
           x: (ev.clientX - rect.left - st.viewX) / st.scale - p.x,
           y: (ev.clientY - rect.top - st.viewY) / st.scale - p.y,
@@ -919,64 +908,123 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
       downPos = { x: ev.clientX, y: ev.clientY };
       panning = true;
     };
+
     const onMouseMove = (ev: MouseEvent) => {
       if (dragNode) {
         st.dragged = true;
         const p = st.nodes.get(dragNode);
         if (p) {
-          const rect = svg.getBoundingClientRect();
+          const rect = canvas.getBoundingClientRect();
           p.x = (ev.clientX - rect.left - st.viewX) / st.scale - dragOfs.x;
           p.y = (ev.clientY - rect.top - st.viewY) / st.scale - dragOfs.y;
           p.pinned = true;
         }
         // 停帧后拖拽仍需刷新：若模拟已停则唤醒，否则手动重绘
         render();
-        if (!st.raf) st.raf = requestAnimationFrame(simulate);
+        wake();
         return;
       }
-      if (!downPos) return;
-      const dx = ev.clientX - downPos.x;
-      const dy = ev.clientY - downPos.y;
-      if (panning) {
-        st.viewX += dx;
-        st.viewY += dy;
-        downPos = { x: ev.clientX, y: ev.clientY };
+      if (downPos) {
+        const dx = ev.clientX - downPos.x;
+        const dy = ev.clientY - downPos.y;
+        if (panning) {
+          st.viewX += dx;
+          st.viewY += dy;
+          downPos = { x: ev.clientX, y: ev.clientY };
+          render();
+        }
+        return;
+      }
+      // hover 命中（不唤醒物理，避免悬停时节点漂移；只重绘高亮态）
+      const hit = hitNode(ev.clientX, ev.clientY) || "";
+      if (hit !== st.hover) {
+        st.hover = hit;
+        canvas.style.cursor = hit ? "pointer" : "";
         render();
       }
     };
+
     const onMouseUp = () => {
       dragNode = null;
       downPos = null;
       panning = false;
     };
+
+    const onMouseLeave = () => {
+      dragNode = null;
+      downPos = null;
+      panning = false;
+      if (st.hover) {
+        st.hover = "";
+        canvas.style.cursor = "";
+        render();
+      }
+    };
+
+    const onClick = (ev: MouseEvent) => {
+      if (st.dragged) {
+        st.dragged = false;
+        return;
+      }
+      const hit = hitNode(ev.clientX, ev.clientY);
+      if (!hit) return;
+      if (clickTimer) clearTimeout(clickTimer);
+      clickTimer = window.setTimeout(() => void selectNode(hit), 220);
+    };
+
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault();
       const delta = ev.deltaY > 0 ? 0.9 : 1.1;
       st.scale = Math.max(0.3, Math.min(3, st.scale * delta));
       render();
     };
-    const onDblClick = () => {
-      // 双击重置视图：重新适应屏幕（居中 + 完整可见）
+
+    const onDblClick = (ev: MouseEvent) => {
+      const hit = hitNode(ev.clientX, ev.clientY);
+      if (hit) {
+        // 双击节点：取消待触发的单击详情，转为下钻该节点邻域（ego）
+        if (clickTimer) {
+          clearTimeout(clickTimer);
+          clickTimer = null;
+        }
+        focusEgo(hit);
+        return;
+      }
+      // 双击空白：重新适应屏幕（居中 + 完整可见）
       autoFitRef.current = true;
       fitToView();
       render();
     };
 
-    svg.addEventListener("mousedown", onMouseDown);
-    svg.addEventListener("mousemove", onMouseMove);
-    svg.addEventListener("mouseup", onMouseUp);
-    svg.addEventListener("wheel", onWheel, { passive: false });
-    svg.addEventListener("dblclick", onDblClick);
+    canvas.addEventListener("mousedown", onMouseDown);
+    canvas.addEventListener("mousemove", onMouseMove);
+    canvas.addEventListener("mouseup", onMouseUp);
+    canvas.addEventListener("mouseleave", onMouseLeave);
+    canvas.addEventListener("click", onClick);
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("dblclick", onDblClick);
+
+    // 容器尺寸变化（页签切换 / 面板拖拽）时同步画布尺寸并重绘
+    const ro =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            resize();
+            render();
+          })
+        : null;
+    ro?.observe(canvas);
 
     const start = () => {
       if (st.raf) cancelAnimationFrame(st.raf);
+      resize();
+      simFrames = 0;
       render();
       simulate();
     };
     start();
 
-    // 可见性守卫：观察 SVG 是否在视口内（隐藏页签 display:none → 不交叉）。
-    // 切到隐藏页签即停帧，切回自动恢复，避免后台持续占用主线程。
+    // 可见性守卫：观察 canvas 是否在视口内（隐藏页签 display:none → 不交叉）。
+    // 切到隐藏页签即停帧，切回自动恢复（并重新测量尺寸），避免后台持续占用主线程。
     const io =
       typeof IntersectionObserver !== "undefined"
         ? new IntersectionObserver((ents) => {
@@ -984,24 +1032,30 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
             if (nowVisible === visible) return;
             visible = nowVisible;
             if (nowVisible) {
-              if (!st.raf) st.raf = requestAnimationFrame(simulate);
+              resize();
+              render();
+              wake();
             } else if (st.raf) {
               cancelAnimationFrame(st.raf);
               st.raf = 0;
             }
           })
         : null;
-    io?.observe(svg);
+    io?.observe(canvas);
 
     return () => {
       if (st.raf) cancelAnimationFrame(st.raf);
       st.raf = 0;
+      if (clickTimer) clearTimeout(clickTimer);
       io?.disconnect();
-      svg.removeEventListener("mousedown", onMouseDown);
-      svg.removeEventListener("mousemove", onMouseMove);
-      svg.removeEventListener("mouseup", onMouseUp);
-      svg.removeEventListener("wheel", onWheel);
-      svg.removeEventListener("dblclick", onDblClick);
+      ro?.disconnect();
+      canvas.removeEventListener("mousedown", onMouseDown);
+      canvas.removeEventListener("mousemove", onMouseMove);
+      canvas.removeEventListener("mouseup", onMouseUp);
+      canvas.removeEventListener("mouseleave", onMouseLeave);
+      canvas.removeEventListener("click", onClick);
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("dblclick", onDblClick);
     };
   }, [data, kbId, arrowsVisible, selectNode, focusEgo, fitToView]);
 
@@ -1039,7 +1093,7 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
             <p className="kb-wikigraph-empty-desc">暂无 wiki 页面，无法生成图谱</p>
           </div>
         ) : (
-          <svg ref={svgRef} className="kb-wikigraph-svg" />
+          <canvas ref={canvasRef} className="kb-wikigraph-svg" />
         )}
       </div>
 

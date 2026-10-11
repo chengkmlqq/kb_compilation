@@ -93,6 +93,76 @@ def create_tape_route(payload: dict, db: Session = Depends(get_db), user: str = 
     return _guarded(svc.create_tape, db, payload, user)
 
 
+
+# ────────────────────────── 编排模板（2026-10-12 新增）──────────────────────────
+
+
+@router.get("/templates")
+def tape_templates(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    keyword: str = "",
+    category: str = "",
+    status: str = "",
+    db: Session = Depends(get_db),
+    _user: str = Depends(_current_user),
+):
+    return _guarded(svc.list_tape_templates, db, page, page_size, keyword, category, status)
+
+
+@router.get("/templates/categories")
+def template_categories(db: Session = Depends(get_db), _user: str = Depends(_current_user)):
+    return _guarded(svc.list_template_categories, db)
+
+
+@router.post("/templates")
+def create_tape_template_route(
+    payload: dict, db: Session = Depends(get_db), user: str = Depends(_current_user)
+):
+    return _guarded(svc.create_tape_template, db, payload, user)
+
+
+@router.get("/templates/{template_id}")
+def tape_template_detail(
+    template_id: str, db: Session = Depends(get_db), _user: str = Depends(_current_user)
+):
+    return _guarded(lambda: svc.serialize_tape_template(svc.get_tape_template(db, template_id), with_design=True))
+
+
+@router.put("/templates/{template_id}")
+def update_tape_template_route(
+    template_id: str, payload: dict, db: Session = Depends(get_db), _user: str = Depends(_current_user)
+):
+    return _guarded(svc.update_tape_template, db, template_id, payload)
+
+
+@router.delete("/templates/{template_id}")
+def delete_tape_template_route(
+    template_id: str, db: Session = Depends(get_db), _user: str = Depends(_current_user)
+):
+    return _guarded(svc.delete_tape_template, db, template_id)
+
+
+@router.post("/templates/{template_id}/apply")
+def apply_tape_template_route(
+    template_id: str,
+    payload: dict | None = None,
+    db: Session = Depends(get_db),
+    user: str = Depends(_current_user),
+):
+    """应用模板 → 生成一条新编排（draft），返回新 tape 摘要。"""
+    return _guarded(svc.apply_tape_template, db, template_id, payload or {}, user)
+
+
+@router.post("/{tape_id}/save-as-template")
+def save_tape_as_template_route(
+    tape_id: str,
+    payload: dict | None = None,
+    db: Session = Depends(get_db),
+    user: str = Depends(_current_user),
+):
+    """把当前编排存为模板（设计器「存为模板」按钮）。"""
+    return _guarded(svc.save_tape_as_template, db, tape_id, payload or {}, user)
 @router.get("/{tape_id}")
 def tape_detail(tape_id: str, db: Session = Depends(get_db), _user: str = Depends(_current_user)):
     return _guarded(lambda: svc.serialize_tape(svc.get_tape(db, tape_id), with_design=True))

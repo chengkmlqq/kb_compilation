@@ -101,3 +101,28 @@ class TapeRun(Base):
     create_user: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class TapeTemplate(Base):
+    """编排模板：可复用的编排骨架（nodes/edges 与 Tape 同结构）。
+
+    存模板 = 从编排「存为模板」；应用模板 = 复制骨架生成一条新编排（draft），
+    应用时重写节点 id，避免与目标编排的前置/后继引用串味。
+    """
+
+    __tablename__ = "kb_tape_template"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)  # 内部名（唯一）
+    label: Mapped[str] = mapped_column(String(128), default="")  # 显示名
+    descr: Mapped[str | None] = mapped_column(String(2000))  # 用途说明
+    category: Mapped[str] = mapped_column(String(64), default="未分类", index=True)  # 分类
+    nodes: Mapped[list | None] = mapped_column(JSON)  # React Flow nodes（与 Tape 一致）
+    edges: Mapped[list | None] = mapped_column(JSON)  # React Flow edges
+    exec_params: Mapped[dict | None] = mapped_column(JSON)  # 运行入参模板
+    status: Mapped[str] = mapped_column(String(32), default="effective")  # effective | disabled
+    is_builtin: Mapped[int] = mapped_column(Integer, default=0)  # 1=内置种子模板（禁止删除）
+    apply_count: Mapped[int] = mapped_column(Integer, default=0)  # 被应用次数
+    create_user: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

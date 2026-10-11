@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 
 from api.config import get_settings
-from api.models.orchestration import Tape, TapeRun, TapeStep, StepDefine
+from api.models.orchestration import Tape, TapeRun, TapeStep, TapeTemplate, StepDefine
 from api.services.orchestration_engine import (
     ATOM_MAP,
     OrchestrationEngine,
@@ -378,3 +378,268 @@ def serialize_tape_run(run: TapeRun) -> dict:
         "created_at": run.created_at.isoformat() if run.created_at else "",
         "updated_at": run.updated_at.isoformat() if run.updated_at else "",
     }
+
+
+# ────────────────────────── 编排模板（2026-10-12 新增）──────────────────────────
+
+TEMPLATE_NAME_MAX = 64
+
+
+def _clean_template_name(raw, required: bool = True) -> str:
+    """模板名清洗（列长 64，与编排名同策略）。"""
+    name = str(raw or "").strip()
+    if not name:
+        if required:
+            raise ValueError("模板名称不能为空")
+        return ""
+    if len(name) > TEMPLATE_NAME_MAX:
+        name = name[:TEMPLATE_NAME_MAX]
+    return name
+
+
+def list_tape_templates(db, page=1, page_size=20, keyword="", category="", status=""):
+    """模板列表：分页 + 关键词（name/label/descr）+ 分类/状态筛选。"""
+    q = db.query(TapeTemplate)
+    if keyword:
+        like = f"%{keyword}%"
+        q = q.filter(
+            TapeTemplate.name.like(like)
+            | TapeTemplate.label.like(like)
+            | TapeTemplate.descr.like(like)
+        )
+    if category:
+        q = q.filter(TapeTemplate.category == category)
+    if status:
+        q = q.filter(TapeTemplate.status == status)
+    total = q.count()
+    items = (
+        q.order_by(TapeTemplate.updated_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return {"total": total, "items": [serialize_tape_template(t) for t in items]}
+
+
+def list_template_categories(db):
+    """分类列表（含每类启用模板计数，供分类下拉与分类管理展示）。"""
+    rows = (
+        db.query(TapeTemplate.category, TapeTemplate.status)
+        .all()
+    )
+    buckets: dict[str, dict] = {}
+    for cat, st in rows:
+        cat = (cat or "未分类").strip() or "未分类"
+        b = buckets.setdefault(cat, {"category": cat, "total": 0, "effective": 0})
+        b["total"] += 1
+        if st == "effective":
+            b["effective"] += 1
+    return list(buckets.values())
+
+
+def serialize_tape_template(t: TapeTemplate, with_design: bool = False) -> dict:
+    out = {
+        "id": t.id,
+        "name": t.name,
+        "label": t.label or "",
+        "descr": t.descr or "",
+        "category": t.category or "未分类",
+        "status": t.status or "effective",
+        "is_builtin": t.is_builtin or 0,
+        "apply_count": t.apply_count or 0,
+        "node_count": len(t.nodes or []),
+        "edge_count": len(t.edges or []),
+        "create_user": t.create_user or "",
+        "created_at": t.created_at.isoformat() if t.created_at else "",
+        "updated_at": t.updated_at.isoformat() if t.updated_at else "",
+    }
+    if with_design:
+        out["nodes"] = t.nodes or []
+        out["edges"] = t.edges or []
+        out["exec_params"] = t.exec_params or {}
+    return out
+
+
+def get_tape_template(db, template_id: str) -> TapeTemplate:
+    t = db.get(TapeTemplate, template_id)
+    if not t:
+        raise KeyError("模板不存在")
+    return t
+
+
+def _template_payload_to_model(obj: TapeTemplate, payload: dict) -> None:
+    if "name" in payload:
+        obj.name = _clean_template_name(payload["name"], required=True)
+    if "label" in payload:
+        obj.label = str(payload["label"] or "").strip()[:128]
+    if "descr" in payload:
+        obj.descr = str(payload["descr"] or "").strip()[:2000] or None
+    if "category" in payload:
+        obj.category = (str(payload["category"] or "").strip() or "未分类")[:64]
+    if "status" in payload:
+        obj.status = str(payload["status"] or "effective") or "effective"
+    if "nodes" in payload:
+        if payload["nodes"] is not None and not isinstance(payload["nodes"], list):
+            raise ValueError("nodes 必须是数组")
+        obj.nodes = payload["nodes"] or []
+    if "edges" in payload:
+        if payload["edges"] is not None and not isinstance(payload["edges"], list):
+            raise ValueError("edges 必须是数组")
+        obj.edges = payload["edges"] or []
+    if "exec_params" in payload:
+        if payload["exec_params"] is not None and not isinstance(payload["exec_params"], dict):
+            raise ValueError("exec_params 必须是对象")
+        obj.exec_params = payload["exec_params"] or {}
+
+
+def create_tape_template(db, payload: dict, user_id: str = "") -> TapeTemplate:
+    name = _clean_template_name(payload.get("name") or payload.get("tape_name"), required=True)
+    exists = db.query(TapeTemplate).filter(TapeTemplate.name == name).first()
+    if exists:
+        raise ValueError(f"模板名已存在: {name}")
+    t = TapeTemplate(
+        id=uuid.uuid4().hex[:64],
+        name=name,
+        label=str(payload.get("label") or name)[:128],
+        descr=str(payload.get("descr") or "").strip()[:2000] or None,
+        category=(str(payload.get("category") or "").strip() or "未分类")[:64],
+        status=str(payload.get("status") or "effective") or "effective",
+        nodes=payload.get("nodes") or [],
+        edges=payload.get("edges") or [],
+        exec_params=payload.get("exec_params") or {},
+        create_user=user_id or None,
+    )
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    return t
+
+
+def update_tape_template(db, template_id: str, payload: dict) -> TapeTemplate:
+    t = get_tape_template(db, template_id)
+    if "name" in payload:
+        new_name = _clean_template_name(payload["name"], required=True)
+        dup = (
+            db.query(TapeTemplate)
+            .filter(TapeTemplate.name == new_name, TapeTemplate.id != template_id)
+            .first()
+        )
+        if dup:
+            raise ValueError(f"模板名已存在: {new_name}")
+        t.name = new_name
+    _template_payload_to_model(t, payload)
+    db.commit()
+    db.refresh(t)
+    return t
+
+
+def delete_tape_template(db, template_id: str) -> None:
+    t = get_tape_template(db, template_id)
+    if t.is_builtin:
+        raise ValueError("内置模板不可删除")
+    db.delete(t)
+    db.commit()
+
+
+def save_tape_as_template(db, tape_id: str, payload: dict, user_id: str = "") -> TapeTemplate:
+    """把一条编排存为模板（设计器「存为模板」入口）。
+
+    payload: {name, label?, descr?, category?, status?}
+    未指定 name 时用编排名 + 时间戳后缀避免撞名。
+    """
+    t = get_tape(db, tape_id)
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        name = f"{t.tape_name}_tpl_{datetime.now().strftime('%m%d%H%M')}"[:TEMPLATE_NAME_MAX]
+    body = {
+        "name": name,
+        "label": payload.get("label") or t.tape_label or t.tape_name,
+        "descr": payload.get("descr") or t.tape_descr or "",
+        "category": payload.get("category") or "未分类",
+        "status": payload.get("status") or "effective",
+        "nodes": t.nodes or [],
+        "edges": t.edges or [],
+        "exec_params": t.exec_params or {},
+    }
+    return create_tape_template(db, body, user_id)
+
+
+def _remap_node_ids(nodes: list, edges: list) -> tuple[list, list]:
+    """复制骨架时重写节点 id：edges.source/target 与节点内自引用（pre/next 等）同步重映射。
+
+    否则应用模板生成的新编排会沿用模板里的旧 node id，与目标编排内既有 id 串味
+    （kb_tape_step.id 虽已带 tape 前缀，但 TapeStep.pre/next 引用的是裸 node id）。
+    """
+    old_ids = [str(n.get("id") or "") for n in nodes if isinstance(n, dict)]
+    mapping: dict[str, str] = {}
+    for old in old_ids:
+        if old and old not in mapping:
+            mapping[old] = uuid.uuid4().hex[:12]
+
+    def _new(old) -> str:
+        return mapping.get(str(old or ""), str(old or ""))
+
+    new_nodes = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        nn = dict(n)
+        if nn.get("id"):
+            nn["id"] = _new(nn["id"])
+        # 节点 data 里若带 pre_step_ids/next_step_ids 一并重映射
+        data = nn.get("data")
+        if isinstance(data, dict):
+            data = dict(data)
+            for key in ("pre_step_ids", "next_step_ids", "preSteps", "nextSteps"):
+                if isinstance(data.get(key), list):
+                    data[key] = [_new(x) for x in data[key]]
+            nn["data"] = data
+        new_nodes.append(nn)
+
+    new_edges = []
+    for e in edges:
+        if not isinstance(e, dict):
+            continue
+        ne = dict(e)
+        if ne.get("source"):
+            ne["source"] = _new(ne["source"])
+        if ne.get("target"):
+            ne["target"] = _new(ne["target"])
+        ne.pop("id", None)
+        new_edges.append(ne)
+    return new_nodes, new_edges
+
+
+def apply_tape_template(db, template_id: str, payload: dict | None = None, user_id: str = "") -> Tape:
+    """应用模板：复制骨架生成一条新编排（draft）。
+
+    payload: {tape_name?, tape_label?, tape_descr?}
+    """
+    tpl = get_tape_template(db, template_id)
+    if (tpl.status or "effective") != "effective":
+        raise ValueError("模板已停用，无法应用")
+    payload = payload or {}
+    tape_name = _clean_name(payload.get("tape_name"), required=False)
+    if not tape_name:
+        tape_name = f"{tpl.name}_copy_{datetime.now().strftime('%m%d%H%M')}"[:TAPE_NAME_MAX]
+    nodes, edges = _remap_node_ids(tpl.nodes or [], tpl.edges or [])
+    tape = Tape(
+        id=uuid.uuid4().hex[:64],
+        tape_name=tape_name,
+        tape_label=str(payload.get("tape_label") or tpl.label or tape_name)[:128],
+        tape_descr=str(payload.get("tape_descr") or tpl.descr or "").strip()[:2000] or None,
+        tape_type=str(payload.get("tape_type") or "general") or "general",
+        status="draft",
+        nodes=nodes,
+        edges=edges,
+        exec_params=tpl.exec_params or {},
+        create_user=user_id or None,
+    )
+    db.add(tape)
+    tpl.apply_count = (tpl.apply_count or 0) + 1
+    db.commit()
+    db.refresh(tape)
+    # 同步步骤子表（与设计器保存同一套覆盖式同步，应用即可直接执行）
+    save_tape_design(db, tape.id, nodes, edges, tpl.exec_params or {})
+    db.refresh(tape)
+    return tape
