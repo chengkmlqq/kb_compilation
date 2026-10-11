@@ -46,63 +46,83 @@ SEED_TEAM = os.getenv("KB_SEED_TEAM", "默认团队")
 # 可用环境变量 KB_SEED_ROLE 覆盖。
 SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 
-# KB 菜单树（4 顶级分组 + 25 页面 = 29 项；sort_num 决定同级顺序）
+# KB 菜单树（sort_num 决定同级顺序；每个菜单/目录都有对应图标）
 # (menu_id, menu_name, menu_label, route, parent_id, menu_icon, sort_num)
 # menu_id 用固定值（workers/mcps/skills/cron 用生产环境已验证的 UUID），
 # 保证多次初始化幂等、且与已部署环境完全一致。
 #
 # 2026-10-06 调整（方案A）：原 root_kb「知识库平台」顶级节点移除——左上角 Logo
-# 品牌区已承担该语义，顶部 Header 顶级导航改为 4 个分组直接提升为顶级，
-# 避免「知识库平台」标签重复出现。
-# 结构：Header 顶级(nav)= 知识管理/智能应用/数据与任务/系统管理 → Sider 分组 → 页面。
-#   - route 留空 = 纯目录分组（只展开不跳转，对齐 ds 的 dir 节点）
-#   - route 有值且带子级 = 分组兼页面（点击自身跳该路由，对齐 ds「系统管理 /system/users」模式）
-#
-# 2026-10-10 调整（方案B）：切片核对 /chunk-verify 从「数据与任务」挪入「知识管理」
-# （文档切片质量核对属知识域工具），数据与任务恢复为 7 项。
+# 品牌区已承担该语义。
+# 2026-10-10 调整（方案B）：切片核对 /chunk-verify 挪入知识管理（文档切片属知识域工具）。
+# 2026-10-12 调整（方案C）：新增「运维监控」顶级分组，任务监控/任务管理/主机监控移入。
+# 2026-10-12 调整（方案D）：
+#   - 操作日志移入运维监控
+#   - 新增顶级「配置管理」目录（运维监控之后），收拢模型配置/MCP/技能/参数管理
+#   - 拆开「知识管理」「智能应用」两个目录，其下菜单直接提升为顶级（减少一层点击）
+#   - 所有菜单/目录均配图标
+# 2026-10-12 调整（方案E）：新增顶级「调试工具」目录（系统管理之后），收拢
+# 引擎与存储/本体Schema/编排组件/联网搜索/切片核对（开发调试类页面集中）。
+# 2026-10-12 调整（方案F）：
+#   - 文件管理/数据查询(日常性工具) 移入调试工具；切片核对移入运维监控
+#   - 改名：知识库管理→知识库、智能体配置→智能体、数据源→数据源管理
+# 2026-10-12 调整（方案G）：
+#   - 智能问答排到知识库前；数据源管理/联网搜索移入配置管理；元数据采集移入运维监控
+# 结构：Header 顶级 = 知识库管理/文件管理/切片核对/智能问答/智能体配置/联网搜索/
+#         数据源/数据查询/编排管理/编排组件/运维监控(目录)/配置管理(目录)/系统管理。
+#   - route 留空 = 纯目录分组（只展开不跳转）
+#   - route 有值且带子级 = 分组兼页面（点击自身跳该路由）
 KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
-    # ---- 知识管理（纯目录，顶级） ----
-    ("grp_knowledge", "grp_knowledge", "知识管理", None, None, "FolderOutlined", 1),
-    ("kbs", "kbs", "知识库管理", "/kbs", "grp_knowledge", "AppstoreOutlined", 1),
-    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_knowledge", "FileOutlined", 2),
-    ("chunk_verify", "chunk_verify", "切片核对", "/chunk-verify", "grp_knowledge", "SafetyOutlined", 3),
-    # ---- 智能应用（纯目录，顶级） ----
-    ("grp_ai", "grp_ai", "智能应用", None, None, "FolderOutlined", 2),
-    ("chat", "chat", "智能问答", "/chat", "grp_ai", "CommentOutlined", 1),
-    ("agents", "agents", "智能体配置", "/agents", "grp_ai", "RobotOutlined", 2),
-    ("d83aee0d1d8a4fce8a6bd121b6efc5fa", "websearch", "联网搜索", "/websearch", "grp_ai", "SearchOutlined", 3),
-    # ---- 数据与任务（纯目录，顶级） ----
-    ("grp_data", "grp_data", "数据与任务", None, None, "FolderOutlined", 3),
-    ("datasources", "datasources", "数据源", "/datasources", "grp_data", "DatabaseOutlined", 1),
-    ("jobs", "jobs", "任务监控", "/jobs", "grp_data", "DashboardOutlined", 2),
-    ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_data", "ScheduleOutlined", 3),
-    ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_data", "CloudServerOutlined", 4),
-    ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_data", "TableOutlined", 5),
-    ("orch_tapes", "orch_tapes", "编排管理", "/orchestrations", "grp_data", "ApartmentOutlined", 6),
-    ("orch_defines", "orch_defines", "编排组件", "/orchestrations/steps", "grp_data", "BlockOutlined", 7),
-    ("orch_templates", "orch_templates", "编排模板", "/tape-templates", "grp_data", "AppstoreOutlined", 8),
-    # ---- 系统管理（分组兼页面，顶级：点击自身跳 /system → 重定向到默认子页 /system/users）。
-    # 用户/角色/团队/菜单/日志均为独立页面路由（对齐 ds system/* 独立页面，无顶部 Tab 聚合页）。
-    ("system", "system", "系统管理", "/system", None, "SettingOutlined", 4),
-    ("sys_users", "sys_users", "用户管理", "/system/users", "system", "TeamOutlined", 1),
-    ("sys_roles", "sys_roles", "角色管理", "/system/roles", "system", "SafetyOutlined", 2),
-    ("sys_teams", "sys_teams", "团队管理", "/system/teams", "system", "PartitionOutlined", 3),
-    ("sys_menus", "sys_menus", "菜单管理", "/system/menus", "system", "MenuOutlined", 4),
-    ("sys_logs", "sys_logs", "操作日志", "/system/logs", "system", "ProfileOutlined", 5),    ("models", "models", "模型配置", "/models", "system", "CloudServerOutlined", 7),
-    ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "system", "ApiOutlined", 8),
-    ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "system", "ToolOutlined", 9),
-    ("ont_schemas", "ont_schemas", "本体Schema", "/ontology-schemas", "system", "ApartmentOutlined", 10),
-    ("sys_engines", "sys_engines", "引擎与存储", "/system/engines", "system", "CloudServerOutlined", 13),
-    ("sys_dims", "sys_dims", "参数管理", "/system/dims", "system", "DatabaseOutlined", 14),
+    # ---- 顶级页面 ----
+    ("chat", "chat", "智能问答", "/chat", None, "CommentOutlined", 1),
+    ("kbs", "kbs", "知识库", "/kbs", None, "AppstoreOutlined", 2),
+    ("agents", "agents", "智能体", "/agents", None, "RobotOutlined", 3),
+    ("orch_tapes", "orch_tapes", "编排管理", "/orchestrations", None, "ApartmentOutlined", 4),
+    ("orch_templates", "orch_templates", "编排模板", "/tape-templates", None, "AppstoreOutlined", 5),
+    # ---- 运维监控（顶级目录：任务监控/任务管理/主机监控/操作日志/切片核对/元数据采集） ----
+    ("grp_ops", "grp_ops", "运维监控", None, None, "FundOutlined", 6),
+    ("jobs", "jobs", "任务监控", "/jobs", "grp_ops", "DashboardOutlined", 1),
+    ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_ops", "ScheduleOutlined", 2),
+    ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_ops", "CloudServerOutlined", 3),
+    ("sys_logs", "sys_logs", "操作日志", "/system/logs", "grp_ops", "ProfileOutlined", 4),
+    ("chunk_verify", "chunk_verify", "切片核对", "/chunk-verify", "grp_ops", "SafetyOutlined", 5),
     (
         "sys_metadata_collection",
         "sys_metadata_collection",
         "元数据采集",
         "/system/metadata-collection",
-        "system",
+        "grp_ops",
         "DatabaseOutlined",
-        15,
+        6,
     ),
+    # ---- 配置管理（顶级目录：数据源管理/模型/MCP/技能/参数/联网搜索） ----
+    ("grp_config", "grp_config", "配置管理", None, None, "ToolOutlined", 7),
+    ("datasources", "datasources", "数据源管理", "/datasources", "grp_config", "DatabaseOutlined", 1),
+    ("models", "models", "模型配置", "/models", "grp_config", "CloudServerOutlined", 2),
+    ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "grp_config", "ApiOutlined", 3),
+    ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "grp_config", "ToolOutlined", 4),
+    ("sys_dims", "sys_dims", "参数管理", "/system/dims", "grp_config", "DatabaseOutlined", 5),
+    ("d83aee0d1d8a4fce8a6bd121b6efc5fa", "websearch", "联网搜索", "/websearch", "grp_config", "SearchOutlined", 6),
+    # ---- 系统管理（分组兼页面，顶级：点击自身跳 /system → 重定向到 /system/users） ----
+    ("system", "system", "系统管理", "/system", None, "SettingOutlined", 8),
+    ("sys_users", "sys_users", "用户管理", "/system/users", "system", "TeamOutlined", 1),
+    ("sys_roles", "sys_roles", "角色管理", "/system/roles", "system", "SafetyOutlined", 2),
+    ("sys_teams", "sys_teams", "团队管理", "/system/teams", "system", "PartitionOutlined", 3),
+    ("sys_menus", "sys_menus", "菜单管理", "/system/menus", "system", "MenuOutlined", 4),
+    # ---- 调试工具（顶级目录：引擎与存储/本体Schema/编排组件/文件管理/数据查询） ----
+    ("grp_debug", "grp_debug", "调试工具", None, None, "BugOutlined", 9),
+    ("sys_engines", "sys_engines", "引擎与存储", "/system/engines", "grp_debug", "CloudServerOutlined", 1),
+    (
+        "ont_schemas",
+        "ont_schemas",
+        "本体Schema",
+        "/ontology-schemas",
+        "grp_debug",
+        "ApartmentOutlined",
+        2,
+    ),
+    ("orch_defines", "orch_defines", "编排组件", "/orchestrations/steps", "grp_debug", "BlockOutlined", 3),
+    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_debug", "FileOutlined", 4),
+    ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_debug", "TableOutlined", 5),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，
