@@ -1,17 +1,17 @@
 "use client";
 
 /**
- * 添加表弹窗（表→wiki，2026-10-10）：从数据源选一张维度表绑定到知识库。
+ * 添加表弹窗（表→wiki，2026-10-10；2026-10-12 改多选）：从数据源选一张或多张维度表绑定到知识库。
  *
  * 流程（对齐元数据采集选表语义）：
  *  1. 选择数据源（可采集的 rdb 数据源列表）
- *  2. 加载该数据源下已采集的表（kb_metadata_table），可搜索表名
- *  3. 确认绑定 → POST /kbs/{kbId}/tables → 建表文档 + 入队 KbTableIngestTask
+ *  2. 加载该数据源下已采集的表（kb_metadata_table），可搜索表名，Checkbox 勾选多张
+ *  3. 确认绑定 → POST /kbs/{kbId}/tables 逐张 → 建表文档 + 入队 KbTableIngestTask
  *
  * 表可绑定到多个知识库（用户拍板 D7：允许重复绑定），每次绑定各建一行。
  */
 import { useEffect, useState } from "react";
-import { App, Button, Empty, Input, List, Modal, Select, Space, Spin, Tag, Typography } from "antd";
+import { App, Button, Checkbox, Empty, Input, List, Modal, Select, Space, Spin, Tag, Typography } from "antd";
 import { DatabaseOutlined, TableOutlined } from "@ant-design/icons";
 import {
   apiAddKbTable,
@@ -43,14 +43,15 @@ export default function SelectTableDialog({ open, kbId, onCancel, onBound }: Pro
   const [tables, setTables] = useState<TableCandidateItem[]>([]);
   const [loadingTables, setLoadingTables] = useState(false);
   const [keyword, setKeyword] = useState("");
-  const [selected, setSelected] = useState<TableCandidateItem | null>(null);
+  // 多选：勾选行的 id 集合（2026-10-12 由单选对象改为多选，支持批量绑表）
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [binding, setBinding] = useState(false);
 
   // 打开时加载数据源列表
   useEffect(() => {
     if (!open) return;
     setDsName("");
-    setSelected(null);
+    setSelectedIds(new Set());
     setKeyword("");
     void apiDatagridDatasources()
       .then((res) => {
@@ -67,7 +68,7 @@ export default function SelectTableDialog({ open, kbId, onCancel, onBound }: Pro
       return;
     }
     setLoadingTables(true);
-    setSelected(null);
+    setSelectedIds(new Set());
     void apiListTableCandidates(kbId, dsName, keyword || undefined)
       .then((res) => {
         if (res.success && Array.isArray(res.data)) setTables(res.data);
@@ -77,27 +78,50 @@ export default function SelectTableDialog({ open, kbId, onCancel, onBound }: Pro
       .finally(() => setLoadingTables(false));
   }, [open, dsName, keyword, kbId]);
 
+  // 勾选/取消勾选某张表
+  const toggleTable = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // 全选/取消全选当前列表
+  const toggleSelectAll = () => {
+    const allChecked = tables.length > 0 && tables.every((t) => selectedIds.has(t.id));
+    setSelectedIds(allChecked ? new Set() : new Set(tables.map((t) => t.id)));
+  };
+
   const confirmBind = async () => {
-    if (!selected) return;
+    const picked = tables.filter((t) => selectedIds.has(t.id));
+    if (picked.length === 0) return;
     setBinding(true);
-    try {
-      const res = await apiAddKbTable(kbId, {
-        ds_name: selected.ds_name,
-        schema: selected.schema || undefined,
-        table_name: selected.table_name,
-        sample_size: 500,
-      });
-      if (res.success && res.data) {
-        message.success(`已绑定表「${selected.table_name}」，后台处理中`);
-        onBound();
-      } else {
-        message.error(res.message || "绑定失败");
+    let okCount = 0;
+    const failed: string[] = [];
+    for (const t of picked) {
+      try {
+        const res = await apiAddKbTable(kbId, {
+          ds_name: t.ds_name,
+          schema: t.schema || undefined,
+          table_name: t.table_name,
+          sample_size: 500,
+        });
+        if (res.success && res.data) okCount += 1;
+        else failed.push(t.table_name);
+      } catch {
+        failed.push(t.table_name);
       }
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : "绑定失败");
-    } finally {
-      setBinding(false);
     }
+    if (failed.length === 0) {
+      message.success(`已绑定 ${okCount} 张表，后台处理中`);
+      onBound();
+    } else {
+      message.warning(`成功绑定 ${okCount} 张，失败 ${failed.length} 张（${failed.join("、")}）`);
+      if (okCount > 0) onBound();
+    }
+    setBinding(false);
   };
 
   // 可用的 rdb 数据源（对齐元数据采集：dsCategory=rdb 的可采集源）
@@ -116,9 +140,17 @@ export default function SelectTableDialog({ open, kbId, onCancel, onBound }: Pro
       width={760}
       footer={
         <Space>
+          <span style={{ fontSize: 12, color: "rgba(0,0,0,.45)" }}>
+            {selectedIds.size > 0 ? `已选 ${selectedIds.size} 张表` : "请勾选要绑定的表"}
+          </span>
           <Button onClick={onCancel}>取消</Button>
-          <Button type="primary" disabled={!selected} loading={binding} onClick={() => void confirmBind()}>
-            绑定表
+          <Button
+            type="primary"
+            disabled={selectedIds.size === 0}
+            loading={binding}
+            onClick={() => void confirmBind()}
+          >
+            绑定{selectedIds.size > 0 ? ` ${selectedIds.size} 张表` : ""}
           </Button>
         </Space>
       }
@@ -145,7 +177,18 @@ export default function SelectTableDialog({ open, kbId, onCancel, onBound }: Pro
         {/* 右：表选择 */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <Text strong style={{ fontSize: 13 }}>表</Text>
+            <Space>
+              <Text strong style={{ fontSize: 13 }}>表</Text>
+              <Checkbox
+                checked={tables.length > 0 && tables.every((t) => selectedIds.has(t.id))}
+                indeterminate={tables.some((t) => selectedIds.has(t.id)) && !tables.every((t) => selectedIds.has(t.id))}
+                onChange={toggleSelectAll}
+                disabled={!tables.length}
+                style={{ fontSize: 12 }}
+              >
+                全选
+              </Checkbox>
+            </Space>
             <Input
               size="small"
               allowClear
@@ -170,27 +213,35 @@ export default function SelectTableDialog({ open, kbId, onCancel, onBound }: Pro
               <List
                 size="small"
                 dataSource={tables}
-                renderItem={(t) => (
-                  <List.Item
-                    style={{ cursor: "pointer", padding: "8px 12px" }}
-                    onClick={() => setSelected(t)}
-                    className={selected?.id === t.id ? "kb-select-table-row-active" : ""}
-                  >
-                    <Space direction="vertical" size={0} style={{ width: "100%" }}>
-                      <Space>
-                        <TableOutlined style={{ color: "#1677ff" }} />
-                        <Text style={{ fontSize: 13 }}>{t.table_name}</Text>
-                        <Tag style={{ fontSize: 11 }}>{t.table_type || "TABLE"}</Tag>
-                        <span style={{ fontSize: 12, color: "rgba(0,0,0,.45)" }}>{formatRows(t.row_count)}</span>
+                renderItem={(t) => {
+                  const checked = selectedIds.has(t.id);
+                  return (
+                    <List.Item
+                      style={{ cursor: "pointer", padding: "8px 12px" }}
+                      onClick={() => toggleTable(t.id)}
+                      className={checked ? "kb-select-table-row-active" : ""}
+                    >
+                      <Space direction="vertical" size={0} style={{ width: "100%" }}>
+                        <Space>
+                          <Checkbox
+                            checked={checked}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={() => toggleTable(t.id)}
+                          />
+                          <TableOutlined style={{ color: "#1677ff" }} />
+                          <Text style={{ fontSize: 13 }}>{t.table_name}</Text>
+                          <Tag style={{ fontSize: 11 }}>{t.table_type || "TABLE"}</Tag>
+                          <span style={{ fontSize: 12, color: "rgba(0,0,0,.45)" }}>{formatRows(t.row_count)}</span>
+                        </Space>
+                        {t.table_comment ? (
+                          <Text type="secondary" style={{ fontSize: 12, marginLeft: 26 }} ellipsis>
+                            {t.table_comment}
+                          </Text>
+                        ) : null}
                       </Space>
-                      {t.table_comment ? (
-                        <Text type="secondary" style={{ fontSize: 12, marginLeft: 22 }} ellipsis>
-                          {t.table_comment}
-                        </Text>
-                      ) : null}
-                    </Space>
-                  </List.Item>
-                )}
+                    </List.Item>
+                  );
+                }}
               />
             )}
           </div>
