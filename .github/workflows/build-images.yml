@@ -13,10 +13,14 @@
 
 name: kb_compilation 镜像构建
 
-# 只保留手工触发（workflow_dispatch）：push 到 main 不自动构建镜像，
-# 避免频繁 push 抢占 runner / 覆盖 latest 镜像。需要构建时在 Actions 页
-# 手动点 "Run workflow"。
+# 触发方式：
+#   - push 到 main 自动构建（2026-10-11 起，用户要求推送即触发）；
+#     concurrency cancel-in-progress 保证连续 push 只保留最新构建
+#   - 也保留 workflow_dispatch 手工触发（需要时仍可手动点 "Run workflow"）
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 concurrency:
