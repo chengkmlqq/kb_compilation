@@ -82,15 +82,24 @@ def _markdown_meta(
     col_comments: dict[str, str],
     col_types: dict[str, str] | None = None,
     row_count: int | None = None,
+    table_comment: str | None = None,
 ) -> str:
     """表元数据 markdown（列定义表 + 表说明）。
 
     row_count 传实际采样行数（len(rows)）；col_types 传 data_type 映射
     （来自元数据采集 kb_metadata_column.data_type），缺省回落 '-'。
+    table_comment 传元数据采集的真实表注释（优先于 file_name）。
     """
     lines = [f"# {doc.ds_table_name or doc.file_name}"]
-    if doc.file_name and doc.file_name != doc.ds_table_name:
-        lines.append(f"> 表注释：{doc.file_name}")
+    comment = (table_comment or "").strip()
+    if not comment and doc.file_name and doc.file_name != doc.ds_table_name:
+        comment = doc.file_name
+    if comment:
+        lines.append(f"> 表注释：{comment}")
+    # 数据来源说明（真实取数路径，不编造）
+    schema = (doc.ds_table_schema or "").strip()
+    src = f"{doc.ds_source_name or ''}" + (f".{schema}" if schema else "")
+    lines.append(f"> 数据来源：数据源 {src or '-'} · 表 {doc.ds_table_name or '-'}")
     lines.append(f"> 行数：{row_count if row_count is not None else (doc.row_count or 0)} · 列数：{len(columns)}")
     if columns:
         lines.append("\n## 列定义\n")
@@ -98,7 +107,8 @@ def _markdown_meta(
         lines.append("|------|------|------|")
         types = col_types or {}
         for c in columns:
-            lines.append(f"| {c} | {types.get(c, '-')} | {col_comments.get(c, '')} |")
+            cmt = (col_comments.get(c) or "").strip()
+            lines.append(f"| {c} | {types.get(c, '-')} | {cmt} |")
     return "\n".join(lines)
 
 
@@ -308,10 +318,36 @@ def process_table_ingest(job_id: str, task_params: dict) -> dict:
             logger.warning("table summary skipped doc=%s: %s", document_id, exc)
 
         # 5. wiki 只建表主页（page_type=table）
-        try:
-            _build_table_wiki(db, doc, columns, rows, col_types)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("table wiki build skipped doc=%s: %s", document_id, exc)
+                try:
+                    # 表注释 / 列注释来自元数据采集（真实信息；缺失不阻塞）
+                    table_comment = ""
+                    try:
+                        from api.models.framework import Datasource
+                        from api.models.metadata import MetadataTable
+                        import sqlalchemy as _sa
+
+                        if doc.ds_source_name and doc.ds_table_name:
+                            ds_id = db.execute(
+                                _sa.select(Datasource.id).where(Datasource.name == doc.ds_source_name)
+                            ).scalars().first()
+                            if ds_id:
+                                mt = db.execute(
+                                    _sa.select(MetadataTable).where(
+                                        MetadataTable.datasource_id == ds_id,
+                                        MetadataTable.table_name == doc.ds_table_name,
+                                        _sa.or_(
+                                            MetadataTable.schema_name == (doc.ds_table_schema or ""),
+                                            MetadataTable.schema_name.is_(None),
+                                        ),
+                                    )
+                                ).scalars().first()
+                                if mt and mt.table_comment:
+                                    table_comment = mt.table_comment
+                    except Exception:  # noqa: BLE001
+                        table_comment = ""
+                    _build_table_wiki(db, doc, columns, rows, col_types, col_comments, table_comment)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("table wiki build skipped doc=%s: %s", document_id, exc)
 
         return {
             "success": True,
@@ -325,19 +361,36 @@ def process_table_ingest(job_id: str, task_params: dict) -> dict:
         db.close()
 
 
-def _build_table_wiki(db, doc: KbDocument, columns: list[str], rows: list[dict], col_types: dict[str, str] | None = None) -> dict:
-    """建一张表主页 wiki 页（含列定义/数据量/样例/摘要）+ 触发互链重建。"""
+def _build_table_wiki(
+    db,
+    doc: KbDocument,
+    columns: list[str],
+    rows: list[dict],
+    col_types: dict[str, str] | None = None,
+    col_comments: dict[str, str] | None = None,
+    table_comment: str | None = None,
+) -> dict:
+    """建一张表主页 wiki 页（含列定义/数据量/样例/表用途说明/摘要）+ 触发互链重建。"""
     from worker.tasks.wiki_build import _upsert_wiki_page
 
     kb_id = doc.kb_id or ""
     table_name = doc.ds_table_name or doc.file_name
     slug = f"table-{doc.ds_table_schema or ''}-{table_name}" if doc.ds_table_schema else f"table-{table_name}"
 
-    # 正文：列定义 + 样例（复用 markdown 拼接；行数显示实际采样数）
-    body_parts = [_markdown_meta(doc, columns, {}, col_types, row_count=len(rows))]
+    # 正文：表说明 + 列定义（带注释/类型）+ 样例 + 表用途说明 + 摘要
+    body_parts = [
+        _markdown_meta(
+            doc, columns, col_comments or {}, col_types,
+            row_count=len(rows), table_comment=table_comment,
+        )
+    ]
     sample = _markdown_rows(rows)
     if sample:
         body_parts.append(sample)
+    # 表用途说明：LLM 基于真实元数据 + 样例数据生成描述性说明（失败不阻塞）
+    usage = _generate_table_usage(db, doc, columns, col_comments or {}, table_comment)
+    if usage:
+        body_parts.append(f"\n## 表用途说明\n\n{usage}")
     if doc.summary:
         body_parts.append(f"\n## 摘要\n\n{doc.summary}")
     content = "\n".join(body_parts)
@@ -352,6 +405,75 @@ def _build_table_wiki(db, doc: KbDocument, columns: list[str], rows: list[dict],
     except Exception as exc:  # noqa: BLE001
         logger.warning("wiki rebuild-links skipped: %s", exc)
     return page
+
+
+def _generate_table_usage(
+    db,
+    doc: KbDocument,
+    columns: list[str],
+    col_comments: dict[str, str],
+    table_comment: str | None,
+) -> str:
+    """基于真实元数据生成「表用途说明」段落。
+
+    输入全部来自实际取数/元数据采集结果（表注释、列注释、列名、行数），
+    LLM 只做总结性描述——不引入外部编造事实。失败返回空串不阻塞 wiki。
+    """
+    try:
+        from api.models.knowledge import KbDatasource
+        from api.services.chat import ChatClient, ChatConfig, ChatMessage
+        from api.services.models import decrypt_secret, get_model as get_llm_model
+
+        kb = db.execute(
+            sa.select(KbDatasource).where(KbDatasource.id == doc.kb_id)
+        ).scalars().first()
+        if not kb:
+            return ""
+        model_id = getattr(kb, "summary_model_id", None) or ""
+        if not model_id:
+            return ""
+        model = get_llm_model(db, model_id)
+        if not model:
+            return ""
+        base_url = (model.base_url or "").rstrip("/")
+        if not base_url:
+            return ""
+
+        col_lines = []
+        for c in columns:
+            cmt = (col_comments.get(c) or "").strip()
+            col_lines.append(f"- {c}：{cmt or '-'}")
+
+        prompt = (
+            "你是数据分析师。请基于下面这张表的真实元数据，写一段中文「表用途说明」。\n"
+            "内容要求：1) 这是一张什么维度的表；2) 这张表在什么场景下使用"
+            "（如作为报表分组维度、指标口径解释依据等，按列名和注释合理推断）；"
+            "3) 关键字段说明（3-5 个代表性列及其含义）。\n"
+            "严格约束：只能依据给出的元数据客观描述，不要编造表中不存在的信息，"
+            "不要臆测具体业务场景细节。总字数 150~300 字，用 2-3 个自然段输出，"
+            "不要输出列表或标题。\n\n"
+            f"表名：{doc.ds_table_name}\n"
+            f"表注释：{table_comment or '-'}\n"
+            f"行数：{doc.row_count or 0}\n"
+            f"列定义：\n{chr(10).join(col_lines)}"
+        )
+        cfg = ChatConfig(
+            base_url=base_url,
+            api_key=decrypt_secret(model.api_key),
+            model=model.name,
+            timeout=120.0,
+        )
+        messages = [ChatMessage(role="user", content=prompt)]
+        try:
+            out = ChatClient(cfg).chat(messages, temperature=0.3, max_tokens=800)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("table usage llm failed doc=%s: %s", doc.id, exc)
+            return ""
+        text = (out or "").strip()
+        return text if len(text) >= 20 else ""
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("table usage skipped doc=%s: %s", doc.id, exc)
+        return ""
 
 
 # --------------------------------------------------------------------------- #
