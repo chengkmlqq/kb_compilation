@@ -32,6 +32,7 @@ from api.models.knowledge import (
     WikiLink,
     WikiOperationLog,
     WikiPage,
+    WikiPageIssue,
 )
 from api.services.retrieval import ChunkHit, hybrid_search
 from api.services import storage
@@ -1951,6 +1952,306 @@ def wiki_rebuild_links(db: Session, kb_id: str) -> dict:
     return {"added_links": added}
 
 
+# ---------------------------------------------------------------------------
+# MCP 对齐补充（2026-10-11）：WeKnora admin-kb 工具所需底层能力
+# ---------------------------------------------------------------------------
+
+
+def get_document_detail(db: Session, kb_id: str, document_id: str) -> dict | None:
+    """单文档详情（对齐 WeKnora get_document）。"""
+    doc = db.execute(
+        select(KbDocument).where(KbDocument.id == document_id, KbDocument.kb_id == kb_id)
+    ).scalars().first()
+    if not doc:
+        return None
+    return {
+        "id": doc.id,
+        "kb_id": doc.kb_id,
+        "file_name": doc.file_name,
+        "file_ext": doc.file_ext,
+        "file_size": doc.file_size,
+        "parse_state": doc.parse_state,
+        "parse_error": doc.parse_error,
+        "chunk_count": doc.chunk_count,
+        "summary": doc.summary,
+        "summary_status": doc.summary_status,
+        "folder_id": doc.folder_id or "",
+        "source_type": doc.source_type or "file",
+        "ds_source_name": doc.ds_source_name,
+        "ds_table_name": doc.ds_table_name,
+        "row_count": doc.row_count,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+    }
+
+
+def list_wiki_pages(
+    db: Session,
+    kb_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    folder_id: str = "",
+    page_type: str = "",
+    status: str = "active",
+) -> dict:
+    """分页列出 wiki 页（对齐 WeKnora list_wiki_pages）。"""
+    stmt = select(WikiPage).where(WikiPage.kb_id == kb_id)
+    if status:
+        stmt = stmt.where(WikiPage.status == status)
+    if page_type:
+        stmt = stmt.where(WikiPage.page_type == page_type)
+    if folder_id:
+        stmt = stmt.where(WikiPage.folder_id == folder_id)
+    total = len(db.execute(stmt).scalars().all())
+    rows = (
+        db.execute(
+            stmt.order_by(WikiPage.created_at.desc(), WikiPage.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        .scalars()
+        .all()
+    )
+    items = [
+        {
+            "id": p.id,
+            "slug": p.slug,
+            "title": p.title,
+            "page_type": p.page_type,
+            "summary": p.summary,
+            "content": p.content,
+            "folder_id": p.folder_id or "",
+            "status": p.status,
+            "source_refs": p.source_refs or [],
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        }
+        for p in rows
+    ]
+    return {"items": items, "total": total, "page": page, "pageSize": page_size}
+
+
+def wiki_lookup_by_title(
+    db: Session, kb_id: str, titles: list[str], page_types: list[str] | None = None
+) -> dict:
+    """按精确标题批量查页面（对齐 WeKnora wiki_lookup_by_title）。"""
+    if not titles:
+        return {"items": []}
+    stmt = select(WikiPage).where(
+        WikiPage.kb_id == kb_id, WikiPage.status == "active", WikiPage.title.in_(titles)
+    )
+    if page_types:
+        stmt = stmt.where(WikiPage.page_type.in_(page_types))
+    rows = db.execute(stmt).scalars().all()
+    return {
+        "items": [
+            {
+                "id": p.id,
+                "slug": p.slug,
+                "title": p.title,
+                "page_type": p.page_type,
+                "summary": p.summary,
+                "status": p.status,
+            }
+            for p in rows
+        ]
+    }
+
+
+def wiki_move_page(db: Session, kb_id: str, slug: str, folder_id: str) -> dict:
+    """移动 wiki 页到指定目录（folder_id="" = 根；对齐 WeKnora move_wiki_page）。"""
+    page = db.execute(
+        select(WikiPage).where(WikiPage.kb_id == kb_id, WikiPage.slug == slug)
+    ).scalars().first()
+    if not page:
+        raise ValueError(f"wiki 页不存在: {slug}")
+    if folder_id:
+        folder = db.execute(
+            select(WikiFolder).where(WikiFolder.kb_id == kb_id, WikiFolder.id == folder_id)
+        ).scalars().first()
+        if not folder:
+            raise ValueError(f"目录不存在: {folder_id}")
+    page.folder_id = folder_id
+    wiki_log_action(db, kb_id, "page_move", slug=page.slug, title=page.title, detail=f"folder_id={folder_id}")
+    db.commit()
+    return {"id": page.id, "slug": page.slug, "folder_id": folder_id}
+
+
+def wiki_auto_fix(db: Session, kb_id: str) -> dict:
+    """自动修复可修复的 wiki 问题（对齐 WeKnora wiki_auto_fix）。
+
+    当前可修复项：
+    - 断链：content 中的 [[slug]] 目标不存在 → 若目标存在则保留，否则修复为空
+      （与 wiki_rebuild_links 语义一致：重建时自动跳过断链）。
+    - 空内容页：保留并记日志（无法自动生成内容，不做删除以免误伤）。
+    """
+    pages = {
+        p.slug: p
+        for p in db.execute(
+            select(WikiPage).where(WikiPage.kb_id == kb_id, WikiPage.status == "active")
+        ).scalars().all()
+    }
+    import re as _re
+
+    fixed = 0
+    for p in pages.values():
+        if not (p.content or "").strip():
+            continue
+        targets = _re.findall(r"\[\[([^\]|]+)\]\]", p.content)
+        for t in targets:
+            if t not in pages:
+                # 断链：剥掉 [[...]] 只留目标文本，作为纯文本保留
+                p.content = p.content.replace(f"[[{t}]]", t)
+                fixed += 1
+    wiki_log_action(db, kb_id, "auto_fix", detail=f"fixed {fixed} broken links")
+    db.commit()
+    return {"fixed": fixed}
+
+
+def wiki_log_write(
+    db: Session,
+    kb_id: str,
+    action: str,
+    knowledge_id: str = "",
+    doc_title: str = "",
+    summary: str = "",
+    page_slugs: list[str] | None = None,
+    operator: str = "",
+) -> dict:
+    """写一条 wiki 操作日志（对齐 WeKnora wiki_log_write，外部 agent 进度上报）。"""
+    if not action:
+        raise ValueError("action 不能为空")
+    detail = summary or ""
+    if page_slugs:
+        detail = (detail + " | pages: " + ", ".join(page_slugs)).strip(" |")
+    wiki_log_action(
+        db, kb_id, action[:32],
+        slug=knowledge_id or "",
+        title=doc_title or "",
+        detail=detail[:2000],
+        operator=operator,
+    )
+    db.commit()
+    return {"success": True, "action": action, "kb_id": kb_id}
+
+
+def wiki_list_issues(db: Session, kb_id: str, slug: str = "", status: str = "") -> dict:
+    """列出 wiki 问题（对齐 WeKnora wiki_list_issues）。"""
+    stmt = select(WikiPageIssue).where(WikiPageIssue.kb_id == kb_id)
+    if slug:
+        stmt = stmt.where(WikiPageIssue.slug == slug)
+    if status:
+        stmt = stmt.where(WikiPageIssue.status == status)
+    rows = (
+        db.execute(stmt.order_by(WikiPageIssue.created_at.desc(), WikiPageIssue.id.desc()))
+        .scalars()
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "slug": r.slug,
+                "issue_type": r.issue_type,
+                "description": r.description,
+                "detail": r.detail,
+                "status": r.status,
+                "reported_by": r.reported_by,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
+def wiki_update_issue_status(db: Session, kb_id: str, issue_id: str, status: str) -> dict:
+    """更新 issue 状态（pending | ignored | resolved，对齐 WeKnora）。"""
+    if status not in ("pending", "ignored", "resolved"):
+        raise ValueError(f"status 必须是 pending/ignored/resolved，收到: {status}")
+    issue = db.execute(
+        select(WikiPageIssue).where(WikiPageIssue.kb_id == kb_id, WikiPageIssue.id == issue_id)
+    ).scalars().first()
+    if not issue:
+        raise ValueError(f"issue 不存在: {issue_id}")
+    issue.status = status
+    db.commit()
+    return {"id": issue.id, "slug": issue.slug, "status": status}
+
+
+def wiki_sync_issues_from_lint(db: Session, kb_id: str) -> dict:
+    """把 lint 检出的问题同步进 wiki_page_issue 表（幂等 upsert）。
+
+    供 lint 调用方可选：WeKnora 的 wiki_lint 会把问题落库，MCP 工具
+    wiki_list_issues 读这张表。这里按 (kb_id, slug, issue_type) 去重 upsert。
+    """
+    lint_result = wiki_lint(db, kb_id, limit=500)
+    issues = lint_result.get("issues") or []
+    inserted = updated = 0
+    for it in issues:
+        row = db.execute(
+            select(WikiPageIssue).where(
+                WikiPageIssue.kb_id == kb_id,
+                WikiPageIssue.slug == it.get("slug", ""),
+                WikiPageIssue.issue_type == it.get("issue_type", ""),
+            )
+        ).scalars().first()
+        if row is None:
+            db.add(
+                WikiPageIssue(
+                    id=uuid.uuid4().hex,
+                    kb_id=kb_id,
+                    slug=it.get("slug", ""),
+                    issue_type=it.get("issue_type", ""),
+                    description=it.get("detail", ""),
+                    detail=it.get("detail", ""),
+                    status="pending",
+                    reported_by="wiki-lint",
+                )
+            )
+            inserted += 1
+        else:
+            row.description = it.get("detail", "")
+            row.detail = it.get("detail", "")
+            row.status = "pending" if row.status in ("", None) else row.status
+            updated += 1
+    db.commit()
+    return {"inserted": inserted, "updated": updated, "total_issues": len(issues)}
+
+
+def tokenize_text(text: str, mode: str = "cut") -> dict:
+    """分词（对齐 WeKnora tokenize）。
+
+    无外部分词依赖：CJK 走 2-gram 滑窗（WeKnora 同款 tokenizeCJKBigram），
+    ASCII 走单词切分。mode=cut_for_search 时对 CJK 2-gram 做去重。
+    """
+    import re as _re
+
+    if not text:
+        return {"words": [], "count": 0}
+
+    def cjk_bigrams(s: str) -> list[str]:
+        chars = _re.sub(r"\s+", "", s)
+        if len(chars) < 2:
+            return list(chars)
+        return [chars[i : i + 2] for i in range(len(chars) - 1)]
+
+    words: list[str] = []
+    # 把 CJK 段和 ASCII 段分开处理
+    for seg in _re.findall(r"[\u4e00-\u9fff]+|[a-zA-Z0-9_]+", text):
+        if _re.fullmatch(r"[\u4e00-\u9fff]+", seg):
+            words.extend(cjk_bigrams(seg))
+        else:
+            words.append(seg)
+    if mode == "cut_for_search":
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for w in words:
+            if w not in seen:
+                seen.add(w)
+                deduped.append(w)
+        words = deduped
+    return {"words": words, "count": len(words)}
+
+
 __all__ = [
     "create_document",
     "create_kb",
@@ -1979,6 +2280,16 @@ __all__ = [
     "wiki_list_feedback",
     "wiki_update_feedback_status",
     "wiki_index",
+    "get_document_detail",
+    "list_wiki_pages",
+    "wiki_lookup_by_title",
+    "wiki_move_page",
+    "wiki_auto_fix",
+    "wiki_log_write",
+    "wiki_list_issues",
+    "wiki_update_issue_status",
+    "wiki_sync_issues_from_lint",
+    "tokenize_text",
     "_remove_local_file",
     "slugify",
 ]

@@ -326,6 +326,32 @@ class WikiFeedback(Base):
     )
 
 
+class WikiPageIssue(Base):
+    """Wiki 页面问题（lint 检出的健康问题，可跟踪/处理）。
+
+    对齐 WeKnora wiki_page_issues（persistent 表）：
+    - issue_type: empty_content / orphan / broken_link / ...
+    - status: pending / ignored / resolved（三态状态机，WeKnora 语义）
+    """
+
+    __tablename__ = "wiki_page_issue"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kb_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    slug: Mapped[str | None] = mapped_column(String(255), default="")
+    issue_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    detail: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="pending")  # pending/ignored/resolved
+    reported_by: Mapped[str | None] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
+    )
+
+
 class KbAgent(Base):
     """An AI agent (QA assistant) bound to knowledge bases.
 

@@ -74,6 +74,16 @@ from api.services.kb_admin import (
     wiki_update_folder,
     wiki_update_page,
     wiki_update_feedback_status,
+    get_document_detail,
+    list_wiki_pages,
+    tokenize_text,
+    wiki_auto_fix,
+    wiki_list_issues,
+    wiki_log_write,
+    wiki_lookup_by_title,
+    wiki_move_page,
+    wiki_sync_issues_from_lint,
+    wiki_update_issue_status,
 )
 from api.services.kb_admin import _remove_local_file  # noqa: PLC2701 (same package helper)
 
@@ -152,6 +162,27 @@ class WikiFolderCreate(BaseModel):
 class WikiFolderUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     parent_id: str | None = Field(default=None)
+
+
+class WikiLookupByTitleRequest(BaseModel):
+    titles: list[str] = Field(..., max_length=1000)
+    page_types: list[str] | None = None
+
+
+class WikiPageMoveRequest(BaseModel):
+    folder_id: str = Field(default="", max_length=64)
+
+
+class WikiLogWriteRequest(BaseModel):
+    action: str = Field(..., min_length=1, max_length=64)
+    knowledge_id: str | None = None
+    doc_title: str | None = None
+    summary: str | None = None
+    page_slugs: list[str] | None = None
+
+
+class WikiIssueStatusUpdate(BaseModel):
+    status: str = Field(..., pattern="^(pending|ignored|resolved)$")
 
 
 class DocFolderCreate(BaseModel):
@@ -1584,6 +1615,152 @@ def generate_doc_summary(
         data = generate_document_summary(db, kb_id, document_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"success": True, "data": data}
+
+
+# ── MCP 对齐补充（2026-10-11）：WeKnora admin-kb 工具所需端点 ──
+
+
+@router.get("/{kb_id}/documents/{document_id}")
+def get_document_detail_route(
+    kb_id: str,
+    document_id: str,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """单文档详情（对齐 WeKnora get_document）。"""
+    _kb_visible(kb_id, caller, db)
+    data = get_document_detail(db, kb_id, document_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"文档不存在: {document_id}")
+    return {"success": True, "data": data}
+
+
+@router.get("/{kb_id}/wiki/pages")
+def list_wiki_pages_route(
+    kb_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    folder_id: str = Query("", max_length=64),
+    page_type: str = Query("", max_length=32),
+    status: str = Query("active", max_length=32),
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """分页列出 wiki 页（对齐 WeKnora list_wiki_pages）。"""
+    _kb_visible(kb_id, caller, db)
+    data = list_wiki_pages(
+        db, kb_id, page=page, page_size=page_size,
+        folder_id=folder_id, page_type=page_type, status=status,
+    )
+    return {"success": True, "data": data}
+
+
+@router.post("/{kb_id}/wiki/pages/lookup-by-title")
+def wiki_lookup_by_title_route(
+    kb_id: str,
+    req: WikiLookupByTitleRequest,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """按精确标题批量查页面（对齐 WeKnora wiki_lookup_by_title）。"""
+    _kb_visible(kb_id, caller, db)
+    data = wiki_lookup_by_title(db, kb_id, req.titles, req.page_types)
+    return {"success": True, "data": data}
+
+
+@router.put("/{kb_id}/wiki/pages/{slug}/move")
+def move_wiki_page_route(
+    kb_id: str,
+    slug: str,
+    req: WikiPageMoveRequest,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """移动 wiki 页到目录（folder_id="" = 根；对齐 WeKnora move_wiki_page）。"""
+    _kb_manage(kb_id, caller, db)
+    try:
+        data = wiki_move_page(db, kb_id, slug, req.folder_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "不存在" in str(e) else 400, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.post("/{kb_id}/wiki/auto-fix")
+def wiki_auto_fix_route(
+    kb_id: str,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """自动修复可修复的 wiki 问题（对齐 WeKnora wiki_auto_fix）。"""
+    _kb_manage(kb_id, caller, db)
+    data = wiki_auto_fix(db, kb_id)
+    return {"success": True, "data": data}
+
+
+@router.post("/{kb_id}/wiki/log")
+def wiki_log_write_route(
+    kb_id: str,
+    req: WikiLogWriteRequest,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """写一条 wiki 操作日志（对齐 WeKnora wiki_log_write，外部 agent 进度上报）。"""
+    _kb_visible(kb_id, caller, db)
+    try:
+        data = wiki_log_write(
+            db, kb_id, req.action,
+            knowledge_id=req.knowledge_id or "",
+            doc_title=req.doc_title or "",
+            summary=req.summary or "",
+            page_slugs=req.page_slugs or None,
+            operator=caller.get("user_id", ""),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.get("/{kb_id}/wiki/issues")
+def wiki_list_issues_route(
+    kb_id: str,
+    slug: str = Query("", max_length=255),
+    status: str = Query("", max_length=20),
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """列出 wiki 问题（对齐 WeKnora wiki_list_issues）。"""
+    _kb_visible(kb_id, caller, db)
+    data = wiki_list_issues(db, kb_id, slug=slug, status=status)
+    return {"success": True, "data": data}
+
+
+@router.put("/{kb_id}/wiki/issues/{issue_id}/status")
+def wiki_update_issue_status_route(
+    kb_id: str,
+    issue_id: str,
+    req: WikiIssueStatusUpdate,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """更新 issue 状态（pending | ignored | resolved；对齐 WeKnora）。"""
+    _kb_manage(kb_id, caller, db)
+    try:
+        data = wiki_update_issue_status(db, kb_id, issue_id, req.status)
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "不存在" in str(e) else 400, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.post("/{kb_id}/wiki/issues/sync")
+def wiki_sync_issues_route(
+    kb_id: str,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """运行 lint 并把问题同步落库（对齐 WeKnora lint 落库语义）。"""
+    _kb_manage(kb_id, caller, db)
+    data = wiki_sync_issues_from_lint(db, kb_id)
     return {"success": True, "data": data}
 
 

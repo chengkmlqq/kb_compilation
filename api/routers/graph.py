@@ -17,7 +17,7 @@ Neo4j 中的实体/关系知识图谱。
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -226,3 +226,111 @@ def search_kb_graph(
     reader = _reader_or_503()
     data = reader.search(kb_id, req.q, limit=max(1, min(req.limit, 1000)))
     return {"success": True, "data": data}
+
+
+# ── MCP 对齐补充（2026-10-11）：graph_add / graph_delete ──
+
+
+class GraphNodePayload(BaseModel):
+    name: str
+    entity_type: str = "Entity"
+    chunks: list[str] = []
+    attributes: dict = {}
+
+
+class GraphRelationPayload(BaseModel):
+    node1: str
+    node2: str
+    type: str = "related"
+    chunks: list[str] = []
+
+
+class GraphWritePayload(BaseModel):
+    graphs: list[dict] = []
+    knowledge_id: str = ""
+
+
+class GraphDeleteQuery(BaseModel):
+    knowledge_id: str = ""
+
+
+def _graph_store_or_503() -> "Neo4jGraphStore":
+    from api.services.graph import Neo4jGraphStore
+    from api.config import get_settings
+    from api.services.graph import Neo4jGraphStore as _Store
+
+    s = get_settings()
+    if not (s.NEO4J_URI and s.NEO4J_PASSWORD):
+        raise HTTPException(
+            status_code=503,
+            detail="Neo4j 未配置（缺少 NEO4J_URI / NEO4J_PASSWORD）",
+        )
+    return _Store(s.NEO4J_URI, s.NEO4J_USERNAME or "neo4j", s.NEO4J_PASSWORD, s.NEO4J_DATABASE)
+
+
+@router.post("/kbs/{kb_id}/graph/write")
+def write_kb_graph(
+    kb_id: str,
+    req: GraphWritePayload,
+    _: str = Depends(_require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """写入实体/关系到 Neo4j 知识图谱（对齐 WeKnora graph_add）。
+
+    graphs 是 list[{"node": [GraphNodePayload...], "relation": [GraphRelationPayload...]}]，
+    与 WeKnora GraphData 形状一致；knowledge_id 提供时按文档粒度写入。
+    """
+    _require_kb(db, kb_id)
+    from api.services.graph import Entity, Neo4jGraphStore, Relationship
+
+    store = _graph_store_or_503()
+    entities: list[Entity] = []
+    relationships: list[Relationship] = []
+    for g in req.graphs or []:
+        for n in g.get("node") or []:
+            entities.append(
+                Entity(
+                    title=n.get("name") or n.get("title") or "",
+                    entity_type=n.get("entity_type") or "Entity",
+                    frequency=1,
+                    chunk_ids=n.get("chunks") or [],
+                )
+            )
+        for r in g.get("relation") or []:
+            relationships.append(
+                Relationship(
+                    source=r.get("node1") or "",
+                    target=r.get("node2") or "",
+                    relation_type=r.get("type") or "related",
+                )
+            )
+    if not entities and not relationships:
+        raise HTTPException(status_code=400, detail="graphs 为空（无 node/relation 数据）")
+    try:
+        store.write_graph(kb_id, entities, relationships)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"图谱写入失败: {exc}") from exc
+    return {
+        "success": True,
+        "data": {"entities": len(entities), "relationships": len(relationships)},
+    }
+
+
+@router.delete("/kbs/{kb_id}/graph/write")
+def delete_kb_graph_route(
+    kb_id: str,
+    knowledge_id: str = Query("", max_length=64),
+    _: str = Depends(_require_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """删除知识库图谱（knowledge_id 提供时只删该文档子图；对齐 WeKnora graph_delete）。"""
+    _require_kb(db, kb_id)
+    store = _graph_store_or_503()
+    try:
+        if knowledge_id:
+            cnt = store.delete_doc_graph(document_id=knowledge_id)
+        else:
+            cnt = store.delete_kb_graph(kb_id=kb_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"图谱删除失败: {exc}") from exc
+    return {"success": True, "data": {"deleted": cnt, "knowledge_id": knowledge_id}}

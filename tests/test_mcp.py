@@ -143,3 +143,160 @@ def test_handle_kb_answer_not_visible_404(mcp_db) -> None:
 def test_mcp_server_instantiable() -> None:
     server = create_mcp_server()
     assert server.name == "kb-tools"
+
+
+# ---- WeKnora admin-kb 对齐工具注册全集（2026-10-11）----
+
+
+def test_mcp_tools_full_weknora_surface_registered() -> None:
+    """WeKnora admin-kb 32 工具全覆盖（list_knowledge_bases/hybrid_search
+    分别由 kb_list/kb_search 承担，其余 30 个逐一对齐注册）。"""
+    tools = asyncio.run(create_mcp_server().list_tools())
+    names = {t.name for t in tools}
+    expected = {
+        "kb_list", "kb_search", "kb_answer",
+        "list_documents", "get_document", "list_chunks",
+        "wiki_search", "wiki_read_page",
+        "create_wiki_page", "update_wiki_page", "delete_wiki_page", "move_wiki_page",
+        "list_wiki_pages", "wiki_lookup_by_title", "wiki_create_pages",
+        "list_wiki_folders", "create_wiki_folder", "update_wiki_folder", "delete_wiki_folder",
+        "wiki_graph", "graph_add", "graph_delete", "graph_search_node",
+        "wiki_stats", "wiki_index_view", "wiki_rebuild_links",
+        "wiki_lint", "wiki_auto_fix", "wiki_log", "wiki_log_write",
+        "wiki_list_issues", "wiki_update_issue_status", "tokenize",
+    }
+    assert expected <= names, f"缺失工具: {expected - names}"
+
+
+# ---- 新增 handler 逻辑（对齐 WeKnora 语义）-------------------------------
+
+
+def test_tokenize_cjk_bigram(mcp_db) -> None:
+    from api.mcp_server import handle_tokenize
+
+    r = handle_tokenize("数据中台架构设计")
+    assert r["success"] is True
+    assert r["count"] > 0
+    # CJK 2-gram：长度 8 → 7 个 bigram
+    assert r["count"] == 7
+
+
+def test_tokenize_ascii_words(mcp_db) -> None:
+    from api.mcp_server import handle_tokenize
+
+    r = handle_tokenize("hello world test")
+    assert r["success"] is True
+    assert r["words"] == ["hello", "world", "test"]
+
+
+def test_tokenize_cut_for_search_dedup(mcp_db) -> None:
+    from api.mcp_server import handle_tokenize
+
+    r = handle_tokenize("数据中台数据中台", mode="cut_for_search")
+    assert r["success"] is True
+    # 去重后 7 个唯一 bigram（"数据中台" 只产生一组 2-gram）
+    assert r["count"] == len(set(r["words"]))
+
+
+def test_handle_list_documents_visible_empty(mcp_db) -> None:
+    from api.mcp_server import handle_list_documents
+
+    caller = {"user_id": "alice", "team_name": "T1", "is_admin": False}
+    r = handle_list_documents(mcp_db, "kb1", caller=caller)
+    assert r["success"] is True
+    assert r["items"] == []
+
+
+def test_handle_list_documents_not_visible(mcp_db) -> None:
+    from api.mcp_server import handle_list_documents
+
+    caller = {"user_id": "alice", "team_name": "T1", "is_admin": False}
+    r = handle_list_documents(mcp_db, "kb2", caller=caller)
+    assert r["success"] is False
+    assert "not found" in r["error"]
+
+
+def test_handle_get_document_unknown(mcp_db) -> None:
+    from api.mcp_server import handle_get_document
+
+    r = handle_get_document(mcp_db, "doc-nonexistent")
+    assert r["success"] is False
+    assert "not found" in r["error"]
+
+
+def test_handle_wiki_read_page_not_visible(mcp_db) -> None:
+    from api.mcp_server import handle_wiki_read_page
+
+    caller = {"user_id": "alice", "team_name": "T1", "is_admin": False}
+    r = handle_wiki_read_page(mcp_db, "kb2", "any-slug", caller=caller)
+    assert r["success"] is False
+    assert "not found" in r["error"]
+
+
+def test_handle_create_wiki_page_requires_manage(mcp_db) -> None:
+    from api.mcp_server import handle_create_wiki_page
+
+    # bob 对 alice 的 personal kb1 只有可见性、无管理权 → 拒绝
+    caller = {"user_id": "bob", "team_name": "T2", "is_admin": False}
+    r = handle_create_wiki_page(
+        mcp_db, "kb1", "new-page", "新页面", "内容", caller=caller
+    )
+    assert r["success"] is False
+    assert "not found" in r["error"]  # manage 校验失败同样返回 404 语义
+
+
+def test_handle_wiki_create_pages_batch(mcp_db) -> None:
+    from api.mcp_server import handle_wiki_create_pages
+
+    caller = {"user_id": "alice", "team_name": "T1", "is_admin": False}
+    r = handle_wiki_create_pages(
+        mcp_db, "kb1",
+        [{"slug": "a", "title": "页A", "content": "内容A"},
+         {"slug": "b", "title": "页B", "content": "内容B"}],
+        caller=caller,
+    )
+    assert r["success"] is True
+    assert r["created"] == 2
+    assert r["errors"] == []
+
+
+def test_handle_wiki_lookup_by_title(mcp_db) -> None:
+    from api.mcp_server import handle_wiki_create_pages, handle_wiki_lookup_by_title
+
+    caller = {"user_id": "alice", "team_name": "T1", "is_admin": False}
+    # 先建页再按标题查（同一测试内自给自足）
+    handle_wiki_create_pages(
+        mcp_db, "kb1",
+        [{"slug": "a", "title": "页A", "content": "内容A"}],
+        caller=caller,
+    )
+    r = handle_wiki_lookup_by_title(mcp_db, "kb1", ["页A"], caller=caller)
+    assert r["success"] is True
+    assert len(r["items"]) == 1
+    assert r["items"][0]["title"] == "页A"
+
+
+def test_handle_wiki_log_write(mcp_db) -> None:
+    from api.mcp_server import handle_wiki_log_write
+
+    caller = {"user_id": "alice", "team_name": "T1", "is_admin": False}
+    r = handle_wiki_log_write(mcp_db, "kb1", "agent_build_done", summary="完成", caller=caller)
+    assert r["success"] is True
+    assert r["data"]["action"] == "agent_build_done"
+
+
+def test_handle_wiki_log_write_bad_action(mcp_db) -> None:
+    from api.mcp_server import handle_wiki_log_write
+
+    caller = {"user_id": "alice", "team_name": "T1", "is_admin": False}
+    r = handle_wiki_log_write(mcp_db, "kb1", "", caller=caller)
+    assert r["success"] is False
+
+
+def test_handle_wiki_update_issue_status(mcp_db) -> None:
+    from api.mcp_server import handle_wiki_update_issue_status
+
+    caller = {"user_id": "alice", "team_name": "T1", "is_admin": False}
+    r = handle_wiki_update_issue_status(mcp_db, "kb1", "issue-nope", "resolved", caller=caller)
+    assert r["success"] is False
+    assert "不存在" in r["error"]
