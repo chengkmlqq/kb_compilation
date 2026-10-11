@@ -146,7 +146,15 @@ class EmbeddingClient:
             out.extend(self._embed_batch(texts[i : i + batch]))
         return out
 
+    # 单请求字符预算（约 2 字符/token 的安全下限，覆盖 8192 token 模型上限）
+    _BATCH_CHAR_BUDGET = 6000
+
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        # 超长批次递归拆半：xlsx 按行生成 chunk 时个别批次累计字符可超模型
+        # context 上限（bge-m3 8192 token 实测 52675 tokens 被 400 拒绝）。
+        if len(texts) > 1 and sum(len(t) for t in texts) > self._BATCH_CHAR_BUDGET:
+            mid = len(texts) // 2
+            return self._embed_batch(texts[:mid]) + self._embed_batch(texts[mid:])
         if (self.cfg.interface_type or "openai").lower() == "oip":
             return self._embed_batch_oip(texts)
         payload = {"model": self.cfg.model, "input": texts}
