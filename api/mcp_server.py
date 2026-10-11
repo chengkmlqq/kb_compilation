@@ -174,6 +174,14 @@ def handle_kb_answer(db: Session, kb_id: str, question: str, caller: dict | None
         return {"success": False, "error": f"knowledge base not found or not visible: {kb_id}"}
     cfg = RetrievalConfig(top_k=5)
     hits = hybrid_search(db, kb_id, question, None, cfg)
+    if not hits:
+        # 空库/无命中：不调 LLM 直接返回（对齐 test_handle_kb_answer_visible_kb_no_llm_crash
+        # 的意图；否则空库在未配置 AI_CHAT_API_ENDPOINT 时 RuntimeError）
+        return {
+            "success": True,
+            "answer": "知识库中暂未找到相关内容。",
+            "references": [],
+        }
     messages = build_messages(question, hits)
     answer = ChatClient(load_chat_config(db)).chat(messages)
     return {
