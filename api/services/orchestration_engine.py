@@ -412,15 +412,24 @@ class KbLlmChatStep(BaseStep):
         json_mode = bool(self.config.get("json_mode"))
 
         try:
-            cfg = load_chat_config(None, model_id=model)
-            client = ChatClient(cfg)
-            from api.services.chat import ChatMessage
+            # 2026-10-12 修复：db 必须传——load_chat_config(None) 走 legacy env，
+            # model_id 解析不到模型注册表（KB 配置的摘要模型）→ AI_CHAT_API_ENDPOINT
+            # is not configured。开会话传 db 后 model_id 走 resolve_model_config。
+            from api.db import get_sessionmaker
 
-            raw = client.chat(
-                [ChatMessage(role="user", content=prompt)],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+            _db = get_sessionmaker()()
+            try:
+                cfg = load_chat_config(_db, model_id=model)
+                client = ChatClient(cfg)
+                from api.services.chat import ChatMessage
+
+                raw = client.chat(
+                    [ChatMessage(role="user", content=prompt)],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+            finally:
+                _db.close()
         except Exception as e:  # noqa: BLE001
             return StepResponse.fail(f"LLM 调用失败: {e}")
         if json_mode:
