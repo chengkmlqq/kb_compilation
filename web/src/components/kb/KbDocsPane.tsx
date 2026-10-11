@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   App,
   Button,
+  Card,
   Dropdown,
   Empty,
   Input,
@@ -535,18 +536,23 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   }, [kbId, kb?.name, load]);
 
   return (
-    <div style={{ height: "100%", display: "flex", overflow: "hidden", minHeight: 0 }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      {/* 白底直角内容面板（标题由页签承担）：左侧目录树贴面板边缘，右侧内容区按系统内边距 12/16 排布 */}
+      <Card
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{ body: { flex: 1, minHeight: 0, display: "flex", overflow: "hidden", padding: 0 } }}
+      >
       {/* 左侧：文档目录树（多级，点选递归筛选） */}
       <div
         className="kb-doc-folder-sidebar"
         style={{
           width: 230,
           flex: "0 0 auto",
-          borderRight: "1px solid var(--kb-border, rgba(5, 5, 5, 0.08))",
+          borderRight: "1px solid var(--color-gray-3, #e3e9ef)",
           display: "flex",
           flexDirection: "column",
           minHeight: 0,
-          padding: "10px 8px",
+          padding: "12px 8px",
           boxSizing: "border-box",
         }}
       >
@@ -907,6 +913,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
       </div>
       </div>
       {/* 右侧内容区结束: 上面的 </div> 闭合 kb-doc-area, 这句闭合右侧 flex wrapper */}
+      </Card>
 
       {/* 上传确认弹窗（对齐 WeKnora：文件列表 + 处理配置，确认后逐文件上传） */}
       <UploadConfirmDialog

@@ -11,7 +11,7 @@
  * （onOpenGraph）跳到独立的知识图谱选项卡。
  */
 import { useState } from "react";
-import { App, Card, Input, List, Segmented, Space, Spin, Typography } from "antd";
+import { App, Card, Input, List, Segmented, Spin, Typography } from "antd";
 import WikiBrowseView from "@/components/WikiBrowseView";
 import WikiManagePanel from "@/components/WikiManagePanel";
 import { apiSearch, SearchHit } from "@/lib/api";
@@ -42,57 +42,88 @@ export default function KbWikiPane({ kbId, focusSlug, onOpenGraph }: KbWikiPaneP
     }
   };
 
+  // 浏览视图自身是「左栏 + 内容」的两栏布局，需贴面板边缘（不加内边距）；
+  // 检索结果 / 管理视图是常规单栏内容，按系统面板内边距 12/16 排布。
+  const isFlush = !searching && hits.length === 0 && wikiView === "browse";
+
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      {/* 白底直角面板（标题由页签承担，面板内不重复标题） */}
       <Card
-        title="Wiki 页面"
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{ body: { flex: 1, minHeight: 0, overflow: "auto", paddingTop: 12 } }}
-        extra={
-          <Space>
-            <Input.Search
-              placeholder="全文检索知识库"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onSearch={doSearch}
-              loading={searching}
-              style={{ width: 280 }}
-            />
-            <Segmented
-              value={wikiView}
-              onChange={(v) => setWikiView(v as "browse" | "manage")}
-              options={[
-                { value: "browse", label: "浏览" },
-                { value: "manage", label: "管理" },
-              ]}
-            />
-          </Space>
-        }
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: 0,
+          },
+        }}
       >
-        {searching ? (
-          <Spin />
-        ) : hits.length > 0 ? (
-          <List
-            dataSource={hits}
-            renderItem={(hit) => (
-              <List.Item>
-                <List.Item.Meta
-                  title={<Typography.Text type="secondary">score {hit.score.toFixed(4)}</Typography.Text>}
-                  description={hit.content.slice(0, 200)}
-                />
-              </List.Item>
-            )}
+        {/* 工具条：全文检索 + 浏览/管理切换（对齐系统「面板顶部工具条」样式） */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "12px 16px",
+            borderBottom: "1px solid var(--color-gray-2, #eff4f9)",
+            flexShrink: 0,
+          }}
+        >
+          <Input.Search
+            placeholder="全文检索知识库"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onSearch={doSearch}
+            loading={searching}
+            style={{ width: 280 }}
           />
-        ) : wikiView === "manage" ? (
-          <WikiManagePanel kbId={kbId} />
-        ) : (
-          <WikiBrowseView
-            kbId={kbId}
-            focusSlug={focusSlug}
-            onTreeChanged={() => undefined}
-            onOpenGraph={onOpenGraph}
+          <span style={{ flex: 1 }} />
+          <Segmented
+            value={wikiView}
+            onChange={(v) => setWikiView(v as "browse" | "manage")}
+            options={[
+              { value: "browse", label: "浏览" },
+              { value: "manage", label: "管理" },
+            ]}
           />
-        )}
+        </div>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflow: isFlush ? "hidden" : "auto",
+            padding: isFlush ? 0 : "12px 16px 0",
+          }}
+        >
+          {searching ? (
+            <Spin />
+          ) : hits.length > 0 ? (
+            <List
+              dataSource={hits}
+              renderItem={(hit) => (
+                <List.Item>
+                  <List.Item.Meta
+                    title={<Typography.Text type="secondary">score {hit.score.toFixed(4)}</Typography.Text>}
+                    description={hit.content.slice(0, 200)}
+                  />
+                </List.Item>
+              )}
+            />
+          ) : wikiView === "manage" ? (
+            <WikiManagePanel kbId={kbId} />
+          ) : (
+            <WikiBrowseView
+              kbId={kbId}
+              focusSlug={focusSlug}
+              onTreeChanged={() => undefined}
+              onOpenGraph={onOpenGraph}
+            />
+          )}
+        </div>
       </Card>
     </div>
   );

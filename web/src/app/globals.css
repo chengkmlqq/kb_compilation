@@ -122,6 +122,30 @@ body {
   overflow-y: auto !important;
 }
 
+/* 数据查询 · 左侧表树：节点超长省略号截断，不换行（全名悬停可见：rc-tree 已给节点写入 title 属性）。
+   antd 的 .ant-tree-treenode 是 flex、内容包裹层默认 min-width:auto 会被内容撑开导致换行，
+   故节点铺满整行宽度 + 内容层 flex:1/min-width:0；内容层再设为 flex 行，
+   让标题占满「图标之外的剩余宽度」并在其中做省略号截断（避免图标被挤到标题下一行）。 */
+.datagrid-page .ant-tree-treenode {
+  width: 100%;
+}
+.datagrid-page .ant-tree-node-content-wrapper {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.datagrid-page .ant-tree-iconEle {
+  flex: none;
+}
+.datagrid-page .ant-tree-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* Tabs：无底部白边（页面 Tab 直接贴在卡片头下方） */
 .ant-tabs .ant-tabs-nav {
   margin-bottom: 0;
@@ -355,7 +379,7 @@ body {
   width: 280px;
   min-width: 240px;
   flex-shrink: 0;
-  border-right: 1px solid #dcdcdc;
+  border-right: 1px solid var(--color-gray-3, #e3e9ef);
   background: #fff;
   display: flex;
   flex-direction: column;
@@ -1167,8 +1191,8 @@ body {
    Wiki 关系图谱 —— 像素级对齐 WeKnora WikiBrowser.vue view='graph'
    （.wiki-graph / .wiki-graph-canvas / .wiki-graph-search-container /
     .wiki-graph-legend / .wiki-graph-drawer）。
-   布局形态：全屏画布 + 浮层覆盖（搜索左上、图例左下），
-   而非 Card 包装（Card 会压缩画布高度、工具栏占位）。
+   布局形态：面板内全屏画布 + 浮层覆盖（搜索左上、图例左下）；
+   外层由 WikiGraphView 用「无标题白底直角 Card」包裹，与其余详情页签面板统一。
    ═══════════════════════════════════════════════════════════════ */
 
 .kb-wikigraph {
@@ -1176,7 +1200,7 @@ body {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: #fafafa;
+  background: #fff;
 }
 
 /* 全屏画布 */
@@ -1190,8 +1214,7 @@ body {
   width: 100%;
   height: 100%;
   display: block;
-  background: #fafafa;
-  border-radius: 6px;
+  background: #fff;
   cursor: grab;
 }
 
@@ -1401,6 +1424,8 @@ body {
   flex-direction: column;
   min-height: 0;
   position: relative;
+  /* 右侧内容区按系统面板内边距 12/16 排布（左侧目录树保持贴面板边缘） */
+  padding: 12px 16px 0;
 }
 
 /* ── 文档目录侧边栏（左侧树）── */

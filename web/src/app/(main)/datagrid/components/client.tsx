@@ -68,11 +68,11 @@ export default function DataGridClient() {
       >
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <PanelGroup orientation="vertical" className="h-full min-h-0 w-full">
-            <Panel defaultSize={consoleShow ? 65 : 100} minSize={20}>
+            <Panel defaultSize={consoleShow ? "65%" : "100%"} minSize="20%">
               <div ref={hWrapRef} className="h-full w-full min-w-0">
                 <PanelGroup key={`h-${key}-${leftSize}`} orientation="horizontal" className="h-full w-full min-w-0">
                   {/* 左：图标竖条 + Database 树 */}
-                  <Panel defaultSize={leftSize} minSize={12}>
+                  <Panel defaultSize={`${leftSize}%`} minSize="12%">
                     <div className="flex h-full w-full overflow-hidden bg-[#fafafa]">
                       <div
                         className="flex w-[34px] shrink-0 flex-col items-center justify-between border-r border-[#e8eaed] bg-[#fafafa] py-3"
@@ -118,7 +118,7 @@ export default function DataGridClient() {
                   </PanelResizeHandle>
 
                   {/* 右：工作台 */}
-                  <Panel defaultSize={80} minSize={30}>
+                  <Panel defaultSize="80%" minSize="30%">
                     <div className="flex h-full w-full flex-col overflow-hidden bg-white">
                       <DbTool />
                     </div>
@@ -134,7 +134,7 @@ export default function DataGridClient() {
                     <div className="h-[4px] w-9 rounded-full bg-[#d9d9d9] transition-colors group-hover:bg-[#bae0ff]" />
                   </div>
                 </PanelResizeHandle>
-                <Panel defaultSize={35} minSize={15}>
+                <Panel defaultSize="35%" minSize="15%">
                   <div className="flex h-full flex-col overflow-hidden bg-white">
                     <DbConsole />
                   </div>

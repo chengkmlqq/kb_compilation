@@ -11,7 +11,7 @@
  *   修复结果在任务监控页查看。
  * - 全部修复：对当前不健康的库逐个投递修复任务。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { App, Button, Card, Col, Row, Space, Statistic, Table, Tag } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -56,9 +56,8 @@ export default function ChunkVerifyPage() {
     }
   }, [message]);
 
-  useEffect(() => {
-    void loadAll();
-  }, [loadAll]);
+  // 进入页面不自动核对（核对会真实扫描 MySQL 切片 ↔ 向量库，开销较大），
+  // 由用户点击「全部核对」触发。
 
   // 单库核对（点击行内按钮，只刷新该行）
   const handleVerifyOne = async (kbId: string) => {
