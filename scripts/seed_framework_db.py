@@ -206,6 +206,40 @@ ORCH_STEP_DEFINES: list[tuple[str, str, str, str, str, list[dict], int]] = [
       {"name": "source_ref", "label": "来源引用(kid|文件名)", "type": "input", "required": False,
        "placeholder": "{{kid}}|制度.docx"},
       {"name": "dry_run", "label": "仅统计不写库", "type": "boolean", "required": False}], 8),
+    # ── 细粒度基础原子（2026-10-12）：编排自己实现 wiki 构建逻辑。
+    #    进程内执行（引擎 BaseStep），结果经 bindings 流转；原子 = 纯基础能力。
+    ("kb_read_doc", "读文档切片", "知识构建", "ReadOutlined",
+     "从 doc_chunk 读指定文档的全部切片内容，写入运行变量（默认 chunks），供下游 LLM/脚本使用",
+     [{"name": "document_id", "label": "文档 ID", "type": "input", "required": True,
+       "placeholder": "{{document_id}}"},
+      {"name": "output_var", "label": "输出变量名", "type": "input", "required": False,
+       "placeholder": "chunks（默认）"},
+      {"name": "max_chunks", "label": "最多读 N 块(0=全部)", "type": "input", "required": False,
+       "placeholder": "0"}], 9),
+    ("kb_llm_chat", "LLM对话", "知识构建", "RobotOutlined",
+     "一次通用 LLM 调用（OpenAI 兼容，走平台 chat 配置），prompt 支持 {{ }} 模板引用前序变量，输出写入变量",
+     [{"name": "prompt", "label": "Prompt(支持{{}}模板)", "type": "textarea", "required": True,
+       "placeholder": "请总结：{{chunks}}", "props": {"rows": 4}},
+      {"name": "output_var", "label": "输出变量名", "type": "input", "required": False,
+       "placeholder": "llm_out（默认）"},
+      {"name": "model", "label": "模型(留空=平台默认)", "type": "input", "required": False,
+       "placeholder": "deepseek-v4-pro"},
+      {"name": "temperature", "label": "温度", "type": "input", "required": False, "placeholder": "0.2"},
+      {"name": "max_tokens", "label": "max_tokens", "type": "input", "required": False, "placeholder": "2048"},
+      {"name": "json_mode", "label": "强制解析JSON输出", "type": "boolean", "required": False}], 10),
+    ("wiki_upsert_page", "写Wiki页(单页)", "知识构建", "UploadOutlined",
+     "幂等写入一张 wiki 页（slug 冲突则更新并恢复 active），支持 {{ }} 模板字段",
+     [{"name": "kb_id", "label": "知识库ID", "type": "input", "required": True, "placeholder": "{{kb_id}}"},
+      {"name": "title", "label": "标题", "type": "input", "required": True, "placeholder": "{{title}}"},
+      {"name": "content", "label": "内容(Markdown)", "type": "textarea", "required": True,
+       "placeholder": "# {{title}}\\n\\n{{summary}}", "props": {"rows": 6}},
+      {"name": "slug", "label": "Slug", "type": "input", "required": True, "placeholder": "doc-{{doc_hash}}"},
+      {"name": "page_type", "label": "页面类型", "type": "input", "required": False, "placeholder": "summary"},
+      {"name": "output_var", "label": "输出变量名", "type": "input", "required": False,
+       "placeholder": "page_slug（默认）"}], 11),
+    ("wiki_rebuild_links", "重建Wiki互链", "知识构建", "LinkOutlined",
+     "重建一个知识库全部 wiki 页之间的互链（无输入输出，纯动作）",
+     [{"name": "kb_id", "label": "知识库ID", "type": "input", "required": True, "placeholder": "{{kb_id}}"}], 12),
 ]
 
 
@@ -455,9 +489,163 @@ def main() -> None:
         d_created, d_updated = _seed_step_defines(db)
         print(f"[7/7] 编排组件定义种子 OK: 内置 {len(ORCH_STEP_DEFINES)} 个 [新建 {d_created} / 修正 {d_updated}]")
 
+        # 8) 种子编排模板：wiki 构建（细粒度基础原子组合，2026-10-12）
+        #    幂等：按 tape_name 查存在则 skip。编排自己实现 wiki 构建逻辑
+        #    （读切片→LLM→解析→摘要页→实体页循环→互链），节点全是可复用基础原子。
+        _seed_wiki_build_tape(db)
+
         print("\nDONE — 登录: " + SEED_USER_ID + "/" + SEED_PASSWORD + "（编排内置组件 " + str(len(ORCH_STEP_DEFINES)) + " 个）")
     finally:
         db.close()
+
+
+# 种子编排模板：wiki 构建（细粒度基础原子组合）
+def _seed_wiki_build_tape(db) -> None:
+    """幂等建「wiki 构建」编排模板（存在则 skip；内容变更用 seed 重跑覆盖字段不删步骤）。"""
+    from api.models.orchestration import Tape
+
+    TAPE_NAME = "wiki构建-基础原子版"
+    existing = db.execute(select(Tape).where(Tape.tape_name == TAPE_NAME)).scalars().first()
+    if existing:
+        print(f"[8/8] 种子编排「{TAPE_NAME}」已存在 (skip)")
+        return
+
+    tape = Tape(
+        id=uuid.uuid4().hex[:32],
+        tape_name=TAPE_NAME,
+        tape_label="文档 wiki 构建（基础原子编排，替代 KbSkillWikiBuildTask 黑盒）",
+        tape_descr=(
+            "用细粒度基础原子组装 wiki 构建流程：kb_read_doc 读切片 → script 拼 prompt → "
+            "kb_llm_chat 生成摘要/实体 → script 解析 → wiki_upsert_page 写摘要页 → "
+            "loop 逐实体写页 → wiki_rebuild_links 重建互链。"
+            "输入 bindings：kb_id / document_id。"
+        ),
+        tape_type="general",
+        status="draft",
+        nodes=list(WIKI_BUILD_TAPE["nodes"]),
+        edges=list(WIKI_BUILD_TAPE["edges"]),
+        exec_params=WIKI_BUILD_TAPE.get("exec_params") or {},
+        create_user=None,
+    )
+    db.add(tape)
+    db.commit()
+
+    # 同步 kb_tape_step（复用服务层设计保存逻辑，保证 pre/next 映射一致）
+    from api.services.orchestration import save_tape_design
+
+    save_tape_design(db, tape.id, WIKI_BUILD_TAPE["nodes"], WIKI_BUILD_TAPE["edges"], WIKI_BUILD_TAPE.get("exec_params") or {})
+    print(f"[8/8] 种子编排「{TAPE_NAME}」OK: id={tape.id[:12]}… 节点 {len(WIKI_BUILD_TAPE['nodes'])} 边 {len(WIKI_BUILD_TAPE['edges'])}（status=draft，页面点执行即可用）")
+
+
+# ── wiki 构建编排（React Flow nodes/edges 结构，种子/测试共用）──────────
+WIKI_BUILD_TAPE: dict = {
+    "exec_params": {"kb_id": "", "document_id": ""},
+    "nodes": [
+        {
+            "id": "n1", "type": "custom",
+            "data": {"label": "读文档切片", "stepInst": "kb_read_doc",
+                     "config": {"document_id": "{{document_id}}", "output_var": "chunks"}},
+        },
+        {
+            "id": "n2", "type": "custom",
+            "data": {"label": "拼摘要Prompt", "stepInst": "script",
+                     "config": {"code": (
+                         "import hashlib\n"
+                         "chunks = bindings.get('chunks') or []\n"
+                         "parts = []\n"
+                         "for c in chunks:\n"
+                         "    text = (c.get('content') or '').strip()\n"
+                         "    if len(text) > 2000:\n"
+                         "        text = text[:2000] + '…'\n"
+                         "    if text:\n"
+                         "        parts.append('[块%s]\\n%s' % (c.get('seq') or 0, text))\n"
+                         "content = '\\n\\n'.join(parts)[:30000]\n"
+                         "bindings['prompt'] = (\n"
+                         "    '你是知识库 wiki 构建专家。根据下面的文档内容，生成结构化 wiki 页面数据。'\n"
+                         "    '必须返回**纯 JSON**（不要 markdown 代码块），格式：\\n'\n"
+                         "    '{\"title\": \"文档标题（中文，去除序号前缀）\", \"summary\": \"文档摘要（200-400 字）\", '\n"
+                         "    '\"entities\": [{\"name\": \"实体/概念名\", \"definition\": \"一句话定义（30-80 字）\"}]}\\n'\n"
+                         "    'entities 数量 3-8 个。只输出 JSON，不要任何额外文字。\\n\\n文档内容：\\n' + content\n"
+                         ")"
+                     )}},
+        },
+        {
+            "id": "n3", "type": "custom",
+            "data": {"label": "LLM生成JSON", "stepInst": "kb_llm_chat",
+                     "config": {"prompt": "{{prompt}}", "output_var": "llm_out",
+                                "json_mode": True, "temperature": "0.2", "max_tokens": "4096"}},
+        },
+        {
+            "id": "n4", "type": "custom",
+            "data": {"label": "解析JSON", "stepInst": "script",
+                     "config": {"code": (
+                         "import hashlib\n"
+                         "d = bindings.get('llm_out') or {}\n"
+                         "if not isinstance(d, dict):\n"
+                         "    raise ValueError('LLM 输出不是对象')\n"
+                         "title = str(d.get('title') or '文档').strip()\n"
+                         "summary = str(d.get('summary') or '').strip()\n"
+                         "entities = [e for e in (d.get('entities') or []) if str(e.get('name') or '').strip()][:6]\n"
+                         "kid = str(bindings.get('kb_id') or '')\n"
+                         "doc_id = str(bindings.get('document_id') or '')\n"
+                         "bindings['title'] = title\n"
+                         "bindings['summary'] = summary\n"
+                         "bindings['entities'] = entities\n"
+                         "bindings['summary_slug'] = 'doc-' + hashlib.md5(doc_id.encode()).hexdigest()[:10]\n"
+                         "bindings['entity_slugs'] = {\n"
+                         "    str(e.get('name') or '').strip(): 'entity-' + hashlib.md5(str(e.get('name') or '').encode()).hexdigest()[:8]\n"
+                         "    for e in entities\n"
+                         "}"
+                     )}},
+        },
+        {
+            "id": "n5", "type": "custom",
+            "data": {"label": "写摘要页", "stepInst": "wiki_upsert_page",
+                     "config": {"kb_id": "{{kb_id}}", "title": "{{title}}", "content": "{{summary}}",
+                                "slug": "{{summary_slug}}", "page_type": "summary"}},
+        },
+        {
+            "id": "n6", "type": "custom",
+            "data": {"label": "逐实体循环", "stepInst": "loop",
+                     "config": {"item_var": "entity", "collection": "bindings.get('entities') or []"}},
+        },
+        {
+            "id": "n7", "type": "custom",
+            "data": {"label": "准备实体页变量", "stepInst": "script",
+                     "config": {"code": (
+                         "ent = bindings.get('entity') or {}\n"
+                         "name = str(ent.get('name') or '').strip()\n"
+                         "definition = str(ent.get('definition') or '').strip()\n"
+                         "slugs = bindings.get('entity_slugs') or {}\n"
+                         "bindings['page_title'] = name\n"
+                         "bindings['page_slug'] = str(slugs.get(name) or '')\n"
+                         "bindings['page_content'] = ('# %s\\n\\n%s' % (name, definition)) if name else ''\n"
+                     )}},
+        },
+        {
+            "id": "n8", "type": "custom",
+            "data": {"label": "写实体页", "stepInst": "wiki_upsert_page",
+                     "config": {"kb_id": "{{kb_id}}", "title": "{{page_title}}",
+                                "content": "{{page_content}}", "slug": "{{page_slug}}",
+                                "page_type": "entity", "skip_empty": True}},
+        },
+        {
+            "id": "n9", "type": "custom",
+            "data": {"label": "重建互链", "stepInst": "wiki_rebuild_links",
+                     "config": {"kb_id": "{{kb_id}}"}},
+        },
+    ],
+    "edges": [
+        {"source": "n1", "target": "n2"},
+        {"source": "n2", "target": "n3"},
+        {"source": "n3", "target": "n4"},
+        {"source": "n4", "target": "n5"},
+        {"source": "n5", "target": "n6"},
+        {"source": "n6", "target": "n7"},
+        {"source": "n7", "target": "n8"},
+        {"source": "n8", "target": "n9"},
+    ],
+}
 
 
 if __name__ == "__main__":

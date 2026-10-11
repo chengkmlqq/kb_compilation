@@ -316,6 +316,178 @@ class WikiPublishStep(_AtomScriptStep):
     ATOM_NAME = "wiki_publish"
 
 
+class KbReadDocStep(BaseStep):
+    """'kb_read_doc' 读文档切片（2026-10-12 基础原子）。
+
+    细粒度基础能力：从 doc_chunk 读指定文档的全部切片内容，写入运行变量
+    （默认 chunks），供下游 script/llm 原子使用。config:
+      - document_id: 文档 ID（支持 {{ }} 模板）
+      - output_var: 输出变量名（默认 chunks）
+      - max_chunks: 最多读 N 块（默认 0=全部）
+    """
+
+    def handle(self, context: TapeRuntimeContext) -> StepResponse:
+        from api.db import get_sessionmaker
+        from api.models.knowledge import DocChunk
+
+        document_id = str(context.render(self.config.get("document_id") or "")).strip()
+        if not document_id:
+            return StepResponse.fail("kb_read_doc 缺 document_id")
+        output_var = str(self.config.get("output_var") or "chunks")
+        max_chunks = int(self.config.get("max_chunks") or 0)
+
+        db = get_sessionmaker()()
+        try:
+            q = (
+                db.query(DocChunk)
+                .filter(DocChunk.document_id == document_id)
+                .order_by(DocChunk.seq)
+            )
+            if max_chunks > 0:
+                q = q.limit(max_chunks)
+            rows = q.all()
+            chunks = [
+                {"seq": c.seq, "content": c.content or ""}
+                for c in rows
+            ]
+        finally:
+            db.close()
+        if not chunks:
+            return StepResponse.fail(f"文档无切片: {document_id}")
+        context.bindings[output_var] = chunks
+        return StepResponse.success({f"set:{output_var}": chunks, "count": len(chunks)})
+
+
+class KbLlmChatStep(BaseStep):
+    """'kb_llm_chat' 通用 LLM 对话（2026-10-12 基础原子）。
+
+    细粒度基础能力：一次 LLM 调用（OpenAI 兼容，走平台 chat 配置），
+    prompt 支持 {{ }} 模板引用前面节点的变量；输出写入变量。config:
+      - prompt: 用户消息（支持 {{ }} 模板）
+      - output_var: 输出变量名（默认 llm_out）
+      - model: 覆盖模型（留空=平台默认）
+      - temperature: 采样温度（默认 0.2）
+      - max_tokens: 上限（默认 2048）
+      - json_mode: 强制解析 JSON 输出为 dict/list（默认 False）
+    """
+
+    def handle(self, context: TapeRuntimeContext) -> StepResponse:
+        from api.services.chat import ChatClient, load_chat_config
+
+        prompt = str(context.render(self.config.get("prompt") or "")).strip()
+        if not prompt:
+            return StepResponse.fail("kb_llm_chat 缺 prompt")
+        output_var = str(self.config.get("output_var") or "llm_out")
+        model = str(self.config.get("model") or "").strip() or None
+        temperature = float(self.config.get("temperature") or 0.2)
+        max_tokens = int(self.config.get("max_tokens") or 2048)
+        json_mode = bool(self.config.get("json_mode"))
+
+        try:
+            cfg = load_chat_config(None, model_id=model)
+            client = ChatClient(cfg)
+            from api.services.chat import ChatMessage
+
+            raw = client.chat(
+                [ChatMessage(role="user", content=prompt)],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        except Exception as e:  # noqa: BLE001
+            return StepResponse.fail(f"LLM 调用失败: {e}")
+        if json_mode:
+            import json as _json
+
+            text = (raw or "").strip()
+            if text.startswith("```"):
+                text = text.strip("`")
+                if text.startswith("json"):
+                    text = text[4:].strip()
+            try:
+                parsed = _json.loads(text)
+            except Exception as e:  # noqa: BLE001
+                return StepResponse.fail(f"LLM 输出非 JSON: {e}，原文: {raw[:200]}")
+            context.bindings[output_var] = parsed
+            return StepResponse.success({f"set:{output_var}": parsed})
+        context.bindings[output_var] = raw or ""
+        return StepResponse.success({f"set:{output_var}": raw or ""})
+
+
+class WikiUpsertPageStep(BaseStep):
+    """'wiki_upsert_page' 单页幂等写入（2026-10-12 基础原子）。
+
+    细粒度基础能力：写一张 wiki 页（slug 冲突则更新）。config:
+      - kb_id / title / content / slug: 页面字段（支持 {{ }} 模板）
+      - page_type: 页面类型（默认 summary）
+      - skip_empty: title/slug 为空时跳过（成功记账）而不失败——loop 空集合
+        退化成执行一轮时（引擎语义）循环体拿不到变量，用它兜底
+      - output_var: 输出变量名（默认 page_slug）
+    """
+
+    def handle(self, context: TapeRuntimeContext) -> StepResponse:
+        from api.db import get_sessionmaker
+        from api.services.kb_admin import wiki_create_page, wiki_update_page
+
+        def _v(key: str) -> str:
+            return str(context.render(self.config.get(key) or "")).strip()
+
+        kb_id = _v("kb_id")
+        title = _v("title")
+        content = _v("content")
+        slug = _v("slug")
+        page_type = str(self.config.get("page_type") or "summary")
+        skip_empty = bool(self.config.get("skip_empty"))
+        output_var = str(self.config.get("output_var") or "page_slug")
+        if not kb_id:
+            return StepResponse.fail(f"wiki_upsert_page 缺 kb_id（got {kb_id}）")
+        if (not title or not slug) and skip_empty:
+            return StepResponse.success({"skipped": True, "reason": "title/slug 为空（skip_empty）"})
+        if not title or not slug:
+            return StepResponse.fail(f"wiki_upsert_page 缺 title/slug（got title={title}, slug={slug}）")
+
+        db = get_sessionmaker()()
+        try:
+            try:
+                wiki_create_page(
+                    db, kb_id,
+                    {"title": title, "content": content, "slug": slug, "page_type": page_type},
+                    user_id="system",
+                )
+                created = True
+            except ValueError as e:
+                if "已存在" in str(e) or "exists" in str(e).lower():
+                    wiki_update_page(db, kb_id, slug, {"title": title, "content": content, "status": "active"})
+                    created = False
+                else:
+                    raise
+        finally:
+            db.close()
+        context.bindings[output_var] = slug
+        return StepResponse.success({f"set:{output_var}": slug, "slug": slug, "created": created})
+
+
+class WikiRebuildLinksStep(BaseStep):
+    """'wiki_rebuild_links' 重建互链（2026-10-12 基础原子）。
+
+    细粒度基础能力：重建一个知识库全部 wiki 页之间的互链。config:
+      - kb_id: 知识库 ID（支持 {{ }} 模板）
+    """
+
+    def handle(self, context: TapeRuntimeContext) -> StepResponse:
+        from api.db import get_sessionmaker
+        from api.services.kb_admin import wiki_rebuild_links
+
+        kb_id = str(context.render(self.config.get("kb_id") or "")).strip()
+        if not kb_id:
+            return StepResponse.fail("wiki_rebuild_links 缺 kb_id")
+        db = get_sessionmaker()()
+        try:
+            wiki_rebuild_links(db, kb_id)
+        finally:
+            db.close()
+        return StepResponse.success({"kb_id": kb_id, "links_rebuilt": True})
+
+
 class IfStep(BaseStep):
     """'if' 条件分支：condition 为真走 next_step_ids，为假走 fail 后继。"""
 
@@ -358,6 +530,12 @@ ATOM_MAP: Dict[str, Callable[[str, str, str, Optional[dict]], BaseStep]] = {
     # 业务原子（2026-10-09）：wiki 构建拆出的通用组件，实现在 orch_atoms.py
     "llm_extract": LlmExtractStep,
     "wiki_publish": WikiPublishStep,
+    # 细粒度基础原子（2026-10-12）：编排自己实现 wiki 构建逻辑（进程内执行，
+    # 结果经 bindings 流转）。原子 = 纯基础能力，流程由编排图表达。
+    "kb_read_doc": KbReadDocStep,
+    "kb_llm_chat": KbLlmChatStep,
+    "wiki_upsert_page": WikiUpsertPageStep,
+    "wiki_rebuild_links": WikiRebuildLinksStep,
 }
 
 
