@@ -74,8 +74,10 @@ SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 #   - 改名：知识库管理→知识库、智能体配置→智能体、数据源→数据源管理
 # 2026-10-12 调整（方案G）：
 #   - 智能问答排到知识库前；数据源管理/联网搜索移入配置管理；元数据采集移入运维监控
+# 2026-10-12 调整（方案H）：编排管理/编排模板 从顶级移入「调试工具」目录
+#   （与编排组件相邻，编排域聚合在调试工具下）
 # 结构：Header 顶级 = 知识库管理/文件管理/切片核对/智能问答/智能体配置/联网搜索/
-#         数据源/数据查询/编排管理/编排组件/运维监控(目录)/配置管理(目录)/系统管理。
+#         数据源/数据查询/运维监控(目录)/配置管理(目录)/系统管理。
 #   - route 留空 = 纯目录分组（只展开不跳转）
 #   - route 有值且带子级 = 分组兼页面（点击自身跳该路由）
 KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
@@ -83,10 +85,8 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("chat", "chat", "智能问答", "/chat", None, "CommentOutlined", 1),
     ("kbs", "kbs", "知识库", "/kbs", None, "AppstoreOutlined", 2),
     ("agents", "agents", "智能体", "/agents", None, "RobotOutlined", 3),
-    ("orch_tapes", "orch_tapes", "编排管理", "/orchestrations", None, "ApartmentOutlined", 4),
-    ("orch_templates", "orch_templates", "编排模板", "/tape-templates", None, "AppstoreOutlined", 5),
     # ---- 运维监控（顶级目录：任务监控/任务管理/主机监控/操作日志/切片核对/元数据采集） ----
-    ("grp_ops", "grp_ops", "运维监控", None, None, "FundOutlined", 6),
+    ("grp_ops", "grp_ops", "运维监控", None, None, "FundOutlined", 4),
     ("jobs", "jobs", "任务监控", "/jobs", "grp_ops", "DashboardOutlined", 1),
     ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_ops", "ScheduleOutlined", 2),
     ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_ops", "CloudServerOutlined", 3),
@@ -102,7 +102,7 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
         6,
     ),
     # ---- 配置管理（顶级目录：数据源管理/模型/MCP/技能/参数/联网搜索） ----
-    ("grp_config", "grp_config", "配置管理", None, None, "ToolOutlined", 7),
+    ("grp_config", "grp_config", "配置管理", None, None, "ToolOutlined", 5),
     ("datasources", "datasources", "数据源管理", "/datasources", "grp_config", "DatabaseOutlined", 1),
     ("models", "models", "模型配置", "/models", "grp_config", "CloudServerOutlined", 2),
     ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "grp_config", "ApiOutlined", 3),
@@ -110,13 +110,13 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("sys_dims", "sys_dims", "参数管理", "/system/dims", "grp_config", "DatabaseOutlined", 5),
     ("d83aee0d1d8a4fce8a6bd121b6efc5fa", "websearch", "联网搜索", "/websearch", "grp_config", "SearchOutlined", 6),
     # ---- 系统管理（分组兼页面，顶级：点击自身跳 /system → 重定向到 /system/users） ----
-    ("system", "system", "系统管理", "/system", None, "SettingOutlined", 8),
+    ("system", "system", "系统管理", "/system", None, "SettingOutlined", 6),
     ("sys_users", "sys_users", "用户管理", "/system/users", "system", "TeamOutlined", 1),
     ("sys_roles", "sys_roles", "角色管理", "/system/roles", "system", "SafetyOutlined", 2),
     ("sys_teams", "sys_teams", "团队管理", "/system/teams", "system", "PartitionOutlined", 3),
     ("sys_menus", "sys_menus", "菜单管理", "/system/menus", "system", "MenuOutlined", 4),
-    # ---- 调试工具（顶级目录：引擎与存储/本体Schema/编排组件/文件管理/数据查询） ----
-    ("grp_debug", "grp_debug", "调试工具", None, None, "BugOutlined", 9),
+    # ---- 调试工具（顶级目录：引擎与存储/本体Schema/编排管理/编排模板/编排组件/文件管理/数据查询） ----
+    ("grp_debug", "grp_debug", "调试工具", None, None, "BugOutlined", 7),
     ("sys_engines", "sys_engines", "引擎与存储", "/system/engines", "grp_debug", "CloudServerOutlined", 1),
     (
         "ont_schemas",
@@ -127,9 +127,12 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
         "ApartmentOutlined",
         2,
     ),
-    ("orch_defines", "orch_defines", "编排组件", "/orchestrations/steps", "grp_debug", "BlockOutlined", 3),
-    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_debug", "FileOutlined", 4),
-    ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_debug", "TableOutlined", 5),
+    # 方案H：编排管理/编排模板 从顶级移入调试工具（与编排组件相邻）
+    ("orch_tapes", "orch_tapes", "编排管理", "/orchestrations", "grp_debug", "ApartmentOutlined", 3),
+    ("orch_templates", "orch_templates", "编排模板", "/tape-templates", "grp_debug", "AppstoreOutlined", 4),
+    ("orch_defines", "orch_defines", "编排组件", "/orchestrations/steps", "grp_debug", "BlockOutlined", 5),
+    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_debug", "FileOutlined", 6),
+    ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_debug", "TableOutlined", 7),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，
