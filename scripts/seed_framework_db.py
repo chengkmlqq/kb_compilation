@@ -34,6 +34,7 @@ from api.lib.crypto import aes_encrypt
 from api.models.framework import (
     Base,
     CronTask,
+    Dim,
     Menu,
     RoleMenuRela,
     Team,
@@ -138,6 +139,24 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，
 # 保证管理员/普通用户登录后侧栏都是完整菜单。
 SEED_GRANT_ROLES = (SEED_ROLE, "plat-mgr", "normal_user")
+
+# 系统参数种子（modo_dim, dim_group=SYSTEM_CONFIG）
+# 2026-10-12: 参数表清理后仅保留代码确实读取的 9 个参数，此处固化进种子——
+#   全新部署跑本脚本即建好这 9 行，已部署环境已有则跳过（不覆盖已有配置值）。
+# dim_value 默认留空 = 走容器 env / 代码默认（与线上实际生效路径一致）；
+# 敏感字段（*_API_KEY）不写默认值。seq 与已部署库一致，保证「参数管理」列表顺序稳定。
+# (dim_code, dim_value, dim_desc, seq)
+SYSTEM_CONFIG_DIMS: list[tuple[str, str, str, int]] = [
+    ("EMBEDDING_BASE_URL", "", "向量模型端点（OpenAI 兼容 /v1；留空=容器 env EMBEDDING_BASE_URL）", 0),
+    ("EMBEDDING_API_KEY", "", "向量模型密钥（留空=容器 env EMBEDDING_API_KEY）", 1),
+    ("EMBEDDING_MODEL", "", "向量模型，如 BAAI/bge-m3（留空=容器 env EMBEDDING_MODEL）", 2),
+    ("EMBEDDING_DIM", "", "向量维度，如 1024（留空=容器 env EMBEDDING_DIM）", 3),
+    ("ai_chat_api_endpoint", "", "问答模型端点（OpenAI 兼容 /v1；留空=容器 env AI_CHAT_API_ENDPOINT）", 4),
+    ("ai_chat_api_key", "", "问答模型密钥（留空=容器 env AI_CHAT_API_KEY）", 5),
+    ("ai_chat_model", "", "问答模型名，如 deepseek-v4-pro（留空=容器 env AI_CHAT_MODEL）", 6),
+    ("metadata_full_collection_enabled", "true", "元数据全量采集开关（true/false）", 9),
+    ("dify_chat_api_endpoint", "", "兼容端点回退（问答/向量的兜底项；留空=不使用）", 37),
+]
 
 
 # 编排内置组件定义（迁移自 data-synth algorithm/steps；step_cfg = dynamic-form FormField[]）
@@ -366,6 +385,39 @@ def _seed_step_defines(db) -> tuple[int, int]:
     return created, updated
 
 
+def _seed_system_config_dims(db) -> int:
+    """幂等播种系统参数（modo_dim, dim_group=SYSTEM_CONFIG）。
+
+    仅当 (dim_group, dim_code) 不存在时插入；已存在则完全不动
+    （不覆盖已配置值，也不修正漂移）。返回新建行数。
+    """
+    created = 0
+    for code, value, desc, seq in SYSTEM_CONFIG_DIMS:
+        existing = db.execute(
+            select(Dim).where(
+                Dim.dim_group == "SYSTEM_CONFIG",
+                Dim.dim_code == code,
+            )
+        ).scalars().first()
+        if existing:
+            continue
+        db.add(
+            Dim(
+                id=uuid.uuid4().hex[:32],
+                dim_code=code,
+                dim_group="SYSTEM_CONFIG",
+                dim_value=value,
+                dim_desc=desc,
+                parent_dim_code=None,
+                seq=seq,
+                state="1",
+            )
+        )
+        created += 1
+    db.commit()
+    return created
+
+
 def _reset_menus(db) -> dict:
     """删除全部菜单与角色-菜单授权，恢复种子前状态（--reset-menus 用）。
 
@@ -591,6 +643,13 @@ def main(argv: list[str] | None = None) -> None:
             )
             db.commit()
             print("[6/6] 日志清理 cron 种子 OK: 每天 03:00, 保留 90 天")
+
+        # 6b) 系统参数种子（modo_dim SYSTEM_CONFIG，幂等：缺失才建，不覆盖已有值）
+        dims_created = _seed_system_config_dims(db)
+        print(
+            f"[6b/7] 系统参数种子 OK: {len(SYSTEM_CONFIG_DIMS)} 个 "
+            f"[新建 {dims_created} / 已有跳过 {len(SYSTEM_CONFIG_DIMS) - dims_created}]"
+        )
 
         # 7) 编排内置组件定义（幂等 upsert）
         d_created, d_updated = _seed_step_defines(db)
