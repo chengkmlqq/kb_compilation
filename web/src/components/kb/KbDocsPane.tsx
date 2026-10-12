@@ -57,11 +57,13 @@ import {
   apiDownloadDocument,
   apiGenerateDocSummary,
   apiGetKb,
+  apiListBuildEngines,
   apiListDocFolders,
   apiListDocuments,
   apiMoveDocumentsToFolder,
   apiReparseDocument,
   apiUploadDocumentWithProgress,
+  BuildEngineItem,
   DocFolderItem,
   DocItem,
   KbItem,
@@ -89,6 +91,8 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   const [paneActive, setPaneActive] = useState(true);
 
   const [kb, setKb] = useState<KbItem | null>(null);
+  // 构建服务下拉数据源（服务编排中已发布的编排）
+  const [buildEngines, setBuildEngines] = useState<BuildEngineItem[]>([]);
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
   const [docPage, setDocPage] = useState(1);
@@ -132,6 +136,12 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
     const res = await apiGetKb(kbId).catch(() => null);
     if (res?.success && res.data) setKb(res.data);
   }, [kbId]);
+
+  // 构建服务下拉（上传/选表可重选覆盖 KB 默认；加载失败不阻断）
+  const loadBuildEngines = useCallback(async () => {
+    const res = await apiListBuildEngines().catch(() => null);
+    if (res?.success && res.data) setBuildEngines(res.data.items || []);
+  }, []);
 
   // 文档目录树（多级）：全量轻量元数据，前端按 parent_id 构建缩进树
   const loadDocFolders = useCallback(async () => {
@@ -215,6 +225,10 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   useEffect(() => {
     void loadKb();
   }, [loadKb]);
+
+  useEffect(() => {
+    void loadBuildEngines();
+  }, [loadBuildEngines]);
 
   const load = useCallback(async () => {
     setDocsLoading(true);
@@ -483,7 +497,13 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
   };
 
   // 带进度上报的知识库文档上传（本地上传 & 全局拖放复用；经 uploadTask 事件驱动任务浮层）
-  const startDocUpload = (file: File, taskId?: string, folderId = docFolderId, processConfig?: UploadProcessConfig | null) => {
+  const startDocUpload = (
+    file: File,
+    taskId?: string,
+    folderId = docFolderId,
+    processConfig?: UploadProcessConfig | null,
+    buildTapeId?: string,
+  ) => {
     const id = taskId ?? makeUploadTaskId("kb-upload");
     emitUploadTask({
       id,
@@ -503,6 +523,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
           },
           folderId || undefined,
           processConfig as Record<string, unknown> | null | undefined,
+          buildTapeId,
         );
         if (res.success) {
           emitUploadTask({ id, name: file.name, size: file.size, status: "success", progress: 100 });
@@ -885,19 +906,21 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
       {/* 右侧内容区结束: 上面的 </div> 闭合 kb-doc-area, 这句闭合右侧 flex wrapper */}
       </Card>
 
-      {/* 上传确认弹窗（对齐 WeKnora：文件列表 + 处理配置，确认后逐文件上传） */}
+      {/* 上传确认弹窗（对齐 WeKnora：文件列表 + 处理配置 + 构建服务，确认后逐文件上传） */}
       <UploadConfirmDialog
         open={uploadConfirmOpen}
         initialFiles={pendingUploadFiles}
+        buildEngines={buildEngines}
+        defaultBuildTapeId={kb?.build_tape_id || ""}
         onCancel={() => {
           setUploadConfirmOpen(false);
           setPendingUploadFiles([]);
         }}
-        onConfirm={({ files: filesToUpload, processConfig }) => {
+        onConfirm={({ files: filesToUpload, processConfig, buildEngine }) => {
           setUploadConfirmOpen(false);
           setPendingUploadFiles([]);
           for (const f of filesToUpload) {
-            startDocUpload(f, undefined, docFolderId, processConfig);
+            startDocUpload(f, undefined, docFolderId, processConfig, buildEngine);
           }
         }}
       />
@@ -906,6 +929,8 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
       <SelectTableDialog
         open={selectTableOpen}
         kbId={kbId}
+        buildEngines={buildEngines}
+        defaultBuildTapeId={kb?.build_tape_id || ""}
         onCancel={() => setSelectTableOpen(false)}
         onBound={() => {
           setSelectTableOpen(false);

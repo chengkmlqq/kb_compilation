@@ -17,6 +17,7 @@ import {
   apiAddKbTable,
   apiDatagridDatasources,
   apiListTableCandidates,
+  BuildEngineItem,
   DatagridDsItem,
   TableCandidateItem,
 } from "@/lib/api";
@@ -26,6 +27,10 @@ const { Text } = Typography;
 interface Props {
   open: boolean;
   kbId: string;
+  /** 可选的构建服务（服务编排中已发布的编排） */
+  buildEngines?: BuildEngineItem[];
+  /** 知识库默认构建引擎（kb_datasource.build_tape_id），用于展示「跟随默认」状态 */
+  defaultBuildTapeId?: string;
   onCancel: () => void;
   onBound: () => void;
 }
@@ -36,7 +41,14 @@ function formatRows(n?: number | null): string {
   return `${n} 行`;
 }
 
-export default function SelectTableDialog({ open, kbId, onCancel, onBound }: Props) {
+export default function SelectTableDialog({
+  open,
+  kbId,
+  buildEngines = [],
+  defaultBuildTapeId,
+  onCancel,
+  onBound,
+}: Props) {
   const { message } = App.useApp();
   const [dsList, setDsList] = useState<DatagridDsItem[]>([]);
   const [dsName, setDsName] = useState<string>("");
@@ -46,6 +58,7 @@ export default function SelectTableDialog({ open, kbId, onCancel, onBound }: Pro
   // 多选：勾选行的 id 集合（2026-10-12 由单选对象改为多选，支持批量绑表）
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [binding, setBinding] = useState(false);
+  const [buildEngine, setBuildEngine] = useState<string>("");
 
   // 打开时加载数据源列表
   useEffect(() => {
@@ -53,6 +66,7 @@ export default function SelectTableDialog({ open, kbId, onCancel, onBound }: Pro
     setDsName("");
     setSelectedIds(new Set());
     setKeyword("");
+    setBuildEngine(""); // 每次打开重置为「跟随知识库默认」
     void apiDatagridDatasources()
       .then((res) => {
         if (res.success && res.data) setDsList(res.data);
@@ -107,6 +121,7 @@ export default function SelectTableDialog({ open, kbId, onCancel, onBound }: Pro
           schema: t.schema || undefined,
           table_name: t.table_name,
           sample_size: 500,
+          build_tape_id: buildEngine || undefined,
         });
         if (res.success && res.data) okCount += 1;
         else failed.push(t.table_name);
@@ -156,6 +171,35 @@ export default function SelectTableDialog({ open, kbId, onCancel, onBound }: Pro
       }
       destroyOnClose
     >
+      {/* 构建服务（文档级重选，覆盖 KB 默认） */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "2px 0 12px",
+          borderBottom: "1px solid #f0f0f0",
+          marginBottom: 12,
+        }}
+      >
+        <span style={{ fontSize: 13, color: "rgba(0,0,0,.85)", fontWeight: 600, flexShrink: 0 }}>
+          构建服务
+        </span>
+        <Select
+          style={{ width: 320 }}
+          allowClear
+          placeholder={defaultBuildTapeId ? "跟随知识库默认（已选）" : "跟随知识库默认（未设置）"}
+          value={buildEngine || undefined}
+          onChange={setBuildEngine}
+          options={buildEngines.map((t) => ({
+            label: t.tape_label || t.tape_name,
+            value: t.id,
+          }))}
+        />
+        <span style={{ fontSize: 12, color: "rgba(0,0,0,.45)" }}>
+          选择后绑定表构建 Wiki 走该编排，留空跟随知识库默认
+        </span>
+      </div>
       <div style={{ display: "flex", gap: 16, minHeight: 320 }}>
         {/* 左：数据源选择 */}
         <div style={{ width: 240, flexShrink: 0 }}>

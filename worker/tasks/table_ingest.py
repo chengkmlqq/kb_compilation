@@ -317,7 +317,29 @@ def process_table_ingest(job_id: str, task_params: dict) -> dict:
         except Exception as exc:  # noqa: BLE001
             logger.warning("table summary skipped doc=%s: %s", document_id, exc)
 
-        # 5. wiki 只建表主页（page_type=table）
+        # 5. wiki 构建：优先走构建引擎编排（文档级覆盖 > KB 默认，未绑定时回落内置表主页构建）
+        #    编排链与文件上传一致：kb_tape_run(env=prod) + KbOrchestrationRunTask。
+        _build_engine_triggered = False
+        try:
+            from worker.tasks.doc_process import (
+                _enqueue_build_engine_task,
+                _kb_pipeline_flags,
+            )
+
+            _tape_id = (_kb_pipeline_flags(kb_id, document_id) or {}).get("tape") or ""
+            if _tape_id:
+                _build_engine_triggered = _enqueue_build_engine_task(
+                    kb_id, document_id, _tape_id, parent_job_id=job_id
+                )
+                logger.info(
+                    "table build engine doc=%s tape=%s triggered=%s",
+                    document_id, _tape_id, _build_engine_triggered,
+                )
+        except Exception as exc:  # noqa: BLE001 — 触发失败不使表摄取失败
+            logger.warning("table build engine trigger skipped doc=%s: %s", document_id, exc)
+
+        # 5.1 未绑定构建引擎（或触发失败）：wiki 只建表主页（page_type=table）
+        if not _build_engine_triggered:
             try:
                 # 表注释 / 列注释来自元数据采集（真实信息；缺失不阻塞）
                 table_comment = ""
@@ -356,6 +378,7 @@ def process_table_ingest(job_id: str, task_params: dict) -> dict:
             "chunks": written,
             "rows": len(rows),
             "parse_state": "READY",
+            "build_engine_triggered": _build_engine_triggered,
         }
     finally:
         db.close()

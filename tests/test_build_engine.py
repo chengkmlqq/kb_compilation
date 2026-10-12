@@ -214,3 +214,45 @@ def test_kb_pipeline_flags_reads_tape(chain_env) -> None:
     flags = dp._kb_pipeline_flags("kb-1")
     assert flags["tape"] == "tape-1"
     db.close()
+
+
+def test_kb_pipeline_flags_doc_overrides_kb(chain_env) -> None:
+    """文档级构建引擎优先于 KB 默认（上传/选表重选覆盖）。"""
+    Session, _sent = chain_env
+    db = Session()
+    from api.models.knowledge import KbDatasource, KbDocument
+
+    _seed_tape(db, "tape-kb", status="effective")
+    _seed_tape(db, "tape-doc", status="effective")
+    db.add(KbDatasource(id="kb-1", name="制度库", build_tape_id="tape-kb"))
+    db.add(KbDocument(id="doc-1", kb_id="kb-1", file_name="a.pdf", build_tape_id="tape-doc"))
+    db.add(KbDocument(id="doc-2", kb_id="kb-1", file_name="b.pdf"))
+    db.commit()
+
+    # 文档覆盖：tape-doc 生效
+    assert dp._kb_pipeline_flags("kb-1", "doc-1")["tape"] == "tape-doc"
+    # 未覆盖：回落 KB 默认
+    assert dp._kb_pipeline_flags("kb-1", "doc-2")["tape"] == "tape-kb"
+    db.close()
+
+
+def test_upload_accepts_doc_build_engine(be_client, be_db, monkeypatch) -> None:
+    """上传端点带 build_tape_id → kb_document.build_tape_id 落库。"""
+    _seed_tape(be_db, "tape-up", "上传引擎", status="effective")
+
+    from api.services.kb_admin import create_kb
+
+    # personal 归属 + admin 属主，绕开 system 库的管理员角色门槛（测试库无角色数据）
+    kb = create_kb(be_db, "构建库", scope="personal", owner_user_id="admin", created_by="admin", build_tape_id=None)
+    import io
+
+    r = be_client.post(
+        f"/api/v1/kbs/{kb.id}/documents/upload",
+        data={"build_tape_id": "tape-up"},
+        files={"file": ("d.pdf", io.BytesIO(b"%PDF-1.4 test"), "application/pdf")},
+    )
+    assert r.status_code == 200, r.text
+    from api.models.knowledge import KbDocument
+
+    doc = be_db.execute(select(KbDocument).where(KbDocument.kb_id == kb.id)).scalars().first()
+    assert doc is not None and doc.build_tape_id == "tape-up"

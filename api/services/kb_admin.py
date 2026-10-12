@@ -570,6 +570,7 @@ def list_documents(
             "file_name": d.file_name,
             "file_ext": d.file_ext,
             "file_size": d.file_size,
+            "build_tape_id": getattr(d, "build_tape_id", None) or "",
             "parse_state": d.parse_state,
             "parse_error": d.parse_error,
             "chunk_count": d.chunk_count,
@@ -605,7 +606,10 @@ def create_document(
     ds_table_schema: str | None = None,
     ds_table_name: str | None = None,
     row_count: int | None = None,
+    build_tape_id: str | None = None,  # 文档级构建引擎（空 = 用 KB 默认）
 ) -> KbDocument:
+    if build_tape_id:
+        _validate_build_tape_ref(db, build_tape_id)
     doc = KbDocument(
         id=_uuid(),
         kb_id=kb_id,
@@ -620,6 +624,7 @@ def create_document(
         ds_table_schema=ds_table_schema,
         ds_table_name=ds_table_name,
         row_count=row_count,
+        build_tape_id=build_tape_id,
         parse_state="PENDING",
         chunk_count=0,
         created_by=created_by,

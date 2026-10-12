@@ -86,11 +86,13 @@ CREATE TABLE IF NOT EXISTS kb_document (
     summary      TEXT,           -- 2026-10-07: LLM 文档摘要(summary_model_id 绑定)
     summary_status VARCHAR(16) NOT NULL DEFAULT '',
     summary_error  TEXT,
+    build_tape_id VARCHAR(64),   -- 2026-10-12 文档级构建引擎覆盖（上传/选表时可重选）
     created_by   VARCHAR(64),
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_kb_document_kb ON kb_document (kb_id);
+CREATE INDEX idx_kb_document_build_tape ON kb_document (build_tape_id);
 -- FK via ALTER TABLE (NOT inline REFERENCES — MySQL parses but ignores
 -- column-level REFERENCES; ALTER TABLE ADD CONSTRAINT works on MySQL and PG
 -- and reuses the index created above).

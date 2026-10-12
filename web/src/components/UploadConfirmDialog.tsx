@@ -18,7 +18,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { App, Button, Col, Form, InputNumber, Modal, Row, Select, Space, Switch, Typography } from "antd";
 import { DeleteOutlined, FileTextOutlined, LinkOutlined, PlusOutlined } from "@ant-design/icons";
-import { apiListParserEngines, ParserEngineItem } from "@/lib/api";
+import { apiListParserEngines, BuildEngineItem, ParserEngineItem } from "@/lib/api";
 
 const { Text } = Typography;
 
@@ -30,12 +30,18 @@ export interface UploadProcessConfig {
 export interface UploadConfirmResult {
   files: File[];
   processConfig: UploadProcessConfig | null;
+  /** 文档级构建引擎（重选覆盖 KB 默认；空 = 跟随知识库默认） */
+  buildEngine?: string;
 }
 
 interface Props {
   open: boolean;
   initialFiles: File[];
   urls?: string[];
+  /** 可选的构建服务（服务编排中已发布的编排） */
+  buildEngines?: BuildEngineItem[];
+  /** 知识库默认构建引擎（kb_datasource.build_tape_id），用于展示「跟随默认」状态 */
+  defaultBuildTapeId?: string;
   onCancel: () => void;
   onConfirm: (result: UploadConfirmResult) => void;
 }
@@ -79,7 +85,15 @@ function getFileIcon(name: string): React.ReactNode {
   return <FileTextOutlined style={{ color: ext === "pdf" ? "#f5222d" : "#1677ff" }} />;
 }
 
-export default function UploadConfirmDialog({ open, initialFiles, urls = [], onCancel, onConfirm }: Props) {
+export default function UploadConfirmDialog({
+  open,
+  initialFiles,
+  urls = [],
+  buildEngines = [],
+  defaultBuildTapeId,
+  onCancel,
+  onConfirm,
+}: Props) {
   const { message } = App.useApp();
   const [files, setFiles] = useState<File[]>([]);
   const [activeSection, setActiveSection] = useState<string>("overview");
@@ -87,12 +101,14 @@ export default function UploadConfirmDialog({ open, initialFiles, urls = [], onC
   const [rules, setRules] = useState<Array<{ file_types: string[]; engine: string }>>([]);
   const [engines, setEngines] = useState<ParserEngineItem[]>([]);
   const [showParser, setShowParser] = useState(false);
+  const [buildEngine, setBuildEngine] = useState<string>("");
 
   // 打开时同步外部文件并拉引擎列表
   useEffect(() => {
     if (!open) return;
     setFiles([...initialFiles]);
     setActiveSection("overview");
+    setBuildEngine(""); // 每次打开重置为「跟随知识库默认」
     void apiListParserEngines()
       .then((res) => {
         if (res.success && Array.isArray(res.data)) setEngines(res.data);
@@ -165,7 +181,11 @@ export default function UploadConfirmDialog({ open, initialFiles, urls = [], onC
       pc.chunking = { ...chunking };
       if (rules.length > 0) pc.parser_engine_rules = rules;
     }
-    onConfirm({ files: [...files], processConfig: hasChunkingDiff ? pc : null });
+    onConfirm({
+      files: [...files],
+      processConfig: hasChunkingDiff ? pc : null,
+      buildEngine: buildEngine || undefined,
+    });
   };
 
   const confirmBtn = (
@@ -194,6 +214,35 @@ export default function UploadConfirmDialog({ open, initialFiles, urls = [], onC
       }
       destroyOnClose
     >
+      {/* 构建服务（文档级重选，覆盖 KB 默认） */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "2px 0 10px",
+          borderBottom: "1px solid #f0f0f0",
+          marginBottom: 12,
+        }}
+      >
+        <span style={{ fontSize: 13, color: "rgba(0,0,0,.85)", fontWeight: 600, flexShrink: 0 }}>
+          构建服务
+        </span>
+        <Select
+          style={{ width: 320 }}
+          allowClear
+          placeholder={defaultBuildTapeId ? "跟随知识库默认（已选）" : "跟随知识库默认（未设置）"}
+          value={buildEngine || undefined}
+          onChange={setBuildEngine}
+          options={buildEngines.map((t) => ({
+            label: t.tape_label || t.tape_name,
+            value: t.id,
+          }))}
+        />
+        <span style={{ fontSize: 12, color: "rgba(0,0,0,.45)" }}>
+          选择后本文档构建 Wiki 走该编排，留空跟随知识库默认
+        </span>
+      </div>
       <div style={{ display: "flex", gap: 16, minHeight: 380 }}>
         {/* 左侧文件列表（对齐 files-panel） */}
         <div

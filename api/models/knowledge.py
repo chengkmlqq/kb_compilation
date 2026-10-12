@@ -138,6 +138,9 @@ class KbDocument(Base):
     folder_id: Mapped[str] = mapped_column(String(64), default="", index=True)
     # 知识源类型：file=文件（默认，现状）/ table=数据源维度表（表→wiki，2026-10-10）
     source_type: Mapped[str] = mapped_column(String(16), default="file", index=True)
+    # 文档级构建引擎（2026-10-12）：上传/选表时可重选构建服务覆盖知识库默认
+    # （kb_datasource.build_tape_id）。空 = 用 KB 默认构建引擎。
+    build_tape_id: Mapped[str | None] = mapped_column(String(64), index=True)
     # table 源专属：数据源分类名（dsName）/ 表所在 schema / 表名 / 采集快照行数
     ds_source_name: Mapped[str | None] = mapped_column(String(64))
     ds_table_schema: Mapped[str | None] = mapped_column(String(128))

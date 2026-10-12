@@ -263,6 +263,8 @@ export interface DocItem {
   parse_state: string;
   parse_error?: string | null;
   chunk_count: number;
+  /** 文档级构建引擎（上传/选表重选覆盖 KB 默认；空 = 用 KB 默认） */
+  build_tape_id?: string | null;
   summary?: string | null;
   summary_status?: string | null;
   summary_error?: string | null;
@@ -373,6 +375,7 @@ export function apiUploadDocumentWithProgress(
   onProgress?: (percent: number) => void,
   folderId?: string,
   processConfig?: Record<string, unknown> | null,
+  buildTapeId?: string,
 ) {
   const form = new FormData();
   form.append("file", file);
@@ -382,6 +385,8 @@ export function apiUploadDocumentWithProgress(
   if (processConfig && Object.keys(processConfig).length > 0) {
     form.append("process_config", JSON.stringify(processConfig));
   }
+  // 文档级构建引擎（上传确认弹窗重选；留空 = 用 KB 默认构建引擎）
+  if (buildTapeId) form.append("build_tape_id", buildTapeId);
   return requestUpload<DocItem>(`/api/v1/kbs/${kbId}/documents/upload`, form, onProgress);
 }
 
@@ -3542,7 +3547,13 @@ export function apiListTableCandidates(kbId: string, dsName?: string, keyword?: 
 
 export function apiAddKbTable(
   kbId: string,
-  payload: { ds_name: string; schema?: string | null; table_name: string; sample_size?: number },
+  payload: {
+    ds_name: string;
+    schema?: string | null;
+    table_name: string;
+    sample_size?: number;
+    build_tape_id?: string | null;
+  },
 ) {
   return request<DocItem>(`/api/v1/kbs/${kbId}/tables`, { method: "POST", body: JSON.stringify(payload) });
 }

@@ -168,7 +168,7 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
     # 开关与技能绑定从 kb_datasource 读（_kb_pipeline_flags），读取失败回退历史默认。
     # 成功标志：ingest_document 返回 parse_state == "READY"（无 success 键）。
     if result.get("parse_state") == "READY" and kb_id:
-        flags = _kb_pipeline_flags(kb_id)
+        flags = _kb_pipeline_flags(kb_id, document_id)
         tape_id = flags.get("tape") or ""
         if tape_id:
             try:
@@ -493,19 +493,27 @@ def _enqueue_graph_build_task(kb_id: str, document_id: str, parent_job_id: str |
     return True
 
 
-def _kb_pipeline_flags(kb_id: str) -> dict:
+def _kb_pipeline_flags(kb_id: str, document_id: str = "") -> dict:
     """读 KB 的 wiki_enabled/graph_enabled 开关、wiki 技能绑定与构建引擎绑定。
 
+    构建引擎（tape）优先级：文档级 kb_document.build_tape_id（上传/选表时
+    重选）> 知识库级 kb_datasource.build_tape_id（创建库时选定的默认）。
     读取失败时返回兼容默认（wiki=True 自动建、graph=False），保证存量行为不回退。
     """
     fallback = {"wiki": True, "graph": False, "skill": "", "tape": ""}
     try:
         from api.db import get_sessionmaker as _gsm
-        from api.models.knowledge import KbDatasource
+        from api.models.knowledge import KbDatasource, KbDocument
 
         db = _gsm()()
         try:
             kb = db.execute(select(KbDatasource).where(KbDatasource.id == kb_id)).scalars().first()
+            doc_tape = ""
+            if document_id:
+                doc_row = db.execute(
+                    select(KbDocument.build_tape_id).where(KbDocument.id == document_id)
+                ).scalars().first()
+                doc_tape = doc_row or ""
         finally:
             db.close()
         if not kb:
@@ -516,8 +524,8 @@ def _kb_pipeline_flags(kb_id: str) -> dict:
             "wiki": pipeline_enabled(kb, "wiki_enabled") and not custom_wiki_generation(kb),
             "graph": pipeline_enabled(kb, "graph_enabled"),
             "skill": wiki_skill_name(kb),
-            # 构建引擎：服务编排中已发布的编排程序（上传后按该编排构建 wiki）
-            "tape": getattr(kb, "build_tape_id", None) or "",
+            # 构建引擎：文档级覆盖优先，其次服务编排中已发布的编排程序
+            "tape": doc_tape or getattr(kb, "build_tape_id", None) or "",
         }
     except Exception:  # noqa: BLE001
         logger.warning("failed to read kb pipeline flags for kb=%s", kb_id, exc_info=True)

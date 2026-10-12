@@ -543,6 +543,7 @@ async def upload_document(
     file_name: str = Query(default="", max_length=255),
     folder_id: str = Query(default="", max_length=64),
     process_config: str = Form(default=""),
+    build_tape_id: str = Form(default=""),
 
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
@@ -558,6 +559,8 @@ async def upload_document(
     KnowledgeProcessOverrides），JSON 字符串，形如
     {"chunking": {"chunk_size": 500, ...}, "parser_engine_rules": [...]}，
     存 kb_document.process_config，解析时覆盖 KB 级默认配置。
+    build_tape_id: 可选的**文档级构建引擎**（服务编排中已发布的编排），
+    覆盖知识库默认构建引擎；留空 = 用 KB 默认。
     """
     _kb_manage(kb_id, caller, db)
 
@@ -630,6 +633,7 @@ async def upload_document(
         storage_path=storage_path,
         folder_id=folder_id,
         process_config=pc_json or None,
+        build_tape_id=build_tape_id.strip() or None,
 
     )
 
@@ -1584,6 +1588,7 @@ class AddTableRequest(BaseModel):
     schema: str | None = None
     table_name: str
     sample_size: int | None = None  # 默认 500
+    build_tape_id: str | None = None  # 文档级构建引擎（2026-10-12，空 = 用 KB 默认）
 
 
 @router.get("/{kb_id}/tables/candidates")
@@ -1673,6 +1678,7 @@ def add_table_document(
         ds_table_schema=body.schema or "",
         ds_table_name=body.table_name,
         row_count=None,
+        build_tape_id=body.build_tape_id,
     )
     db.commit()
 
