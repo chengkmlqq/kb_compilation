@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import types
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -194,6 +195,9 @@ def test_enqueue_build_engine_task_writes_job(chain_env) -> None:
         "document_id": "doc-1",
         "doc_id": "doc-1",  # 兼容存量编排的 doc_id 变量名
         "x_next_identity": "",  # 未传身份时为空串（上传链会带操作者 cookie）
+        "limit": "",  # context 组装兜底：编排 def/print 可能引用的变量
+        "only_codes": "",
+        "build_summary": "",
         "language": "中文",
     }
     db.close()
@@ -262,3 +266,35 @@ def test_upload_accepts_doc_build_engine(be_client, be_db, monkeypatch) -> None:
 
     doc = be_db.execute(select(KbDocument).where(KbDocument.kb_id == kb.id)).scalars().first()
     assert doc is not None and doc.build_tape_id == "tape-up"
+
+
+def test_metric_wiki_lib_build_page() -> None:
+    """任务库 metric_wiki_lib.build_page 产出与 wr.create_wiki_pages_batch 契约一致。"""
+    import sys
+
+    lib_dir = str(Path(__file__).resolve().parents[1] / "worker" / "builtin_engine" / "scripts")
+    if lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    import metric_wiki_lib as mwl  # noqa: PLC0415
+
+    page = mwl.build_page(
+        {
+            "指标编码": "A001",
+            "指标名称": "月营收",
+            "指标分类-I": "财务",
+            "指标分类-II": "利润",
+            "业务口径": "主营业务收入合计",
+            "技术口径": "日汇聚总",
+        },
+        "SELECT SUM(amt) FROM t",
+        "folder-2",
+        {"依赖表": ["dim_a", "fact_b"], "说明": "按日聚合并去重"},
+    )
+    assert page["title"] == "月营收"
+    assert page["slug"] == "A001_月营收"
+    assert page["page_type"] == "entity"
+    assert page["folder_id"] == "folder-2"
+    assert "## 业务口径" in page["content"] and "主营业务收入合计" in page["content"]
+    assert "```sql" in page["content"] and "SELECT SUM(amt) FROM t" in page["content"]
+    assert "依赖表" in page["content"]
+    assert page["summary"]

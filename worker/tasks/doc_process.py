@@ -237,6 +237,11 @@ def _enqueue_build_engine_task(
                 # 需要登录身份（def 读 x_next_identity）；上传操作者的 cookie
                 # 在此注入，过期时 weknora_rpc 自动用服务账号重登兜底
                 "x_next_identity": cookie,
+                # 2026-10-12 context 组装补全：编排 def/print 可能引用的变量
+                # 显式给默认，避免模板渲染出字面量或脚本取到 None
+                "limit": "",
+                "only_codes": "",
+                "build_summary": "",
                 "language": "中文",
             },
             env="prod",  # 上传链数据在 prod，编排节点须同环境读写（2026-10-12）

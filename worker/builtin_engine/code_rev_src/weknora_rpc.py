@@ -1438,9 +1438,15 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
     def _llm_raw(req, sock_to):
         """单次 HTTP 请求：返回响应体文本。socket 超时只作用于单次 recv 等待——
         服务器慢流持续发字节时 recv 永不超时（2026-10-07 实测 8h+ hang）。
+        异常（HTTPError/URLError）经队列回传主线程——否则 daemon 线程里
+        丢的 429/403 只打印 traceback，主线程 q.get 白等 660s（2026-10-12
+        指标编排第 5 行 LLM 429 实证卡 10 分钟）。
         """
-        with urllib.request.urlopen(req, timeout=sock_to) as r:
-            return r.read().decode()
+        try:
+            with urllib.request.urlopen(req, timeout=sock_to) as r:
+                q.put(("ok", r.read().decode()))
+        except BaseException as exc:  # noqa: BLE001 — 回传后由主线程既有分支处理
+            q.put(("err", exc))
 
     for attempt in range(retries):
         # 总时长守卫：daemon 线程执行 + Queue.get(总超时)——无论 read 怎么挂起
@@ -1448,11 +1454,11 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
         # 孤儿无害回收。__import__ 幂等，避免重复 import。
         q = __import__("queue").Queue()
         wt = __import__("threading").Thread(
-            target=lambda: q.put(_llm_raw(req, timeout)), daemon=True)
+            target=lambda: _llm_raw(req, timeout), daemon=True)
         wt.start()
         total_to = min(timeout + 60, 900)
         try:
-            raw = q.get(timeout=total_to)
+            _kind, raw = q.get(timeout=total_to)
         except __import__("queue").Empty:
             # 慢流不重试（2026-10-07）：660s 已是极慢——重试只再等一个 660s，
             # 且会把批级 pool.shutdown(wait=True) 拖入 55min 级阻塞被 watchdog 杀。
@@ -1462,6 +1468,9 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
             print(f"  ⛔ LLM 总时长超限 {total_to}s（慢流挂起），抛错")
             raise TimeoutError(f"LLM 响应超过 {total_to}s 未完整")
         try:
+            if _kind == "err":
+                # 线程内 HTTP/网络异常回传：走本 except 分支（429/403 退避重试）
+                raise raw
             resp = json.loads(raw)
             choice = resp['choices'][0]
             content = (choice['message'].get('content') or '').strip()
