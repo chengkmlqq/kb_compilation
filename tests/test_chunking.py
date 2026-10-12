@@ -14,10 +14,12 @@ from api.services.chunking import (
     validate_chunks,
 )
 from api.services.chunking_orch import (
+    HARD_MAX_CHARS,
     split,
     split_parent_child,
     split_with_diagnostics,
 )
+from api.services.chunking_tiers import split_heuristic
 
 
 # --------------------------------------------------------------------------- #
@@ -325,3 +327,43 @@ def test_diagnostics_payload_has_contract_fields():
     assert p["total_chars"] == len(MD_DOC)
     assert "md_heading_total" in p
     assert "detected_langs" in p
+
+
+# --------------------------------------------------------------------------- #
+# oversized-chunk regressions (2026-10-12, xlsx 「全量指标」1406 failure)
+# --------------------------------------------------------------------------- #
+
+
+def test_heuristic_preamble_is_hard_capped():
+    """heuristic tier：首个结构标记前的超长 preamble 必须硬切（曾直append 出
+    78687 字符块，INSERT doc_chunk 撞 TEXT 64KB → Data too long 1406）。"""
+    # 前置 preamble：一整段无空行、无句号的超长表格头（逗号分隔）
+    preamble = "A: 指标编码,B: 指标名称,C: 指标SQL," + "D: 指标说明," * 3000
+    # 后跟 heuristic 结构标记行（数字序号）使 profile 判定为 structured
+    body = "\n".join(f"{i}. 第{i}条 说明" for i in range(1, 40))
+    text = preamble + "\n" + body
+    cfg = ChunkConfig(chunk_size=800, chunk_overlap=80)
+    profile = profile_document(text)
+    out = split_heuristic(text, cfg, profile)
+    assert out, "heuristic 应有产出"
+    max_len = max(len(c.content) for c in out)
+    # 800 + overlap(80) 是正常上界；修复后不再出现万字符级块
+    assert max_len <= cfg.chunk_size + cfg.chunk_overlap + 50, f"仍有超大块: {max_len}"
+
+
+def test_split_enforces_hard_max_chars():
+    """split 出口兜底：任何 tier 漏切的超长块都必须被硬上限切分。"""
+    huge = "X" * (HARD_MAX_CHARS * 3 + 100)
+    out = split(huge, ChunkConfig(chunk_size=800))
+    assert out
+    for c in out:
+        assert len(c.content) <= HARD_MAX_CHARS, f"超硬上限: {len(c.content)}"
+    # seq 连续（落库顺序稳定）
+    assert [c.seq for c in out] == list(range(len(out)))
+
+
+def test_split_with_diagnostics_enforces_hard_max_chars():
+    huge = "指标编码,指标名称,指标SQL," * 5000  # 约 6 万字符
+    out, _diag = split_with_diagnostics(huge, ChunkConfig())
+    assert out
+    assert max(len(c.content) for c in out) <= HARD_MAX_CHARS

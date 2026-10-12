@@ -24,6 +24,30 @@ from api.services.chunking import (
 )
 from api.services.chunking_tiers import run_tier
 
+# 单块硬上限（2026-10-12 防超长块入库失败，defense in depth）：
+# doc_chunk.content 是 TEXT（MySQL 上限 65535 字节），中文最多 ~4 字节/字符
+# → 单块安全上限取 8000 字符（最坏 32KB 字节，远低于 64KB；对 embedding
+# 输入也安全）。任何 tier 合并/预处理路径（如 heuristic preamble）漏切的
+# 超长块都在 split 出口被硬切兜底。
+HARD_MAX_CHARS = 8000
+
+
+def _enforce_hard_cap(chunks: list[Chunk]) -> list[Chunk]:
+    """Split any chunk above HARD_MAX_CHARS into fixed-size pieces (in place)."""
+    from api.services.chunking_tiers import _hard_chars
+
+    out: list[Chunk] = []
+    for c in chunks:
+        text = c.content or ""
+        if len(text) <= HARD_MAX_CHARS:
+            out.append(c)
+            continue
+        pieces = _hard_chars(text, HARD_MAX_CHARS)
+        for p in pieces:
+            if p.strip():
+                out.append(Chunk(seq=len(out), content=p, parent_seq=c.parent_seq))
+    return out
+
 
 def ensure_defaults(cfg: ChunkConfig) -> ChunkConfig:
     """Fill unset fields with the standard defaults (mutates and returns)."""
@@ -72,7 +96,7 @@ def split(text: str, cfg: ChunkConfig) -> list[Chunk]:
     profile = profile_document(text)
     chain = resolve_chain(cfg, profile)
     out, _ = _run_chain(text, cfg, chain, profile)
-    return out
+    return _enforce_hard_cap(out)
 
 
 def split_with_diagnostics(text: str, cfg: ChunkConfig) -> tuple[list[Chunk], Diagnostics]:
@@ -84,7 +108,7 @@ def split_with_diagnostics(text: str, cfg: ChunkConfig) -> tuple[list[Chunk], Di
     chain = resolve_chain(cfg, profile)
     out, diag = _run_chain(text, cfg, chain, profile)
     diag.profile = profile.to_dict()
-    return out, diag
+    return _enforce_hard_cap(out), diag
 
 
 def split_parent_child(

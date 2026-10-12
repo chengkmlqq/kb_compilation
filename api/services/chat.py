@@ -566,6 +566,9 @@ def answer_question(
     if not tools:
         yield {"type": "stage", "stage": "generation", "status": "running", "title": "正在生成回答…"}
         yield from _stream_once(client, messages)
+        # 2026-10-12: 此前只发 running 从不发 done，前端步骤树的
+        # 「正在生成回答…」永远转 loading（收到回复后仍显示）。结束补发 done。
+        yield {"type": "stage", "stage": "generation", "status": "done", "title": "回答完成"}
         return
     max_rounds = max(1, int(max_tool_iterations or 1))
     for round_idx in range(max_rounds):
@@ -634,6 +637,9 @@ def answer_question(
                 )
             )
         yield {"type": "tool", "tool_calls": tool_calls, "results": results, "durations": durations}
+    # 2026-10-12: 工具循环结束（无更多工具调用或达最大轮次）补发 done，
+    # 否则前端步骤树「正在生成回答…」永远转 loading。
+    yield {"type": "stage", "stage": "generation", "status": "done", "title": "回答完成"}
 
 
 def _stream_once(client: ChatClient, messages: list[ChatMessage]) -> Iterator[dict]:

@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS doc_chunk (
     kb_id       VARCHAR(64) NOT NULL,
     document_id VARCHAR(64) NOT NULL,
     seq         INTEGER NOT NULL DEFAULT 0,
-    content     TEXT NOT NULL,
+    content     MEDIUMTEXT NOT NULL,  -- 2026-10-12 扩列：TEXT 64KB 字节上限曾被 xlsx 超长块撞破（1406），MEDIUMTEXT 16MB 兜底
     meta        JSON NOT NULL,  -- page/section metadata for citation (app-supplied)
     enabled     BOOLEAN NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP

@@ -240,7 +240,13 @@ def split_heuristic(text: str, cfg: ChunkConfig, profile: DocProfile) -> list[Ch
     if bounds[0] > 0:
         pre = text[: bounds[0]].strip()
         if pre:
-            pieces.append(pre)
+            # 2026-10-12 修复：preamble 未做长度兜底——xlsx 表格文本首个结构
+            # 标记前可能是一整段超长表头（实测 78687 字符），直接 append 会
+            # 产出超大块，超过 doc_chunk.content(TEXT 64KB) 容量导致入库失败。
+            if len(pre) <= size:
+                pieces.append(pre)
+            else:
+                pieces.extend(_hard_wrap(pre, size, cfg.chunk_overlap))
     for i, start in enumerate(bounds):
         end = bounds[i + 1] if i + 1 < len(bounds) else len(text)
         seg = text[start:end].strip()
