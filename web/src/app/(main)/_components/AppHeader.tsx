@@ -5,10 +5,13 @@ import { App, Avatar, Dropdown, Input, Layout, Menu, Modal, Form, Select, Tag, T
 import {
   CaretDownOutlined,
   LogoutOutlined,
+  MoonOutlined,
   SearchOutlined,
+  SunOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
+import { useThemeMode } from "@/lib/theme-mode";
 import {
   apiGetDefaultTeam,
   apiMe,
@@ -293,8 +296,31 @@ export const AppHeader: React.FC = () => {
           中间留弹性空位，右侧为用户区 */}
       <div style={{ flex: 1 }} />
 
-      {/* Right: 用户下拉（2026-10-06 通知管理功能已删除） */}
+      {/* Right: 主题切换（2026-10-12 深色模式）+ 用户下拉（2026-10-06 通知管理功能已删除） */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, height: 45 }}>
+        {(() => {
+          const { mode, toggle } = useThemeMode();
+          return (
+            <span
+              onClick={toggle}
+              title={mode === "dark" ? "切换为浅色模式" : "切换为深色模式"}
+              aria-label={mode === "dark" ? "切换为浅色模式" : "切换为深色模式"}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 28,
+                height: 28,
+                borderRadius: 6,
+                cursor: "pointer",
+                color: mode === "dark" ? "#f5b800" : "#79879c",
+                fontSize: 14,
+              }}
+            >
+              {mode === "dark" ? <SunOutlined /> : <MoonOutlined />}
+            </span>
+          );
+        })()}
         <Dropdown
           open={dropdownOpen}
           onOpenChange={(open) => {

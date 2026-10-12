@@ -71,6 +71,8 @@ function parseAttrs(attrString: string): Record<string, string> {
 }
 
 const KB_TAG_RE = /<kb\b([^>]*?)\s*\/?>/gi;
+/** Web 引用标签（2026-10-12 对齐 WeKnora web 引用胶囊）：`<web url="..." title="..."/>` */
+const WEB_TAG_RE = /<web\b([^>]*?)\s*\/?>/gi;
 /** `[chunk_id: xxx]` / `[chunkid:xxx]`（模型把 SYSTEM_PROMPT 的 [chunk_id] 展开成字面量） */
 const CHUNK_BRACKET_RE = /\[chunk[_-]?id\s*[::]\s*([0-9a-zA-Z_-]{6,})\]/gi;
 /** 裸 32 位 hex id（排除已经在 <kb/> 或 [chunk_id:] 里的，由调用顺序保证） */
@@ -86,9 +88,24 @@ function buildToken(
   const ref = findCitationRef(chunkId, refs);
   const display = citationDisplayName(doc, ref);
   const payload = JSON.stringify({
+    type: "kb",
     chunkId,
     doc: doc || ref?.document_title || "",
     kbId: kbId || ref?.kb_id || "",
+    display,
+  });
+  const idx = store.length;
+  store.push(payload);
+  return `@@KB_CITATION_${idx}@@`;
+}
+
+/** Web 引用 token：`<web url=... title=.../>` → 品牌色胶囊（点击新窗口打开）。 */
+function buildWebToken(url: string, title: string, store: string[]): string {
+  const display = (title || url || "网页来源").slice(0, 40);
+  const payload = JSON.stringify({
+    type: "web",
+    url,
+    title: title || "",
     display,
   });
   const idx = store.length;
@@ -118,6 +135,14 @@ export function preprocessCitations(
     const kbId = attrs.kb_id || attrs.kbId || "";
     if (!chunkId) return "";
     return buildToken(chunkId, doc, kbId, refs, snippets);
+  });
+
+  // 1.5) <web url="..." title="..."/> —— 联网搜索引用（对齐 WeKnora web 胶囊）
+  out = out.replace(WEB_TAG_RE, (_m, attrString: string) => {
+    const attrs = parseAttrs(attrString);
+    const url = attrs.url || attrs.href || "";
+    if (!url) return "";
+    return buildWebToken(url, attrs.title || "", snippets);
   });
 
   // 2) [chunk_id: xxx] —— kb 现行格式
@@ -155,15 +180,22 @@ export function collectCitationSnippets(text: string): string[] {
 
 /** token payload 的结构。 */
 export interface CitationPayload {
+  /** kb=知识库片段引用（打开引用抽屉）；web=联网搜索引用（新窗口打开） */
+  type?: "kb" | "web";
   chunkId: string;
   doc: string;
   kbId: string;
   display: string;
+  /** web 引用专用 */
+  url?: string;
+  title?: string;
 }
 
 export function parsePayload(json: string): CitationPayload | null {
   try {
     const p = JSON.parse(json) as CitationPayload;
+    // web 引用无 chunkId（只有 url/title），单独放行
+    if (p && p.type === "web") return p.url ? p : null;
     if (p && p.chunkId) return p;
   } catch {
     // ignore

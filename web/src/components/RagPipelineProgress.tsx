@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Spin } from "antd";
+import { Spin, theme } from "antd";
 import {
   SearchOutlined,
   RobotOutlined,
@@ -28,6 +28,7 @@ const STAGE_META: Record<string, { icon: React.ReactNode }> = {
 // 对齐 WeKnora RagPipelineProgress：RAG 链路步骤树（运行中高亮、完成打勾、结果摘要）
 export default function RagPipelineProgress({ steps }: { steps: RagStep[] }) {
   const [openIdx, setOpenIdx] = useState<number | null>(null);
+  const { token } = theme.useToken();
   if (!steps || steps.length === 0) return null;
   return (
     <div
@@ -37,8 +38,8 @@ export default function RagPipelineProgress({ steps }: { steps: RagStep[] }) {
         gap: 4,
         marginBottom: 8,
         padding: "6px 10px",
-        background: "#fafafa",
-        border: "1px solid #f0f0f0",
+        background: token.colorFillQuaternary,
+        border: `1px solid ${token.colorSplit}`,
         borderRadius: 8,
         fontSize: 12,
       }}
@@ -49,11 +50,11 @@ export default function RagPipelineProgress({ steps }: { steps: RagStep[] }) {
         return (
           <div key={`${s.stage}-${i}`}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ color: "#1677ff", fontSize: 12 }}>{meta.icon}</span>
+              <span style={{ color: token.colorPrimary, fontSize: 12 }}>{meta.icon}</span>
               <span
                 style={{
                   fontWeight: s.status === "running" ? 600 : 400,
-                  color: s.status === "running" ? "#fa8c16" : "#333",
+                  color: s.status === "running" ? "#fa8c16" : token.colorText,
                   cursor: s.detail ? "pointer" : "default",
                 }}
                 onClick={() => (s.detail ? setOpenIdx(expanded ? null : i) : undefined)}
@@ -63,18 +64,18 @@ export default function RagPipelineProgress({ steps }: { steps: RagStep[] }) {
               {s.status === "running" ? (
                 <Spin size="small" style={{ marginLeft: 4 }} />
               ) : (
-                <CheckCircleFilled style={{ color: "#52c41a", fontSize: 12 }} />
+                <CheckCircleFilled style={{ color: token.colorSuccess, fontSize: 12 }} />
               )}
               {s.status === "done" && s.summary && (
-                <span style={{ color: "#999", marginLeft: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 240 }}>
+                <span style={{ color: token.colorTextTertiary, marginLeft: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 240 }}>
                   {s.summary}
                 </span>
               )}
               {s.status === "done" && s.duration != null && (
-                <span style={{ color: "#bbb", fontSize: 11 }}>{s.duration}s</span>
+                <span style={{ color: token.colorTextQuaternary, fontSize: 11 }}>{s.duration}s</span>
               )}
               {s.detail && (
-                <span style={{ color: "#1677ff", cursor: "pointer", marginLeft: "auto" }} onClick={() => setOpenIdx(expanded ? null : i)}>
+                <span style={{ color: token.colorPrimary, cursor: "pointer", marginLeft: "auto" }} onClick={() => setOpenIdx(expanded ? null : i)}>
                   {expanded ? "收起" : "详情"}
                 </span>
               )}
@@ -84,11 +85,11 @@ export default function RagPipelineProgress({ steps }: { steps: RagStep[] }) {
                 style={{
                   margin: "4px 0 2px 18px",
                   padding: "6px 8px",
-                  background: "#fff",
-                  border: "1px solid #f0f0f0",
+                  background: token.colorBgContainer,
+                  border: `1px solid ${token.colorSplit}`,
                   borderRadius: 4,
                   fontSize: 11,
-                  color: "#555",
+                  color: token.colorTextSecondary,
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-word",
                   maxHeight: 160,

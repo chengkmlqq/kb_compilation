@@ -99,6 +99,8 @@ class AgentQARequest(BaseModel):
     # 发送 model_id 但此处无对应字段 → pydantic 静默丢弃，用户选了模型不生效。
     # 与 qa.py 的 QARequest.model_id 对齐：不传=用默认模型。
     model_id: str | None = None
+    # 2026-10-12 对齐 WeKnora 输入区联网开关：请求级显式开关（None=跟随 agent 配置）
+    web_search_enabled: bool | None = None
 
     @field_validator("question")
     @classmethod
@@ -248,6 +250,7 @@ def agent_qa_stream(
                 caller_user_id=ctx_user_id,
                 caller_team_name=ctx_team_name,
                 is_sys_admin=ctx_is_admin,
+                enabled_override=req.web_search_enabled,
             )
         except Exception:  # noqa: BLE001 — 联网搜索装配失败不阻断问答
             logger.exception("agent websearch tool resolution failed; websearch disabled for this call")

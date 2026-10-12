@@ -141,3 +141,103 @@ def test_build_tool_shape() -> None:
     t = build_websearch_tool(5)[0]
     assert t["type"] == "function"
     assert "query" in t["function"]["parameters"]["required"]
+
+
+# ── 2026-10-12 请求级联网开关（对齐 WeKnora 输入区开关）──────────────
+def test_request_level_disabled_returns_empty(ws_db) -> None:
+    from api.services.websearch import request_websearch_tool_context
+
+    tools, ex = request_websearch_tool_context(ws_db, enabled=False)
+    assert tools == []
+    assert ex is None
+
+
+def test_request_level_enabled_without_provider_returns_empty(ws_db) -> None:
+    from api.services.websearch import request_websearch_tool_context
+
+    tools, ex = request_websearch_tool_context(
+        ws_db,
+        enabled=True,
+        caller_user_id="huqiang",
+        caller_team_name="默认团队",
+        is_sys_admin=True,
+    )
+    assert tools == []
+    assert ex is None
+
+
+def test_request_level_enabled_with_system_provider_injects(ws_db) -> None:
+    from api.services.websearch import request_websearch_tool_context
+
+    ws_db.add(
+        WebSearchProvider(
+            id="p-req",
+            name="sys-tavily",
+            provider_type="tavily",
+            api_key="k",
+            scope="system",
+            state="1",
+        )
+    )
+    ws_db.commit()
+    tools, ex = request_websearch_tool_context(
+        ws_db,
+        enabled=True,
+        caller_user_id="huqiang",
+        caller_team_name="默认团队",
+        is_sys_admin=True,
+    )
+    assert len(tools) == 1
+    assert tools[0]["function"]["name"] == WEB_SEARCH_TOOL
+    assert ex is not None
+
+
+def test_agent_enabled_override_true_when_config_disabled(ws_db) -> None:
+    """agent 配置未开启联网，但请求级显式开启 → 覆盖装配。"""
+    ws_db.add(
+        WebSearchProvider(
+            id="p-ovr",
+            name="sys-tavily",
+            provider_type="tavily",
+            api_key="k",
+            scope="system",
+            state="1",
+        )
+    )
+    ws_db.commit()
+    tools, ex = agent_websearch_tool_context(
+        ws_db,
+        _fake_agent({"web_search_enabled": False}),
+        caller_user_id="huqiang",
+        caller_team_name="默认团队",
+        is_sys_admin=True,
+        enabled_override=True,
+    )
+    assert len(tools) == 1
+    assert tools[0]["function"]["name"] == WEB_SEARCH_TOOL
+    assert ex is not None
+
+
+def test_agent_enabled_override_false_when_config_enabled(ws_db) -> None:
+    """agent 配置开启联网，但请求级显式关闭 → 不注入。"""
+    ws_db.add(
+        WebSearchProvider(
+            id="p-ovr2",
+            name="sys-tavily",
+            provider_type="tavily",
+            api_key="k",
+            scope="system",
+            state="1",
+        )
+    )
+    ws_db.commit()
+    tools, ex = agent_websearch_tool_context(
+        ws_db,
+        _fake_agent({"web_search_enabled": True}),
+        caller_user_id="huqiang",
+        caller_team_name="默认团队",
+        is_sys_admin=True,
+        enabled_override=False,
+    )
+    assert tools == []
+    assert ex is None

@@ -45,6 +45,8 @@ class QARequest(BaseModel):
     embed_query: bool = True
     # 2026-10-06: 问答界面模型切换（指定 chat 模型 id；不传=用默认模型）
     model_id: str | None = None
+    # 2026-10-12 对齐 WeKnora 输入区联网开关：请求级开启联网搜索（注入 web_search 工具）
+    web_search_enabled: bool = False
 
 
 def _sse(event: dict) -> str:
@@ -197,6 +199,23 @@ def _run_generation(
                         return
                 except Exception:  # noqa: BLE001
                     pass
+            # 2026-10-12 对齐 WeKnora 输入区联网开关：请求级开启时注入 web_search 工具，
+            # 装配失败不阻断问答（回落纯 RAG 单轮流式）
+            ws_tools: list[dict] = []
+            ws_executor = None
+            if req.web_search_enabled:
+                try:
+                    from api.services.websearch import request_websearch_tool_context
+
+                    ws_tools, ws_executor = request_websearch_tool_context(
+                        db,
+                        enabled=True,
+                        caller_user_id=ctx_user_id,
+                        caller_team_name=ctx_team_name,
+                        is_sys_admin=ctx_is_admin,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("websearch tool resolution failed; websearch disabled for this call")
             for event in answer_question(
                 kb_db=db,
                 kb=kb,
@@ -210,6 +229,9 @@ def _run_generation(
                 team_name=ctx_team_name,
                 is_sys_admin=ctx_is_admin,
                 chat_cfg=requested_cfg if req.model_id else None,  # 2026-10-06: 指定模型时复用解析结果
+                tools=ws_tools or None,
+                tool_executor=ws_executor,
+                max_tool_iterations=3,
             ):
                 if event.get("type") == "context":
                     hits = event.get("hits") or []

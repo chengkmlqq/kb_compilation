@@ -450,30 +450,19 @@ def build_websearch_tool(max_results: int) -> list[dict]:
     ]
 
 
-def agent_websearch_tool_context(
+def _resolve_websearch_provider(
     db: Session,
-    agent,
+    provider_id: str = "",
     *,
     caller_user_id: str = "",
     caller_team_name: str = "",
     is_sys_admin: bool = False,
-) -> tuple[list[dict], "Callable[[dict], str] | None"]:
-    """按 AgentConfig.web_search_enabled 装配 web_search 工具上下文。
-
-    返回 (tools, executor)：未启用 / 无可见 provider 时返回 ([], None)，问答链路
-    不受影响。provider 解析：显式 web_search_provider_id（带可见性校验）；
-    未指定时取调用方可见的第一个 system 级 provider（无则跳过注入）。
-    """
-    from api.services.agents import config_from_dict
-
-    cfg = config_from_dict(agent.config or {})
-    if not cfg.web_search_enabled:
-        return [], None
-
-    provider_id = str(cfg.web_search_provider_id or "").strip()
-    provider = None
-    if provider_id:
-        provider = get_websearch_provider(db, provider_id)
+) -> str | None:
+    """解析可用的 WebSearchProvider id：显式 provider_id（带可见性校验）→
+    调用方可见的第一个 system 级 provider → None（无可用 provider）。"""
+    pid = str(provider_id or "").strip()
+    if pid:
+        provider = get_websearch_provider(db, pid)
         if provider and (
             provider.state != "1"
             or not websearch_provider_visible(
@@ -484,22 +473,31 @@ def agent_websearch_tool_context(
             )
         ):
             provider = None
-    if provider is None:
-        visible = list_websearch_providers(
-            db,
-            caller_user_id=caller_user_id,
-            caller_team_name=caller_team_name,
-            is_sys_admin=is_sys_admin,
-        )
-        # list_* 返回 dict 项（websearch_to_dict 形状：id/scope/name/...）
-        pick = next((p for p in visible if p.get("scope") == "system"), visible[0] if visible else None)
-        if pick is None:
-            return [], None
-        provider_id = str(pick.get("id") or "")
-        if not provider_id:
-            return [], None
+        if provider:
+            return pid
+    visible = list_websearch_providers(
+        db,
+        caller_user_id=caller_user_id,
+        caller_team_name=caller_team_name,
+        is_sys_admin=is_sys_admin,
+    )
+    # list_* 返回 dict 项（websearch_to_dict 形状：id/scope/name/...）
+    pick = next((p for p in visible if p.get("scope") == "system"), visible[0] if visible else None)
+    if pick is None:
+        return None
+    return str(pick.get("id") or "") or None
 
-    max_results = max(1, min(int(cfg.web_search_max_results or 5), 20))
+
+def _build_websearch_tool_context(
+    db: Session,
+    provider_id: str,
+    max_results: int,
+    *,
+    caller_user_id: str = "",
+    caller_team_name: str = "",
+    is_sys_admin: bool = False,
+) -> tuple[list[dict], "Callable[[dict], str]"]:
+    """基于已解析的 provider 构建 web_search 工具 + 执行器闭包。"""
     tools = build_websearch_tool(max_results)
 
     def executor(tool_call: dict) -> str:
@@ -536,6 +534,88 @@ def agent_websearch_tool_context(
     return tools, executor
 
 
+def request_websearch_tool_context(
+    db: Session,
+    *,
+    enabled: bool = False,
+    caller_user_id: str = "",
+    caller_team_name: str = "",
+    is_sys_admin: bool = False,
+    provider_id: str = "",
+    max_results: int = 5,
+) -> tuple[list[dict], "Callable[[dict], str] | None"]:
+    """请求级联网搜索开关（2026-10-12 对齐 WeKnora 输入区联网开关）：
+
+    普通问答（非 agent 绑定）按请求参数 enabled 决定是否注入 web_search 工具；
+    provider 解析与 agent 路径一致（显式 provider_id → 第一个可见 system provider）。
+    未启用 / 无可用 provider 时返回 ([], None)，问答链路不受影响。
+    """
+    if not enabled:
+        return [], None
+    rid = _resolve_websearch_provider(
+        db,
+        provider_id,
+        caller_user_id=caller_user_id,
+        caller_team_name=caller_team_name,
+        is_sys_admin=is_sys_admin,
+    )
+    if not rid:
+        return [], None
+    capped = max(1, min(int(max_results or 5), 20))
+    return _build_websearch_tool_context(
+        db,
+        rid,
+        capped,
+        caller_user_id=caller_user_id,
+        caller_team_name=caller_team_name,
+        is_sys_admin=is_sys_admin,
+    )
+
+
+def agent_websearch_tool_context(
+    db: Session,
+    agent,
+    *,
+    caller_user_id: str = "",
+    caller_team_name: str = "",
+    is_sys_admin: bool = False,
+    enabled_override: bool | None = None,
+) -> tuple[list[dict], "Callable[[dict], str] | None"]:
+    """按 AgentConfig.web_search_enabled 装配 web_search 工具上下文。
+
+    返回 (tools, executor)：未启用 / 无可见 provider 时返回 ([], None)，问答链路
+    不受影响。provider 解析：显式 web_search_provider_id（带可见性校验）；
+    未指定时取调用方可见的第一个 system 级 provider（无则跳过注入）。
+    enabled_override（请求级开关，2026-10-12）：非 None 时覆盖 agent 配置的
+    web_search_enabled（前端输入区联网开关在 agent 模式下作为显式覆盖）。
+    """
+    from api.services.agents import config_from_dict
+
+    cfg = config_from_dict(agent.config or {})
+    enabled = cfg.web_search_enabled if enabled_override is None else enabled_override
+    if not enabled:
+        return [], None
+
+    rid = _resolve_websearch_provider(
+        db,
+        str(cfg.web_search_provider_id or ""),
+        caller_user_id=caller_user_id,
+        caller_team_name=caller_team_name,
+        is_sys_admin=is_sys_admin,
+    )
+    if not rid:
+        return [], None
+    max_results = max(1, min(int(cfg.web_search_max_results or 5), 20))
+    return _build_websearch_tool_context(
+        db,
+        rid,
+        max_results,
+        caller_user_id=caller_user_id,
+        caller_team_name=caller_team_name,
+        is_sys_admin=is_sys_admin,
+    )
+
+
 __all__ = [
     "PROVIDER_TYPES",
     "DEFAULT_ENDPOINTS",
@@ -547,4 +627,6 @@ __all__ = [
     "websearch_provider_visible",
     "websearch_to_dict",
     "search",
+    "request_websearch_tool_context",
+    "agent_websearch_tool_context",
 ]

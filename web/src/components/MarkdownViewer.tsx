@@ -1,11 +1,14 @@
 "use client";
 
-import { Fragment, ReactNode, useCallback } from "react";
+import { Fragment, ReactNode, useCallback, useState } from "react";
+import { CheckOutlined, CopyOutlined } from "@ant-design/icons";
 import { CitationRef, preprocessCitations, parsePayload, CitationPayload } from "@/lib/citation";
+import { tokenizeCode, hasHighlight } from "@/lib/highlight";
 
 /** 轻量 Markdown 渲染（标题/粗体/斜体/行内代码/代码块/列表/链接/引用/表格/引用胶囊）。
  * 对齐 WeKnora 消息渲染的常用子集，避免引入额外依赖。
- * 引用胶囊（WeKnora `<kb doc=.../>`）像素级对齐 WeKnora chat-citations.less。 */
+ * 引用胶囊（WeKnora `<kb doc=.../>`）像素级对齐 WeKnora chat-citations.less。
+ * 代码块：```lang 识别 + 自研轻量高亮（对齐 WeKnora hljs 亮色主题配色）+ 标题栏（语言名 + 复制）。 */
 
 interface Props {
   text: string;
@@ -15,14 +18,91 @@ interface Props {
   onCitationClick?: (payload: CitationPayload, ref?: CitationRef) => void;
 }
 
-/** 渲染单个引用胶囊（圆点图标 + 文档名，hover 变色）。 */
+/** 代码块：标题栏（语言 + 复制按钮）+ 高亮代码（对齐 WeKnora chat-markdown.less 代码块）。 */
+function CodeBlock({ code, lang }: { code: string; lang: string }) {
+  const [copied, setCopied] = useState(false);
+  const label = lang || "text";
+  const copy = async (ev: React.MouseEvent) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // 忽略剪贴板不可用
+    }
+  };
+  let nodes: ReactNode;
+  if (hasHighlight(lang)) {
+    nodes = (
+      <>
+        {tokenizeCode(code, lang).map((t, i) =>
+          t.type === "plain" ? (
+            <Fragment key={i}>{t.text}</Fragment>
+          ) : (
+            <span key={i} className={`kb-hl-${t.type}`}>
+              {t.text}
+            </span>
+          )
+        )}
+      </>
+    );
+  } else {
+    nodes = (
+      <>
+        {code.split("\n").map((ln, i) => (
+          <div key={i}>{ln === "" ? " " : ln}</div>
+        ))}
+      </>
+    );
+  }
+  return (
+    <div className="kb-chat-md-codeblock">
+      <div className="kb-chat-md-codeblock-bar">
+        <span className="kb-chat-md-codeblock-lang">{label}</span>
+        <button
+          type="button"
+          className="kb-chat-md-codeblock-copy"
+          onClick={copy}
+          title="复制代码"
+          aria-label="复制代码"
+        >
+          {copied ? <CheckOutlined /> : <CopyOutlined />}
+          <span>{copied ? "已复制" : "复制"}</span>
+        </button>
+      </div>
+      <pre className="kb-chat-md-pre">
+        <code>{nodes}</code>
+      </pre>
+    </div>
+  );
+}
+
+/** 引用胶囊的悬停态（内容片段浮层 —— 对齐 WeKnora ChatCitationFloat）。 */
+interface CitationHover {
+  payload: CitationPayload;
+  ref?: CitationRef;
+  rect: DOMRect;
+}
+
+/** 渲染单个引用胶囊（书本图标 + 文档名，hover 变色；hover 弹出片段浮层）。
+ *  kb 引用：点击打开引用抽屉；web 引用：点击新窗口打开 URL（对齐 WeKnora web 胶囊）。 */
 function citationPill(
   payload: CitationPayload,
   ref: CitationRef | undefined,
   keyPrefix: string,
   onCitationClick: Props["onCitationClick"],
+  onHoverChange: (h: CitationHover | null) => void,
 ): ReactNode {
+  const isWeb = payload.type === "web";
   const click = (ev: React.MouseEvent | React.KeyboardEvent) => {
+    if (isWeb) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (payload.url) window.open(payload.url, "_blank", "noopener,noreferrer");
+      return;
+    }
     if (!onCitationClick) return;
     ev.preventDefault();
     ev.stopPropagation();
@@ -31,13 +111,17 @@ function citationPill(
   return (
     <span
       key={keyPrefix}
-      className="kb-citation kb-citation-kb"
+      className={`kb-citation ${isWeb ? "kb-citation-web" : "kb-citation-kb"}`}
       role="button"
       tabIndex={0}
       onClick={click}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") click(e);
       }}
+      onMouseEnter={(e) =>
+        onHoverChange({ payload, ref, rect: e.currentTarget.getBoundingClientRect() })
+      }
+      onMouseLeave={() => onHoverChange(null)}
     >
       <span className="kb-citation-icon kb-citation-icon--book" aria-hidden="true" />
       <span className="kb-citation-text">{payload.display}</span>
@@ -51,6 +135,7 @@ function inline(
   snippets: string[],
   refs: CitationRef[] | null | undefined,
   onCitationClick: Props["onCitationClick"],
+  onHoverChange: (h: CitationHover | null) => void,
 ): ReactNode[] {
   const nodes: ReactNode[] = [];
   // 引用胶囊 token（@@KB_CITATION_n@@）先切出来，避免被后续 inline 解析吞掉
@@ -62,7 +147,7 @@ function inline(
       if (!payload) return;
       const ref = refs?.find((r) => r.chunk_id === payload.chunkId);
       nodes.push(
-        citationPill(payload, ref, `${keyPrefix}-cit${ci}`, onCitationClick),
+        citationPill(payload, ref, `${keyPrefix}-cit${ci}`, onCitationClick, onHoverChange),
       );
       return;
     }
@@ -116,11 +201,13 @@ function renderBlock(
   snippets: string[],
   refs: CitationRef[] | null | undefined,
   onCitationClick: Props["onCitationClick"],
+  onHoverChange: (h: CitationHover | null) => void,
 ): ReactNode[] {
   const lines = text.split("\n");
   const out: ReactNode[] = [];
   let i = 0;
   let codeBuf: string[] | null = null;
+  let codeLang = "";
   let listBuf: { type: "ul" | "ol"; items: string[] } | null = null;
 
   const flushList = (key: string) => {
@@ -129,7 +216,7 @@ function renderBlock(
     out.push(
       <Tag key={key} className="kb-chat-md-list">
         {listBuf.items.map((it, n) => (
-          <li key={n}>{inline(it, `${key}-li${n}`, snippets, refs, onCitationClick)}</li>
+          <li key={n}>{inline(it, `${key}-li${n}`, snippets, refs, onCitationClick, onHoverChange)}</li>
         ))}
       </Tag>
     );
@@ -138,17 +225,21 @@ function renderBlock(
 
   for (i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (line.startsWith("```")) {
+    if (line.trimStart().startsWith("```")) {
       flushList(`list-${i}`);
       if (codeBuf !== null) {
         out.push(
-          <pre key={`code-${i}`} className="kb-chat-md-pre">
-            <code>{codeBuf.join("\n")}</code>
-          </pre>
+          <CodeBlock
+            key={`code-${i}`}
+            code={codeBuf.join("\n")}
+            lang={codeLang}
+          />,
         );
         codeBuf = null;
+        codeLang = "";
       } else {
         codeBuf = [];
+        codeLang = line.trim().slice(3).trim().split(/[\s,]+/)[0] || "";
       }
       continue;
     }
@@ -162,7 +253,7 @@ function renderBlock(
       const level = h[1].length;
       out.push(
         <div key={`h${i}`} className={`kb-chat-md-h${level}`}>
-          {inline(h[2], `h${i}`, snippets, refs, onCitationClick)}
+          {inline(h[2], `h${i}`, snippets, refs, onCitationClick, onHoverChange)}
         </div>
       );
       continue;
@@ -190,7 +281,7 @@ function renderBlock(
       flushList(`list-${i}`);
       out.push(
         <div key={`q${i}`} className="kb-chat-md-quote">
-          {inline(q[1], `q${i}`, snippets, refs, onCitationClick)}
+          {inline(q[1], `q${i}`, snippets, refs, onCitationClick, onHoverChange)}
         </div>
       );
       continue;
@@ -207,7 +298,7 @@ function renderBlock(
           <thead>
             <tr>
               {header.map((c, n) => (
-                <th key={n}>{inline(c, `th${n}`, snippets, refs, onCitationClick)}</th>
+                <th key={n}>{inline(c, `th${n}`, snippets, refs, onCitationClick, onHoverChange)}</th>
               ))}
             </tr>
           </thead>
@@ -215,7 +306,7 @@ function renderBlock(
             <tbody>
               <tr>
                 {body.map((c, n) => (
-                  <td key={n}>{inline(c, `td${n}`, snippets, refs, onCitationClick)}</td>
+                  <td key={n}>{inline(c, `td${n}`, snippets, refs, onCitationClick, onHoverChange)}</td>
                 ))}
               </tr>
             </tbody>
@@ -231,7 +322,7 @@ function renderBlock(
     } else {
       out.push(
         <div key={`p${i}`} className="kb-chat-md-p">
-          {inline(line, `p${i}`, snippets, refs, onCitationClick)}
+          {inline(line, `p${i}`, snippets, refs, onCitationClick, onHoverChange)}
         </div>
       );
     }
@@ -241,11 +332,63 @@ function renderBlock(
 }
 
 export default function MarkdownViewer({ text, refs, onCitationClick }: Props) {
+  // 引用胶囊悬停浮层（对齐 WeKnora ChatCitationFloat：跟鼠标显示片段内容）
+  const [hover, setHover] = useState<CitationHover | null>(null);
+  const onHoverChange = useCallback(
+    (h: CitationHover | null) => setHover(h),
+    [],
+  );
   // 引用预处理：把 <kb doc=.../> / [chunk_id: ...] / 裸 32 位 id 换成 token
   const { content, snippets } = preprocessCitations(text, refs);
   const render = useCallback(
-    () => renderBlock(content, snippets, refs, onCitationClick),
-    [content, snippets, refs, onCitationClick],
+    () => renderBlock(content, snippets, refs, onCitationClick, onHoverChange),
+    [content, snippets, refs, onCitationClick, onHoverChange],
   );
-  return <div className="kb-chat-md">{render()}</div>;
+  // 浮层定位：胶囊下方，视口底部放不下时翻到上方
+  const floatStyle: React.CSSProperties | undefined = hover
+    ? (() => {
+        const gap = 6;
+        const floatH = 220;
+        const below = hover.rect.bottom + gap;
+        const top = below + floatH > window.innerHeight
+          ? Math.max(8, hover.rect.top - floatH - gap)
+          : below;
+        return {
+          position: "fixed" as const,
+          left: Math.min(hover.rect.left, Math.max(8, window.innerWidth - 320 - 8)),
+          top,
+        };
+      })()
+    : undefined;
+  return (
+    <div className="kb-chat-md">
+      {render()}
+      {hover && (
+        <div className="kb-citation-float" style={floatStyle} role="tooltip">
+          <div className="kb-citation-float__title">
+            {hover.payload.type === "web"
+              ? hover.payload.title || hover.payload.display
+              : hover.ref?.document_title || hover.payload.display}
+          </div>
+          <div className="kb-citation-float__body">
+            {hover.payload.type === "web"
+              ? hover.payload.url
+              : hover.ref?.content || "（该片段未返回正文，点击可查看详情）"}
+          </div>
+          <div className="kb-citation-float__muted">
+            {hover.payload.type === "web" ? (
+              "点击在新窗口打开"
+            ) : (
+              <>
+                片段 {hover.payload.chunkId.slice(0, 8)}
+                {typeof hover.ref?.score === "number"
+                  ? ` · 相似度 ${hover.ref.score.toFixed(2)}`
+                  : ""}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

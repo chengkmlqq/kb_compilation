@@ -36,6 +36,9 @@ class ChatSession(Base):
     pinned: Mapped[int] = mapped_column(Integer, default=0)  # 1 = 置顶
     # 非空 = 由某会话分叉而来（WeKnora fork 分支树）
     parent_session_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    # 2026-10-12 对齐 WeKnora last_request_state：会话级输入态快照（JSON 字符串），
+    # 前端发送后写入、打开会话时恢复输入区（agent/kb/模型/联网开关等）
+    last_request_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32), default=_now_iso)
     updated_at: Mapped[str] = mapped_column(String(32), default=_now_iso)
 

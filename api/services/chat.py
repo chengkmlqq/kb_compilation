@@ -146,7 +146,10 @@ CITATION_INSTRUCTIONS = (
     '<kb doc="片段的 document_name" chunk_id="片段的 chunk_id" kb_id="片段的 kb_id" />\n'
     "其中 doc 必须照抄检索结果里的 document_name（文档文件名），"
     "chunk_id/kb_id 照抄对应字段。标签前后不加多余括号或编号；"
-    "正文里不要输出裸的 chunk_id / document_id（纯 32 位乱码用户看不懂）。"
+    "正文里不要输出裸的 chunk_id / document_id（纯 32 位乱码用户看不懂）。\n"
+    "如果使用了联网搜索结果（web_search 工具返回的网页），引用网页时输出：\n"
+    '<web url="网页完整URL" title="网页标题" />\n'
+    "url 必须照抄搜索结果里的 URL，title 用网页标题（无标题可省略）。"
 )
 
 

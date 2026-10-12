@@ -18,6 +18,7 @@ Requires the x-next-identity cookie (user ownership).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, Cookie, Depends, File, HTTPException, Query, UploadFile
@@ -80,12 +81,16 @@ class CreateSessionRequest(BaseModel):
     kb_id: str | None = None
     title: str | None = None
     agent_id: str | None = None  # 非空 = agent 会话
+    # 2026-10-12 对齐 WeKnora last_request_state：会话输入态快照（JSON 对象）
+    last_request_state: dict | None = None
 
 
 class UpdateSessionRequest(BaseModel):
     title: str | None = None
     kb_id: str | None = None
     pinned: bool | None = None
+    # 2026-10-12 对齐 WeKnora last_request_state：会话输入态快照（JSON 对象）
+    last_request_state: dict | None = None
 
 
 class BatchDeleteRequest(BaseModel):
@@ -110,8 +115,8 @@ def api_create_session(
     user_id: str = Depends(_require_user_id),
 ) -> dict:
     if req.agent_id:
-        return {"success": True, "data": create_agent_session(db, user_id, req.agent_id, req.kb_id, req.title)}
-    return {"success": True, "data": create_session(db, user_id, req.kb_id, req.title)}
+        return {"success": True, "data": create_agent_session(db, user_id, req.agent_id, req.kb_id, req.title, last_request_state=req.last_request_state)}
+    return {"success": True, "data": create_session(db, user_id, req.kb_id, req.title, last_request_state=req.last_request_state)}
 
 
 @router.get("")
@@ -136,8 +141,13 @@ def api_get_session(
         "data": {
             "id": s.id,
             "kb_id": s.kb_id,
+            "agent_id": s.agent_id,
             "title": s.title,
             "pinned": bool(s.pinned),
+            # 2026-10-12 对齐 WeKnora last_request_state：打开会话时恢复输入区
+            "last_request_state": (
+                json.loads(s.last_request_state) if s.last_request_state else None
+            ),
             "created_at": s.created_at,
             "updated_at": s.updated_at,
         },
@@ -153,7 +163,15 @@ def api_update_session(
 ) -> dict:
     return {
         "success": True,
-        "data": update_session(db, user_id, session_id, title=req.title, kb_id=req.kb_id, pinned=req.pinned),
+        "data": update_session(
+            db,
+            user_id,
+            session_id,
+            title=req.title,
+            kb_id=req.kb_id,
+            pinned=req.pinned,
+            last_request_state=req.last_request_state,
+        ),
     }
 
 

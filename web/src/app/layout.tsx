@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import StyledComponentsRegistry from "@/lib/antd-registry";
+import { ThemeModeProvider, themeInitScript } from "@/lib/theme-mode";
 
 export const metadata: Metadata = {
   title: "知识库平台",
@@ -9,9 +10,15 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" suppressHydrationWarning>
+      <head>
+        {/* 深色模式首帧防闪烁（2026-10-12 对齐 WeKnora html[theme-mode]） */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body>
-        <StyledComponentsRegistry>{children}</StyledComponentsRegistry>
+        <ThemeModeProvider>
+          <StyledComponentsRegistry>{children}</StyledComponentsRegistry>
+        </ThemeModeProvider>
       </body>
     </html>
   );

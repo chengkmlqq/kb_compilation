@@ -6,6 +6,39 @@
   --color-gray-3: #e3e9ef;
   --color-gray-6: #79879c;
   --color-gray-10: #242e43;
+
+  /* 问答工作台语义色（2026-10-12 深色模式变量化，亮色默认值见下） */
+  --kb-c-text: rgba(0, 0, 0, 0.88);
+  --kb-c-text-secondary: rgba(0, 0, 0, 0.65);
+  --kb-c-text-placeholder: rgba(0, 0, 0, 0.3);
+  --kb-c-surface: #ffffff;
+  --kb-c-surface-2: #fafafa;
+  --kb-c-user-bubble: #f3f3f3;
+  --kb-c-border: #dcdcdc;
+  --kb-c-link: #1677ff;
+  --kb-c-citation-bg: rgba(0, 0, 0, 0.04);
+  --kb-c-citation-bg-hover: rgba(0, 0, 0, 0.07);
+  --kb-c-citation-ring: rgba(0, 0, 0, 0.1);
+  --kb-c-citation-ring-hover: rgba(0, 0, 0, 0.18);
+  --kb-c-float-bg: #ffffff;
+}
+
+/* 深色模式（2026-10-12 对齐 WeKnora html[theme-mode="dark"]）：
+   antd 组件层经 darkAlgorithm 自动适配，问答工作台硬编码色走覆盖。 */
+html[data-theme="dark"] {
+  --kb-c-text: rgba(255, 255, 255, 0.88);
+  --kb-c-text-secondary: rgba(255, 255, 255, 0.65);
+  --kb-c-text-placeholder: rgba(255, 255, 255, 0.3);
+  --kb-c-surface: #1f1f1f;
+  --kb-c-surface-2: #262626;
+  --kb-c-user-bubble: rgba(255, 255, 255, 0.12);
+  --kb-c-border: rgba(255, 255, 255, 0.15);
+  --kb-c-link: #6fa8ff;
+  --kb-c-citation-bg: rgba(255, 255, 255, 0.08);
+  --kb-c-citation-bg-hover: rgba(255, 255, 255, 0.14);
+  --kb-c-citation-ring: rgba(255, 255, 255, 0.2);
+  --kb-c-citation-ring-hover: rgba(255, 255, 255, 0.35);
+  --kb-c-float-bg: #262626;
 }
 
 html,
@@ -13,6 +46,10 @@ body {
   margin: 0;
   padding: 0;
   background: #f5f7fa;
+}
+
+html[data-theme="dark"] body {
+  background: #141414;
 }
 
 * {
@@ -1106,7 +1143,7 @@ body {
   max-width: 100%;
   box-sizing: border-box;
   border-radius: 4px;
-  color: rgba(0, 0, 0, 0.88);
+  color: var(--kb-c-text);
   font-size: 16px;
   line-height: 1.625;
   overflow-wrap: anywhere;
@@ -1128,7 +1165,7 @@ body {
   justify-content: center;
   align-items: flex-start;
   border-radius: 8px;
-  background: #f3f3f3;
+  background: var(--kb-c-user-bubble);
   margin-left: auto;
   font-size: 16px;
 }
@@ -1136,7 +1173,7 @@ body {
 /* ── 消息正文 markdown（对齐 chat-markdown.less：16px / 1.625） ── */
 .kb-chat-md {
   font-size: 16px;
-  color: rgba(0, 0, 0, 0.88);
+  color: var(--kb-c-text);
   line-height: 1.625;
 }
 
@@ -1191,9 +1228,9 @@ body {
 .kb-chat-md-quote {
   margin: 0.75em 0;
   padding: 6px 10px 6px 12px;
-  border-left: 3px solid #dcdcdc;
+  border-left: 3px solid var(--kb-c-border);
   border-radius: 0 4px 4px 0;
-  color: rgba(0, 0, 0, 0.65);
+  color: var(--kb-c-text-secondary);
   font-size: 12px;
   line-height: 1.2;
 }
@@ -1202,18 +1239,18 @@ body {
   padding: 0.15em 0.45em;
   font-size: 0.8125em;
   line-height: 1.4;
-  color: rgba(0, 0, 0, 0.88);
-  background: #f3f3f3;
+  color: var(--kb-c-text);
+  background: var(--kb-c-user-bubble);
   border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .kb-chat-md-pre {
-  margin: 0.75em 0;
+  margin: 0;
   padding: 14px 16px;
   background: #282c34;
   color: #f8f8f2;
-  border-radius: 6px;
+  border-radius: 0 0 6px 6px;
   overflow: auto;
   line-height: 1.55;
   font-size: 13px;
@@ -1226,8 +1263,73 @@ body {
   font-size: inherit;
 }
 
+/* ── 代码块容器 + 标题栏（对齐 WeKnora chat-markdown.less 代码块：语言标签 + 复制按钮）── */
+.kb-chat-md-codeblock {
+  margin: 0.75em 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #282c34;
+}
+
+.kb-chat-md-codeblock-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 10px;
+  background: #21252b;
+  border-bottom: 1px solid #333842;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.kb-chat-md-codeblock-lang {
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(248, 248, 242, 0.55);
+  text-transform: lowercase;
+  letter-spacing: 0.4px;
+}
+
+.kb-chat-md-codeblock-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(248, 248, 242, 0.75);
+  font-size: 11px;
+  line-height: 1.6;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.kb-chat-md-codeblock-copy:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #f8f8f2;
+}
+
+/* ── 代码高亮色（One Dark 系，适配 #282c34 深底 —— 对齐 WeKnora hljs 亮色主题）── */
+.kb-hl-comment {
+  color: #5c6370;
+  font-style: italic;
+}
+.kb-hl-string {
+  color: #98c379;
+}
+.kb-hl-keyword {
+  color: #c678dd;
+}
+.kb-hl-number {
+  color: #d19a66;
+}
+.kb-hl-function {
+  color: #61afef;
+}
+
 .kb-chat-md-link {
-  color: #1677ff;
+  color: var(--kb-c-link);
   text-decoration: none;
 }
 
@@ -1240,8 +1342,8 @@ body {
   margin: 0.75em 0;
   font-size: 13px;
   line-height: 1.55;
-  background: #fff;
-  border: 1px solid #dcdcdc;
+  background: var(--kb-c-surface);
+  border: 1px solid var(--kb-c-border);
   border-radius: 6px;
   display: block;
   width: fit-content;
@@ -1251,20 +1353,20 @@ body {
 
 .kb-chat-md-table th,
 .kb-chat-md-table td {
-  border: 1px solid #dcdcdc;
+  border: 1px solid var(--kb-c-border);
   padding: 6px 10px;
   text-align: left;
   vertical-align: top;
 }
 
 .kb-chat-md-table th {
-  background: #fafafa;
+  background: var(--kb-c-surface-2);
   font-weight: 600;
-  color: rgba(0, 0, 0, 0.88);
+  color: var(--kb-c-text);
 }
 
 .kb-chat-md-table tr:hover td {
-  background: #fafafa;
+  background: var(--kb-c-surface-2);
 }
 
 .kb-chat-md-spacer {
@@ -1744,10 +1846,10 @@ body {
 }
 
 .kb-citation-kb {
-  background: rgba(0, 0, 0, 0.04);
-  color: rgba(0, 0, 0, 0.88);
+  background: var(--kb-c-citation-bg);
+  color: var(--kb-c-text);
   border: 0;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+  box-shadow: inset 0 0 0 1px var(--kb-c-citation-ring);
   cursor: pointer;
   white-space: nowrap;
   position: relative;
@@ -1755,14 +1857,43 @@ body {
 }
 
 .kb-citation-kb:hover {
-  background: rgba(0, 0, 0, 0.07);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
-  color: rgba(0, 0, 0, 0.88);
+  background: var(--kb-c-citation-bg-hover);
+  box-shadow: inset 0 0 0 1px var(--kb-c-citation-ring-hover);
+  color: var(--kb-c-text);
 }
 
 .kb-citation-kb:focus-visible {
-  outline: 2px solid #dcdcdc;
+  outline: 2px solid var(--kb-c-border);
   outline-offset: 2px;
+}
+
+/* ── Web 引用胶囊（2026-10-12 对齐 WeKnora chat-citations.less 的 web 引用：
+   KB 引用灰底、web 引用品牌色底；点击新窗口打开 URL）── */
+.kb-citation-web {
+  background: #e6f4ff;
+  color: #1677ff;
+  border: 0;
+  box-shadow: inset 0 0 0 1px rgba(22, 119, 255, 0.25);
+  cursor: pointer;
+  white-space: nowrap;
+  position: relative;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.kb-citation-web:hover {
+  background: #d6ecff;
+  box-shadow: inset 0 0 0 1px rgba(22, 119, 255, 0.45);
+}
+
+html[data-theme="dark"] .kb-citation-web {
+  background: rgba(22, 119, 255, 0.18);
+  color: #6fa8ff;
+  box-shadow: inset 0 0 0 1px rgba(111, 168, 255, 0.35);
+}
+
+html[data-theme="dark"] .kb-citation-web:hover {
+  background: rgba(22, 119, 255, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(111, 168, 255, 0.55);
 }
 
 /* 点击引用弹出的片段浮层（对齐 WeKnora .chat-citation-float） */
@@ -1772,16 +1903,16 @@ body {
   max-width: 320px;
   padding: 10px 12px;
   border-radius: 8px;
-  background: #fff;
+  background: var(--kb-c-float-bg);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
   font-size: 12px;
   line-height: 1.5;
-  color: rgba(0, 0, 0, 0.88);
+  color: var(--kb-c-text);
 }
 
 .kb-citation-float__title {
   font-weight: 600;
-  color: #1677ff;
+  color: var(--kb-c-link);
   margin-bottom: 4px;
 }
 
@@ -1792,7 +1923,7 @@ body {
 }
 
 .kb-citation-float__muted {
-  color: rgba(0, 0, 0, 0.65);
+  color: var(--kb-c-text-secondary);
 }
 
 
@@ -1867,7 +1998,7 @@ body {
   margin: 4px 0 8px;
 }
 .kb-agent-tool-card {
-  border-left: 2px solid #e5e6eb;
+  border-left: 2px solid var(--kb-c-border, #e5e6eb);
   padding-left: 10px;
   transition: border-color 0.2s ease;
 }
@@ -1882,13 +2013,13 @@ body {
   cursor: pointer;
   user-select: none;
   font-size: 13px;
-  color: rgba(0, 0, 0, 0.88);
+  color: var(--kb-c-text);
   transition: background-color 0.15s ease;
   border-radius: 4px;
   padding: 0 4px;
 }
 .kb-agent-tool-card-head:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--kb-c-citation-bg);
 }
 .kb-agent-tool-tool {
   color: #1677ff;
@@ -1913,12 +2044,12 @@ body {
   font-size: 13px;
 }
 .kb-agent-tool-status {
-  color: rgba(0, 0, 0, 0.45);
+  color: var(--kb-c-text-placeholder);
   font-size: 12px;
   flex-shrink: 0;
 }
 .kb-agent-tool-summary {
-  color: rgba(0, 0, 0, 0.45);
+  color: var(--kb-c-text-placeholder);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1927,7 +2058,7 @@ body {
   min-width: 0;
 }
 .kb-agent-tool-arrow {
-  color: rgba(0, 0, 0, 0.45);
+  color: var(--kb-c-text-placeholder);
   font-size: 10px;
   margin-left: auto;
   flex-shrink: 0;
@@ -1939,17 +2070,17 @@ body {
 }
 .kb-agent-tool-section-title {
   font-size: 12px;
-  color: rgba(0, 0, 0, 0.45);
+  color: var(--kb-c-text-placeholder);
   margin: 4px 0 2px;
 }
 .kb-agent-tool-pre {
   margin: 0;
   padding: 8px 10px;
-  background: #fafafa;
+  background: var(--kb-c-surface-2);
   border-radius: 6px;
   font-size: 12px;
   line-height: 1.6;
-  color: rgba(0, 0, 0, 0.88);
+  color: var(--kb-c-text);
   white-space: pre-wrap;
   word-break: break-all;
   max-height: 320px;

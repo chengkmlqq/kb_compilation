@@ -2084,6 +2084,14 @@ export interface ChatSessionItem {
   agent_id?: string | null;
   title: string;
   pinned: boolean;
+  /** 2026-10-12 对齐 WeKnora last_request_state：会话输入态快照（打开会话时恢复输入区） */
+  last_request_state?: {
+    agent_id?: string | null;
+    kb_id?: string | null;
+    model_id?: string | null;
+    web_search_enabled?: boolean;
+    at_target?: { kind: "kb" | "agent"; id: string; name: string } | null;
+  } | null;
   created_at: string;
   updated_at: string;
 }
@@ -2124,10 +2132,43 @@ export interface QaStreamEvent {
   durations?: number[];
 }
 
-export function apiCreateSession(kb_id?: string | null, title?: string) {
+export interface ChatSessionInputState {
+  agent_id?: string | null;
+  kb_id?: string | null;
+  model_id?: string | null;
+  web_search_enabled?: boolean;
+  at_target?: { kind: "kb" | "agent"; id: string; name: string } | null;
+}
+
+export function apiCreateSession(
+  kb_id?: string | null,
+  title?: string,
+  lastRequestState?: ChatSessionInputState | null,
+) {
   return request<ChatSessionItem>("/api/v1/sessions", {
     method: "POST",
-    body: JSON.stringify({ kb_id: kb_id || null, title: title || null }),
+    body: JSON.stringify({
+      kb_id: kb_id || null,
+      title: title || null,
+      last_request_state: lastRequestState || null,
+    }),
+  });
+}
+
+export function apiCreateAgentSession(
+  agentId: string,
+  kbId?: string | null,
+  title?: string,
+  lastRequestState?: ChatSessionInputState | null,
+) {
+  return request<ChatSessionItem>("/api/v1/sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      agent_id: agentId,
+      kb_id: kbId || null,
+      title: title || null,
+      last_request_state: lastRequestState || null,
+    }),
   });
 }
 
@@ -2139,7 +2180,12 @@ export function apiListSessions(page = 1, pageSize = 50) {
 
 export function apiUpdateSession(
   sessionId: string,
-  patch: { title?: string; kb_id?: string | null; pinned?: boolean },
+  patch: {
+    title?: string;
+    kb_id?: string | null;
+    pinned?: boolean;
+    last_request_state?: ChatSessionInputState | null;
+  },
 ) {
   return request<ChatSessionItem>(`/api/v1/sessions/${sessionId}`, {
     method: "PUT",
@@ -2245,13 +2291,6 @@ export function apiUploadAttachment(sessionId: string, file: File) {
 
 export function apiDeleteAttachment(sessionId: string, attachmentId: string) {
   return request(`/api/v1/sessions/${sessionId}/attachments/${attachmentId}`, { method: "DELETE" });
-}
-
-export function apiCreateAgentSession(agentId: string, kbId?: string | null, title?: string) {
-  return request<ChatSessionItem>("/api/v1/sessions", {
-    method: "POST",
-    body: JSON.stringify({ agent_id: agentId, kb_id: kbId || null, title: title || null }),
-  });
 }
 
 // ---- task monitor (任务监控) ----

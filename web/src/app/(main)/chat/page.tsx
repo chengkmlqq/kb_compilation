@@ -32,6 +32,7 @@ import {
   DownOutlined,
   EditOutlined,
   FileTextOutlined,
+  GlobalOutlined,
   PaperClipOutlined,
   PictureOutlined,
   PlusOutlined,
@@ -69,6 +70,7 @@ import {
   ModelItem,
 } from "@/lib/api";
 import MarkdownViewer from "@/components/MarkdownViewer";
+import TypewriterText from "@/components/TypewriterText";
 import RagPipelineProgress, { RagStep } from "@/components/RagPipelineProgress";
 import AgentToolCalls, { ToolCallEvent } from "@/components/AgentToolCalls";
 
@@ -121,6 +123,25 @@ export default function ChatPage() {
   // 2026-10-08 对齐 WeKnora：图片独立入口 + 发送前预览（本地对象 URL）
   const [imagePreviews, setImagePreviews] = useState<{ file: File; url: string }[]>([]);
   const MAX_IMAGES = 5;
+  // 2026-10-12 对齐 WeKnora：整文件拖放上传（拖入时输入卡片高亮）
+  const [dragActive, setDragActive] = useState(false);
+  // 2026-10-12 对齐 WeKnora 输入区联网搜索开关（普通问答/agent 模式通用，请求级生效）
+  const [webSearch, setWebSearch] = useState(false);
+  // 2026-10-12 对齐 WeKnora embeddedMode：iframe 嵌入 / ?embed=1 / ?noframe=1 时
+  // 隐藏左侧会话列表，问答区满宽沉浸式展示（宿主页面嵌入问答小窗场景）
+  const [embeddedMode, setEmbeddedMode] = useState(false);
+  useEffect(() => {
+    const inIframe = typeof window !== "undefined" && window.self !== window.top;
+    const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    const forced = params?.get("embed") === "1" || params?.get("noframe") === "1";
+    setEmbeddedMode(inIframe || forced);
+  }, []);
+    // 2026-10-07 对齐 WeKnora：@提及多资源（消息级目标覆盖：知识库 / 智能体）
+  // 声明放在 openSession 之前（openSession 恢复输入态时用到 atTarget）
+  const [atTarget, setAtTarget] = useState<{ kind: "kb" | "agent"; id: string; name: string } | null>(null);
+  const [atOpen, setAtOpen] = useState(false);
+  // 2026-10-12 @提及选择器分组过滤关键字
+  const [atSearch, setAtSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [refsDrawer, setRefsDrawer] = useState<{ title: string; refs: ChatRefItem[] } | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
@@ -273,6 +294,18 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 2026-10-12 对齐 WeKnora last_request_state：会话输入态快照（发送时写入会话）
+  const snapshotInputState = useCallback(
+    () => ({
+      agent_id: agentMode || null,
+      kb_id: kbId || null,
+      model_id: modelId || null,
+      web_search_enabled: webSearch,
+      at_target: atTarget,
+    }),
+    [agentMode, kbId, modelId, webSearch, atTarget],
+  );
+
   // 打开会话：加载历史 + 推荐问题
   const openSession = useCallback(
     async (sessionId: string) => {
@@ -288,6 +321,17 @@ export default function ChatPage() {
           setAgentMode(s.agent_id);
         } else {
           setAgentMode(undefined);
+        }
+        // 2026-10-12 对齐 WeKnora last_request_state：恢复会话级输入态
+        // （agent/kb/模型/联网开关/@目标；kb_id 由会话绑定覆盖）
+        const st = s?.last_request_state;
+        if (st) {
+          if (st.kb_id) setKbId(st.kb_id);
+          if (st.agent_id) setAgentMode(st.agent_id);
+          if (st.model_id) setModelId(st.model_id);
+          if (st.web_search_enabled != null) setWebSearch(!!st.web_search_enabled);
+          if (st.at_target) setAtTarget(st.at_target);
+          else setAtTarget(null);
         }
         // 加载附件
         const att = await apiListAttachments(sessionId);
@@ -552,8 +596,8 @@ export default function ChatPage() {
     if (!sessionId) {
       try {
         const created = effectiveAgent
-          ? await apiCreateAgentSession(effectiveAgent, effectiveKbId, question.slice(0, 30))
-          : await apiCreateSession(effectiveKbId ?? "", question.slice(0, 30));
+          ? await apiCreateAgentSession(effectiveAgent, effectiveKbId, question.slice(0, 30), snapshotInputState())
+          : await apiCreateSession(effectiveKbId ?? "", question.slice(0, 30), snapshotInputState());
         if (created.success && created.data) {
           sessionId = created.data.id;
           setActiveSession(sessionId);
@@ -600,6 +644,7 @@ export default function ChatPage() {
           threshold: 0.2,
           embed_query: true,
           model_id: modelId || undefined, // 2026-10-06: 模型切换（空=默认模型）
+          web_search_enabled: webSearch, // 2026-10-12 对齐 WeKnora 输入区联网开关
         }),
         signal: controller.signal,
       });
@@ -740,6 +785,12 @@ export default function ChatPage() {
       );
       setStreaming(false);
       if (sessionId) sessionStorage.removeItem(QA_RESUME_KEY(sessionId));
+      // 2026-10-12 对齐 WeKnora last_request_state：发送成功后保存会话输入态快照
+      if (sessionId) {
+        void apiUpdateSession(sessionId, { last_request_state: snapshotInputState() }).then(
+          () => loadSessions(),
+        );
+      }
       // 后台生成标题（成功会话）
       if (sessionId) {
         void apiGenerateTitle(sessionId).then(() => loadSessions());
@@ -768,6 +819,8 @@ export default function ChatPage() {
           });
           return c;
         })();
+        // 2026-10-12 停止后同样保存输入态快照（下次打开恢复）
+        if (sessionId) void apiUpdateSession(sessionId, { last_request_state: snapshotInputState() });
         void apiFollowUp(sessionId!, finalContent).then((res) => {
           if (res.success) {
             setMsgs((prev) =>
@@ -924,6 +977,25 @@ export default function ChatPage() {
     }
   };
 
+  // 2026-10-12 对齐 WeKnora Input-field：整文件拖放 —— 图片→预览条，其余→直接上传
+  const handleChatDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (!files.length) return;
+    const images = files.filter((f) => f.type.startsWith("image/"));
+    const others = files.filter((f) => !f.type.startsWith("image/"));
+    if (images.length) {
+      if (!canUploadImage) {
+        toast.warning("当前未启用图片上传，图片已忽略");
+      } else {
+        addImageFiles(images);
+      }
+    }
+    others.forEach((f) => void uploadAttachment(f));
+  };
+
   // L3：消息搜索
   const doSearch = async () => {
     if (!searchKeyword.trim()) {
@@ -983,10 +1055,7 @@ export default function ChatPage() {
     return labels;
   }, [filteredSessions]);
 
-  // 2026-10-07 对齐 WeKnora：@提及多资源（消息级目标覆盖：知识库 / 智能体）
-  const [atTarget, setAtTarget] = useState<{ kind: "kb" | "agent"; id: string; name: string } | null>(null);
-  const [atOpen, setAtOpen] = useState(false);
-
+  // 2026-10-12 @提及选择器分组过滤关键字（声明已上移，见组件顶部输入态区）
   return (
     // 2026-10-08: 对齐任务监控页「固定视口高度 + 统一 8px 边距」——外层锁定 视口 − 顶栏(45px)，
     // 左右两栏吃满剩余高度、各自内部滚动，页面本身不出现滚动条。
@@ -1001,7 +1070,8 @@ export default function ChatPage() {
         overflow: "hidden",
       }}
     >
-      {/* 左：会话列表 */}
+      {/* 左：会话列表（2026-10-12 embeddedMode 时隐藏，问答区满宽沉浸式） */}
+      {!embeddedMode && (
       <Card
         style={{
           width: 280,
@@ -1100,6 +1170,7 @@ export default function ChatPage() {
         )}
         </div>
       </Card>
+      )}
 
       {/* 右：对话区 */}
       <Card
@@ -1217,9 +1288,10 @@ export default function ChatPage() {
                     ) : m.role === "assistant" ? (
                       <div>
                         {m.content ? (
-                          <MarkdownViewer
+                          <TypewriterText
                             text={m.content}
                             refs={m.refs}
+                            active={!!m.streaming}
                             onCitationClick={(payload) =>
                               setRefDrawer({
                                 open: true,
@@ -1406,14 +1478,29 @@ export default function ChatPage() {
           </Tag>
         ))}
       </div>
-      {/* 2026-10-08 对齐 WeKnora：图片 / 附件双入口 + 输入卡片式布局 */}
+      {/* 2026-10-08 对齐 WeKnora：图片 / 附件双入口 + 输入卡片式布局；2026-10-12 支持整文件拖放 */}
       <div
+        onDragEnter={(e) => {
+          e.preventDefault();
+          setDragActive(true);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }}
+        onDragLeave={(e) => {
+          // 仅在离开卡片本身时取消高亮（子元素间移动不触发）
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+          setDragActive(false);
+        }}
+        onDrop={handleChatDrop}
         style={{
-          border: `1px solid ${token.colorBorderSecondary}`,
+          border: `1px solid ${dragActive ? token.colorPrimary : token.colorBorderSecondary}`,
           borderRadius: 8,
-          boxShadow: token.boxShadowTertiary,
-          background: token.colorBgContainer,
+          boxShadow: dragActive ? `0 0 0 2px ${token.colorPrimaryBorder}` : token.boxShadowTertiary,
+          background: dragActive ? token.colorPrimaryBg : token.colorBgContainer,
           padding: "10px 14px 6px",
+          transition: "border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease",
         }}
       >
         {/* 图片预览条（发送前本地预览） */}
@@ -1523,6 +1610,23 @@ export default function ChatPage() {
               title="@提及知识库 / 智能体"
               onClick={() => setAtOpen(true)}
             />
+            {/* 2026-10-12 对齐 WeKnora Input-field：联网搜索开关（请求级生效） */}
+            <Button
+              type="text"
+              size="small"
+              icon={<GlobalOutlined />}
+              title={
+                webSearch
+                  ? "联网搜索已开启：回答可调用 web_search 检索实时信息"
+                  : "联网搜索已关闭"
+              }
+              aria-pressed={webSearch}
+              onClick={() => setWebSearch((v) => !v)}
+              style={{
+                color: webSearch ? token.colorPrimary : undefined,
+                background: webSearch ? token.colorPrimaryBg : undefined,
+              }}
+            />
             {canUploadImage && (
               <Button
                 type="text"
@@ -1608,7 +1712,8 @@ export default function ChatPage() {
         />
       </div>
           </div>
-        {/* 2026-10-07 @提及多资源：选择本次消息的目标知识库 / 智能体 */}
+        {/* 2026-10-07 @提及多资源：选择本次消息的目标知识库 / 智能体；
+            2026-10-12 对齐 WeKnora MentionSelector：分组列表 + 关键字过滤，点击即选 */}
           <Modal
             title="@ 提及目标"
             open={atOpen}
@@ -1619,43 +1724,90 @@ export default function ChatPage() {
             <Text type="secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
               选择后本条消息将针对该资源问答（不改变会话绑定）
             </Text>
-            <div style={{ marginBottom: 8 }}>
-              <Text strong style={{ fontSize: 13 }}>知识库</Text>
-              <Select
-                style={{ width: "100%", marginTop: 4 }}
-                placeholder="选择知识库"
-                value={atTarget?.kind === "kb" ? atTarget.id : undefined}
-                onChange={(id) => {
-                  const kb = kbs.find((k) => k.id === id);
-                  if (kb) setAtTarget({ kind: "kb", id, name: kb.name });
-                }}
-                options={kbs.map((k) => ({ value: k.id, label: k.name }))}
-              />
-            </div>
-            <div>
-              <Text strong style={{ fontSize: 13 }}>智能体</Text>
-              <Select
-                style={{ width: "100%", marginTop: 4 }}
-                placeholder="选择智能体"
-                value={atTarget?.kind === "agent" ? atTarget.id : undefined}
-                onChange={(id) => {
-                  const a = agents.find((x) => x.id === id);
-                  if (a) setAtTarget({ kind: "agent", id, name: a.name });
-                }}
-                options={agents.map((a) => ({
-                  value: a.id,
-                  label: (
-                    <Space size={4}>
-                      <RobotOutlined />
-                      {a.name}
-                    </Space>
-                  ),
-                }))}
-              />
+            <Input
+              allowClear
+              size="small"
+              prefix={<SearchOutlined style={{ color: token.colorTextTertiary, fontSize: 12 }} />}
+              placeholder="搜索知识库 / 智能体"
+              value={atSearch}
+              onChange={(e) => setAtSearch(e.target.value)}
+              style={{ marginBottom: 8 }}
+            />
+            <div style={{ maxHeight: 300, overflow: "auto", margin: "0 -4px", padding: "0 4px" }}>
+              {/* 知识库分组 */}
+              <Text type="secondary" style={{ fontSize: 12, display: "block", margin: "6px 0 2px" }}>
+                知识库
+              </Text>
+              {(() => {
+                const q = atSearch.trim().toLowerCase();
+                const items = kbs.filter((k) => !q || k.name.toLowerCase().includes(q));
+                if (items.length === 0) {
+                  return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无匹配知识库" style={{ padding: "8px 0" }} />;
+                }
+                return items.map((k) => (
+                  <div
+                    key={k.id}
+                    onClick={() => {
+                      setAtTarget({ kind: "kb", id: k.id, name: k.name });
+                      setAtOpen(false);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "5px 8px",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      fontSize: 13,
+                      background: atTarget?.kind === "kb" && atTarget.id === k.id ? token.controlItemBgActive : "transparent",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = atTarget?.kind === "kb" && atTarget.id === k.id ? token.controlItemBgActive : token.colorFillTertiary)}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = atTarget?.kind === "kb" && atTarget.id === k.id ? token.controlItemBgActive : "transparent")}
+                  >
+                    <DatabaseOutlined style={{ color: token.colorPrimary, fontSize: 12 }} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k.name}</span>
+                  </div>
+                ));
+              })()}
+              {/* 智能体分组 */}
+              <Text type="secondary" style={{ fontSize: 12, display: "block", margin: "8px 0 2px" }}>
+                智能体
+              </Text>
+              {(() => {
+                const q = atSearch.trim().toLowerCase();
+                const items = agents.filter((a) => !q || a.name.toLowerCase().includes(q));
+                if (items.length === 0) {
+                  return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无匹配智能体" style={{ padding: "8px 0" }} />;
+                }
+                return items.map((a) => (
+                  <div
+                    key={a.id}
+                    onClick={() => {
+                      setAtTarget({ kind: "agent", id: a.id, name: a.name });
+                      setAtOpen(false);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "5px 8px",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      fontSize: 13,
+                      background: atTarget?.kind === "agent" && atTarget.id === a.id ? token.controlItemBgActive : "transparent",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = atTarget?.kind === "agent" && atTarget.id === a.id ? token.controlItemBgActive : token.colorFillTertiary)}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = atTarget?.kind === "agent" && atTarget.id === a.id ? token.controlItemBgActive : "transparent")}
+                  >
+                    <RobotOutlined style={{ color: token.colorPrimary, fontSize: 12 }} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
+                  </div>
+                ));
+              })()}
             </div>
             <div style={{ textAlign: "right", marginTop: 12 }}>
-              <Button type="primary" onClick={() => setAtOpen(false)}>
-                确定
+              <Button size="small" onClick={() => setAtOpen(false)}>
+                取消
               </Button>
             </div>
           </Modal>

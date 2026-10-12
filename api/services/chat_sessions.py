@@ -39,23 +39,40 @@ MAX_MESSAGES_PER_SESSION = 500
 
 
 def _session_dict(s: ChatSession) -> dict:
+    state: dict | None = None
+    if s.last_request_state:
+        try:
+            state = json.loads(s.last_request_state)
+        except (TypeError, json.JSONDecodeError):
+            state = None
     return {
         "id": s.id,
         "kb_id": s.kb_id,
         "agent_id": s.agent_id,
         "title": s.title,
         "pinned": bool(s.pinned),
+        # 2026-10-12 对齐 WeKnora last_request_state：会话输入态快照（前端恢复用）
+        "last_request_state": state,
         "created_at": s.created_at,
         "updated_at": s.updated_at,
     }
 
 
-def create_session(db: Session, user_id: str, kb_id: str | None, title: str | None = None) -> dict:
+def create_session(
+    db: Session,
+    user_id: str,
+    kb_id: str | None,
+    title: str | None = None,
+    last_request_state: dict | None = None,
+    agent_id: str | None = None,
+) -> dict:
     session = ChatSession(
         id=new_session_id(),
         user_id=user_id,
         kb_id=kb_id or None,
+        agent_id=agent_id or None,
         title=(title or "").strip() or "新会话",
+        last_request_state=json.dumps(last_request_state, ensure_ascii=False) if last_request_state else None,
     )
     db.add(session)
     db.commit()
@@ -93,6 +110,7 @@ def update_session(
     title: str | None = None,
     kb_id: str | None = None,
     pinned: bool | None = None,
+    last_request_state: dict | None = None,
 ) -> dict:
     s = get_session(db, user_id, session_id)
     if title is not None:
@@ -101,6 +119,9 @@ def update_session(
         s.kb_id = kb_id or None
     if pinned is not None:
         s.pinned = 1 if pinned else 0
+    if last_request_state is not None:
+        # 2026-10-12 会话输入态快照（对齐 WeKnora last_request_state）
+        s.last_request_state = json.dumps(last_request_state, ensure_ascii=False)
     s.updated_at = dt.datetime.now(dt.timezone.utc).isoformat()
     db.commit()
     return _session_dict(s)
@@ -587,13 +608,21 @@ def search_messages(db: Session, user_id: str, keyword: str, limit: int = 20) ->
 # ---------------------------------------------------------------------------
 
 
-def create_agent_session(db: Session, user_id: str, agent_id: str, kb_id: str | None = None, title: str | None = None) -> dict:
+def create_agent_session(
+    db: Session,
+    user_id: str,
+    agent_id: str,
+    kb_id: str | None = None,
+    title: str | None = None,
+    last_request_state: dict | None = None,
+) -> dict:
     session = ChatSession(
         id=new_session_id(),
         user_id=user_id,
         kb_id=kb_id or None,
         agent_id=agent_id,
         title=(title or "").strip() or "新会话",
+        last_request_state=json.dumps(last_request_state, ensure_ascii=False) if last_request_state else None,
     )
     db.add(session)
     db.commit()
