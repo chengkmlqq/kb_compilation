@@ -642,18 +642,25 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     }
     const goldenAngle = Math.PI * (3 - Math.sqrt(5));
     if (st.nodes.size === 0) {
-      const R = Math.max(Math.min(W, H) / 2 - 40, 80);
+      // 世界坐标与视口解耦：布点半径只由节点数决定（世界原点即图中心）。
+      // 原实现用 min(W,H)/2 作半径并以画布中心为原点，导致节点永远被限制在
+      // 首次打开时视口大小的方块内。
+      const R = 40 + 26 * Math.sqrt(Math.max(nodeList.length, 1));
       nodeList.forEach((n, i) => {
         const r = R * Math.sqrt((i + 0.5) / Math.max(nodeList.length, 1));
         const ang = i * goldenAngle;
         st.nodes.set(n.slug, {
-          x: W / 2 + Math.cos(ang) * r,
-          y: H / 2 + Math.sin(ang) * r,
+          x: Math.cos(ang) * r,
+          y: Math.sin(ang) * r,
           vx: 0,
           vy: 0,
           pinned: false,
         });
       });
+      // 首次布点把世界原点摆到视口中心（保持初始可见）；收敛后会自动 fitToView
+      st.viewX = W / 2;
+      st.viewY = H / 2;
+      st.scale = 1;
       autoFitRef.current = false;
     } else if (st.nodes.size < nodeList.length) {
       const fresh = nodeList.filter((n) => !st.nodes.has(n.slug));
@@ -695,6 +702,9 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     const repulsion = 900;
     const spring = 0.008;
     const restLen = 90;
+    // 向心力（gravity）：把整体向世界原点收束，使布局收敛到与视口无关的有限尺度。
+    // 原实现改用「夹到画布 20..W-20」代替，导致图被锁死在画布方块内（节点还会被挤到边界）。
+    const gravity = 0.0001;
 
     // 可见性守卫：切到隐藏页签（display:none）时停帧，避免后台空转。
     // antd Tabs 默认不销毁隐藏 pane，若不守卫则多开图页签会多实例满帧跑。
@@ -828,8 +838,9 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         acc.fx = 0;
         acc.fy = 0;
         bhRepulse(root, slug, a.x, a.y, repulsion, acc);
-        a.vx += acc.fx;
-        a.vy += acc.fy;
+        // 斥力 + 向心力（向心力替代原先的画布边界硬夹取，让图自然收敛且与视口无关）
+        a.vx += acc.fx - a.x * gravity;
+        a.vy += acc.fy - a.y * gravity;
         for (const other of adj.get(slug) || []) {
           const tb = nodes.get(other);
           if (!tb || tb === a) continue;
@@ -842,9 +853,6 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         }
         a.x += a.vx;
         a.y += a.vy;
-        // 夹到画布内：原实现写死 20..2000，节点会漂出可视区（表现为「不居中」）
-        a.x = Math.max(20, Math.min(W - 20, a.x));
-        a.y = Math.max(20, Math.min(H - 20, a.y));
         totalV += Math.abs(a.vx) + Math.abs(a.vy);
       }
       render();
@@ -974,8 +982,16 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
 
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const mx = ev.clientX - rect.left;
+      const my = ev.clientY - rect.top;
+      // 缩放前光标处的世界坐标（缩放后保持不动，实现「以光标为锚点」缩放）
+      const wx = (mx - st.viewX) / st.scale;
+      const wy = (my - st.viewY) / st.scale;
       const delta = ev.deltaY > 0 ? 0.9 : 1.1;
       st.scale = Math.max(0.3, Math.min(3, st.scale * delta));
+      st.viewX = mx - wx * st.scale;
+      st.viewY = my - wy * st.scale;
       render();
     };
 

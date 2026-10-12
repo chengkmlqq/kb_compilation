@@ -616,7 +616,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
                 setDocPage(1);
               }}
               treeData={folderTreeData as any}
-              style={{ background: "transparent" }}
             />
           )}
         </div>
@@ -638,6 +637,43 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             }}
             onPressEnter={() => void load()}
           />
+          {/* 解析状态 / 文件类型 过滤紧跟搜索框之后（宽屏 flex 行按 DOM 顺序排列） */}
+          <div className="kb-doc-filter-fields">
+            <div className="kb-doc-filter-field">
+              <Select
+                className="kb-doc-filter-control"
+                allowClear
+                placeholder="解析状态"
+                value={docStatus || undefined}
+                onChange={(v) => {
+                  setDocStatus(v || "");
+                  setDocPage(1);
+                  void load();
+                }}
+                options={["PENDING", "PARSING", "EMBEDDING", "READY", "FAILED"].map((s) => ({
+                  label: STATE_LABEL[s] || s,
+                  value: s,
+                }))}
+              />
+            </div>
+            <div className="kb-doc-filter-field">
+              <Select
+                className="kb-doc-filter-control"
+                allowClear
+                placeholder="文件类型"
+                value={docType || undefined}
+                onChange={(v) => {
+                  setDocType(v || "");
+                  setDocPage(1);
+                  void load();
+                }}
+                options={["md", "pdf", "docx", "xlsx", "pptx", "txt", "epub"].map((t) => ({
+                  label: t.toUpperCase(),
+                  value: t,
+                }))}
+              />
+            </div>
+          </div>
           <div className="kb-doc-filter-trailing">
             {/* 视图切换（对齐 .doc-view-toggle：28×24 图标按钮组） */}
             <div className="kb-doc-view-toggle" role="group">
@@ -705,42 +741,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
               }}
             />
           </div>
-          <div className="kb-doc-filter-fields">
-            <div className="kb-doc-filter-field">
-              <Select
-                className="kb-doc-filter-control"
-                allowClear
-                placeholder="解析状态"
-                value={docStatus || undefined}
-                onChange={(v) => {
-                  setDocStatus(v || "");
-                  setDocPage(1);
-                  void load();
-                }}
-                options={["PENDING", "PARSING", "EMBEDDING", "READY", "FAILED"].map((s) => ({
-                  label: STATE_LABEL[s] || s,
-                  value: s,
-                }))}
-              />
-            </div>
-            <div className="kb-doc-filter-field">
-              <Select
-                className="kb-doc-filter-control"
-                allowClear
-                placeholder="文件类型"
-                value={docType || undefined}
-                onChange={(v) => {
-                  setDocType(v || "");
-                  setDocPage(1);
-                  void load();
-                }}
-                options={["md", "pdf", "docx", "xlsx", "pptx", "txt", "epub"].map((t) => ({
-                  label: t.toUpperCase(),
-                  value: t,
-                }))}
-              />
-            </div>
-          </div>
         </div>
         {selectedList.length > 0 && (
           <div className="kb-doc-batch-bar">
@@ -791,6 +791,10 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
               containerClassName="kb-doc-table"
               rowKey="id"
               size="small"
+              // ModoTable 默认 scroll.x=1000，会把表格撑到 1000px；内容面板窄于此宽度时
+              // 最右「操作」列被挤出面板外看不见。改为 100%（table-layout 仍为 fixed，列宽可控），
+              // 表格始终贴合面板宽度，操作列常驻可见。
+              scroll={{ x: "100%" }}
               loading={docsLoading}
               dataSource={docs}
               rowSelection={{
@@ -845,7 +849,9 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
                 },
                 {
                   title: "操作",
-                  width: 150,
+                  // 三个「图标+文字」链接按钮（下载/重解析/删除）约需 190px，150px 会被
+                  // 全局 td overflow:hidden 从右裁掉，故留足宽度。
+                  width: 210,
                   render: (_: unknown, doc: DocItem) => (
                     <Space size={4}>
                       <Button type="link" size="small" icon={<DownloadOutlined />} onClick={(e) => { e.stopPropagation(); void onDownloadDoc(doc); }}>

@@ -1542,6 +1542,18 @@ body {
 .kb-doc-folder-sidebar {
   background: var(--kb-bg-subtle, #fafafa);
 }
+/* 左侧树撑满容器：antd Tree 的 style 只作用于内层 NodeList，root .ant-tree 仍默认白底且
+   高度只随内容，与侧栏底色（#fafafa）错位、视觉上「树未撑满」。令滚动容器纵向 flex，
+   树根透明并占满剩余高度。 */
+.kb-doc-folder-tree {
+  display: flex;
+  flex-direction: column;
+}
+.kb-doc-folder-tree .ant-tree {
+  flex: 1;
+  min-height: 0;
+  background: transparent;
+}
 .kb-doc-folder-tree .ant-tree-treenode {
   padding: 2px 0;
 }
