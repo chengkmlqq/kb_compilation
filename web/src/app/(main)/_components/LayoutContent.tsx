@@ -46,10 +46,11 @@ export function LayoutContent({ children }: { children: React.ReactNode }) {
         if (jwt) {
           try {
             const res = await apiJwtExchange(jwt);
-            if (res.success && res.data?.identity_cookie) {
+            if (res.success && res.identity_cookie) {
               // 注意：不能 encodeURIComponent —— 后端 decode_identity_cookie
-              // 不先做 URL 解码，编码后的 %XX 会导致 base64 解析失败（同 login 页写法）
-              document.cookie = `x-next-identity=${res.data.identity_cookie}; path=/; max-age=172800`;
+              // 不先做 URL 解码，编码后的 %XX 会导致 base64 解析失败（同 login 页写法）。
+              // identity_cookie 在响应顶层（data 是 identity payload，不含它）。
+              document.cookie = `x-next-identity=${res.identity_cookie}; path=/; max-age=172800`;
             }
           } catch {
             /* 换签失败：继续走身份校验，未登录会跳 /login */

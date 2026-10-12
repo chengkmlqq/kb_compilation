@@ -2437,8 +2437,13 @@ export function apiAuthMode() {
 // ---- URL 带 ?jwt= 换签（挂载场景免二次登录）----
 // 宿主系统签发 HS256 JWT，前端用其换取 x-next-identity cookie，
 // 之后所有接口走正常认证链路。失败时返回 success=false，调用方回退到登录页。
-export function apiJwtExchange(token: string) {
-  return request<{ identity_cookie?: string } & Identity>("/api/v1/auth/jwt-exchange", {
+// 注意：后端响应里 identity_cookie 在顶层（data 是 Identity payload）。
+export interface JwtExchangeResult extends ApiEnvelope<Identity> {
+  identity_cookie?: string;
+}
+
+export function apiJwtExchange(token: string): Promise<JwtExchangeResult> {
+  return request<Identity>("/api/v1/auth/jwt-exchange", {
     method: "POST",
     body: JSON.stringify({ token }),
   });
