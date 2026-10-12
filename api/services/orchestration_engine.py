@@ -412,15 +412,24 @@ class KbLlmChatStep(BaseStep):
         json_mode = bool(self.config.get("json_mode"))
 
         try:
-            cfg = load_chat_config(None, model_id=model)
-            client = ChatClient(cfg)
-            from api.services.chat import ChatMessage
+            # 2026-10-12 修复：db 必须传——load_chat_config(None) 走 legacy env，
+            # model_id 解析不到模型注册表（KB 配置的摘要模型）→ AI_CHAT_API_ENDPOINT
+            # is not configured。开会话传 db 后 model_id 走 resolve_model_config。
+            from api.db import get_sessionmaker
 
-            raw = client.chat(
-                [ChatMessage(role="user", content=prompt)],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+            _db = get_sessionmaker()()
+            try:
+                cfg = load_chat_config(_db, model_id=model)
+                client = ChatClient(cfg)
+                from api.services.chat import ChatMessage
+
+                raw = client.chat(
+                    [ChatMessage(role="user", content=prompt)],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+            finally:
+                _db.close()
         except Exception as e:  # noqa: BLE001
             return StepResponse.fail(f"LLM 调用失败: {e}")
         if json_mode:
@@ -514,6 +523,142 @@ class WikiRebuildLinksStep(BaseStep):
         finally:
             db.close()
         return StepResponse.success({"kb_id": kb_id, "links_rebuilt": True})
+
+
+class KbReadTableStep(BaseStep):
+    """'kb_read_table' 读表源数据（2026-10-12 基础原子）。
+
+    细粒度基础能力：从数据源实时读一张绑定表（复用 datagrid 连接层），
+    输出到运行变量供下游 script/llm 原子构造 markdown 与 wiki 页。
+    等价于 table_ingest._load_table_rows + 元数据列注释补全。config:
+      - document_id: 表源文档 ID（支持 {{ }} 模板）
+      - output_var: 输出变量名（默认 table_data）
+      - limit: 样例行数上限（默认 500）
+    输出 bindings[output_var] = {
+        "rows": [dict], "columns": [str], "col_comments": {c: str},
+        "col_types": {c: str}, "table_comment": str|None,
+        "table_name": str, "schema": str, "ds_name": str,
+        "kb_id": str, "summary": str|None, "summary_model_id": str|None,
+    }
+    """
+
+    def handle(self, context: TapeRuntimeContext) -> StepResponse:
+        import sqlalchemy as sa
+
+        from api.db import get_sessionmaker
+        from api.models.knowledge import KbDocument
+
+        document_id = str(context.render(self.config.get("document_id") or "")).strip()
+        if not document_id:
+            return StepResponse.fail("kb_read_table 缺 document_id")
+        output_var = str(self.config.get("output_var") or "table_data")
+        limit = int(self.config.get("limit") or 500)
+
+        db = get_sessionmaker()()
+        try:
+            doc = db.execute(
+                sa.select(KbDocument).where(KbDocument.id == document_id)
+            ).scalars().first()
+            if not doc:
+                return StepResponse.fail(f"表源文档不存在: {document_id}")
+            if doc.source_type not in ("table", None, ""):
+                return StepResponse.fail(f"文档不是表源（source_type={doc.source_type}）")
+
+            # 取数（复用 datagrid 连接层，空 user/team = 系统级）
+            from api.services import datagrid
+
+            ds_name = doc.ds_source_name or ""
+            if not ds_name:
+                return StepResponse.fail("表源缺少数据源（ds_source_name）")
+            entry = datagrid._find_entry(db, ds_name, user_id="", team_name="")
+            if entry is None:
+                return StepResponse.fail(f"数据源不存在或不可用: {ds_name}")
+            engine = datagrid._connect(entry)
+            schema = (doc.ds_table_schema or "").strip()
+            table = (doc.ds_table_name or "").strip()
+            if not table:
+                return StepResponse.fail("表源缺少表名（ds_table_name）")
+            table_ref = f"{schema}.{table}" if schema else table
+            sql = f"SELECT * FROM {table_ref} LIMIT {int(limit)}"
+            with engine.connect() as conn:
+                result = conn.exec_driver_sql(sql)
+                cols = list(result.keys())
+                rows = [dict(zip(cols, r)) for r in result.fetchall()]
+
+            # 元数据列注释/类型/表注释补全（缺失不阻塞）
+            col_comments: dict[str, str] = {}
+            col_types: dict[str, str] = {}
+            table_comment: str | None = None
+            try:
+                from api.models.framework import Datasource
+                from api.models.metadata import MetadataColumn, MetadataTable
+
+                mt_id = None
+                if doc.ds_source_name and doc.ds_table_name:
+                    ds_id = db.execute(
+                        sa.select(Datasource.id).where(Datasource.name == doc.ds_source_name)
+                    ).scalars().first()
+                    if ds_id:
+                        mt_id = db.execute(
+                            sa.select(MetadataTable.id).where(
+                                MetadataTable.datasource_id == ds_id,
+                                MetadataTable.table_name == doc.ds_table_name,
+                                sa.or_(
+                                    MetadataTable.schema_name == (doc.ds_table_schema or ""),
+                                    MetadataTable.schema_name.is_(None),
+                                ),
+                            )
+                        ).scalars().first()
+                if mt_id:
+                    mt = db.get(MetadataTable, mt_id)
+                    if mt and mt.table_comment:
+                        table_comment = mt.table_comment
+                    for cname, ccomment, ctype in db.execute(
+                        sa.select(
+                            MetadataColumn.column_name,
+                            MetadataColumn.column_comment,
+                            MetadataColumn.data_type,
+                        ).where(MetadataColumn.metadata_table_id == mt_id)
+                    ).all():
+                        if cname and ccomment:
+                            col_comments[cname] = ccomment
+                        if cname and ctype:
+                            col_types[cname] = str(ctype)
+            except Exception:  # noqa: BLE001
+                col_comments = {}
+                col_types = {}
+
+            # KB 配置（摘要模型/摘要文本供下游 LLM 与正文使用）
+            summary = doc.summary or None
+            summary_model_id = None
+            try:
+                from api.models.knowledge import KbDatasource
+
+                kb = db.execute(
+                    sa.select(KbDatasource).where(KbDatasource.id == doc.kb_id)
+                ).scalars().first()
+                if kb:
+                    summary_model_id = getattr(kb, "summary_model_id", None) or None
+            except Exception:  # noqa: BLE001
+                pass
+        finally:
+            db.close()
+
+        out = {
+            "rows": rows,
+            "columns": cols,
+            "col_comments": col_comments,
+            "col_types": col_types,
+            "table_comment": table_comment,
+            "table_name": table,
+            "schema": schema,
+            "ds_name": ds_name,
+            "kb_id": doc.kb_id or "",
+            "summary": summary,
+            "summary_model_id": summary_model_id,
+        }
+        context.bindings[output_var] = out
+        return StepResponse.success({f"set:{output_var}": out, "rows": len(rows), "columns": len(cols)})
 
 
 class WikiEnsureFolderStep(BaseStep):
@@ -665,6 +810,7 @@ ATOM_MAP: Dict[str, Callable[[str, str, str, Optional[dict]], BaseStep]] = {
     # 细粒度基础原子（2026-10-12）：编排自己实现 wiki 构建逻辑（进程内执行，
     # 结果经 bindings 流转）。原子 = 纯基础能力，流程由编排图表达。
     "kb_read_doc": KbReadDocStep,
+    "kb_read_table": KbReadTableStep,
     "kb_llm_chat": KbLlmChatStep,
     "wiki_upsert_page": WikiUpsertPageStep,
     "wiki_rebuild_links": WikiRebuildLinksStep,

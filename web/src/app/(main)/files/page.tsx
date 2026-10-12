@@ -414,7 +414,7 @@ export default function FilesPage() {
       className="files-page"
       style={{
         padding: 8,
-        height: "calc(100vh - 45px)",
+        height: "calc(100vh - var(--app-header-h, 45px))",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",

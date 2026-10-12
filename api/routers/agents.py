@@ -94,6 +94,10 @@ class AgentQARequest(BaseModel):
     question: str = Field(..., min_length=1)
     history: list[dict] = Field(default_factory=list)
     session_id: str | None = None  # 会话模式：持久化 + 加载历史 + 附件注入
+    # 2026-10-12: 问答界面的模型选择此前只走 /qa/stream，agent 模式前端仍在
+    # 发送 model_id 但此处无对应字段 → pydantic 静默丢弃，用户选了模型不生效。
+    # 与 qa.py 的 QARequest.model_id 对齐：不传=用默认模型。
+    model_id: str | None = None
 
     @field_validator("question")
     @classmethod
@@ -262,6 +266,22 @@ def agent_qa_stream(
         answer_parts: list[str] = []
         refs: list[dict] = []
         last_kb_id = ""
+        # 2026-10-12: 模型选择生效——指定模型则显式解析（文本/图片均生效），
+        # 与 qa.py 的 _run_generation 同款逻辑；解析失败回退默认模型。
+        requested_cfg = None
+        if req.model_id:
+            try:
+                from api.services.chat import load_chat_config
+
+                requested_cfg = load_chat_config(
+                    db,
+                    user_id=ctx_user_id,
+                    team_name=ctx_team_name,
+                    is_sys_admin=ctx_is_admin,
+                    model_id=req.model_id,
+                )
+            except Exception:  # noqa: BLE001
+                requested_cfg = None
         try:
             if image_urls:
                 # 图片问答要求对话模型支持视觉（supports_vision）
@@ -269,7 +289,7 @@ def agent_qa_stream(
                     from api.models.model import KbModel
                     from api.services.chat import load_chat_config
 
-                    chat_cfg = load_chat_config(
+                    chat_cfg = requested_cfg or load_chat_config(
                         db,
                         user_id=ctx_user_id,
                         team_name=ctx_team_name,
@@ -295,7 +315,7 @@ def agent_qa_stream(
                     query_embedding=query_embedding,
                     retrieval_overrides=overrides,
                     history=history,
-                    chat_cfg=None,
+                    chat_cfg=requested_cfg if req.model_id else None,  # 指定模型时复用解析结果
                     extra_context=extra,
                     image_urls=image_urls if idx == 0 else None,
                     agent_prompt=agent_prompt,

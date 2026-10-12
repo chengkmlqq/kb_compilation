@@ -331,6 +331,17 @@ class ChatClient:
                     # 例外：403/408/429 —— 部分服务(Infer AI)用 403 表达限流，
                     # 实测高峰期会瞬时 403 后自行恢复，故纳入重试。
                     if status and 400 <= status < 500 and status not in (403, 408, 429):
+                        # 2026-10-12: 上游网关用 404 表达「模型名不存在」
+                        # （tokenerpgw/erp 网关实测：model_not_found 回 404）。
+                        # 裸抛 httpx 异常只会给用户一句 "Client error '404 Not
+                        # Found' for url ..."，无从判断是地址错还是模型名错，
+                        # 这里改成可据模型名自查的中文提示。
+                        if status == 404:
+                            raise RuntimeError(
+                                f"模型不可用：网关返回 404（模型不存在或地址错误）。"
+                                f"当前模型名「{self.cfg.model}」，接口地址「{endpoint}」。"
+                                f"请在「模型配置」中核对该模型名是否为网关实际支持的取值。"
+                            ) from exc
                         raise
                     if attempt < 2:
                         time.sleep(1.5 * (attempt + 1))

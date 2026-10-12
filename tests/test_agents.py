@@ -120,3 +120,14 @@ def test_resolve_qa_overrides(agent_db) -> None:
     overrides = resolve_agent_qa_overrides(agent)
     assert overrides["top_k"] == 3
     assert overrides["threshold"] == 0.5
+
+
+def test_agent_qa_request_accepts_model_id() -> None:
+    """2026-10-12: 前端在 agent 模式也发送 model_id，但 AgentQARequest 此前
+    没有该字段 → pydantic 静默丢弃，「选了模型不生效」。断言字段存在且透传。"""
+    from api.routers.agents import AgentQARequest
+
+    req = AgentQARequest(question="你好", model_id="m-abc")
+    assert req.model_id == "m-abc"
+    # 不传时默认 None（用默认模型），保持旧行为
+    assert AgentQARequest(question="你好").model_id is None

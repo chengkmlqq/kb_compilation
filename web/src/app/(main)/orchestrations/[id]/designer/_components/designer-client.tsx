@@ -10,7 +10,7 @@ import {
   useReactFlow,
   addEdge,
 } from '@xyflow/react';
-import type { Edge, NodeChange, EdgeChange, Connection, OnSelectionChangeParams, Viewport } from '@xyflow/react';
+import type { Edge, NodeChange, EdgeChange, Connection, Viewport } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { App, Button, Input, Modal, Select, Spin, Tag, Tooltip, Typography } from 'antd';
 import {
@@ -305,9 +305,9 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
     [screenToFlowPosition, setNodes, markDirty],
   );
 
-  /** 节点选中 -> 打开右侧配参 Drawer */
-  const onSelectionChange = useCallback(({ nodes: selected }: OnSelectionChangeParams<StepFlowNode>) => {
-    setSelectedNode(selected[0] ?? null);
+  /** 节点双击 -> 打开右侧配参 Drawer（单击仅选中高亮，不进抽屉） */
+  const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: StepFlowNode) => {
+    setSelectedNode(node);
   }, []);
 
   const handleClosePanel = useCallback(() => {
@@ -349,9 +349,41 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
     setZoomLevel(Math.round(viewport.zoom * 100));
   }, []);
 
+  // 2026-10-12 画布节点联动：由执行结果（execRun.step_results）注入每个节点的
+  // runStatus（running/success/failed/skipped）与耗时——step_id 格式 tape_id::n1，
+  // 拆出节点 id n1 做映射；无 execRun 时节点保持静态样式。
+  const runNodeMap = useMemo(() => {
+    const map: Record<string, { status: string; durationMs?: number }> = {};
+    (execRun?.step_results || []).forEach((s) => {
+      const seg = String(s.step_id || '').split('::');
+      const nodeId = seg.length > 1 ? seg[seg.length - 1] : seg[0];
+      if (nodeId) {
+        const dur = Number(s.duration_ms ?? 0);
+        map[nodeId] = { status: s.status || 'pending', durationMs: dur > 0 ? dur : undefined };
+      }
+    });
+    return map;
+  }, [execRun]);
+
   const renderedNodes = useMemo(
-    () => nodes.map((n) => ({ ...n, data: { ...n.data, onDelete: handleDeleteNode } })),
-    [nodes, handleDeleteNode],
+    () =>
+      nodes.map((n) => {
+        const run = runNodeMap[n.id];
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            onDelete: handleDeleteNode,
+            // 执行中（终态已定）才注入状态；正在执行时当前节点闪烁效果由
+            // custom-node 的 animation 负责，这里不做时间戳驱动（避免 1.5s
+            // 轮询抖动重置动画）
+            ...(run && execRun?.status !== 'queued'
+              ? { runStatus: run.status, runDurationMs: run.durationMs }
+              : { runStatus: undefined, runDurationMs: undefined }),
+          },
+        };
+      }),
+    [nodes, handleDeleteNode, runNodeMap, execRun],
   );
 
   // ---------------- 保存 / 发布 / 执行 ----------------
@@ -634,7 +666,7 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onSelectionChange={onSelectionChange}
+            onNodeDoubleClick={onNodeDoubleClick}
             onPaneClick={handleClosePanel}
             onViewportChange={onViewportChange}
             defaultEdgeOptions={{ type: 'default' }}
@@ -723,8 +755,8 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
             <div style={{ maxHeight: 360, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>
               {(execRun.step_results || []).map((s, i) => (
                 <div key={s.step_id || i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 0', borderBottom: '1px dashed #f5f5f5' }}>
-                  <Tag color={s.status === 'success' ? 'green' : s.status === 'skipped' ? 'orange' : 'red'} style={{ width: 62, textAlign: 'center', margin: 0, flexShrink: 0 }}>
-                    {s.status === 'success' ? '成功' : s.status === 'skipped' ? '跳过' : '失败'}
+                  <Tag color={s.status === 'success' ? 'green' : s.status === 'skipped' ? 'orange' : s.status === 'running' ? 'blue' : 'red'} style={{ width: 62, textAlign: 'center', margin: 0, flexShrink: 0 }}>
+                    {s.status === 'success' ? '成功' : s.status === 'skipped' ? '跳过' : s.status === 'running' ? '执行中' : '失败'}
                   </Tag>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <Text strong style={{ fontSize: 13 }}>

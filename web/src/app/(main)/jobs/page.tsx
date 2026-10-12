@@ -187,7 +187,7 @@ export default function JobsPage() {
       style={{
         display: "flex",
         flexDirection: "column",
-        height: "calc(100vh - 45px)",
+        height: "calc(100vh - var(--app-header-h, 45px))",
         minHeight: 0,
         background: "#F5F7FA",
         padding: 8,

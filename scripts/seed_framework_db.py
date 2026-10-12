@@ -12,15 +12,22 @@
   KB 菜单树是本平台的**种子数据**（与前端页面路由一一对应），初始化后由
   「系统管理 → 菜单管理 / 角色管理」维护，不再写死在代码里。前端
   FALLBACK_MENUS 仅在 my-menus 为空时兜底，正常运行以本表为准。
+
+重新初始化菜单（恢复纯种子状态）:
+  uv run python scripts/seed_framework_db.py --reset-menus
+  该选项会**删除全部现有菜单与角色-菜单授权**（业务自定义菜单一并清除），
+  再按 KB_MENUS 种子重建并重新授权种子角色；其余数据（用户/角色/团队/
+  参数等）不受影响。不带参数则维持幂等 upsert（补缺/修正漂移，不删除）。
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from api.db import get_sessionmaker
 from api.lib.crypto import aes_encrypt
@@ -46,63 +53,83 @@ SEED_TEAM = os.getenv("KB_SEED_TEAM", "默认团队")
 # 可用环境变量 KB_SEED_ROLE 覆盖。
 SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 
-# KB 菜单树（4 顶级分组 + 25 页面 = 29 项；sort_num 决定同级顺序）
+# KB 菜单树（sort_num 决定同级顺序；每个菜单/目录都有对应图标）
 # (menu_id, menu_name, menu_label, route, parent_id, menu_icon, sort_num)
 # menu_id 用固定值（workers/mcps/skills/cron 用生产环境已验证的 UUID），
 # 保证多次初始化幂等、且与已部署环境完全一致。
 #
 # 2026-10-06 调整（方案A）：原 root_kb「知识库平台」顶级节点移除——左上角 Logo
-# 品牌区已承担该语义，顶部 Header 顶级导航改为 4 个分组直接提升为顶级，
-# 避免「知识库平台」标签重复出现。
-# 结构：Header 顶级(nav)= 知识管理/智能应用/数据与任务/系统管理 → Sider 分组 → 页面。
-#   - route 留空 = 纯目录分组（只展开不跳转，对齐 ds 的 dir 节点）
-#   - route 有值且带子级 = 分组兼页面（点击自身跳该路由，对齐 ds「系统管理 /system/users」模式）
-#
-# 2026-10-10 调整（方案B）：切片核对 /chunk-verify 从「数据与任务」挪入「知识管理」
-# （文档切片质量核对属知识域工具），数据与任务恢复为 7 项。
+# 品牌区已承担该语义。
+# 2026-10-10 调整（方案B）：切片核对 /chunk-verify 挪入知识管理（文档切片属知识域工具）。
+# 2026-10-12 调整（方案C）：新增「运维监控」顶级分组，任务监控/任务管理/主机监控移入。
+# 2026-10-12 调整（方案D）：
+#   - 操作日志移入运维监控
+#   - 新增顶级「配置管理」目录（运维监控之后），收拢模型配置/MCP/技能/参数管理
+#   - 拆开「知识管理」「智能应用」两个目录，其下菜单直接提升为顶级（减少一层点击）
+#   - 所有菜单/目录均配图标
+# 2026-10-12 调整（方案E）：新增顶级「调试工具」目录（系统管理之后），收拢
+# 引擎与存储/本体Schema/编排组件/联网搜索/切片核对（开发调试类页面集中）。
+# 2026-10-12 调整（方案F）：
+#   - 文件管理/数据查询(日常性工具) 移入调试工具；切片核对移入运维监控
+#   - 改名：知识库管理→知识库、智能体配置→智能体、数据源→数据源管理
+# 2026-10-12 调整（方案G）：
+#   - 智能问答排到知识库前；数据源管理/联网搜索移入配置管理；元数据采集移入运维监控
+# 结构：Header 顶级 = 知识库管理/文件管理/切片核对/智能问答/智能体配置/联网搜索/
+#         数据源/数据查询/编排管理/编排组件/运维监控(目录)/配置管理(目录)/系统管理。
+#   - route 留空 = 纯目录分组（只展开不跳转）
+#   - route 有值且带子级 = 分组兼页面（点击自身跳该路由）
 KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
-    # ---- 知识管理（纯目录，顶级） ----
-    ("grp_knowledge", "grp_knowledge", "知识管理", None, None, "FolderOutlined", 1),
-    ("kbs", "kbs", "知识库管理", "/kbs", "grp_knowledge", "AppstoreOutlined", 1),
-    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_knowledge", "FileOutlined", 2),
-    ("chunk_verify", "chunk_verify", "切片核对", "/chunk-verify", "grp_knowledge", "SafetyOutlined", 3),
-    # ---- 智能应用（纯目录，顶级） ----
-    ("grp_ai", "grp_ai", "智能应用", None, None, "FolderOutlined", 2),
-    ("chat", "chat", "智能问答", "/chat", "grp_ai", "CommentOutlined", 1),
-    ("agents", "agents", "智能体配置", "/agents", "grp_ai", "RobotOutlined", 2),
-    ("d83aee0d1d8a4fce8a6bd121b6efc5fa", "websearch", "联网搜索", "/websearch", "grp_ai", "SearchOutlined", 3),
-    # ---- 数据与任务（纯目录，顶级） ----
-    ("grp_data", "grp_data", "数据与任务", None, None, "FolderOutlined", 3),
-    ("datasources", "datasources", "数据源", "/datasources", "grp_data", "DatabaseOutlined", 1),
-    ("jobs", "jobs", "任务监控", "/jobs", "grp_data", "DashboardOutlined", 2),
-    ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_data", "ScheduleOutlined", 3),
-    ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_data", "CloudServerOutlined", 4),
-    ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_data", "TableOutlined", 5),
-    ("orch_tapes", "orch_tapes", "编排管理", "/orchestrations", "grp_data", "ApartmentOutlined", 6),
-    ("orch_defines", "orch_defines", "编排组件", "/orchestrations/steps", "grp_data", "BlockOutlined", 7),
-    ("orch_templates", "orch_templates", "编排模板", "/tape-templates", "grp_data", "AppstoreOutlined", 8),
-    # ---- 系统管理（分组兼页面，顶级：点击自身跳 /system → 重定向到默认子页 /system/users）。
-    # 用户/角色/团队/菜单/日志均为独立页面路由（对齐 ds system/* 独立页面，无顶部 Tab 聚合页）。
-    ("system", "system", "系统管理", "/system", None, "SettingOutlined", 4),
-    ("sys_users", "sys_users", "用户管理", "/system/users", "system", "TeamOutlined", 1),
-    ("sys_roles", "sys_roles", "角色管理", "/system/roles", "system", "SafetyOutlined", 2),
-    ("sys_teams", "sys_teams", "团队管理", "/system/teams", "system", "PartitionOutlined", 3),
-    ("sys_menus", "sys_menus", "菜单管理", "/system/menus", "system", "MenuOutlined", 4),
-    ("sys_logs", "sys_logs", "操作日志", "/system/logs", "system", "ProfileOutlined", 5),    ("models", "models", "模型配置", "/models", "system", "CloudServerOutlined", 7),
-    ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "system", "ApiOutlined", 8),
-    ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "system", "ToolOutlined", 9),
-    ("ont_schemas", "ont_schemas", "本体Schema", "/ontology-schemas", "system", "ApartmentOutlined", 10),
-    ("sys_engines", "sys_engines", "引擎与存储", "/system/engines", "system", "CloudServerOutlined", 13),
-    ("sys_dims", "sys_dims", "参数管理", "/system/dims", "system", "DatabaseOutlined", 14),
+    # ---- 顶级页面 ----
+    ("chat", "chat", "智能问答", "/chat", None, "CommentOutlined", 1),
+    ("kbs", "kbs", "知识库", "/kbs", None, "AppstoreOutlined", 2),
+    ("agents", "agents", "智能体", "/agents", None, "RobotOutlined", 3),
+    ("orch_tapes", "orch_tapes", "编排管理", "/orchestrations", None, "ApartmentOutlined", 4),
+    ("orch_templates", "orch_templates", "编排模板", "/tape-templates", None, "AppstoreOutlined", 5),
+    # ---- 运维监控（顶级目录：任务监控/任务管理/主机监控/操作日志/切片核对/元数据采集） ----
+    ("grp_ops", "grp_ops", "运维监控", None, None, "FundOutlined", 6),
+    ("jobs", "jobs", "任务监控", "/jobs", "grp_ops", "DashboardOutlined", 1),
+    ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_ops", "ScheduleOutlined", 2),
+    ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_ops", "CloudServerOutlined", 3),
+    ("sys_logs", "sys_logs", "操作日志", "/system/logs", "grp_ops", "ProfileOutlined", 4),
+    ("chunk_verify", "chunk_verify", "切片核对", "/chunk-verify", "grp_ops", "SafetyOutlined", 5),
     (
         "sys_metadata_collection",
         "sys_metadata_collection",
         "元数据采集",
         "/system/metadata-collection",
-        "system",
+        "grp_ops",
         "DatabaseOutlined",
-        15,
+        6,
     ),
+    # ---- 配置管理（顶级目录：数据源管理/模型/MCP/技能/参数/联网搜索） ----
+    ("grp_config", "grp_config", "配置管理", None, None, "ToolOutlined", 7),
+    ("datasources", "datasources", "数据源管理", "/datasources", "grp_config", "DatabaseOutlined", 1),
+    ("models", "models", "模型配置", "/models", "grp_config", "CloudServerOutlined", 2),
+    ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "grp_config", "ApiOutlined", 3),
+    ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "grp_config", "ToolOutlined", 4),
+    ("sys_dims", "sys_dims", "参数管理", "/system/dims", "grp_config", "DatabaseOutlined", 5),
+    ("d83aee0d1d8a4fce8a6bd121b6efc5fa", "websearch", "联网搜索", "/websearch", "grp_config", "SearchOutlined", 6),
+    # ---- 系统管理（分组兼页面，顶级：点击自身跳 /system → 重定向到 /system/users） ----
+    ("system", "system", "系统管理", "/system", None, "SettingOutlined", 8),
+    ("sys_users", "sys_users", "用户管理", "/system/users", "system", "TeamOutlined", 1),
+    ("sys_roles", "sys_roles", "角色管理", "/system/roles", "system", "SafetyOutlined", 2),
+    ("sys_teams", "sys_teams", "团队管理", "/system/teams", "system", "PartitionOutlined", 3),
+    ("sys_menus", "sys_menus", "菜单管理", "/system/menus", "system", "MenuOutlined", 4),
+    # ---- 调试工具（顶级目录：引擎与存储/本体Schema/编排组件/文件管理/数据查询） ----
+    ("grp_debug", "grp_debug", "调试工具", None, None, "BugOutlined", 9),
+    ("sys_engines", "sys_engines", "引擎与存储", "/system/engines", "grp_debug", "CloudServerOutlined", 1),
+    (
+        "ont_schemas",
+        "ont_schemas",
+        "本体Schema",
+        "/ontology-schemas",
+        "grp_debug",
+        "ApartmentOutlined",
+        2,
+    ),
+    ("orch_defines", "orch_defines", "编排组件", "/orchestrations/steps", "grp_debug", "BlockOutlined", 3),
+    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_debug", "FileOutlined", 4),
+    ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_debug", "TableOutlined", 5),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，
@@ -255,6 +282,14 @@ ORCH_STEP_DEFINES: list[tuple[str, str, str, str, str, list[dict], int]] = [
       {"name": "output_var", "label": "输出变量名", "type": "input", "required": False,
        "placeholder": "folder_id（单条输出 id，批量输出列表）"},
       {"name": "dry_run", "label": "仅统计不写库", "type": "boolean", "required": False}], 13),
+    ("kb_read_table", "读表源数据", "知识构建", "DatabaseOutlined",
+     "从数据源实时读一张绑定表（复用 datagrid 连接层）+ 元数据列注释/类型补全，输出 rows/columns/col_comments/col_types/table_comment 等到运行变量，供下游脚本构造 markdown 与 wiki 页",
+     [{"name": "document_id", "label": "表源文档ID", "type": "input", "required": True,
+       "placeholder": "{{document_id}}"},
+      {"name": "output_var", "label": "输出变量名", "type": "input", "required": False,
+       "placeholder": "table_data（默认）"},
+      {"name": "limit", "label": "样例行数上限", "type": "input", "required": False,
+       "placeholder": "500"}], 14),
     ("long_sentence_extract", "长句拆分", "知识构建", "ScissorOutlined",
      "长句原文拆分（包装 WeKnora extract_long_sentences_v2：切句→LLM整篇归组→拼接校验），输入 chunks JSON 输出候选长句 JSON",
      [{"name": "chunks_file", "label": "输入chunks JSON路径", "type": "input", "required": True,
@@ -267,7 +302,7 @@ ORCH_STEP_DEFINES: list[tuple[str, str, str, str, str, list[dict], int]] = [
        "placeholder": ""},
       {"name": "max_tokens", "label": "max_tokens", "type": "input", "required": False, "placeholder": "8000"},
       {"name": "model", "label": "模型(默认wr默认)", "type": "input", "required": False, "placeholder": ""},
-      {"name": "timeout_sec", "label": "超时(秒)", "type": "input", "required": False, "placeholder": "1800"}], 14),
+      {"name": "timeout_sec", "label": "超时(秒)", "type": "input", "required": False, "placeholder": "1800"}], 15),
     ("keyword_extract", "关键词抽取", "知识构建", "TagsOutlined",
      "高频关键词抽取（两步：程序统计 discover_terms → LLM 过滤 filter_terms_llm），输入长句 JSON 输出过滤后关键词 JSON",
      [{"name": "ls_file", "label": "输入长句JSON路径", "type": "input", "required": True,
@@ -281,7 +316,7 @@ ORCH_STEP_DEFINES: list[tuple[str, str, str, str, str, list[dict], int]] = [
       {"name": "kb", "label": "知识库ID(LLM配置来源)", "type": "input", "required": False, "placeholder": "{{kb_id}}"},
       {"name": "model", "label": "模型(可选)", "type": "input", "required": False, "placeholder": ""},
       {"name": "dry_run", "label": "只统计不写过滤文件", "type": "boolean", "required": False},
-      {"name": "timeout_sec", "label": "超时(秒)", "type": "input", "required": False, "placeholder": "1800"}], 15),
+      {"name": "timeout_sec", "label": "超时(秒)", "type": "input", "required": False, "placeholder": "1800"}], 16),
 ]
 
 
@@ -328,7 +363,31 @@ def _seed_step_defines(db) -> tuple[int, int]:
     return created, updated
 
 
-def main() -> None:
+def _reset_menus(db) -> dict:
+    """删除全部菜单与角色-菜单授权，恢复种子前状态（--reset-menus 用）。
+
+    仅清理 modo_menu / modo_role_menu_rela 两表；菜单-接口绑定（api_perms）
+    存于 Menu.menu_ext_conf JSON 列，随菜单行一并删除。其余框架数据
+    （用户/角色/团队/参数等）不受影响。返回删除计数。
+    """
+    n_rela = getattr(db.execute(delete(RoleMenuRela)), "rowcount", 0)
+    n_menu = getattr(db.execute(delete(Menu)), "rowcount", 0)
+    db.commit()
+    print(
+        f"[reset] 菜单硬重置: 删除角色-菜单授权 {n_rela} 条、菜单 {n_menu} 项；"
+        f"将按种子重建 {len(KB_MENUS)} 项并重新授权"
+    )
+    return {"role_menu_rela": n_rela, "menu": n_menu}
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="KB 平台框架库种子初始化")
+    parser.add_argument(
+        "--reset-menus",
+        action="store_true",
+        help="重新初始化菜单：删除全部菜单与角色-菜单授权，按 KB_MENUS 种子重建（业务自定义菜单一并清除）",
+    )
+    args = parser.parse_args(argv)
     # KB_DATABASE_URL 优先（compose 注入），其次 DATABASE_URL；
     # 打印实际目标库，避免误连到其它平台的库（本仓库根 .env 历史上指向 data-synth 的库）。
     url = os.environ.get("KB_DATABASE_URL") or os.environ.get("DATABASE_URL")
@@ -433,6 +492,9 @@ def main() -> None:
         print(f"[4/5] 角色/关联 OK: {SEED_ROLE}")
 
         # 5) KB 菜单树种子（幂等 upsert）+ 授权给种子角色
+        # 5a) 可选硬重置：--reset-menus 先清空菜单与角色-菜单授权，再按种子重建
+        if args.reset_menus:
+            _reset_menus(db)
         created = updated = 0
         for mid, mname, mlabel, route, parent, icon, sort in KB_MENUS:
             existing = db.execute(
@@ -535,6 +597,12 @@ def main() -> None:
         #    幂等：按 tape_name 查存在则 skip。编排自己实现 wiki 构建逻辑
         #    （读切片→LLM→解析→摘要页→实体页循环→互链），节点全是可复用基础原子。
         _seed_wiki_build_tape(db)
+
+        # 9) 种子编排模板：表→wiki 构建（2026-10-12）
+        #    幂等：按 tape_name 查存在则 skip。编排自己实现表 wiki 构建逻辑
+        #    （kb_read_table 取数→script 构 md→LLM 表用途→script 拼正文→
+        #    wiki_upsert_page 写表主页→wiki_rebuild_links），节点全是可复用基础原子。
+        _seed_table_wiki_tape(db)
 
         print("\nDONE — 登录: " + SEED_USER_ID + "/" + SEED_PASSWORD + "（编排内置组件 " + str(len(ORCH_STEP_DEFINES)) + " 个）")
     finally:
@@ -688,6 +756,173 @@ WIKI_BUILD_TAPE: dict = {
         {"source": "n8", "target": "n9"},
     ],
 }
+
+
+# ── 表→wiki 构建编排（2026-10-12）──────────────────────────────
+# 用细粒度基础原子 + script 组件定义逻辑，替代 table_ingest._build_table_wiki
+# 黑盒：kb_read_table 取数 → script 构列定义/样例 markdown → kb_llm_chat 生成
+# 表用途说明 → script 拼 wiki 正文 → wiki_upsert_page 写表主页(page_type=table)
+# → wiki_rebuild_links 重建互链。输入 bindings：kb_id / document_id。
+TABLE_WIKI_TAPE: dict = {
+    "exec_params": {"kb_id": "", "document_id": ""},
+    "nodes": [
+        {
+            "id": "n1", "type": "custom",
+            "data": {"label": "读表源数据", "stepInst": "kb_read_table",
+                     "config": {"document_id": "{{document_id}}", "output_var": "table_data"}},
+        },
+        {
+            "id": "n2", "type": "custom",
+            "data": {"label": "构建表元数据Markdown", "stepInst": "script",
+                     "config": {"code": (
+                         "import json\n"
+                         "td = bindings.get('table_data') or {}\n"
+                         "columns = td.get('columns') or []\n"
+                         "col_comments = td.get('col_comments') or {}\n"
+                         "col_types = td.get('col_types') or {}\n"
+                         "table_name = td.get('table_name') or td.get('table_name') or ''\n"
+                         "table_comment = td.get('table_comment') or ''\n"
+                         "schema = td.get('schema') or ''\n"
+                         "ds_name = td.get('ds_name') or ''\n"
+                         "row_count = len(td.get('rows') or [])\n"
+                         "lines = ['# %s' % (table_name or '表')]\n"
+                         "if table_comment:\n"
+                         "    lines.append('> 表注释：%s' % table_comment)\n"
+                         "src = ds_name + ('.' + schema if schema else '')\n"
+                         "lines.append('> 数据来源：数据源 %s · 表 %s' % (src or '-', table_name or '-'))\n"
+                         "lines.append('> 行数：%s · 列数：%s' % (row_count, len(columns)))\n"
+                         "if columns:\n"
+                         "    lines.append('\\\\n## 列定义\\\\n')\n"
+                         "    lines.append('| 列名 | 类型 | 注释 |')\n"
+                         "    lines.append('|------|------|------|')\n"
+                         "    for c in columns:\n"
+                         "        cmt = (col_comments.get(c) or '').strip()\n"
+                         "        lines.append('| %s | %s | %s |' % (c, col_types.get(c, '-'), cmt))\n"
+                         "bindings['meta_md'] = '\\\\n'.join(lines)\n"
+                         "bindings['row_count'] = row_count\n"
+                     )}},
+        },
+        {
+            "id": "n3", "type": "custom",
+            "data": {"label": "构建样例数据Markdown", "stepInst": "script",
+                     "config": {"code": (
+                         "td = bindings.get('table_data') or {}\n"
+                         "rows = td.get('rows') or []\n"
+                         "if not rows:\n"
+                         "    bindings['sample_md'] = ''\n"
+                         "else:\n"
+                         "    cols = list(rows[0].keys())\n"
+                         "    lines = ['\\\\n## 样例数据（前 %d 行）\\\\n' % len(rows)]\n"
+                         "    lines.append('| ' + ' | '.join(cols) + ' |')\n"
+                         "    lines.append('|' + '|'.join('---' for _ in cols) + '|')\n"
+                         "    for r in rows:\n"
+                         "        cells = []\n"
+                         "        for c in cols:\n"
+                         "            v = r.get(c)\n"
+                         "            cells.append('' if v is None else str(v).replace('|', '\\\\\\\\|')[:80])\n"
+                         "        lines.append('| ' + ' | '.join(cells) + ' |')\n"
+                         "    bindings['sample_md'] = '\\\\n'.join(lines)\n"
+                     )}},
+        },
+        {
+            "id": "n4", "type": "custom",
+            "data": {"label": "LLM生成表用途说明", "stepInst": "kb_llm_chat",
+                     "config": {"prompt": (
+                         "你是数据分析师。请基于下面这张表的真实元数据，写一段中文「表用途说明」。\\n"
+                         "内容要求：1) 这是一张什么维度的表；2) 这张表在什么场景下使用"
+                         "（如作为报表分组维度、指标口径解释依据等，按列名和注释合理推断）；"
+                         "3) 关键字段说明（3-5 个代表性列及其含义）。\\n"
+                         "严格约束：只能依据给出的元数据客观描述，不要编造表中不存在的信息，"
+                         "不要臆测具体业务场景细节。总字数 150~300 字，用 2-3 个自然段输出，"
+                         "不要输出列表或标题。\\n\\n{{meta_md}}"),
+                                "output_var": "table_usage", "temperature": "0.3",
+                                "max_tokens": "800", "model": "{{table_data.summary_model_id}}"}},
+        },
+        {
+            "id": "n5", "type": "custom",
+            "data": {"label": "拼Wiki正文", "stepInst": "script",
+                     "config": {"code": (
+                         "import hashlib\n"
+                         "td = bindings.get('table_data') or {}\n"
+                         "parts = [bindings.get('meta_md') or '']\n"
+                         "sample = bindings.get('sample_md') or ''\n"
+                         "if sample:\n"
+                         "    parts.append(sample)\n"
+                         "usage = bindings.get('table_usage') or ''\n"
+                         "if usage:\n"
+                         "    parts.append('\\\\n## 表用途说明\\\\n\\\\n' + usage)\n"
+                         "summary = td.get('summary') or ''\n"
+                         "if summary:\n"
+                         "    parts.append('\\\\n## 摘要\\\\n\\\\n' + summary)\n"
+                         "content = '\\\\n'.join([p for p in parts if p and p.strip()])\n"
+                         "table_name = td.get('table_name') or '表'\n"
+                         "if not content.strip():\n"
+                         "    content = '# %s' % table_name\n"
+                         "schema = td.get('schema') or ''\n"
+                         "slug = ('table-%s-%s' % (schema, table_name)) if schema else ('table-%s' % table_name)\n"
+                         "bindings['wiki_title'] = table_name\n"
+                         "bindings['wiki_content'] = content\n"
+                         "bindings['wiki_slug'] = slug\n"
+                     )}},
+        },
+        {
+            "id": "n6", "type": "custom",
+            "data": {"label": "写表主页Wiki页", "stepInst": "wiki_upsert_page",
+                     "config": {"kb_id": "{{kb_id}}", "title": "{{wiki_title}}",
+                                "content": "{{wiki_content}}", "slug": "{{wiki_slug}}",
+                                "page_type": "table"}},
+        },
+        {
+            "id": "n7", "type": "custom",
+            "data": {"label": "重建互链", "stepInst": "wiki_rebuild_links",
+                     "config": {"kb_id": "{{kb_id}}"}},
+        },
+    ],
+    "edges": [
+        {"source": "n1", "target": "n2"},
+        {"source": "n2", "target": "n3"},
+        {"source": "n3", "target": "n4"},
+        {"source": "n4", "target": "n5"},
+        {"source": "n5", "target": "n6"},
+        {"source": "n6", "target": "n7"},
+    ],
+}
+
+
+def _seed_table_wiki_tape(db) -> None:
+    """幂等建「表构建Wiki-基础原子版」编排模板（存在则 skip）。"""
+    from api.models.orchestration import Tape
+
+    TAPE_NAME = "表构建Wiki-基础原子版"
+    existing = db.execute(select(Tape).where(Tape.tape_name == TAPE_NAME)).scalars().first()
+    if existing:
+        print(f"[9/9] 种子编排「{TAPE_NAME}」已存在 (skip)")
+        return
+
+    tape = Tape(
+        id=uuid.uuid4().hex[:32],
+        tape_name=TAPE_NAME,
+        tape_label="表→wiki 构建（基础原子编排，替代 table_ingest 表主页黑盒）",
+        tape_descr=(
+            "用细粒度基础原子组装表 wiki 构建流程：kb_read_table 取数 → script 构列定义/样例 "
+            "markdown → kb_llm_chat 生成表用途说明 → script 拼 wiki 正文 → "
+            "wiki_upsert_page 写表主页(page_type=table) → wiki_rebuild_links 重建互链。"
+            "输入 bindings：kb_id / document_id（表源文档）。"
+        ),
+        tape_type="general",
+        status="draft",
+        nodes=list(TABLE_WIKI_TAPE["nodes"]),
+        edges=list(TABLE_WIKI_TAPE["edges"]),
+        exec_params=TABLE_WIKI_TAPE.get("exec_params") or {},
+        create_user=None,
+    )
+    db.add(tape)
+    db.commit()
+
+    from api.services.orchestration import save_tape_design
+
+    save_tape_design(db, tape.id, TABLE_WIKI_TAPE["nodes"], TABLE_WIKI_TAPE["edges"], TABLE_WIKI_TAPE.get("exec_params") or {})
+    print(f"[9/9] 种子编排「{TAPE_NAME}」OK: id={tape.id[:12]}… 节点 {len(TABLE_WIKI_TAPE['nodes'])} 边 {len(TABLE_WIKI_TAPE['edges'])}（status=draft，页面点执行即可用）")
 
 
 if __name__ == "__main__":

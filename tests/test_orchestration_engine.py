@@ -43,8 +43,8 @@ def orch_db():
 
 
 def test_atom_map_registered() -> None:
-    for inst in ("kb_read_doc", "kb_llm_chat", "wiki_upsert_page", "wiki_rebuild_links", "wiki_ensure_folder",
-                 "long_sentence_extract", "keyword_extract"):
+    for inst in ("kb_read_doc", "kb_read_table", "kb_llm_chat", "wiki_upsert_page", "wiki_rebuild_links",
+                 "wiki_ensure_folder", "long_sentence_extract", "keyword_extract"):
         assert inst in ATOM_MAP, f"{inst} 未注册到 ATOM_MAP"
 
 
@@ -147,6 +147,55 @@ def test_wiki_ensure_folder_requires_kb() -> None:
     assert not resp.success and "kb_id" in resp.error
 
 
+def test_step_result_upsert_semantics(monkeypatch) -> None:
+    """step_results 同 (step_id, round) 应替换而非追加（2026-10-12 动态效果）。
+
+    run_node 先写 running 占位、执行完写终态——若追加则每个节点两条记录，
+    前端会看到重复步骤；必须替换。
+    """
+    import json
+
+    from api.models.orchestration import TapeRun
+    from sqlalchemy import select
+
+    from worker.tasks.orch_runner import _append_step_result
+
+    # 用内存 SQLite 模拟（sessionmaker 打桩）
+    from api.db import Base
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    TestSM = sessionmaker(bind=engine)
+    monkeypatch.setattr("worker.tasks.orch_runner._run_db", lambda: TestSM())
+    db = TestSM()
+    run = TapeRun(
+        id="r1", tape_id="t1", tape_name="t", status="running",
+        inputs={}, step_results=[], bindings={},
+    )
+    db.add(run)
+    db.commit()
+
+    _append_step_result("r1", {
+        "step_id": "t1::n1", "step_inst": "kb_read_table", "step_label": "读",
+        "queue": "orch", "status": "running", "body": None, "error": None,
+        "duration_ms": 0, "round": 0,
+    })
+    _append_step_result("r1", {
+        "step_id": "t1::n1", "step_inst": "kb_read_table", "step_label": "读",
+        "queue": "orch", "status": "success", "body": {"rows": 8}, "error": None,
+        "duration_ms": 134, "round": 0,
+    })
+    db2 = TestSM()
+    run2 = db2.execute(select(TapeRun).where(TapeRun.id == "r1")).scalars().first()
+    results = run2.step_results or []
+    assert len(results) == 1, f"同 step_id 应替换为 1 条，实际 {len(results)}"
+    assert results[0]["status"] == "success", f"应为终态 success，实际 {results[0]['status']}"
+    assert results[0]["duration_ms"] == 134
+    db2.close()
+
+
 def test_wiki_build_template_structure() -> None:
     import sys
     sys.path.insert(0, ".")
@@ -156,3 +205,24 @@ def test_wiki_build_template_structure() -> None:
     assert insts == ["kb_read_doc", "script", "kb_llm_chat", "script",
                      "wiki_upsert_page", "loop", "script", "wiki_upsert_page", "wiki_rebuild_links"]
     assert len(WIKI_BUILD_TAPE["edges"]) == 8
+
+
+def test_table_wiki_template_structure() -> None:
+    """表→wiki 构建编排模板结构：节点指令全部注册、边闭合、输入参数齐备（2026-10-12）。"""
+    from scripts.seed_framework_db import TABLE_WIKI_TAPE
+
+    nodes = TABLE_WIKI_TAPE["nodes"]
+    edges = TABLE_WIKI_TAPE["edges"]
+    by_id = {n["id"]: n for n in nodes}
+    assert len(nodes) == 7, f"期望 7 节点实际 {len(nodes)}"
+    for n in nodes:
+        inst = n["data"]["stepInst"]
+        assert inst in ATOM_MAP, f"指令 {inst} 未注册到 ATOM_MAP"
+    for e in edges:
+        assert e["source"] in by_id and e["target"] in by_id, f"边引用了不存在的节点: {e}"
+    insts = [n["data"]["stepInst"] for n in nodes]
+    assert insts[0] == "kb_read_table", "首节点应为 kb_read_table"
+    assert "kb_llm_chat" in insts, "应有 LLM 生成表用途说明"
+    assert insts[-2] == "wiki_upsert_page" and insts[-1] == "wiki_rebuild_links", "末两节点应为写页+重建互链"
+    upsert = next(n for n in nodes if n["data"]["stepInst"] == "wiki_upsert_page")
+    assert upsert["data"]["config"].get("page_type") == "table"

@@ -956,7 +956,7 @@ export default function ChatPage() {
       className="chat-page"
       style={{
         display: "flex",
-        height: "calc(100vh - 45px)",
+        height: "calc(100vh - var(--app-header-h, 45px))",
         gap: 8,
         padding: 8,
         minHeight: 0,

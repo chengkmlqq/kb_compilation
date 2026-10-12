@@ -42,6 +42,10 @@ export interface StepNodeData extends Record<string, unknown> {
   config: Record<string, unknown>;
   /** 删除回调（运行期注入，保存时剔除） */
   onDelete?: (nodeId: string) => void;
+  /** 2026-10-12 画布节点联动：执行状态（running/success/failed/skipped/pending，无=未执行） */
+  runStatus?: string;
+  /** 2026-10-12 画布节点联动：该步耗时 ms（展示徽标） */
+  runDurationMs?: number;
 }
 
 /** React Flow 节点类型：type 固定 'stepNode' */
@@ -110,6 +114,22 @@ export const CustomNode = memo(function CustomNode({ id, data, selected }: NodeP
 
   const previewItems = useMemo(() => buildConfigPreview(data.config), [data.config]);
 
+  // 2026-10-12 画布节点联动：按执行状态（runStatus）着色 + 运行中脉冲动画
+  const statusStyle = useMemo(() => {
+    switch (data.runStatus) {
+      case 'success':
+        return { border: '1.5px solid #52c41a', boxShadow: '0 2px 8px rgba(82,196,26,0.25)', background: '#f6ffed' };
+      case 'failed':
+        return { border: '1.5px solid #ff4d4f', boxShadow: '0 2px 8px rgba(255,77,79,0.25)', background: '#fff2f0' };
+      case 'running':
+        return { border: '1.5px solid #3261ce', boxShadow: '0 0 0 3px rgba(50,97,206,0.2)', background: '#f0f5ff' };
+      case 'skipped':
+        return { border: '1.5px solid #faad14', background: '#fffbe6', opacity: 0.85 };
+      default:
+        return {};
+    }
+  }, [data.runStatus]);
+
   const cardStyle: React.CSSProperties = {
     background: '#fff',
     border: `1px solid ${selected ? '#3261ce' : '#e3e9ef'}`,
@@ -124,9 +144,59 @@ export const CustomNode = memo(function CustomNode({ id, data, selected }: NodeP
     width: 240,
     position: 'relative',
     transition: 'all 0.2s ease-in-out',
+    // 运行状态覆盖（无状态时保持默认）
+    ...statusStyle,
   };
 
+  // 运行中：icon 旋转脉冲；状态角标
+  const statusBadge = useMemo(() => {
+    switch (data.runStatus) {
+      case 'success':
+        return (
+          <span
+            title="执行成功"
+            style={{
+              position: 'absolute', top: -7, right: -7, background: '#52c41a', color: '#fff',
+              borderRadius: '50%', width: 16, height: 16, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', fontSize: 10, boxShadow: '0 2px 6px rgba(82,196,26,0.4)',
+            }}
+          >
+            ✓
+          </span>
+        );
+      case 'failed':
+        return (
+          <span
+            title="执行失败"
+            style={{
+              position: 'absolute', top: -7, right: -7, background: '#ff4d4f', color: '#fff',
+              borderRadius: '50%', width: 16, height: 16, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', fontSize: 10, boxShadow: '0 2px 6px rgba(255,77,79,0.4)',
+            }}
+          >
+            ✕
+          </span>
+        );
+      case 'running':
+        return (
+          <span
+            title="执行中…"
+            style={{
+              position: 'absolute', top: -7, right: -7, borderRadius: '50%', width: 16, height: 16,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: '2px solid #3261ce', borderTopColor: 'transparent',
+              background: '#fff', animation: 'spin 1s linear infinite',
+            }}
+          />
+        );
+      default:
+        return null;
+    }
+  }, [data.runStatus]);
+
   return (
+    <>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     <div style={{ display: 'flex', alignItems: 'stretch', minHeight: 48, position: 'relative' }}>
       {/* 目标连接点（左侧，悬停/已连接时显示） */}
       <Handle
@@ -272,6 +342,23 @@ export const CustomNode = memo(function CustomNode({ id, data, selected }: NodeP
         )}
       </div>
 
+      {/* 2026-10-12 状态角标（成功✓/失败✕/运行中转圈）+ 耗时 */}
+      <div style={{ position: 'relative' }}>
+        {statusBadge}
+        {data.runDurationMs !== undefined && data.runDurationMs > 0 && (
+          <span
+            title={`耗时 ${data.runDurationMs}ms`}
+            style={{
+              position: 'absolute', bottom: -7, right: 4, fontSize: 10, color: '#79879c',
+              background: '#fff', padding: '0 5px', borderRadius: 8,
+              border: '1px solid #e3e9ef', lineHeight: '16px',
+            }}
+          >
+            {data.runDurationMs >= 1000 ? `${(data.runDurationMs / 1000).toFixed(1)}s` : `${data.runDurationMs}ms`}
+          </span>
+        )}
+      </div>
+
       {/* 源连接点（右侧，悬停/已连接时显示） */}
       <Handle
         type="source"
@@ -290,6 +377,7 @@ export const CustomNode = memo(function CustomNode({ id, data, selected }: NodeP
         }}
       />
     </div>
+    </>
   );
 });
 
