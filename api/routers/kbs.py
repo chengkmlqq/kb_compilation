@@ -529,6 +529,52 @@ def _attach_wiki_build_status(db: Session, kb_id: str, items: list[dict]) -> Non
                 }
         except Exception:  # noqa: BLE001
             continue
+    # 编排构建引擎任务（KbOrchestrationRunTask，id=ORCH_RUN_*，2026-10-12）：
+    # task_params 只有 runId，经 kb_tape_run.inputs「反查」kb/document 定位，
+    # 使文档列表能看到编排构建状态（此前编排跑通但列表无状态，像没生成）。
+    from api.models.orchestration import TapeRun
+
+    orch_jobs = db.execute(
+        select(Job.id, Job.task_params, Job.duration_ms)
+        .where(Job.id.like("ORCH_RUN%"))
+        .order_by(Job.create_time.desc())
+        .limit(2000)
+    ).all()
+    if orch_jobs:
+        run_ids = []
+        for jid, tp, _dur in orch_jobs:
+            try:
+                rid = (json.loads(tp or "{}").get("runId") or "").strip()
+            except Exception:  # noqa: BLE001
+                rid = ""
+            if rid:
+                run_ids.append(rid)
+        run_rows = {}
+        if run_ids:
+            for run in db.execute(
+                select(TapeRun.id, TapeRun.status, TapeRun.inputs).where(
+                    TapeRun.id.in_(run_ids)
+                )
+            ).all():
+                run_rows[str(run.id)] = (run.status, run.inputs or {})
+        for jid, _tp, dur in orch_jobs:
+            try:
+                rid = str(json.loads(_tp or "{}").get("runId") or "")
+            except Exception:  # noqa: BLE001
+                rid = ""
+            if rid not in run_rows:
+                continue
+            status, inputs = run_rows[rid]
+            if str(inputs.get("kb_id") or "") != kb_id:
+                continue
+            kid = str(inputs.get("document_id") or inputs.get("doc_id") or "")
+            if not kid or kid in by_doc:
+                continue
+            by_doc[kid] = {
+                "state": str(status).upper(),
+                "duration_ms": dur,
+                "job_id": str(jid),
+            }
     for it in items:
         b = by_doc.get(str(it.get("id") or ""))
         if b:
