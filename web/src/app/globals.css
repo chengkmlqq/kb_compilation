@@ -28,7 +28,7 @@ body {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 45px);
+  min-height: calc(100vh - var(--app-header-h, 45px));
 }
 .modo-page > .ant-card,
 .modo-page-body {

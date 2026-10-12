@@ -798,7 +798,7 @@ export default function DatasourcesPage() {
   return (
     <div
       className="datasources-page"
-      style={{ padding: 8, height: "calc(100vh - 45px)", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+      style={{ padding: 8, height: "calc(100vh - var(--app-header-h, 45px))", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
     >
       <ModoTabs
         type="editable-card"

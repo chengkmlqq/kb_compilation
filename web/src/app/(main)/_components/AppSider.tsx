@@ -196,7 +196,7 @@ export const AppSider: React.FC = () => {
       style={{
         background: "#F9FBFD",
         borderRight: "1px solid #EFF4F9",
-        height: "calc(100vh - 45px)",
+        height: "calc(100vh - var(--app-header-h, 45px))",
         position: "sticky",
         top: 45,
         left: 0,
