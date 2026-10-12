@@ -318,17 +318,27 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
       });
   }, [docs, kbId, kb?.summary_model_id, autoTick, paneActive]);
 
-  const onDeleteDoc = async (doc: DocItem) => {
-    const res = await apiDeleteDocument(kbId, doc.id);
-    if (res.success) {
-      message.success("文档已删除");
-      if (detailDoc?.id === doc.id) setDetailDoc(null);
-      // 删除当前页最后一条且不在第 1 页时回退一页，避免空页
-      if (docs.length === 1 && docPage > 1) setDocPage(docPage - 1);
-      else void load();
-    } else {
-      message.error(res.message || "删除失败");
-    }
+  const onDeleteDoc = (doc: DocItem) => {
+    // 2026-10-12: 单文档删除此前无确认动作，直接调 API（不可恢复：级联清分块+向量）。
+    // 补齐与批量删除一致的确认弹窗，防止误点/误触。
+    modal.confirm({
+      title: `删除文档「${doc.file_name}」？`,
+      content: "删除后不可恢复（关联分块与向量一并清理）。",
+      okText: "删除",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        const res = await apiDeleteDocument(kbId, doc.id);
+        if (res.success) {
+          message.success("文档已删除");
+          if (detailDoc?.id === doc.id) setDetailDoc(null);
+          // 删除当前页最后一条且不在第 1 页时回退一页，避免空页
+          if (docs.length === 1 && docPage > 1) setDocPage(docPage - 1);
+          else void load();
+        } else {
+          message.error(res.message || "删除失败");
+        }
+      },
+    });
   };
 
   const onDownloadDoc = async (doc: DocItem) => {
