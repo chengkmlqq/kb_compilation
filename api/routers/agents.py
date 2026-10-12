@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from api.db import get_db
 from api.models.knowledge import KbAgent
 from api.services.agents import (
+    config_from_dict,
     copy_agent,
     create_agent,
     delete_agent,
@@ -263,6 +264,18 @@ def agent_qa_stream(
         else:
             merged_executor = ws_executor or skill_executor
 
+        # allowed_tools 白名单（非空 = 仅注入白名单内已装配的工具；空 = 全部允许）
+        agent_cfg = config_from_dict(agent.config or {})
+        tool_whitelist = {str(t).strip() for t in (agent_cfg.allowed_tools or []) if str(t).strip()}
+
+        def filter_by_whitelist(tools: list[dict]) -> list[dict]:
+            if not tool_whitelist:
+                return tools
+            return [
+                t for t in tools
+                if str((t.get("function") or {}).get("name") or "") in tool_whitelist
+            ]
+
         answer_parts: list[str] = []
         refs: list[dict] = []
         last_kb_id = ""
@@ -308,22 +321,37 @@ def agent_qa_stream(
             for idx, kb in enumerate(kbs):
                 last_kb_id = kb.id
                 extra = attachment_ctx if idx == 0 else ""
+                # 知识库检索工具（按 kb 绑定：LLM 可在多轮循环中按需再检索当前知识库）
+                kb_tools: list[dict] = []
+                kb_executor = None
+                try:
+                    from api.services.agent_tools import agent_kbsearch_tool_context
+
+                    kb_tools, kb_executor = agent_kbsearch_tool_context(
+                        db,
+                        agent,
+                        kb=kb,
+                        caller_user_id=ctx_user_id,
+                        caller_team_name=ctx_team_name,
+                        is_sys_admin=ctx_is_admin,
+                    )
+                except Exception:  # noqa: BLE001 — 检索工具装配失败不阻断问答
+                    logger.exception("agent kb_search tool resolution failed; kb_search disabled for this call")
+                    kb_tools, kb_executor = [], None
+                # allowed_tools 白名单裁剪（非空仅注入白名单内工具；空=全部允许）
+                per_kb_tools = filter_by_whitelist((merged_tools or []) + kb_tools)
+
+                def per_kb_executor(tool_call: dict) -> str:
+                    name = str(tool_call.get("name") or "")
+                    if name == "kb_search" and kb_executor is not None:
+                        return kb_executor(tool_call)
+                    if merged_executor is not None:
+                        return merged_executor(tool_call)
+                    return f"工具不可用: 未配置执行器（{name or '?'}）"
+
                 for event in answer_question(
-                    kb_db=db,
-                    kb=kb,
-                    question=req.question,
-                    query_embedding=query_embedding,
-                    retrieval_overrides=overrides,
-                    history=history,
-                    chat_cfg=requested_cfg if req.model_id else None,  # 指定模型时复用解析结果
-                    extra_context=extra,
-                    image_urls=image_urls if idx == 0 else None,
-                    agent_prompt=agent_prompt,
-                    user_id=ctx_user_id,
-                    team_name=ctx_team_name,
-                    is_sys_admin=ctx_is_admin,
-                    tools=merged_tools or None,
-                    tool_executor=merged_executor,
+                    tools=per_kb_tools or None,
+                    tool_executor=per_kb_executor,
                     max_tool_iterations=skill_max_rounds,
                 ):
                     event["kb_id"] = kb.id
