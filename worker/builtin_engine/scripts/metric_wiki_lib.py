@@ -34,13 +34,18 @@ def _render_value(v, _depth: int = 0):
     return str(v)
 
 
-def build_page(meta: dict, sql: str, folder_id: str, analysis: dict) -> dict:
+def build_page(meta: dict, sql: str, folder_id: str, analysis: dict,
+               document_id: str = "", document_name: str = "") -> dict:
     """构造一个指标 wiki 实体页。
 
     meta:     指标行（xlsx 解析 dict）：指标编码/指标名称/指标分类-I/II/业务口径/技术口径
     sql:      指标 SQL 脚本原文
     folder_id: 二级分类目录 id（seq2 门禁+建两级目录产出）
     analysis: seq3 LLM SQL 分析结果（dict，不定字段，递归渲染）
+    document_id/document_name: 来源文档标识（2026-10-12 补）。写入 source_refs
+      （格式 {kid}|{file_name}，与平台 delete_document 的前缀匹配一致），
+      删除文档时才能识别并整页清理——此前 source_refs=[] 导致删文档后
+      wiki 页残留成孤儿。
     """
     code = str(meta.get("指标编码") or "").strip()
     name = str(meta.get("指标名称") or "").strip()
@@ -79,6 +84,10 @@ def build_page(meta: dict, sql: str, folder_id: str, analysis: dict) -> dict:
             lines.append("## SQL 分析")
             lines.append(body)
 
+    source_refs: list[str] = []
+    if document_id:
+        source_refs = [f"{document_id}|{document_name or document_id}"]
+
     return {
         "slug": slug,
         "title": title,
@@ -86,5 +95,5 @@ def build_page(meta: dict, sql: str, folder_id: str, analysis: dict) -> dict:
         "page_type": "entity",
         "folder_id": folder_id,
         "summary": f"{name or code}（{c1}/{c2}）指标",
-        "source_refs": [],
+        "source_refs": source_refs,
     }

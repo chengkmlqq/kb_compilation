@@ -289,12 +289,16 @@ def test_metric_wiki_lib_build_page() -> None:
         "SELECT SUM(amt) FROM t",
         "folder-2",
         {"依赖表": ["dim_a", "fact_b"], "说明": "按日聚合并去重"},
+        document_id="doc-x",  # 2026-10-12：source_refs 必须带文档引用（删除文档时识别）
     )
     assert page["title"] == "月营收"
     assert page["slug"] == "A001_月营收"
     assert page["page_type"] == "entity"
     assert page["folder_id"] == "folder-2"
+    assert page["source_refs"] == ["doc-x|doc-x"]
     assert "## 业务口径" in page["content"] and "主营业务收入合计" in page["content"]
     assert "```sql" in page["content"] and "SELECT SUM(amt) FROM t" in page["content"]
     assert "依赖表" in page["content"]
     assert page["summary"]
+    # 无 document_id 时 source_refs 为空（兼容历史调用）
+    assert mwl.build_page({"指标编码": "A001"}, "", "", {})["source_refs"] == []
