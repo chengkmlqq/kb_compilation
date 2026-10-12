@@ -202,6 +202,8 @@ def process_table_ingest(job_id: str, task_params: dict) -> dict:
     kb_id = str(task_params.get("kbId") or task_params.get("kb_id") or "").strip()
     if not document_id:
         return {"success": False, "error": "task_params must include documentId"}
+    # 操作者身份 cookie（透传给编排脚本调平台 API；2026-10-12）
+    caller_cookie = str(task_params.get("cookie") or "")
 
     from api.db import get_sessionmaker
     from api.services.embedding import get_embedding_client, l2_normalize
@@ -329,7 +331,8 @@ def process_table_ingest(job_id: str, task_params: dict) -> dict:
             _tape_id = (_kb_pipeline_flags(kb_id, document_id) or {}).get("tape") or ""
             if _tape_id:
                 _build_engine_triggered = _enqueue_build_engine_task(
-                    kb_id, document_id, _tape_id, parent_job_id=job_id
+                    kb_id, document_id, _tape_id,
+                    parent_job_id=job_id, cookie=caller_cookie,
                 )
                 logger.info(
                     "table build engine doc=%s tape=%s triggered=%s",

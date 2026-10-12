@@ -152,6 +152,8 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
         return {"success": False, "error": "task_params must include documentId"}
     kb_id = str(params.get("kbId") or params.get("kb_id") or "").strip()
     parser_engine = params.get("parserEngine") or params.get("parser_engine")
+    # 上传操作者身份 cookie（透传给编排脚本调平台 API；空 = 无身份）
+    caller_cookie = str(params.get("cookie") or "")
     # Bytes are not storable in modo_job.task_params (text column); callers
     # fetch from object storage via the storage path on the document row.
     file_content = b""
@@ -175,6 +177,7 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
                 result["build_engine_triggered"] = _enqueue_build_engine_task(
                     kb_id, document_id, tape_id,
                     parent_job_id=job_id,  # 2026-10-12 父子：挂链头解析任务
+                    cookie=caller_cookie,
                 )
             except Exception as exc:  # noqa: BLE001 — 触发失败不使文档处理任务失败
                 logger.warning("failed to trigger build engine task: %s", exc)
@@ -206,6 +209,7 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
 def _enqueue_build_engine_task(
     kb_id: str, document_id: str, tape_id: str,
     parent_job_id: str | None = None,  # 2026-10-12 父子：链头解析任务 job id
+    cookie: str = "",  # 操作者身份 cookie，透传进编排 bindings.x_next_identity
 ) -> bool:
     """KB 绑定构建引擎（服务编排中已发布的编排）时：按该编排构建 wiki。
 
@@ -229,6 +233,10 @@ def _enqueue_build_engine_task(
                 # 2026-10-12 兼容存量编排：部分自建编排的 def/script 读 doc_id
                 #（如「指标WIKI构建」），别名注入后开箱即用，无需逐个改编排
                 "doc_id": document_id,
+                # 2026-10-12 身份透传：自建编排脚本经 weknora_rpc 调平台 API
+                # 需要登录身份（def 读 x_next_identity）；上传操作者的 cookie
+                # 在此注入，过期时 weknora_rpc 自动用服务账号重登兜底
+                "x_next_identity": cookie,
                 "language": "中文",
             },
             env="prod",  # 上传链数据在 prod，编排节点须同环境读写（2026-10-12）

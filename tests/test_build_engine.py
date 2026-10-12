@@ -193,6 +193,7 @@ def test_enqueue_build_engine_task_writes_job(chain_env) -> None:
         "kb_id": "kb-1",
         "document_id": "doc-1",
         "doc_id": "doc-1",  # 兼容存量编排的 doc_id 变量名
+        "x_next_identity": "",  # 未传身份时为空串（上传链会带操作者 cookie）
         "language": "中文",
     }
     db.close()

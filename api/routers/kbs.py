@@ -544,6 +544,7 @@ async def upload_document(
     folder_id: str = Query(default="", max_length=64),
     process_config: str = Form(default=""),
     build_tape_id: str = Form(default=""),
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
 
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
@@ -639,7 +640,7 @@ async def upload_document(
 
     # --- enqueue Celery job (modo_job row + send_task) ---
     try:
-        _enqueue_document_process(kb_id, doc.id)
+        _enqueue_document_process(kb_id, doc.id, caller_identity=x_next_identity or "")
     except Exception:  # noqa: BLE001
         logger.exception("failed to enqueue doc process task; document kept as PENDING")
         # keep the row so a manual retry / worker sweep can pick it up
@@ -655,11 +656,14 @@ async def upload_document(
     }
 
 
-def _enqueue_document_process(kb_id: str, document_id: str) -> None:
+def _enqueue_document_process(kb_id: str, document_id: str, caller_identity: str = "") -> None:
     """Create-or-reset a modo_job row (trigger=API) and send the Celery task.
 
     Runs on the framework session (modo_job lives on the shared store);
     mirrors the scheduler's CRON dispatch but with trigger_type=API.
+
+    caller_identity: 上传操作者的 x-next-identity cookie 原值，随任务参数
+    透传给下游（编排脚本经 weknora_rpc 调平台 API 需登录身份，2026-10-12）。
 
     幂等：job_id 固定为 DOC_{document_id}，重新解析时该行已存在 → 直接
     insert 会撞主键(IntegrityError 1062)导致入队失败。改为先查后改——
@@ -669,7 +673,10 @@ def _enqueue_document_process(kb_id: str, document_id: str) -> None:
 
     job_id = f"DOC_{document_id}"
     task_class = "KbDocumentProcessTask"
-    task_params = json.dumps({"kbId": kb_id, "documentId": document_id}, ensure_ascii=False)
+    task_params = json.dumps(
+        {"kbId": kb_id, "documentId": document_id, "cookie": caller_identity},
+        ensure_ascii=False,
+    )
 
     from api.db import get_sessionmaker
 
@@ -1651,6 +1658,7 @@ def add_table_document(
     kb_id: str,
     body: AddTableRequest,
     caller: dict = Depends(_require_kb_caller),
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
     db: Session = Depends(get_db),
 ) -> dict:
     """绑定一张表到知识库：建 KbDocument(source_type=table) + 入队 KbTableIngestTask。
@@ -1687,7 +1695,12 @@ def add_table_document(
 
     job_id = f"TABLE_{doc.id}"
     task_params = json.dumps(
-        {"kbId": kb_id, "documentId": doc.id, "sampleSize": body.sample_size or 500},
+        {
+            "kbId": kb_id,
+            "documentId": doc.id,
+            "sampleSize": body.sample_size or 500,
+            "cookie": x_next_identity or "",  # 操作者身份透传给编排脚本（2026-10-12）
+        },
         ensure_ascii=False,
     )
     from api.db import get_sessionmaker
