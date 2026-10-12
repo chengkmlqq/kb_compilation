@@ -7,7 +7,6 @@ from typing import Optional
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
 
 from api.db import Session, get_db
-from api.config import get_settings
 from api.services.identity import decode_identity_cookie
 from api.services import orchestration as svc
 from api.services.orchestration_engine import (
@@ -24,9 +23,7 @@ def _current_user(x_next_identity: Optional[str] = Cookie(default=None, alias="x
     """从 x-next-identity Cookie 解出用户名（不能直接存 token：256 位会超列长）。"""
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity or not identity.user_id:
-        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
-            raise HTTPException(status_code=401, detail="未登录")
-        return ""
+        raise HTTPException(status_code=401, detail="未登录")
     return identity.user_id
 
 

@@ -56,13 +56,18 @@ class Settings:
     SSO_ENABLED: bool = os.getenv("SSO_ENABLED", "0") == "1"
     SSO_URL: str = os.getenv("SSO_URL", "")
     COOKIES_MAX_AGE: int = int(os.getenv("COOKIES_MAX_AGE", "172800"))
+    # --- JWT 换签认证（挂载场景 URL 带 ?jwt= 免二次登录）---
+    # 宿主系统用 HS256 共享密钥签发 JWT（payload 含 userId/sub + exp），
+    # 前端调 /api/v1/auth/jwt-exchange 验签换签 x-next-identity cookie，
+    # 之后所有接口走正常认证链路（RBAC 照常生效）。密钥空 = 端点禁用。
+    JWT_SECRET: str = os.getenv("JWT_SECRET", "")
+    # 可选：签发方白名单，配置后校验 JWT 的 iss 必须匹配（空 = 不校验）
+    JWT_ISSUER: str = os.getenv("JWT_ISSUER", "")
+    # URL 携带 JWT 的最大可接受时效（秒），防止长期有效的 token 流入日志
+    JWT_MAX_AGE: int = int(os.getenv("JWT_MAX_AGE", "900"))
     # Comma-separated user ids that bypass the RBAC path check (source
     # proxy's AUTH_ADMIN_USERS equivalent). plat-mgr role also bypasses.
     AUTH_ADMIN_USERS: str = os.getenv("AUTH_ADMIN_USERS", "")
-    # 匿名放行开关（挂载/集成场景临时使用，默认关）：开启后未登录请求
-    # 不再 401，以匿名身份继续（user_id/team 为空，is_admin=False）。
-    # 恢复强制登录只需将此环境变量置 0/删除。
-    AUTH_ANONYMOUS: bool = os.getenv("AUTH_ANONYMOUS", "0") == "1"
 
     # --- Redis / Celery ---
     # All URLs come from env only. If unset, Celery falls back to its own

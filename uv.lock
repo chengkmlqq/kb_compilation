@@ -848,8 +848,8 @@ name = "httpcore2"
 version = "2.13.1"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 dependencies = [
-    { name = "h11" },
-    { name = "truststore" },
+    { name = "h11", marker = "sys_platform != 'emscripten'" },
+    { name = "truststore", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/cb/f3/1db7aa2bc2524062192bb0e0323969492d1883152a232fe36eea65f4e35c/httpcore2-2.13.1.tar.gz", hash = "sha256:e0aa977abe17e69a3b820a24542a6fa88702676d83880b8d194dcd18408e5103", size = 68071, upload-time = "2026-09-23T07:47:22.372Z" }
 wheels = [
@@ -1047,6 +1047,7 @@ dependencies = [
     { name = "pycryptodome" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pyjwt" },
     { name = "pymysql" },
     { name = "pypdf" },
     { name = "python-docx" },
@@ -1091,6 +1092,7 @@ requires-dist = [
     { name = "pycryptodome", specifier = ">=3.23.0" },
     { name = "pydantic", specifier = ">=2.13" },
     { name = "pydantic-settings", specifier = ">=2.3" },
+    { name = "pyjwt", specifier = ">=2.8" },
     { name = "pymysql", specifier = ">=1.1" },
     { name = "pypdf", specifier = ">=6.13" },
     { name = "python-docx", specifier = ">=1.2" },

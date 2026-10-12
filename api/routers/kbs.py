@@ -225,8 +225,7 @@ def get_kbs(
     ) -> dict:
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity:
-        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
-            raise HTTPException(status_code=401, detail="未登录")
+        raise HTTPException(status_code=401, detail="未登录")
     caller_user_id = identity.user_id if identity else ""
     caller_team_name = identity.team_name or "" if identity else ""
     is_sys_admin = False
@@ -260,8 +259,7 @@ def build_engines(
     """
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity:
-        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
-            raise HTTPException(status_code=401, detail="未登录")
+        raise HTTPException(status_code=401, detail="未登录")
     from api.models.orchestration import Tape
     from sqlalchemy import select
 
@@ -299,8 +297,7 @@ def post_kb(
 ) -> dict:
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity:
-        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
-            raise HTTPException(status_code=401, detail="未登录")
+        raise HTTPException(status_code=401, detail="未登录")
     caller_user_id = identity.user_id if identity else ""
     caller_team_name = identity.team_name or "" if identity else ""
     is_sys_admin = False
@@ -364,9 +361,7 @@ def _require_kb_caller(
 ) -> dict:
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity or not identity.user_id:
-        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
-            raise HTTPException(status_code=401, detail="未登录")
-        return {"user_id": "", "team_name": "", "is_admin": False}
+        raise HTTPException(status_code=401, detail="未登录")
     from api.services.scope import is_admin
 
     return {
@@ -966,9 +961,7 @@ def _require_wiki_user(
 ) -> str:
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity or not identity.user_id:
-        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
-            raise HTTPException(status_code=401, detail="未登录")
-        return ""
+        raise HTTPException(status_code=401, detail="未登录")
     return identity.user_id
 
 

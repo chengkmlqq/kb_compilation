@@ -137,3 +137,91 @@ def test_rbac_denies_unlinked_menu(rbac_db) -> None:
     allowed, reason = check_path_permission(db, "admin", "/system/secret")
     assert allowed is False
     assert reason == "无菜单权限"
+
+
+# ── JWT 换签认证（/auth/jwt-exchange）──
+
+import datetime
+from types import SimpleNamespace
+
+import jwt as pyjwt
+
+import api.routers.auth as auth_mod
+from api.routers.auth import JwtExchangeRequest, jwt_exchange
+
+JWT_TEST_SECRET = "test-secret-" + "for-jwt-exchange-0123456789abcdef"
+
+
+def _make_jwt(sub: str, *, secret: str = JWT_TEST_SECRET, exp_secs: int = 900, issuer: str | None = None) -> str:
+    payload: dict = {"sub": sub, "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=exp_secs)}
+    if issuer:
+        payload["iss"] = issuer
+    return pyjwt.encode(payload, secret, algorithm="HS256")
+
+
+def _exchange(db, token: str) -> tuple[bool, str, str | None]:
+    resp = jwt_exchange(JwtExchangeRequest(token=token), db=db)
+    return resp.success, resp.message, resp.identity_cookie
+
+
+def _patch_settings(monkeypatch, *, secret: str = JWT_TEST_SECRET, issuer: str = "") -> None:
+    """get_settings is lru_cached — env patching won't reach it; replace the accessor."""
+    monkeypatch.setattr(
+        auth_mod,
+        "get_settings",
+        lambda: SimpleNamespace(JWT_SECRET=secret, JWT_ISSUER=issuer, JWT_MAX_AGE=900),
+    )
+
+
+def test_jwt_exchange_success(rbac_db, monkeypatch) -> None:
+    _patch_settings(monkeypatch)
+    token = _make_jwt("admin")
+    ok, msg, cookie = _exchange(rbac_db, token)
+    assert ok is True
+    assert cookie
+    decoded = decode_identity_cookie(cookie)
+    assert decoded is not None
+    assert decoded.user_id == "admin"
+    assert decoded.team_name == "DEFAULT_TEAM"
+
+
+def test_jwt_exchange_rejects_expired(rbac_db, monkeypatch) -> None:
+    _patch_settings(monkeypatch)
+    token = _make_jwt("admin", exp_secs=-60)
+    ok, msg, _ = _exchange(rbac_db, token)
+    assert ok is False
+    assert "过期" in msg
+
+
+def test_jwt_exchange_rejects_wrong_secret(rbac_db, monkeypatch) -> None:
+    _patch_settings(monkeypatch)
+    token = _make_jwt("admin", secret="other-secret-value")
+    ok, msg, _ = _exchange(rbac_db, token)
+    assert ok is False
+    assert "无效" in msg
+
+
+def test_jwt_exchange_rejects_unknown_user(rbac_db, monkeypatch) -> None:
+    _patch_settings(monkeypatch)
+    token = _make_jwt("ghost")
+    ok, msg, _ = _exchange(rbac_db, token)
+    assert ok is False
+    assert "不存在" in msg
+
+
+def test_jwt_exchange_disabled_without_secret(rbac_db, monkeypatch) -> None:
+    _patch_settings(monkeypatch, secret="")
+    token = _make_jwt("admin")
+    ok, msg, _ = _exchange(rbac_db, token)
+    assert ok is False
+    assert "未启用" in msg
+
+
+def test_jwt_exchange_issuer_whitelist(rbac_db, monkeypatch) -> None:
+    _patch_settings(monkeypatch, issuer="data-supply")
+    ok, msg, _ = _exchange(rbac_db, _make_jwt("admin", issuer="evil-host"))
+    assert ok is False
+    assert "签发方" in msg
+    ok, _, cookie = _exchange(rbac_db, _make_jwt("admin", issuer="data-supply"))
+    assert ok is True
+    assert cookie

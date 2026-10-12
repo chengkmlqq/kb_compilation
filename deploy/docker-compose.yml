@@ -32,10 +32,6 @@ x-api-env: &api-env
     KNOWLEDGE_DATABASE_URL: ${KB_KNOWLEDGE_DATABASE_URL}
     KB_STORAGE_DIR: /data/kb_documents
     PYTHONPATH: /srv/kb
-    # 匿名放行开关（挂载/集成场景临时用）：AUTH_ANONYMOUS=1 时未登录
-    # 请求不再 401（前端守卫同样匿名放行），避免 data_supply 菜单挂载
-    # 后二次登录。恢复强制登录置 0/删除即可。走 env_file .env 注入。
-    AUTH_ANONYMOUS: ${AUTH_ANONYMOUS:-0}
     # agent-gateway (host-bound :8080). The worker reaches it through
     # host.docker.internal (see celery-worker extra_hosts).
     AGENT_GATEWAY_BASE_URL: ${AGENT_GATEWAY_BASE_URL:-http://host.docker.internal:8080}

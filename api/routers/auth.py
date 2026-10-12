@@ -86,6 +86,69 @@ def get_identity_from_cookie(token: str | None, db: Session) -> Identity | None:
     return decode_identity_cookie(token)
 
 
+class JwtExchangeRequest(BaseModel):
+    token: str = Field(..., description="宿主系统签发的 HS256 JWT")
+
+
+class JwtExchangeResponse(BaseModel):
+    success: bool
+    message: str
+    data: dict | None = None
+    identity_cookie: str | None = None
+
+
+@router.post("/jwt-exchange", response_model=JwtExchangeResponse)
+def jwt_exchange(req: JwtExchangeRequest, db: Session = Depends(get_db)) -> JwtExchangeResponse:
+    """URL 带 ?jwt= 换签：验签宿主 JWT → 查库解析真实身份 → 签发 x-next-identity cookie。
+
+    挂载场景（iframe / 无框架）免二次登录的正规通道：JWT 只在这里消费一次，
+    换签成现有身份 cookie 后，所有接口走既有认证链路（middleware RBAC + 17 个
+    router 的 _require_*），写操作按真实 user_id 正常授权，不做匿名放行。
+
+    安全约束：
+    - HS256 共享密钥（JWT_SECRET），未配置时端点直接拒绝；
+    - exp 必须存在且未过期（JWT_MAX_AGE 兜底上限，防长期 token 流入日志）；
+    - 可选 iss 白名单（JWT_ISSUER）校验签发方；
+    - 换签后只认 resolve_active_user_identity 查库结果：用户不存在/停用 → 拒绝。
+    """
+    settings = get_settings()
+    secret = settings.JWT_SECRET.strip()
+    if not secret:
+        return JwtExchangeResponse(success=False, message="服务端未启用 JWT 认证")
+    import jwt as pyjwt
+
+    try:
+        payload = pyjwt.decode(
+            req.token,
+            secret,
+            algorithms=["HS256"],
+            options={"require": ["exp"]},
+        )
+    except pyjwt.ExpiredSignatureError:
+        return JwtExchangeResponse(success=False, message="登录凭证已过期，请重新进入")
+    except pyjwt.InvalidTokenError:
+        return JwtExchangeResponse(success=False, message="登录凭证无效")
+
+    issuer = settings.JWT_ISSUER.strip()
+    if issuer and (payload.get("iss") or "") != issuer:
+        return JwtExchangeResponse(success=False, message="登录凭证签发方不匹配")
+
+    user_id = str(payload.get("sub") or payload.get("userId") or "").strip()
+    if not user_id:
+        return JwtExchangeResponse(success=False, message="登录凭证缺少用户标识")
+
+    identity = resolve_active_user_identity(db, user_id)
+    if not identity:
+        return JwtExchangeResponse(success=False, message="用户不存在或未启用")
+
+    return JwtExchangeResponse(
+        success=True,
+        message="登录成功",
+        data=identity.to_payload(),
+        identity_cookie=encode_identity_cookie(identity),
+    )
+
+
 @router.get("/auth-mode")
 def auth_mode() -> dict:
     """Runtime auth configuration for the login page.

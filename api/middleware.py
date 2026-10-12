@@ -150,10 +150,6 @@ async def rbac_guard(request: Request, call_next):
 
     identity = decode_identity_cookie(request.cookies.get("x-next-identity") or "")
     if not identity or not identity.user_id:
-        if getattr(get_settings(), "AUTH_ANONYMOUS", False):
-            # 匿名放行（AUTH_ANONYMOUS 开关）：挂载场景免登录，跳过 RBAC，
-            # 与前端守卫匿名放行对齐；后续恢复登录只需关开关。
-            return await call_next(request)
         # No identity on a controlled path: fail-closed (login enforcement).
         return JSONResponse(
             status_code=401,

@@ -26,7 +26,6 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from api.config import get_settings
 from api.db import get_db
 from api.models.ontology import KbOntologySchema, OntologySchema
 from api.services.identity import decode_identity_cookie
@@ -51,9 +50,7 @@ def _require_caller(
 ) -> Caller:
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity or not identity.user_id:
-        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
-            raise HTTPException(status_code=401, detail="未登录")
-        return Caller(user_id="", team_name="", is_admin=False)
+        raise HTTPException(status_code=401, detail="未登录")
     return Caller(
         user_id=identity.user_id,
         user_name=identity.user_name,

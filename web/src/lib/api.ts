@@ -2429,6 +2429,16 @@ export function apiAuthMode() {
   return request<AuthModeConfig>("/api/v1/auth/auth-mode");
 }
 
+// ---- URL 带 ?jwt= 换签（挂载场景免二次登录）----
+// 宿主系统签发 HS256 JWT，前端用其换取 x-next-identity cookie，
+// 之后所有接口走正常认证链路。失败时返回 success=false，调用方回退到登录页。
+export function apiJwtExchange(token: string) {
+  return request<{ identity_cookie?: string } & Identity>("/api/v1/auth/jwt-exchange", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+}
+
 // ---- 任务监控统计 / 队列 / 停止 / 删除（对齐 data-synth JobStatistics） ----
 
 export interface JobStatistics {
