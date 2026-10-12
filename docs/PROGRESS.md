@@ -2,7 +2,24 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-12（知识库创建「构建引擎」改造）
+最后更新：2026-10-12（智能问答页全量对齐 WeKnora）
+
+## 7. 当前状态（2026-10-12 智能问答页对齐 WeKnora，commit ad3b132，已推送 main）
+
+- **背景**：与 WeKnora（`/home/jenkins/chengkai/WeKnora` views/chat）逐项比对样式与交互后，完成 8 项对齐（kb 问答页此前已是 WeKnora 的 antd 移植版，本次补齐差距）：
+  1. **代码块高亮 + 标题栏/复制按钮**：新增 `web/src/lib/highlight.ts`（自研零依赖 token 高亮，js/python/sql/shell/java/go/rust/c/json/yaml 等 + 别名归一化，One Dark 配色适配 #282c34）；`MarkdownViewer.tsx` 新增 CodeBlock
+  2. **引用 hover 浮层**：接通既有 `.kb-citation-float` 样式（fixed 定位、底部空间不足自动上翻）
+  3. **拖放上传**：输入卡片 onDragEnter/onDragOver/onDrop + 拖入高亮（图片→预览条、文件→直传）
+  4. **打字机平滑输出**：新增 `web/src/components/TypewriterText.tsx`（流式慢速追平、结束加速追平）
+  5. **联网搜索开关**：前端输入区 GlobalOutlined 开关 → SSE `web_search_enabled`；后端 `websearch.py` 抽出 `_resolve_websearch_provider`/`_build_websearch_tool_context`，新增 `request_websearch_tool_context`（请求级）+ `agent_websearch_tool_context(enabled_override=...)`；`qa.py`/`agents.py` 请求模型加字段
+  6. **深色模式**：新增 `web/src/lib/theme-mode.tsx`（Provider + 首帧防闪烁脚本 + prefers-color-scheme）；antd-registry 暗色叠加 darkAlgorithm；globals.css 新增 `--kb-c-*` 语义变量（亮/暗两套）并把 chat 区硬编码色变量化；AppHeader 加切换按钮；RagPipelineProgress 改 token
+  7. **web 引用胶囊**：citation.ts 解析 `<web url="" title=""/>`；MarkdownViewer 渲染品牌色 web 胶囊（点击新窗口 + hover 显示 URL）；`chat.py` CITATION_INSTRUCTIONS 增加 web 标签输出规范
+  8. **嵌入模式 + @提及分组 + 会话输入态恢复**：chat 页 iframe/?embed=1/?noframe=1 时隐藏会话列表；@提及弹窗改分组列表+搜索过滤；`chat_session.last_request_state`（迁移 **0012_session_last_request_state**，JSON 快照 agent/kb/模型/联网开关/@目标）——发送成功/停止后写入、openSession 恢复
+- **改动文件（21 个）**：前端 `MarkdownViewer.tsx`/`TypewriterText.tsx`（新）/`highlight.ts`（新）/`theme-mode.tsx`（新）/`RagPipelineProgress.tsx`/`citation.ts`/`api.ts`/`antd-registry.tsx`/`layout.tsx`/`globals.css`/`chat/page.tsx`/`AppHeader.tsx`；后端 `websearch.py`/`chat_sessions.py`/`chat.py`/`qa.py`/`agents.py`/`chat_session.py` + 迁移 `0012_session_last_request_state.py`（新）+ `tests/test_websearch_agent_inject.py`（新增 5 例）
+- **验证**：`tsc --noEmit` exit 0；`pytest tests/test_websearch_agent_inject.py tests/test_chat.py tests/test_chat_sessions.py tests/test_chat_fork_rewind.py` → **34 passed**（bun build 未跑；tsc 阶段修掉一处真实缺陷：atTarget state 声明在 openSession 之后会 TDZ 崩溃，已上移）
+- **部署注意**：改码 ≠ 生效——需 GitHub Actions 手动触发 `build-images.yml` → 本机 `docker-compose pull` + `up -d` + `restart nginx`；部署后 api-server 启动自动 `alembic upgrade head` 执行 0012
+- **明确不做**：MCP OAuth 行内授权卡（kb agent 工具链是自研 kb_search/web_search/run_skill_script，无 MCP 工具调用，语义不适用）；@提及的文件/tag/MCP/skill 分组（后端无对应资源端点，本次只做 kb/agent 两分组 UI）
+- **遗留（逐页跟进）**：深色模式目前只变量化了 chat 工作台 + 组件 token，其他业务页（kbs/wiki/datagrid 等）的硬编码色在暗色下仍偏亮，建议后续逐页收敛
 
 ## 6. 当前状态（2026-10-12 知识库创建「构建引擎」改造）
 
