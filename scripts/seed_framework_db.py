@@ -12,15 +12,22 @@
   KB 菜单树是本平台的**种子数据**（与前端页面路由一一对应），初始化后由
   「系统管理 → 菜单管理 / 角色管理」维护，不再写死在代码里。前端
   FALLBACK_MENUS 仅在 my-menus 为空时兜底，正常运行以本表为准。
+
+重新初始化菜单（恢复纯种子状态）:
+  uv run python scripts/seed_framework_db.py --reset-menus
+  该选项会**删除全部现有菜单与角色-菜单授权**（业务自定义菜单一并清除），
+  再按 KB_MENUS 种子重建并重新授权种子角色；其余数据（用户/角色/团队/
+  参数等）不受影响。不带参数则维持幂等 upsert（补缺/修正漂移，不删除）。
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from api.db import get_sessionmaker
 from api.lib.crypto import aes_encrypt
@@ -356,7 +363,31 @@ def _seed_step_defines(db) -> tuple[int, int]:
     return created, updated
 
 
-def main() -> None:
+def _reset_menus(db) -> dict:
+    """删除全部菜单与角色-菜单授权，恢复种子前状态（--reset-menus 用）。
+
+    仅清理 modo_menu / modo_role_menu_rela 两表；菜单-接口绑定（api_perms）
+    存于 Menu.menu_ext_conf JSON 列，随菜单行一并删除。其余框架数据
+    （用户/角色/团队/参数等）不受影响。返回删除计数。
+    """
+    n_rela = getattr(db.execute(delete(RoleMenuRela)), "rowcount", 0)
+    n_menu = getattr(db.execute(delete(Menu)), "rowcount", 0)
+    db.commit()
+    print(
+        f"[reset] 菜单硬重置: 删除角色-菜单授权 {n_rela} 条、菜单 {n_menu} 项；"
+        f"将按种子重建 {len(KB_MENUS)} 项并重新授权"
+    )
+    return {"role_menu_rela": n_rela, "menu": n_menu}
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="KB 平台框架库种子初始化")
+    parser.add_argument(
+        "--reset-menus",
+        action="store_true",
+        help="重新初始化菜单：删除全部菜单与角色-菜单授权，按 KB_MENUS 种子重建（业务自定义菜单一并清除）",
+    )
+    args = parser.parse_args(argv)
     # KB_DATABASE_URL 优先（compose 注入），其次 DATABASE_URL；
     # 打印实际目标库，避免误连到其它平台的库（本仓库根 .env 历史上指向 data-synth 的库）。
     url = os.environ.get("KB_DATABASE_URL") or os.environ.get("DATABASE_URL")
@@ -461,6 +492,9 @@ def main() -> None:
         print(f"[4/5] 角色/关联 OK: {SEED_ROLE}")
 
         # 5) KB 菜单树种子（幂等 upsert）+ 授权给种子角色
+        # 5a) 可选硬重置：--reset-menus 先清空菜单与角色-菜单授权，再按种子重建
+        if args.reset_menus:
+            _reset_menus(db)
         created = updated = 0
         for mid, mname, mlabel, route, parent, icon, sort in KB_MENUS:
             existing = db.execute(
