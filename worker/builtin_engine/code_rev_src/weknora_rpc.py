@@ -137,7 +137,7 @@ def _skill_config():
 def _default_model():
     """模型名优先级：任务级 WEKNORA_LLM_MODEL > 容器 LLM_MODEL/AI_CHAT_MODEL
     > 技能 config.yaml model.default > 内置默认 deepseek-v4-pro。"""
-    for env in ('WEKNORA_LLM_MODEL', 'LLM_MODEL', 'AI_CHAT_MODEL'):
+    for env in ('WIKI_LLM_MODEL', 'WEKNORA_LLM_MODEL', 'LLM_MODEL', 'AI_CHAT_MODEL'):
         v = os.environ.get(env, '').strip()
         if v:
             return v
@@ -154,16 +154,17 @@ def llm_config():
     > 技能 config.yaml model 段 > 默认 https://inferaiapi.com/v1（key 兜底
     /home/ctyun/kb_compilation/deploy/.env 的 AI_CHAT_API_KEY）。"""
     cfg = _skill_config().get('model', {}) or {}
-    base = (_env('WEKNORA_LLM_BASE_URL') or _env('LLM_BASE_URL')
+    base = (_env('WEKNORA_LLM_BASE_URL') or _env('WIKI_LLM_BASE_URL') or _env('LLM_BASE_URL')
             or _env('AI_CHAT_API_ENDPOINT') or str(cfg.get('base_url') or '').strip()
             or 'https://inferaiapi.com/v1')
-    key = (_env('WEKNORA_LLM_API_KEY') or _env('LLM_API_KEY')
+    key = (_env('WEKNORA_LLM_API_KEY') or _env('WIKI_LLM_API_KEY') or _env('LLM_API_KEY')
            or _env('AI_CHAT_API_KEY')
            or os.path.expandvars(str(cfg.get('api_key') or '')).strip())
     if not key or '${' in key:
-        # 平台部署 .env（宿主机路径；容器内不存在时静默跳过）
+        # 平台部署 .env（宿主机路径；容器内不存在时静默跳过）+ WIKI_LLM_API_KEY 兜底
         key = (_env_file('/home/ctyun/kb_compilation/deploy/.env', 'AI_CHAT_API_KEY')
                or _env_file(os.path.expanduser('~/kb_compilation/deploy/.env'), 'AI_CHAT_API_KEY')
+               or _env('WIKI_LLM_API_KEY')
                or _env('HERMES_CUSTOM_AIAAA_CC_API_KEY') or '')
     if '${' in base or '${' in key:
         base = 'https://inferaiapi.com/v1'

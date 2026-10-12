@@ -137,7 +137,7 @@ def _skill_config():
 def _default_model():
     """模型名优先级：任务级 WEKNORA_LLM_MODEL > 容器 LLM_MODEL/AI_CHAT_MODEL
     > 技能 config.yaml model.default > 内置默认 deepseek-v4-pro。"""
-    for env in ('WEKNORA_LLM_MODEL', 'LLM_MODEL', 'AI_CHAT_MODEL'):
+    for env in ('WIKI_LLM_MODEL', 'WEKNORA_LLM_MODEL', 'LLM_MODEL', 'AI_CHAT_MODEL'):
         v = os.environ.get(env, '').strip()
         if v:
             return v
@@ -154,16 +154,17 @@ def llm_config():
     > 技能 config.yaml model 段 > 默认 https://inferaiapi.com/v1（key 兜底
     /home/ctyun/kb_compilation/deploy/.env 的 AI_CHAT_API_KEY）。"""
     cfg = _skill_config().get('model', {}) or {}
-    base = (_env('WEKNORA_LLM_BASE_URL') or _env('LLM_BASE_URL')
+    base = (_env('WEKNORA_LLM_BASE_URL') or _env('WIKI_LLM_BASE_URL') or _env('LLM_BASE_URL')
             or _env('AI_CHAT_API_ENDPOINT') or str(cfg.get('base_url') or '').strip()
             or 'https://inferaiapi.com/v1')
-    key = (_env('WEKNORA_LLM_API_KEY') or _env('LLM_API_KEY')
+    key = (_env('WEKNORA_LLM_API_KEY') or _env('WIKI_LLM_API_KEY') or _env('LLM_API_KEY')
            or _env('AI_CHAT_API_KEY')
            or os.path.expandvars(str(cfg.get('api_key') or '')).strip())
     if not key or '${' in key:
-        # 平台部署 .env（宿主机路径；容器内不存在时静默跳过）
+        # 平台部署 .env（宿主机路径；容器内不存在时静默跳过）+ WIKI_LLM_API_KEY 兜底
         key = (_env_file('/home/ctyun/kb_compilation/deploy/.env', 'AI_CHAT_API_KEY')
                or _env_file(os.path.expanduser('~/kb_compilation/deploy/.env'), 'AI_CHAT_API_KEY')
+               or _env('WIKI_LLM_API_KEY')
                or _env('HERMES_CUSTOM_AIAAA_CC_API_KEY') or '')
     if '${' in base or '${' in key:
         base = 'https://inferaiapi.com/v1'
@@ -1428,14 +1429,9 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
     def _llm_raw(req, sock_to):
         """单次 HTTP 请求：返回响应体文本。socket 超时只作用于单次 recv 等待——
         服务器慢流持续发字节时 recv 永不超时（2026-10-07 实测 8h+ hang）。
-        2026-10-11 修复：HTTPError 必须在**本线程内捕获**再放入队列返回——
-        否则异常在 daemon 线程抛出、主线程 except HTTPError 分支永远执行不到
-        （线程死了 q 无结果 → 只能等总时长超时），403/429/504 退避重试形同虚设。"""
-        try:
-            with urllib.request.urlopen(req, timeout=sock_to) as r:
-                return ("ok", r.read().decode())
-        except Exception as e:  # noqa: BLE001 —— 全部异常带回主线程重试分支
-            return ("err", e)
+        """
+        with urllib.request.urlopen(req, timeout=sock_to) as r:
+            return r.read().decode()
 
     for attempt in range(retries):
         # 总时长守卫：daemon 线程执行 + Queue.get(总超时)——无论 read 怎么挂起
@@ -1447,10 +1443,7 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
         wt.start()
         total_to = min(timeout + 60, 900)
         try:
-            _r = q.get(timeout=total_to)
-            if _r[0] == "err":
-                raise _r[1]
-            raw = _r[1]
+            raw = q.get(timeout=total_to)
         except __import__("queue").Empty:
             # 慢流不重试（2026-10-07）：660s 已是极慢——重试只再等一个 660s，
             # 且会把批级 pool.shutdown(wait=True) 拖入 55min 级阻塞被 watchdog 杀。
@@ -1481,11 +1474,7 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
 
         except urllib.error.HTTPError as e:
             code = e.code
-            # 504 Gateway Timeout 加入重试列表（2026-10-11 编排化适配）：
-            # InferAI 对大 max_tokens(20000) 请求常见 504，单次失败直接抛会让
-            # 实体/规则联合抽取整批作废 → esm={}、实体页全空。504 多为瞬态
-            # （网关等后端超时），退避重试可自愈。
-            if code in (403, 429, 500, 502, 503, 504, 520, 521, 522, 524):
+            if code in (403, 429, 500, 502, 503, 520, 521, 522, 524):
                 # 退避上限 45s + 重试次数 5：最长退避 ~3 分钟 < run_one 阶段超时，
                 # 避免 LLM 限流重试耗尽 450s 被判 gen_summary 超时（2026-10-07 实证）
                 delay = min(max(15, base_delay * (2 ** attempt)), 45)
