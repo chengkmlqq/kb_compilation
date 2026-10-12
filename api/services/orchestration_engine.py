@@ -403,13 +403,19 @@ class KbLlmChatStep(BaseStep):
         from api.services.chat import ChatClient, load_chat_config
 
         prompt = str(context.render(self.config.get("prompt") or "")).strip()
-        if not prompt:
-            return StepResponse.fail("kb_llm_chat 缺 prompt")
         output_var = str(self.config.get("output_var") or "llm_out")
         model = str(self.config.get("model") or "").strip() or None
         temperature = float(self.config.get("temperature") or 0.2)
         max_tokens = int(self.config.get("max_tokens") or 2048)
         json_mode = bool(self.config.get("json_mode"))
+        # 2026-10-12 摘要三模式模板：loop 内条件触发合并 LLM——非最后一轮
+        # prompt 渲染为空时跳过（空合并）而不失败，与 wiki_upsert_page 的
+        # skip_empty 语义对称（loop 下游节点每轮都跑，靠它只让最后一轮真合并）。
+        skip_empty = bool(self.config.get("skip_empty"))
+        if not prompt:
+            if skip_empty:
+                return StepResponse.success({"skipped": True, "reason": "empty prompt (skip_empty)"})
+            return StepResponse.fail("kb_llm_chat 缺 prompt")
 
         try:
             # 2026-10-12 修复：db 必须传——load_chat_config(None) 走 legacy env，

@@ -276,7 +276,8 @@ ORCH_STEP_DEFINES: list[tuple[str, str, str, str, str, list[dict], int]] = [
        "placeholder": "deepseek-v4-pro"},
       {"name": "temperature", "label": "温度", "type": "input", "required": False, "placeholder": "0.2"},
       {"name": "max_tokens", "label": "max_tokens", "type": "input", "required": False, "placeholder": "2048"},
-      {"name": "json_mode", "label": "强制解析JSON输出", "type": "boolean", "required": False}], 10),
+      {"name": "json_mode", "label": "强制解析JSON输出", "type": "boolean", "required": False},
+      {"name": "skip_empty", "label": "空Prompt时跳过(不失败)", "type": "boolean", "required": False}], 10),
     ("wiki_upsert_page", "写Wiki页(单页)", "知识构建", "UploadOutlined",
      "幂等写入一张 wiki 页（slug 冲突则更新并恢复 active），支持 {{ }} 模板字段",
      [{"name": "kb_id", "label": "知识库ID", "type": "input", "required": True, "placeholder": "{{kb_id}}"},
@@ -666,6 +667,10 @@ def main(argv: list[str] | None = None) -> None:
         #    wiki_upsert_page 写表主页→wiki_rebuild_links），节点全是可复用基础原子。
         _seed_table_wiki_tape(db)
 
+        # 10-12) 种子编排模板：文档摘要三模式（Stuff / Map-Reduce / Refine，2026-10-12）
+        #    业界经典摘要模式，全部用基础原子组装（读切片→分批→LLM→合并/修订→写摘要页）。
+        _seed_summary_tapes(db)
+
         print("\nDONE — 登录: " + SEED_USER_ID + "/" + SEED_PASSWORD + "（编排内置组件 " + str(len(ORCH_STEP_DEFINES)) + " 个）")
     finally:
         db.close()
@@ -985,6 +990,364 @@ def _seed_table_wiki_tape(db) -> None:
 
     save_tape_design(db, tape.id, TABLE_WIKI_TAPE["nodes"], TABLE_WIKI_TAPE["edges"], TABLE_WIKI_TAPE.get("exec_params") or {})
     print(f"[9/9] 种子编排「{TAPE_NAME}」OK: id={tape.id[:12]}… 节点 {len(TABLE_WIKI_TAPE['nodes'])} 边 {len(TABLE_WIKI_TAPE['edges'])}（status=draft，页面点执行即可用）")
+
+
+# ── 文档摘要三模式编排（2026-10-12）────────────────────────────
+# 业界大文档摘要三种经典模式，全部用细粒度基础原子组装：
+#   A. Stuff（全文直塞）：kb_read_doc 读全部切片 → script 拼全文 prompt →
+#      kb_llm_chat 一次生成 → script 解析 → wiki_upsert_page 写摘要页。
+#      适合中小文档；与线上 kb_admin.generate_document_summary 同思路。
+#   B. Map-Reduce（分块再合并）：kb_read_doc → script 分批 → loop：
+#      每批 {script 拼子摘要 prompt → kb_llm_chat 子摘要 → script 累积}，
+#      最后一批时 script 拼合并 prompt → kb_llm_chat 合并（skip_empty 兜底，
+#      非最后一批空 prompt 跳过不调 LLM）→ script 解析 → wiki_upsert_page。
+#      适合大文档（切片多，避免超上下文）。
+#   C. Refine（增量修订）：kb_read_doc → script 分批 → loop：
+#      每批 {script 拼「已有摘要 + 本批新内容」→ kb_llm_chat 更新摘要 →
+#      script 写回 running_summary}，最后一批落页。摘要逐批滚动，只读每批一次。
+# 三种模板输入 bindings 一致：kb_id / document_id；可选用 summary_* 覆盖默认。
+# 产物一致：wiki 摘要页（page_type=summary，slug 带模式后缀）+ bindings.final_summary。
+#
+# ⚠️ 设计约束（引擎语义）：loop 的全部下游节点都是循环体、每轮都跑——所以
+#    「合并」必须放循环体内、用 script 判断最后一批才拼合并 prompt +
+#    kb_llm_chat(skip_empty) 空 prompt 跳过 + wiki_upsert_page(skip_empty)
+#    空 title 跳过。script 改 bindings 通过 run_node 的 context.bindings 合并
+#    持久化到 run（跨轮累积 running_summary / sub_summaries 由此实现）。
+
+SUMMARY_PROMPT_TPL = (
+    "你是专业的文档摘要助手。请阅读用户提供的文档内容，生成一段简洁、准确的中文摘要："
+    "先一句话概括文档主题，再用分点列出核心要点与关键结论。"
+    "控制在 150~250 字，只输出摘要正文，不要输出多余解释。"
+)
+
+SUMMARY_STUFF_TAPE: dict = {
+    "exec_params": {"kb_id": "", "document_id": "", "max_chars": "60000"},
+    "nodes": [
+        {
+            "id": "n1", "type": "custom",
+            "data": {"label": "读文档切片", "stepInst": "kb_read_doc",
+                     "config": {"document_id": "{{document_id}}", "output_var": "chunks"}},
+        },
+        {
+            "id": "n2", "type": "custom",
+            "data": {"label": "拼全文Prompt", "stepInst": "script",
+                     "config": {"code": (
+                         "chunks = bindings.get('chunks') or []\n"
+                         "parts = []\n"
+                         "for c in chunks:\n"
+                         "    text = (c.get('content') or '').strip()\n"
+                         "    if len(text) > 4000:\n"
+                         "        text = text[:4000] + '…'\n"
+                         "    if text:\n"
+                         "        parts.append(text)\n"
+                         "limit = int(bindings.get('max_chars') or 60000)\n"
+                         "content = '\\n\\n'.join(parts)[:limit]\n"
+                         "bindings['prompt'] = ('" + SUMMARY_PROMPT_TPL +
+                         "\\n\\n文档内容：\\n' + content)\n"
+                     )}},
+        },
+        {
+            "id": "n3", "type": "custom",
+            "data": {"label": "LLM生成摘要", "stepInst": "kb_llm_chat",
+                     "config": {"prompt": "{{prompt}}", "output_var": "summary_text",
+                                "temperature": "0.3", "max_tokens": "1024"}},
+        },
+        {
+            "id": "n4", "type": "custom",
+            "data": {"label": "落页准备", "stepInst": "script",
+                     "config": {"code": (
+                         "import hashlib\n"
+                         "s = str(bindings.get('summary_text') or '').strip()\n"
+                         "doc_id = str(bindings.get('document_id') or '')\n"
+                         "bindings['final_summary'] = s\n"
+                         "bindings['page_title'] = '文档摘要（Stuff 全文直塞）' if s else ''\n"
+                         "bindings['page_slug'] = 'doc-' + hashlib.md5(doc_id.encode()).hexdigest()[:10] + '-stuff'\n"
+                         "bindings['page_content'] = ('# 文档摘要（Stuff 全文直塞）\\n\\n' + s) if s else ''\n"
+                     )}},
+        },
+        {
+            "id": "n5", "type": "custom",
+            "data": {"label": "写摘要页", "stepInst": "wiki_upsert_page",
+                     "config": {"kb_id": "{{kb_id}}", "title": "{{page_title}}",
+                                "content": "{{page_content}}", "slug": "{{page_slug}}",
+                                "page_type": "summary", "skip_empty": True}},
+        },
+    ],
+    "edges": [
+        {"source": "n1", "target": "n2"},
+        {"source": "n2", "target": "n3"},
+        {"source": "n3", "target": "n4"},
+        {"source": "n4", "target": "n5"},
+    ],
+}
+
+SUMMARY_MAPREDUCE_TAPE: dict = {
+    "exec_params": {"kb_id": "", "document_id": "", "batch_size": "5", "chunk_cap": "2000"},
+    "nodes": [
+        {
+            "id": "n1", "type": "custom",
+            "data": {"label": "读文档切片", "stepInst": "kb_read_doc",
+                     "config": {"document_id": "{{document_id}}", "output_var": "chunks"}},
+        },
+        {
+            "id": "n2", "type": "custom",
+            "data": {"label": "分批", "stepInst": "script",
+                     "config": {"code": (
+                         "chunks = bindings.get('chunks') or []\n"
+                         "batch_size = int(bindings.get('batch_size') or 5)\n"
+                         "cap = int(bindings.get('chunk_cap') or 2000)\n"
+                         "batches = []\n"
+                         "for i in range(0, len(chunks), batch_size):\n"
+                         "    texts = []\n"
+                         "    for c in chunks[i:i + batch_size]:\n"
+                         "        t = (c.get('content') or '').strip()\n"
+                         "        if len(t) > cap:\n"
+                         "            t = t[:cap] + '…'\n"
+                         "        if t:\n"
+                         "            texts.append(t)\n"
+                         "    if texts:\n"
+                         "        batches.append({'idx': len(batches), 'text': '\\n\\n'.join(texts)})\n"
+                         "bindings['batches'] = batches\n"
+                         "bindings['_total'] = len(batches)\n"
+                         "bindings['sub_summaries'] = []\n"
+                     )}},
+        },
+        {
+            "id": "n3", "type": "custom",
+            "data": {"label": "逐批循环", "stepInst": "loop",
+                     "config": {"item_var": "batch", "collection": "bindings.get('batches') or []"}},
+        },
+        {
+            "id": "n4", "type": "custom",
+            "data": {"label": "拼子摘要Prompt", "stepInst": "script",
+                     "config": {"code": (
+                         "batch = bindings.get('batch') or {}\n"
+                         "idx = int(batch.get('idx') or 0)\n"
+                         "total = int(bindings.get('_total') or 1)\n"
+                         "bindings['is_last'] = (idx >= total - 1)\n"
+                         "bindings['map_prompt'] = (\n"
+                         "    '以下是文档的第 %d/%d 个片段，请生成 80~150 字中文子摘要，'\n"
+                         "    '只输出摘要正文，不要多余解释：\\n\\n' % (idx + 1, total))\n"
+                         "text = str(batch.get('text') or '')\n"
+                         "bindings['map_prompt'] += text\n"
+                     )}},
+        },
+        {
+            "id": "n5", "type": "custom",
+            "data": {"label": "LLM子摘要", "stepInst": "kb_llm_chat",
+                     "config": {"prompt": "{{map_prompt}}", "output_var": "sub_summary",
+                                "temperature": "0.3", "max_tokens": "512"}},
+        },
+        {
+            "id": "n6", "type": "custom",
+            "data": {"label": "累积+拼合并Prompt", "stepInst": "script",
+                     "config": {"code": (
+                         "subs = list(bindings.get('sub_summaries') or [])\n"
+                         "s = str(bindings.get('sub_summary') or '').strip()\n"
+                         "if s:\n"
+                         "    subs.append(s)\n"
+                         "bindings['sub_summaries'] = subs\n"
+                         "if bindings.get('is_last') and subs:\n"
+                         "    body = '\\n\\n'.join('[子摘要 %d] %s' % (i + 1, t) for i, t in enumerate(subs))\n"
+                         "    bindings['reduce_prompt'] = (\n"
+                         "        '以下是对同一文档各分段的子摘要，请合并为一份完整连贯的中文文档摘要'\n"
+                         "        '（150~250 字，先一句话概括主题，再分点列出核心要点，只输出摘要正文）：\\n\\n' + body)\n"
+                         "    bindings['merge_ready'] = True\n"
+                         "else:\n"
+                         "    bindings['reduce_prompt'] = ''\n"
+                         "    bindings['merge_ready'] = False\n"
+                     )}},
+        },
+        {
+            "id": "n7", "type": "custom",
+            "data": {"label": "LLM合并", "stepInst": "kb_llm_chat",
+                     "config": {"prompt": "{{reduce_prompt}}", "output_var": "merged_summary",
+                                "temperature": "0.3", "max_tokens": "1024", "skip_empty": True}},
+        },
+        {
+            "id": "n8", "type": "custom",
+            "data": {"label": "落页准备", "stepInst": "script",
+                     "config": {"code": (
+                         "import hashlib\n"
+                         "if bindings.get('merge_ready'):\n"
+                         "    doc_id = str(bindings.get('document_id') or '')\n"
+                         "    s = str(bindings.get('merged_summary') or '').strip()\n"
+                         "    bindings['final_summary'] = s\n"
+                         "    bindings['page_title'] = '文档摘要（Map-Reduce 分块合并）' if s else ''\n"
+                         "    bindings['page_slug'] = 'doc-' + hashlib.md5(doc_id.encode()).hexdigest()[:10] + '-mapreduce'\n"
+                         "    bindings['page_content'] = ('# 文档摘要（Map-Reduce 分块合并）\\n\\n' + s) if s else ''\n"
+                         "else:\n"
+                         "    bindings['page_title'] = ''\n"
+                         "    bindings['page_slug'] = ''\n"
+                         "    bindings['page_content'] = ''\n"
+                     )}},
+        },
+        {
+            "id": "n9", "type": "custom",
+            "data": {"label": "写摘要页", "stepInst": "wiki_upsert_page",
+                     "config": {"kb_id": "{{kb_id}}", "title": "{{page_title}}",
+                                "content": "{{page_content}}", "slug": "{{page_slug}}",
+                                "page_type": "summary", "skip_empty": True}},
+        },
+    ],
+    "edges": [
+        {"source": "n1", "target": "n2"},
+        {"source": "n2", "target": "n3"},
+        {"source": "n3", "target": "n4"},
+        {"source": "n4", "target": "n5"},
+        {"source": "n5", "target": "n6"},
+        {"source": "n6", "target": "n7"},
+        {"source": "n7", "target": "n8"},
+        {"source": "n8", "target": "n9"},
+    ],
+}
+
+SUMMARY_REFINE_TAPE: dict = {
+    "exec_params": {"kb_id": "", "document_id": "", "batch_size": "3", "chunk_cap": "3000"},
+    "nodes": [
+        {
+            "id": "n1", "type": "custom",
+            "data": {"label": "读文档切片", "stepInst": "kb_read_doc",
+                     "config": {"document_id": "{{document_id}}", "output_var": "chunks"}},
+        },
+        {
+            "id": "n2", "type": "custom",
+            "data": {"label": "分批+初始化", "stepInst": "script",
+                     "config": {"code": (
+                         "chunks = bindings.get('chunks') or []\n"
+                         "batch_size = int(bindings.get('batch_size') or 3)\n"
+                         "cap = int(bindings.get('chunk_cap') or 3000)\n"
+                         "batches = []\n"
+                         "for i in range(0, len(chunks), batch_size):\n"
+                         "    texts = []\n"
+                         "    for c in chunks[i:i + batch_size]:\n"
+                         "        t = (c.get('content') or '').strip()\n"
+                         "        if len(t) > cap:\n"
+                         "            t = t[:cap] + '…'\n"
+                         "        if t:\n"
+                         "            texts.append(t)\n"
+                         "    if texts:\n"
+                         "        batches.append({'idx': len(batches), 'text': '\\n\\n'.join(texts)})\n"
+                         "bindings['batches'] = batches\n"
+                         "bindings['_total'] = len(batches)\n"
+                         "bindings['running_summary'] = ''\n"
+                     )}},
+        },
+        {
+            "id": "n3", "type": "custom",
+            "data": {"label": "逐批循环", "stepInst": "loop",
+                     "config": {"item_var": "batch", "collection": "bindings.get('batches') or []"}},
+        },
+        {
+            "id": "n4", "type": "custom",
+            "data": {"label": "拼增量Prompt", "stepInst": "script",
+                     "config": {"code": (
+                         "batch = bindings.get('batch') or {}\n"
+                         "idx = int(batch.get('idx') or 0)\n"
+                         "total = int(bindings.get('_total') or 1)\n"
+                         "bindings['is_last'] = (idx >= total - 1)\n"
+                         "prev = str(bindings.get('running_summary') or '').strip()\n"
+                         "cur = str(batch.get('text') or '')\n"
+                         "if prev:\n"
+                         "    bindings['refine_prompt'] = (\n"
+                         "        '已有摘要：\\n' + prev +\n"
+                         "        '\\n\\n新内容（第 %d/%d 片段）：\\n' % (idx + 1, total) + cur +\n"
+                         "        '\\n\\n请基于「已有摘要 + 新内容」输出更新后的完整文档摘要'\n"
+                         "        '（150~250 字，保留已有要点并融入新要点，只输出摘要正文）：')\n"
+                         "else:\n"
+                         "    bindings['refine_prompt'] = (\n"
+                         "        '根据以下文档内容生成中文摘要（150~250 字，先一句话概括主题，'\n"
+                         "        '再分点列出核心要点，只输出摘要正文）：\\n\\n' + cur)\n"
+                     )}},
+        },
+        {
+            "id": "n5", "type": "custom",
+            "data": {"label": "LLM更新摘要", "stepInst": "kb_llm_chat",
+                     "config": {"prompt": "{{refine_prompt}}", "output_var": "new_summary",
+                                "temperature": "0.3", "max_tokens": "1024"}},
+        },
+        {
+            "id": "n6", "type": "custom",
+            "data": {"label": "回写+落页准备", "stepInst": "script",
+                     "config": {"code": (
+                         "import hashlib\n"
+                         "s = str(bindings.get('new_summary') or '').strip()\n"
+                         "bindings['running_summary'] = s\n"
+                         "if bindings.get('is_last') and s:\n"
+                         "    doc_id = str(bindings.get('document_id') or '')\n"
+                         "    bindings['final_summary'] = s\n"
+                         "    bindings['page_title'] = '文档摘要（Refine 增量修订）'\n"
+                         "    bindings['page_slug'] = 'doc-' + hashlib.md5(doc_id.encode()).hexdigest()[:10] + '-refine'\n"
+                         "    bindings['page_content'] = '# 文档摘要（Refine 增量修订）\\n\\n' + s\n"
+                         "else:\n"
+                         "    bindings['final_summary'] = s\n"
+                         "    bindings['page_title'] = ''\n"
+                         "    bindings['page_slug'] = ''\n"
+                         "    bindings['page_content'] = ''\n"
+                     )}},
+        },
+        {
+            "id": "n7", "type": "custom",
+            "data": {"label": "写摘要页", "stepInst": "wiki_upsert_page",
+                     "config": {"kb_id": "{{kb_id}}", "title": "{{page_title}}",
+                                "content": "{{page_content}}", "slug": "{{page_slug}}",
+                                "page_type": "summary", "skip_empty": True}},
+        },
+    ],
+    "edges": [
+        {"source": "n1", "target": "n2"},
+        {"source": "n2", "target": "n3"},
+        {"source": "n3", "target": "n4"},
+        {"source": "n4", "target": "n5"},
+        {"source": "n5", "target": "n6"},
+        {"source": "n6", "target": "n7"},
+    ],
+}
+
+
+def _seed_summary_tapes(db) -> None:
+    """幂等建三个文档摘要编排模板（存在则 skip；改内容需删 Tape+TapeStep 行重建）。"""
+    from api.models.orchestration import Tape
+
+    tapes = [
+        ("摘要-Stuff（全文直塞）", "文档摘要（Stuff：全文一次直塞 LLM，适合中小文档）",
+         "业界经典模式一：整篇文档拼接后一次性交给 LLM 生成摘要。适合切片总长不超 "
+         "上下文窗口的文档；可配 max_chars 控制输入上限。产物=wiki 摘要页 + bindings.final_summary。",
+         SUMMARY_STUFF_TAPE),
+        ("摘要-Map-Reduce（分块合并）", "文档摘要（Map-Reduce：分块子摘要再合并，适合大文档）",
+         "业界经典模式二：按 batch_size 把切片分批，每批 LLM 生成子摘要，最后一批后把全部 "
+         "子摘要合并出最终摘要。切片多的大文档用它，每批独立调用避免超上下文。"
+         "产物=wiki 摘要页 + bindings.final_summary。",
+         SUMMARY_MAPREDUCE_TAPE),
+        ("摘要-Refine（增量修订）", "文档摘要（Refine：摘要随批次滚动更新，适合大文档）",
+         "业界经典模式三：摘要草稿随每批新内容滚动修订（先基于第一批生成初始摘要，之后每批 "
+         "带着已有摘要 + 新内容更新），每批只读一次，输出持续累积。"
+         "产物=wiki 摘要页 + bindings.final_summary。",
+         SUMMARY_REFINE_TAPE),
+    ]
+    from api.services.orchestration import save_tape_design
+
+    for i, (name, label, descr, tape_dict) in enumerate(tapes, start=10):
+        existing = db.execute(select(Tape).where(Tape.tape_name == name)).scalars().first()
+        if existing:
+            print(f"[{i}/12] 种子编排「{name}」已存在 (skip)")
+            continue
+        tape = Tape(
+            id=uuid.uuid4().hex[:32],
+            tape_name=name,
+            tape_label=label,
+            tape_descr=descr,
+            tape_type="general",
+            status="draft",
+            nodes=list(tape_dict["nodes"]),
+            edges=list(tape_dict["edges"]),
+            exec_params=tape_dict.get("exec_params") or {},
+            create_user=None,
+        )
+        db.add(tape)
+        db.commit()
+        save_tape_design(db, tape.id, tape_dict["nodes"], tape_dict["edges"], tape_dict.get("exec_params") or {})
+        print(f"[{i}/12] 种子编排「{name}」OK: id={tape.id[:12]}… 节点 {len(tape_dict['nodes'])} 边 {len(tape_dict['edges'])}（status=draft，页面点执行即可用）")
 
 
 if __name__ == "__main__":

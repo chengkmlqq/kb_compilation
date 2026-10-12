@@ -81,6 +81,39 @@ def test_kb_read_doc_max_chunks(orch_db, monkeypatch) -> None:
     assert resp.success and len(ctx.bindings["chunks"]) == 1
 
 
+def test_kb_llm_chat_skip_empty(monkeypatch) -> None:
+    """kg_llm_chat skip_empty：空 prompt 跳过（success + skipped）不调 LLM；非空正常调。"""
+    from api.services.orchestration_engine import KbLlmChatStep
+
+    called = []
+
+    def fake_chat(cfg, messages, temperature=None, max_tokens=None):
+        called.append(messages[-1].content)
+        return "摘要结果"
+
+    import api.services.chat as chat_mod
+    chat_mod.ChatClient = lambda cfg: type("FC", (), {"chat": lambda self, m, **k: fake_chat(cfg, m, **k)})()
+    chat_mod.load_chat_config = lambda db=None, model_id=None: {"base_url": "http://f", "api_key": "k", "model": "m"}
+
+    # skip_empty=True + 空 prompt → 跳过不调 LLM
+    step = KbLlmChatStep("n7", "合并", "kb_llm_chat",
+                         {"prompt": "{{reduce_prompt}}", "output_var": "out", "skip_empty": True})
+    resp = step.handle(TapeRuntimeContext({"reduce_prompt": ""}))
+    assert resp.success and resp.body.get("skipped") is True
+    assert len(called) == 0, "空 prompt + skip_empty 不应调 LLM"
+
+    # 非空 prompt → 正常调用
+    ctx = TapeRuntimeContext({"reduce_prompt": "请合并"})
+    resp2 = step.handle(ctx)
+    assert resp2.success and ctx.bindings["out"] == "摘要结果"
+    assert len(called) == 1
+
+    # 无 skip_empty + 空 prompt → fail
+    step3 = KbLlmChatStep("n7", "合并", "kb_llm_chat", {"prompt": "{{x}}", "output_var": "out"})
+    resp3 = step3.handle(TapeRuntimeContext({"x": ""}))
+    assert not resp3.success
+
+
 def test_wiki_upsert_page_skip_empty() -> None:
     # page_title 为空字符串（script 节点准备了空变量）→ skip_empty 跳过成功
     step = WikiUpsertPageStep("n8", "写实体页", "wiki_upsert_page",
@@ -226,3 +259,58 @@ def test_table_wiki_template_structure() -> None:
     assert insts[-2] == "wiki_upsert_page" and insts[-1] == "wiki_rebuild_links", "末两节点应为写页+重建互链"
     upsert = next(n for n in nodes if n["data"]["stepInst"] == "wiki_upsert_page")
     assert upsert["data"]["config"].get("page_type") == "table"
+
+
+# ── 文档摘要三模式模板结构（2026-10-12）──────────────────────────
+
+def test_summary_tapes_structure() -> None:
+    """三个摘要模板：节点指令全部注册、边闭合、含 loop/skip_empty 关键语义、script 可编译。"""
+    from scripts.seed_framework_db import (
+        SUMMARY_STUFF_TAPE,
+        SUMMARY_MAPREDUCE_TAPE,
+        SUMMARY_REFINE_TAPE,
+    )
+
+    tapes = {
+        "stuff": SUMMARY_STUFF_TAPE,
+        "mapreduce": SUMMARY_MAPREDUCE_TAPE,
+        "refine": SUMMARY_REFINE_TAPE,
+    }
+    for name, tape in tapes.items():
+        nodes, edges = tape["nodes"], tape["edges"]
+        by_id = {n["id"]: n for n in nodes}
+        assert len(by_id) == len(nodes), f"{name}: 节点 id 重复"
+        for n in nodes:
+            inst = n["data"]["stepInst"]
+            assert inst in ATOM_MAP, f"{name}: 指令 {inst} 未注册"
+            if inst == "script":
+                compile(n["data"]["config"].get("code") or "", f"<{name}:{n['id']}>", "exec")
+        for e in edges:
+            assert e["source"] in by_id and e["target"] in by_id, f"{name}: 边引用不存在节点 {e}"
+        assert all(n["data"]["stepInst"] == "kb_read_doc" for n in nodes[:1]), f"{name}: 首节点应为 kb_read_doc"
+        assert any(n["data"]["stepInst"] == "wiki_upsert_page" for n in nodes), f"{name}: 缺写页节点"
+        upsert = next(n for n in nodes if n["data"]["stepInst"] == "wiki_upsert_page")
+        assert upsert["data"]["config"].get("skip_empty") is True, f"{name}: 写页需 skip_empty"
+        assert "kb_id" in tape["exec_params"] and "document_id" in tape["exec_params"]
+
+
+def test_summary_tapes_mode_semantics() -> None:
+    """三种模式的语义差异断言：stuff 无 loop；mapreduce/refine 有 loop 且循环体内含 LLM。"""
+    from scripts.seed_framework_db import (
+        SUMMARY_STUFF_TAPE,
+        SUMMARY_MAPREDUCE_TAPE,
+        SUMMARY_REFINE_TAPE,
+    )
+
+    insts_of = lambda t: [n["data"]["stepInst"] for n in t["nodes"]]
+    assert "loop" not in insts_of(SUMMARY_STUFF_TAPE), "Stuff 模式不应有 loop"
+    assert "loop" in insts_of(SUMMARY_MAPREDUCE_TAPE) and "loop" in insts_of(SUMMARY_REFINE_TAPE)
+
+    # Map-Reduce：循环体内应有两个 kb_llm_chat（子摘要 + 合并），合并那个带 skip_empty
+    mr_llms = [n for n in SUMMARY_MAPREDUCE_TAPE["nodes"] if n["data"]["stepInst"] == "kb_llm_chat"]
+    assert len(mr_llms) == 2, f"Map-Reduce 应有 2 个 LLM 节点（子摘要+合并），实际 {len(mr_llms)}"
+    assert any(n["data"]["config"].get("skip_empty") for n in mr_llms), "合并 LLM 应带 skip_empty"
+
+    # Refine：单 LLM 节点（滚动更新），无 skip_empty 需要
+    rf_llms = [n for n in SUMMARY_REFINE_TAPE["nodes"] if n["data"]["stepInst"] == "kb_llm_chat"]
+    assert len(rf_llms) == 1, f"Refine 应有 1 个 LLM 节点，实际 {len(rf_llms)}"
