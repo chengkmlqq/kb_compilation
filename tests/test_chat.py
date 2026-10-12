@@ -78,3 +78,57 @@ def test_chat_client_missing_endpoint_raises() -> None:
     client = ChatClient(ChatConfig(base_url="", api_key="", model="m"))
     with pytest.raises(RuntimeError):
         list(client.stream([ChatMessage(role="user", content="hi")]))
+
+
+def test_chat_client_404_becomes_actionable_message(monkeypatch) -> None:
+    """2026-10-12: 网关用 404 表达「模型名不存在」（tokenerpgw/erp 实测
+    model_not_found 回 404）。裸抛 httpx 异常会给用户一句无法定位的
+    "Client error '404 Not Found' for url ..."，这里断言已转换为
+    带模型名与接口地址的中文提示。"""
+
+    import httpx
+
+    captured: dict = {}
+
+    class FakeResp:
+        def __init__(self, *a, **kw):
+            pass
+
+        @property
+        def status_code(self):
+            return 404
+
+        def close(self):
+            pass
+
+    class FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def build_request(self, method, url, json=None, headers=None):
+            return {"method": method, "url": url, "json": json, "headers": headers}
+
+        def send(self, req, stream=True):
+            captured["url"] = req["url"]
+            raise httpx.HTTPStatusError(
+                "404", request=httpx.Request("POST", req["url"]), response=FakeResp()  # type: ignore[arg-type]
+            )
+
+    monkeypatch.setattr("httpx.Client", FakeClient)
+    from api.services.chat import ChatClient, ChatConfig, ChatMessage
+
+    client = ChatClient(
+        ChatConfig(base_url="https://gw.example.com/erp/v1", api_key="sk-1", model="aliyun/x")
+    )
+    with pytest.raises(RuntimeError) as ei:
+        list(client.stream_events([ChatMessage(role="user", content="hi")]))
+    msg = str(ei.value)
+    assert "404" in msg
+    assert "aliyun/x" in msg  # 模型名出现在提示里
+    assert "gw.example.com" in msg  # 接口地址出现在提示里
