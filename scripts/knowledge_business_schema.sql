@@ -64,9 +64,11 @@ CREATE TABLE IF NOT EXISTS kb_datasource (
     wiki_config       JSON,
     storage_provider_config JSON,
     storage_backend_id VARCHAR(36),
-    vector_store_id   VARCHAR(36)
+    vector_store_id   VARCHAR(36),
+    build_tape_id     VARCHAR(64)
 );
 CREATE INDEX idx_kb_datasource_team ON kb_datasource (team_name);
+CREATE INDEX idx_kb_datasource_build_tape ON kb_datasource (build_tape_id);
 
 -- --------------------------------------------------------------------- document
 CREATE TABLE IF NOT EXISTS kb_document (

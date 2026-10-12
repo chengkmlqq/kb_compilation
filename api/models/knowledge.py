@@ -91,6 +91,9 @@ class KbDatasource(Base):
     storage_provider_config: Mapped[dict] = mapped_column(JSON, default=dict)
     storage_backend_id: Mapped[str | None] = mapped_column(String(36))
     vector_store_id: Mapped[str | None] = mapped_column(String(36))
+    # 构建引擎（2026-10-12）：绑定「服务编排」中已发布的编排程序（kb_tape.id）。
+    # 绑定后文档解析成功自动按该编排构建 wiki（空 = 使用内置 wiki 构建链）。
+    build_tape_id: Mapped[str | None] = mapped_column(String(64), index=True)
 
     state: Mapped[str] = mapped_column(String(16), default="1")  # 1=active 0=deleted
     created_by: Mapped[str | None] = mapped_column(String(64))

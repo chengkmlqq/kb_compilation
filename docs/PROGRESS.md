@@ -2,7 +2,18 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-10（菜单重新划分）
+最后更新：2026-10-12（知识库创建「构建引擎」改造）
+
+## 6. 当前状态（2026-10-12 知识库创建「构建引擎」改造）
+
+- **知识库创建表单重构（commit 待定）**：
+  - 去除「知识库类型 / 本体 Schema（抽取分类结构）/ 自定义 Wiki 生成」三个表单项；新增「构建引擎」下拉——选项 = 服务编排中**已发布**（kb_tape.status=effective）的编排程序（`GET /api/v1/kbs/build-engines`）
+  - KB 绑定存储：`kb_datasource.build_tape_id`（迁移 0009 + scripts/knowledge_business_schema.sql 同步；create/update_kb 校验编排存在且已发布，_kb_dict 序列化回显）
+  - **上传链改造**（`worker/tasks/doc_process.py`）：文档解析 READY 后，KB 绑定构建引擎 → `_enqueue_build_engine_task`（建 kb_tape_run env=prod + Job 行 KbOrchestrationRunTask + 投 orch 队列），**不再走内置 skill 链**；未绑定回落原逻辑。编排节点模板用 `{{kb_id}}`/`{{document_id}}` 即可构建 wiki（种子编排「wiki构建-基础原子版」直接可用，需先发布）
+  - **orch_runner env 透传**（2026-10-12 环境隔离配套）：execute_run/advance_run/run_node 及各 db 读写函数加 env 参数（None=沿用历史 dev）；execute_tape 拆出 `_create_tape_run`（只建 run 不投递），worker 上传链显式传 "prod" 与文档同库；orch_loop.dispatch_next_round 透传 env
+  - 测试：`tests/test_build_engine.py` 新增 8 例（build-engines 端点只返已发布 / create-update 绑定与校验 / 上传链触发 Job+run 行）；修复 test_step_result_upsert_semantics 的 `_run_db` 0 参 mock 适配新签名；顺手补 test_framework_models 白名单 `kb_tape_template`（55c7c00 引入模型但白名单未同步，既有缺陷类，同 bd31f68/dfd8234）
+  - 验证：pytest **549 passed**（仅剩 2 个既有失败 tests/test_storage.py::test_is_remote_and_parse_build 与 tests/test_files.py::test_files_minio_tree_zip_and_raw_download——2026-10-12 环境隔离给 storage 路径加 `prod/` 前缀后测试断言未同步，与本次无关，勿动 storage 语义）；前端 tsc 0 错误 + bun build 通过
+  - 前端：`kbs/page.tsx` 创建抽屉表单重构（删 type/ontology/custom_wiki 三项 + 清理 Radio/Switch/useWatch），`api.ts` 加 apiListBuildEngines/BuildEngineItem/KbCreatePayload.build_tape_id
 
 ## 5. 当前状态（2026-10-10 菜单重新划分）
 

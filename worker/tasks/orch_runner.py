@@ -45,11 +45,11 @@ def _db(env: str | None = None):
     return get_sessionmaker(env)()
 
 
-def _run_db():
-    """执行数据会话（开发库）。"""
+def _run_db(env: str | None = None):
+    """执行数据会话。env None = 沿用历史默认（dev）；上传链触发时显式传 "prod"。"""
     from api.db import ENV_DEV
 
-    return _db(ENV_DEV)
+    return _db(env or ENV_DEV)
 
 
 def _def_db():
@@ -59,8 +59,8 @@ def _def_db():
     return _db(ENV_PROD)
 
 
-def _get_run(run_id: str):
-    db = _run_db()
+def _get_run(run_id: str, env: str | None = None):
+    db = _run_db(env)
     try:
         return db.get(TapeRun, run_id)
     finally:
@@ -100,8 +100,8 @@ def _step_queue(steps: dict, sid: str) -> str:
     return q if q in ("default", "agent", "build", "orch") else ORCH_QUEUE
 
 
-def _append_step_result(run_id: str, result: dict) -> None:
-    db = _run_db()
+def _append_step_result(run_id: str, result: dict, env: str | None = None) -> None:
+    db = _run_db(env)
     try:
         run = db.get(TapeRun, run_id)
         if not run:
@@ -127,8 +127,8 @@ def _append_step_result(run_id: str, result: dict) -> None:
         db.close()
 
 
-def _update_run(run_id: str, **fields) -> None:
-    db = _run_db()
+def _update_run(run_id: str, env: str | None = None, **fields) -> None:
+    db = _run_db(env)
     try:
         run = db.get(TapeRun, run_id)
         if not run:
@@ -140,8 +140,8 @@ def _update_run(run_id: str, **fields) -> None:
         db.close()
 
 
-def _bindings_from_run(run_id: str) -> dict:
-    db = _run_db()
+def _bindings_from_run(run_id: str, env: str | None = None) -> dict:
+    db = _run_db(env)
     try:
         run = db.get(TapeRun, run_id)
         return dict(run.bindings or {})
@@ -151,17 +151,17 @@ def _bindings_from_run(run_id: str) -> dict:
 
 # ───────────────────────── 调度中枢 ─────────────────────────
 
-def _send_node(run_id: str, sid: str, bindings: dict, round_no: int, queue: str) -> None:
+def _send_node(run_id: str, sid: str, bindings: dict, round_no: int, queue: str, env: str | None = None) -> None:
     from worker.celery_app import celery_app
 
     celery_app.send_task(
         "worker.tasks.orch_runner.run_node",
-        args=[run_id, sid, bindings, round_no],
+        args=[run_id, sid, bindings, round_no, env] if env else [run_id, sid, bindings, round_no],
         queue=queue,
     )
 
 
-def _advance_impl(run_id: str) -> None:
+def _advance_impl(run_id: str, env: str | None = None) -> None:
     """检查所有可推进的就绪节点并投递；无就绪节点时判定终态。
 
     loop 迭代（2026-10-09 修复）：原先 loop 节点只当普通节点跑一次，循环体
@@ -169,12 +169,12 @@ def _advance_impl(run_id: str) -> None:
     逻辑，两条链路不一致）。现在由 orch_loop 按 collection 逐轮投循环体，
     每条执行记录带 round 字段，同一 body 节点跑 N 轮不被「已执行」吞掉。
     """
-    run = _get_run(run_id)
+    run = _get_run(run_id, env)
     if not run or run.status not in ("queued", "running"):
         return
     tape = _get_tape(run.tape_id)
     if not tape:
-        _update_run(run_id, status="failed", error="编排不存在")
+        _update_run(run_id, env, status="failed", error="编排不存在")
         return
     steps = _load_steps(run.tape_id)
     results = list(run.step_results or [])
@@ -214,12 +214,12 @@ def _advance_impl(run_id: str) -> None:
                 "queue": _step_queue(steps, sid), "status": "skipped",
                 "error": None, "duration_ms": 0, "round": 0,
                 "body": None,
-            })
+            }, env)
             done.add(sid)
             skip_ids.add(sid)
         logger.info("编排 run=%s 失败传播：%d 个后继节点 skipped", run_id, len(newly_skipped))
         # 重新取 run（结果已变更），继续推进以标记完整条阻断链
-        run = _get_run(run_id)
+        run = _get_run(run_id, env)
         results = list(run.step_results or [])
         done = {r["step_id"] for r in results}
         failed_ids = {r["step_id"] for r in results if r.get("status") == "failed"}
@@ -228,9 +228,9 @@ def _advance_impl(run_id: str) -> None:
     # 0.5) loop 迭代展开：给已完成的 loop 节点投下一轮循环体（投了就等回调）
     looped = orch_loop.dispatch_next_round(
         run_id, steps, results, loop_state, bindings,
-        step_queue_fn=_step_queue, send_task=_send_node)
+        step_queue_fn=_step_queue, send_task=_send_node, env=env)
     if looped:
-        _update_run(run_id, status="running",
+        _update_run(run_id, env, status="running",
                     bindings={**bindings, orch_loop.LOOP_STATE_KEY: loop_state})
         return
 
@@ -248,11 +248,11 @@ def _advance_impl(run_id: str) -> None:
         if all((p, rnd if p in body_map else 0) in pairs for p in s["pre"]):
             ready.append(sid)
     if ready:
-        _update_run(run_id, status="running",
+        _update_run(run_id, env, status="running",
                     bindings={**bindings, orch_loop.LOOP_STATE_KEY: loop_state})
         for sid in ready:
             _send_node(run_id, sid, bindings,
-                       orch_loop.round_of(sid, loop_state), _step_queue(steps, sid))
+                       orch_loop.round_of(sid, loop_state), _step_queue(steps, sid), env)
         return
 
     # 2) 无就绪节点：检查是否全部完成 → 终态（loop body 按应有轮次集判定）
@@ -263,7 +263,7 @@ def _advance_impl(run_id: str) -> None:
     if all_done:
         failed = [r for r in results if r.get("status") == "failed"]
         status = "failed" if failed else "success"
-        _update_run(run_id, status=status, bindings=bindings,
+        _update_run(run_id, env, status=status, bindings=bindings,
                     error="; ".join(f"{r['step_id']}: {r.get('error','')}" for r in failed) if failed else None)
         logger.info("编排 run=%s 终态 %s (%d 步)", run_id, status, len(results))
     else:
@@ -271,30 +271,34 @@ def _advance_impl(run_id: str) -> None:
         logger.info("编排 run=%s 等待依赖完成 (done=%d/%d)", run_id, len(pairs), len(steps))
 
 
-def execute_run(run_id: str) -> dict:
-    """调度中枢入口（orch 队列）：首次推进 DAG。"""
-    run = _get_run(run_id)
+def execute_run(run_id: str, env: str | None = None) -> dict:
+    """调度中枢入口（orch 队列）：首次推进 DAG。
+
+    env：执行记录所在环境（上传链触发编排传 "prod"；None 沿用历史 dev）。
+    """
+    run = _get_run(run_id, env)
     if not run:
         return {"success": False, "error": f"run not found: {run_id}"}
-    _update_run(run_id, status="running")
-    _advance_impl(run_id)
+    _update_run(run_id, env, status="running")
+    _advance_impl(run_id, env)
     return {"success": True, "run_id": run_id}
 
 
-def advance_run(run_id: str, step_id: str) -> dict:
+def advance_run(run_id: str, step_id: str, env: str | None = None) -> dict:
     """节点完成回调（orch 队列）：记录结果后推进 DAG。"""
-    _advance_impl(run_id)
+    _advance_impl(run_id, env)
     return {"success": True, "run_id": run_id}
 
 
 # ───────────────────────── 单节点执行（节点所在 worker） ─────────────────────────
 
-def run_node(run_id: str, step_id: str, bindings: dict, round_no: int = 0) -> dict:
+def run_node(run_id: str, step_id: str, bindings: dict, round_no: int = 0, env: str | None = None) -> dict:
     """执行单个编排节点（投递到该节点指定队列的 worker）。
 
     执行完写 step_results，再 send_task advance_run 推进 DAG。
+    env：执行记录所在环境（上传链触发编排传 "prod"；None 沿用历史 dev）。
     """
-    run = _get_run(run_id)
+    run = _get_run(run_id, env)
     if not run:
         return {"success": False, "error": f"run not found: {run_id}"}
     steps = _load_steps(run.tape_id)
@@ -308,8 +312,8 @@ def run_node(run_id: str, step_id: str, bindings: dict, round_no: int = 0) -> di
             "step_id": step_id, "step_inst": s["inst"], "step_label": s["label"],
             "queue": _step_queue(steps, step_id), "status": "failed",
             "error": f"未知组件指令: {s['inst']}", "duration_ms": 0, "round": round_no,
-        })
-        _send_advance(run_id, step_id)
+        }, env)
+        _send_advance(run_id, step_id, env)
         return {"success": False, "error": f"unknown step_inst {s['inst']}"}
 
     start = time.time()
@@ -320,13 +324,14 @@ def run_node(run_id: str, step_id: str, bindings: dict, round_no: int = 0) -> di
         "step_id": step_id, "step_inst": s["inst"], "step_label": s["label"],
         "queue": _step_queue(steps, step_id), "status": "running",
         "body": None, "error": None, "duration_ms": 0, "round": round_no,
-    })
+    }, env)
     try:
         # 2026-10-12 环境隔离：编排节点执行产生的业务数据（wiki 页/切片等）
-        # 一律落开发库——原子内部 get_sessionmaker() 读 contextvar 自动路由。
+        # 一律落执行记录所在环境（手工编排→dev；上传链触发→prod，与文档同库）——
+        # 原子内部 get_sessionmaker() 读 contextvar 自动路由。
         from api.db import ENV_DEV, env_scope
 
-        with env_scope(ENV_DEV):
+        with env_scope(env or ENV_DEV):
             response = step_cls(step_id, s["label"], s["inst"], s["config"]).handle(context)
         status = "success" if response.success else "failed"
         body = response.body if response.success else None
@@ -345,27 +350,27 @@ def run_node(run_id: str, step_id: str, bindings: dict, round_no: int = 0) -> di
         "error": error or None,
         "round": round_no,
     }
-    _append_step_result(run_id, result)
+    _append_step_result(run_id, result, env)
 
     # 新 bindings 写回 run（与库里现有值合并，不整体覆盖）。
     # 2026-10-09 loop 修复：整体覆盖会把调度中枢维护的 loop 迭代状态
     # (__loop_state__) 冲掉 → 下一轮投不出循环体。loop_state 由调度中枢独占。
-    cur = _bindings_from_run(run_id)
+    cur = _bindings_from_run(run_id, env)
     merged = {**cur, **context.bindings}
     if orch_loop.LOOP_STATE_KEY in cur:
         merged[orch_loop.LOOP_STATE_KEY] = cur[orch_loop.LOOP_STATE_KEY]
-    _update_run(run_id, bindings=merged)
-    _send_advance(run_id, step_id)
+    _update_run(run_id, env, bindings=merged)
+    _send_advance(run_id, step_id, env)
     logger.info("编排节点[%s %s] %s (%.0fms) run=%s", s["inst"], s["label"], status, (time.time() - start) * 1000, run_id)
     return {"success": status == "success", "step_id": step_id}
 
 
-def _send_advance(run_id: str, step_id: str) -> None:
+def _send_advance(run_id: str, step_id: str, env: str | None = None) -> None:
     from worker.celery_app import celery_app
 
     celery_app.send_task(
         "worker.tasks.orch_runner.advance_run",
-        args=[run_id, step_id],
+        args=[run_id, step_id, env] if env else [run_id, step_id],
         queue=ORCH_QUEUE,
     )
 
@@ -382,7 +387,8 @@ def register_task_handlers() -> None:
         run_id = params.get("runId") or params.get("run_id") or ""
         if not run_id:
             return {"success": False, "error": "runId required"}
-        return execute_run(run_id)
+        env = params.get("env") or None
+        return execute_run(run_id, env)
 
     def _handle_node(job_id, task_params):
         try:
@@ -394,7 +400,8 @@ def register_task_handlers() -> None:
         bindings = params.get("bindings") or {}
         if not run_id or not step_id:
             return {"success": False, "error": "runId/stepId required"}
-        return run_node(run_id, step_id, bindings)
+        env = params.get("env") or None
+        return run_node(run_id, step_id, bindings, env=env)
 
     TASK_CLASS_REGISTRY[TASK_CLASS_ORCH_RUN] = _handle_run
     TASK_CLASS_REGISTRY[TASK_CLASS_ORCH_NODE] = _handle_node

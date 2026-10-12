@@ -168,7 +168,7 @@ def test_step_result_upsert_semantics(monkeypatch) -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     TestSM = sessionmaker(bind=engine)
-    monkeypatch.setattr("worker.tasks.orch_runner._run_db", lambda: TestSM())
+    monkeypatch.setattr("worker.tasks.orch_runner._run_db", lambda env=None: TestSM())
     db = TestSM()
     run = TapeRun(
         id="r1", tape_id="t1", tape_name="t", status="running",

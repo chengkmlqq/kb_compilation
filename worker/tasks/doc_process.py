@@ -159,14 +159,27 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
     result["job_id"] = job_id
 
     # 自动触发下游构建（WeKnora 索引策略对齐）：文档解析/向量化成功后，
-    #   - wiki_enabled=true 且 custom_wiki_generation=false → enqueue KbAgentGatewayTask
-    #     用 KB 绑定的 wiki_config.skill（回退 WIKI_SKILL_NAME）跑 build_wiki.py
+    #   - KB 绑定了构建引擎（build_tape_id，服务编排中已发布的编排）→ 按该编排
+    #     构建 wiki（替代内置 skill 链，2026-10-12）
+    #   - 未绑定时：wiki_enabled=true 且 custom_wiki_generation=false →
+    #     enqueue KbAgentGatewayTask 用 KB 绑定的 wiki_config.skill（回退
+    #     WIKI_SKILL_NAME）跑 build_wiki.py
     #   - graph_enabled=true → enqueue KbGraphBuildTask 抽 Neo4j 实体/关系
     # 开关与技能绑定从 kb_datasource 读（_kb_pipeline_flags），读取失败回退历史默认。
     # 成功标志：ingest_document 返回 parse_state == "READY"（无 success 键）。
     if result.get("parse_state") == "READY" and kb_id:
         flags = _kb_pipeline_flags(kb_id)
-        if flags["wiki"]:
+        tape_id = flags.get("tape") or ""
+        if tape_id:
+            try:
+                result["build_engine_triggered"] = _enqueue_build_engine_task(
+                    kb_id, document_id, tape_id,
+                    parent_job_id=job_id,  # 2026-10-12 父子：挂链头解析任务
+                )
+            except Exception as exc:  # noqa: BLE001 — 触发失败不使文档处理任务失败
+                logger.warning("failed to trigger build engine task: %s", exc)
+                result["build_engine_triggered"] = False
+        elif flags["wiki"]:
             try:
                 enqueued = _enqueue_wiki_skill_task(
                     kb_id, document_id, skill_name=flags["skill"] or None,
@@ -188,6 +201,77 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
                 logger.warning("failed to trigger graph build task: %s", exc)
                 result["graph_build_triggered"] = False
     return result
+
+
+def _enqueue_build_engine_task(
+    kb_id: str, document_id: str, tape_id: str,
+    parent_job_id: str | None = None,  # 2026-10-12 父子：链头解析任务 job id
+) -> bool:
+    """KB 绑定构建引擎（服务编排中已发布的编排）时：按该编排构建 wiki。
+
+    链路：建 kb_tape_run（env=prod，与文档同库）→ 写 modo_job 行
+    （KbOrchestrationRunTask，任务监控可见）→ 投 orch 队列由调度中枢
+    execute_run 按 DAG 逐步执行（编排节点内 kb_read_doc 读文档切片、
+    wiki_upsert_page/wiki_publish 写 wiki 页）。
+    输入 bindings：kb_id / document_id（编排节点模板 {{kb_id}}/{{document_id}}）。
+    """
+    from api.db import get_sessionmaker
+    from api.models.framework import Job
+    from api.services.orchestration import _create_tape_run
+
+    db = get_sessionmaker()()
+    try:
+        created = _create_tape_run(
+            db, tape_id,
+            inputs={"kb_id": kb_id, "document_id": document_id, "language": "中文"},
+            env="prod",  # 上传链数据在 prod，编排节点须同环境读写（2026-10-12）
+        )
+    except Exception as exc:  # noqa: BLE001 — 编排不可用（未保存步骤/未发布）不使解析任务失败
+        logger.warning("failed to create build engine run (tape=%s): %s", tape_id, exc)
+        return False
+    finally:
+        db.close()
+    run_id, run_env = created["run_id"], created["run_env"]
+
+    job_id = f"ORCH_RUN_{uuid.uuid4().hex[:12]}"
+    task_params = json.dumps({"runId": run_id, "env": run_env}, ensure_ascii=False)
+    # 顺序契约（对齐 scheduler.scan_cron_tasks Case 3 / _enqueue_job）：
+    # 必须先 commit Job 行、再投 broker。若 send_task 先于 commit，worker 空闲时
+    # 会在 Job 行可见前就消费 execute_modo_job，报 'job not found' 立即失败。
+    db2 = get_sessionmaker()()
+    try:
+        db2.add(
+            Job(
+                id=job_id,
+                task_id=job_id,
+                task_class="KbOrchestrationRunTask",
+                queue_name="orch",
+                task_params=task_params,
+                trigger_type="API",
+                state="PENDING",
+                parent_id=parent_job_id,  # 2026-10-12 父子：挂链头解析任务
+            )
+        )
+        db2.commit()
+    except Exception:  # noqa: BLE001
+        db2.rollback()
+        return False
+    finally:
+        db2.close()
+
+    try:
+        from worker.celery_app import celery_app
+
+        celery_app.send_task(
+            "worker.tasks.scheduler.execute_modo_job",
+            args=[job_id],
+            task_id=job_id,
+            queue="orch",
+        )
+    except Exception as exc:  # noqa: BLE001 — broker 不可达时返回 False，不抛
+        logger.warning("failed to enqueue build engine run %s: %s", run_id, exc)
+        return False
+    return True
 
 
 def _enqueue_wiki_build_task(kb_id: str, document_id: str, parent_job_id: str | None = None) -> bool:
@@ -410,11 +494,11 @@ def _enqueue_graph_build_task(kb_id: str, document_id: str, parent_job_id: str |
 
 
 def _kb_pipeline_flags(kb_id: str) -> dict:
-    """读 KB 的 wiki_enabled/graph_enabled 开关与 wiki 技能绑定。
+    """读 KB 的 wiki_enabled/graph_enabled 开关、wiki 技能绑定与构建引擎绑定。
 
     读取失败时返回兼容默认（wiki=True 自动建、graph=False），保证存量行为不回退。
     """
-    fallback = {"wiki": True, "graph": False, "skill": ""}
+    fallback = {"wiki": True, "graph": False, "skill": "", "tape": ""}
     try:
         from api.db import get_sessionmaker as _gsm
         from api.models.knowledge import KbDatasource
@@ -432,6 +516,8 @@ def _kb_pipeline_flags(kb_id: str) -> dict:
             "wiki": pipeline_enabled(kb, "wiki_enabled") and not custom_wiki_generation(kb),
             "graph": pipeline_enabled(kb, "graph_enabled"),
             "skill": wiki_skill_name(kb),
+            # 构建引擎：服务编排中已发布的编排程序（上传后按该编排构建 wiki）
+            "tape": getattr(kb, "build_tape_id", None) or "",
         }
     except Exception:  # noqa: BLE001
         logger.warning("failed to read kb pipeline flags for kb=%s", kb_id, exc_info=True)
