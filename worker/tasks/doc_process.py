@@ -223,7 +223,14 @@ def _enqueue_build_engine_task(
     try:
         created = _create_tape_run(
             db, tape_id,
-            inputs={"kb_id": kb_id, "document_id": document_id, "language": "中文"},
+            inputs={
+                "kb_id": kb_id,
+                "document_id": document_id,
+                # 2026-10-12 兼容存量编排：部分自建编排的 def/script 读 doc_id
+                #（如「指标WIKI构建」），别名注入后开箱即用，无需逐个改编排
+                "doc_id": document_id,
+                "language": "中文",
+            },
             env="prod",  # 上传链数据在 prod，编排节点须同环境读写（2026-10-12）
         )
     except Exception as exc:  # noqa: BLE001 — 编排不可用（未保存步骤/未发布）不使解析任务失败

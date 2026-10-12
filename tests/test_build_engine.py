@@ -189,7 +189,12 @@ def test_enqueue_build_engine_task_writes_job(chain_env) -> None:
     runs = db.execute(select(TapeRun)).scalars().all()
     assert len(runs) == 1
     assert runs[0].tape_id == "tape-1"
-    assert runs[0].inputs == {"kb_id": "kb-1", "document_id": "doc-1", "language": "中文"}
+    assert runs[0].inputs == {
+        "kb_id": "kb-1",
+        "document_id": "doc-1",
+        "doc_id": "doc-1",  # 兼容存量编排的 doc_id 变量名
+        "language": "中文",
+    }
     db.close()
 
 
