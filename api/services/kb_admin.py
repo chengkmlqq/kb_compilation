@@ -1217,6 +1217,16 @@ def _wiki_child_counts(db: Session, kb_id: str) -> dict[str, int]:
     return counts
 
 
+def _wiki_page_counts(db: Session, kb_id: str) -> dict[str, int]:
+    """每个 folder 的直接 active 页面数（对齐 WeKnora 目录胶囊的页面数语义）。"""
+    rows = db.execute(
+        select(func.coalesce(WikiPage.folder_id, ""), func.count())
+        .where(WikiPage.kb_id == kb_id, WikiPage.status == "active")
+        .group_by(func.coalesce(WikiPage.folder_id, ""))
+    ).all()
+    return {str(fid or ""): int(n) for fid, n in rows}
+
+
 def wiki_branch(
     db: Session, kb_id: str, folder_id: str = "", page: int = 1, page_size: int = 50
 ) -> dict:
@@ -1242,6 +1252,7 @@ def wiki_branch(
         pages_q.order_by(WikiPage.created_at).offset((page - 1) * page_size).limit(page_size)
     ).scalars().all()
     counts = _wiki_child_counts(db, kb_id)
+    page_counts = _wiki_page_counts(db, kb_id)
     return {
         "kb_id": kb_id,
         "folder_id": fid,
@@ -1251,7 +1262,7 @@ def wiki_branch(
                 "name": f.name,
                 "parent_id": f.parent_id or "",
                 "child_count": counts.get(f.id, 0),
-                "page_count": 0,
+                "page_count": page_counts.get(f.id, 0),
             }
             for f in folders
         ],
@@ -1280,12 +1291,14 @@ def wiki_folders(db: Session, kb_id: str) -> list[dict]:
         select(WikiFolder).where(WikiFolder.kb_id == kb_id).order_by(WikiFolder.created_at)
     ).scalars().all()
     counts = _wiki_child_counts(db, kb_id)
+    page_counts = _wiki_page_counts(db, kb_id)
     return [
         {
             "id": f.id,
             "name": f.name,
             "parent_id": f.parent_id or "",
             "child_count": counts.get(f.id, 0),
+            "page_count": page_counts.get(f.id, 0),
         }
         for f in folders
     ]
