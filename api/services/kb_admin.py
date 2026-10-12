@@ -195,6 +195,7 @@ def create_kb(
     vector_store_id: str | None = None,
     configs: dict | None = None,
     ontology_schema_name: str | None = None,
+    build_tape_id: str | None = None,
     caller_user_id: str | None = None,
     caller_team_name: str | None = None,
     is_sys_admin: bool = False,
@@ -204,6 +205,8 @@ def create_kb(
     scope: personal(owner_user_id) / team(team_name) / system(admin).
     indexing_strategy 归一为 WeKnora 四路开关（缺失键用 WeKnora 默认）。
     configs 为其余 JSON 配置（wiki_config/extract_config/faq_config 等）。
+    build_tape_id: 构建引擎 = 服务编排中已发布的编排程序（kb_tape.id），
+    文档解析成功后自动按该编排构建 wiki。
     """
     from api.services.kb_config import normalize_indexing_strategy
 
@@ -213,6 +216,8 @@ def create_kb(
     name = name.strip()
     if vector_store_id:
         _validate_vector_store_ref(db, vector_store_id)
+    if build_tape_id:
+        _validate_build_tape_ref(db, build_tape_id)
     _validate_bound_model(
         db, embedding_model_id, "向量化", caller_user_id, caller_team_name, is_sys_admin
     )
@@ -234,6 +239,7 @@ def create_kb(
         team_name=team_name,
         owner_user_id=owner_user_id,
         created_by=created_by,
+        build_tape_id=build_tape_id,
         indexing_strategy=normalize_indexing_strategy(indexing_strategy),
         wiki_config=normalize_wiki_config(cfg.get("wiki_config")),
         extract_config=normalize_extract_config(cfg.get("extract_config")),
@@ -278,7 +284,21 @@ def _validate_vector_store_ref(db: Session, ds_id: str) -> None:
         "postgresql", "pg", "postgres",
     ):
         raise ValueError(
-            f"资源 {row.label or row.name or row.id} 的类型不支持作为向量库: {row.ds_type}"
+            f"资源 {row.label or row.name or row.id} 的类型不支持作为向量库: {ds_type}"
+        )
+
+
+def _validate_build_tape_ref(db: Session, tape_id: str) -> None:
+    """Check a tape exists and is published (构建引擎 = 服务编排中已发布的编排)."""
+    from api.models.orchestration import Tape
+
+    tape = db.get(Tape, tape_id)
+    if tape is None:
+        raise ValueError(f"构建引擎编排不存在: {tape_id}")
+    if tape.status != "effective":
+        raise ValueError(
+            f"编排「{tape.tape_label or tape.tape_name}」未发布（status={tape.status}），"
+            "请在服务编排中发布后再绑定"
         )
 
 
@@ -320,6 +340,11 @@ def update_kb(
         kb.type = t if t in KB_TYPES else kb.type
     if "custom_wiki_generation" in fields:
         kb.custom_wiki_generation = bool(fields["custom_wiki_generation"])
+    if "build_tape_id" in fields:
+        new_tape = str(fields.get("build_tape_id") or "") or None
+        if new_tape:
+            _validate_build_tape_ref(db, new_tape)
+        kb.build_tape_id = new_tape
     for f in ("embedding_model_id", "summary_model_id", "storage_backend_id"):
         if f in fields:
             setattr(kb, f, str(fields.get(f) or "") or None)
@@ -487,6 +512,7 @@ def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0) -> dict:
         # ── WeKnora 对齐配置（详情页配置弹窗读取）──
         "type": kb.type or "document",
         "custom_wiki_generation": bool(getattr(kb, "custom_wiki_generation", False)),
+        "build_tape_id": getattr(kb, "build_tape_id", None) or "",
         "embedding_model_id": getattr(kb, "embedding_model_id", None) or "",
         "summary_model_id": getattr(kb, "summary_model_id", None) or "",
         "wiki_config": getattr(kb, "wiki_config", None) or {},

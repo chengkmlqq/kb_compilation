@@ -159,6 +159,7 @@ export interface KbItem {
   faq_config?: FaqConfig;
   question_generation_config?: QuestionGenerationConfig;
   custom_wiki_generation?: boolean;
+  build_tape_id?: string | null;
   wiki_config?: {
     skill?: string;
     extraction_granularity?: string;
@@ -223,6 +224,8 @@ export interface KbCreatePayload {
   vector_store_id?: string | null;
   configs?: Record<string, unknown>;
   ontology_schema_name?: string;
+  /** 构建引擎 = 服务编排中已发布的编排程序（kb_tape.id） */
+  build_tape_id?: string | null;
 }
 
 export function apiCreateKb(payload: KbCreatePayload) {
@@ -234,6 +237,19 @@ export function apiCreateKb(payload: KbCreatePayload) {
 
 export function apiDeleteKb(kbId: string) {
   return request(`/api/v1/kbs/${kbId}`, { method: "DELETE" });
+}
+
+// ---- 构建引擎（服务编排中已发布的编排程序）----
+
+export interface BuildEngineItem {
+  id: string;
+  tape_name: string;
+  tape_label?: string;
+  tape_descr?: string;
+}
+
+export function apiListBuildEngines() {
+  return request<{ items: BuildEngineItem[]; total: number }>("/api/v1/kbs/build-engines");
 }
 
 // ---- documents ----

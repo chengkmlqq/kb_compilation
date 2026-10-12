@@ -285,11 +285,12 @@ def delete_tape(db, tape_id: str) -> None:
     db.commit()
 
 
-def execute_tape(db, tape_id: str, inputs: dict | None = None) -> dict:
-    """异步执行编排：建 kb_tape_run + 投递 orch 调度中枢，立即返回 run_id。
+def _create_tape_run(db, tape_id: str, inputs: dict | None = None, env: str | None = None) -> dict:
+    """校验编排并创建执行记录（kb_tape_run），返回 {run_id, run_env}。
 
-    实际执行在 celery worker（orch 队列调度中枢 + 各节点队列执行）。
-    前端通过 GET runs/{run_id} 轮询逐步日志。
+    与 execute_tape 的差异：只建 run 行、不投递——调用方（API 或 worker
+    上传链）自行决定如何调度。env：显式指定执行环境（worker 上传链传
+    "prod"，与文档同库）；None 走原逻辑（路由开启时编排→dev）。
     """
     t = get_tape(db, tape_id)
     if t.status != "effective" and t.status != "draft":
@@ -299,8 +300,8 @@ def execute_tape(db, tape_id: str, inputs: dict | None = None) -> dict:
     if not step_count:
         raise ValueError("编排没有可执行的步骤（请先在设计器保存）")
 
+    run_env = env or ("dev" if get_settings().KB_ENV_ROUTING_ENABLED else "prod")
     run_id = uuid.uuid4().hex[:32]
-    run_env = "dev" if get_settings().KB_ENV_ROUTING_ENABLED else "prod"
     bindings0 = dict(inputs or {})
     bindings0["__env__"] = run_env  # 2026-10-12 环境隔离：编排执行一律落开发库
     run = TapeRun(
@@ -314,6 +315,18 @@ def execute_tape(db, tape_id: str, inputs: dict | None = None) -> dict:
     )
     db.add(run)
     db.commit()
+    return {"run_id": run_id, "run_env": run_env}
+
+
+def execute_tape(db, tape_id: str, inputs: dict | None = None, env: str | None = None) -> dict:
+    """异步执行编排：建 kb_tape_run + 投递 orch 调度中枢，立即返回 run_id。
+
+    实际执行在 celery worker（orch 队列调度中枢 + 各节点队列执行）。
+    前端通过 GET runs/{run_id} 轮询逐步日志。
+    env：None 按原逻辑（路由开启时编排→dev）；worker 上传链传 "prod"。
+    """
+    created = _create_tape_run(db, tape_id, inputs, env=env)
+    run_id, run_env = created["run_id"], created["run_env"]
 
     # 投递调度中枢（orch 队列）
     try:
@@ -321,13 +334,15 @@ def execute_tape(db, tape_id: str, inputs: dict | None = None) -> dict:
 
         celery_app.send_task(
             "worker.tasks.orch_runner.execute_run",
-            args=[run_id],
+            args=[run_id, run_env],
             queue="orch",
         )
     except Exception as exc:  # noqa: BLE001
-        run.status = "failed"
-        run.error = f"编排任务投递失败: {exc}"
-        db.commit()
+        run = db.get(TapeRun, run_id)
+        if run:
+            run.status = "failed"
+            run.error = f"编排任务投递失败: {exc}"
+            db.commit()
         raise ValueError(f"编排任务投递失败: {exc}")
 
     return {"success": True, "run_id": run_id, "tape_id": tape_id, "status": "queued"}

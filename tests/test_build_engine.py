@@ -1,0 +1,216 @@
+"""构建引擎（KB 绑定服务编排中已发布的编排程序）测试。
+
+覆盖：
+- GET /api/v1/kbs/build-engines 只返回已发布（status=effective）的编排
+- create_kb / update_kb 绑定 build_tape_id（服务层保存/回显）
+- 绑定校验：编排不存在 / 未发布 → ValueError
+- doc_process 上传链：KB 绑定构建引擎 → 建 kb_tape_run + Job 行（KbOrchestrationRunTask）
+"""
+
+from __future__ import annotations
+
+import json
+import types
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+
+from api.db import Base, get_db
+from api.models.framework import Job
+from api.models.orchestration import Tape, TapeStep
+from api.services.kb_admin import create_kb, get_kb, update_kb
+from api.main import app
+import api.routers.kbs as kbs_router
+import worker.tasks.doc_process as dp
+
+
+@pytest.fixture()
+def be_db():
+    from sqlalchemy.pool import StaticPool
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,  # 共享底层连接：TestClient 线程与主线程同一库
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    db = Session()
+    yield db
+    db.close()
+
+
+def _seed_tape(db, tape_id="tape-1", name="构建-基础原子版", status="effective") -> Tape:
+    t = Tape(
+        id=tape_id, tape_name=name, tape_label=name,
+        tape_type="general", status=status, nodes=[], edges=[],
+    )
+    db.add(t)
+    db.commit()
+    return t
+
+
+# ───────────────────────── 服务层：create/update kb 绑定 ─────────────────────────
+
+
+def test_create_kb_with_build_engine(be_db) -> None:
+    _seed_tape(be_db, "tape-a", "文档构建引擎A")
+    kb = create_kb(be_db, "制度库", build_tape_id="tape-a")
+    assert kb is not None
+    assert kb.build_tape_id == "tape-a"
+    got = get_kb(be_db, kb.id)
+    assert got is not None and got.build_tape_id == "tape-a"
+
+
+def test_create_kb_rejects_unpublished_engine(be_db) -> None:
+    _seed_tape(be_db, "tape-draft", status="draft")
+    with pytest.raises(ValueError, match="未发布"):
+        create_kb(be_db, "库", build_tape_id="tape-draft")
+
+
+def test_create_kb_rejects_missing_engine(be_db) -> None:
+    with pytest.raises(ValueError, match="编排不存在"):
+        create_kb(be_db, "库", build_tape_id="tape-nope")
+
+
+def test_update_kb_build_engine(be_db) -> None:
+    _seed_tape(be_db, "tape-a", "引擎A")
+    _seed_tape(be_db, "tape-b", "引擎B")
+    kb = create_kb(be_db, "库")
+    assert kb is not None and kb.build_tape_id is None
+    updated = update_kb(be_db, kb.id, {"build_tape_id": "tape-b"})
+    assert updated is not None and updated.build_tape_id == "tape-b"
+    cleared = update_kb(be_db, kb.id, {"build_tape_id": ""})
+    assert cleared is not None and cleared.build_tape_id is None
+
+
+# ───────────────────────── API：GET /kbs/build-engines ─────────────────────────
+
+
+@pytest.fixture()
+def be_client(be_db, monkeypatch):
+    import types as _types
+
+    from api.services.identity import Identity, encode_identity_cookie
+    import api.middleware as mw
+
+    app.dependency_overrides[get_db] = lambda: be_db
+    monkeypatch.setattr(
+        kbs_router, "decode_identity_cookie",
+        lambda cookie: types.SimpleNamespace(user_id="admin", user_name="admin", team_name="ROOT"),
+    )
+    # middleware 守卫：受控路径需身份——mock 身份解析并带上登录 cookie
+    monkeypatch.setattr(mw, "get_sessionmaker", lambda: type("SM", (), {"__call__": lambda s: be_db})())
+    monkeypatch.setattr(mw, "get_settings", lambda: types.SimpleNamespace(AUTH_ADMIN_USERS="admin"))
+    monkeypatch.setattr(mw, "decode_identity_cookie", lambda cookie: Identity(user_id="admin"))
+    client = TestClient(app)
+    client.cookies.set(
+        "x-next-identity",
+        encode_identity_cookie(Identity(user_id="admin", user_name="admin", team_name="ROOT")),
+    )
+    yield client
+    app.dependency_overrides.clear()
+
+
+def test_build_engines_only_published(be_client, be_db) -> None:
+    _seed_tape(be_db, "tape-ok", "已发布引擎", status="effective")
+    _seed_tape(be_db, "tape-draft", "草稿引擎", status="draft")
+    _seed_tape(be_db, "tape-off", "下线引擎", status="offline")
+    r = be_client.get("/api/v1/kbs/build-engines")
+    assert r.status_code == 200
+    data = r.json()["data"]
+    ids = [it["id"] for it in data["items"]]
+    assert ids == ["tape-ok"]
+    assert data["items"][0]["tape_label"] == "已发布引擎"
+
+
+# ───────────────────────── worker：上传链触发编排 ─────────────────────────
+
+
+@pytest.fixture()
+def chain_env(monkeypatch):
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    import api.db as db_mod
+
+    monkeypatch.setattr(db_mod, "get_sessionmaker", lambda: Session)
+
+    sent: dict = {}
+
+    class FakeCelery:
+        def send_task(self, name, args, task_id, queue):
+            sent["name"] = name
+            sent["task_id"] = task_id
+            sent["queue"] = queue
+
+    import worker.celery_app as celery_mod
+
+    monkeypatch.setattr(celery_mod, "celery_app", FakeCelery())
+    yield Session, sent
+
+
+def test_enqueue_build_engine_task_writes_job(chain_env) -> None:
+    Session, sent = chain_env
+    db = Session()
+    _seed_tape(db, "tape-1", "文档构建引擎", status="effective")
+    db.add(
+        TapeStep(
+            id="s1", tape_id="tape-1", step_inst="print", step_label="输出",
+            step_config={"text": "hello"}, step_seq=0,
+            pre_step_ids=[], next_step_ids=[],
+        )
+    )
+    db.commit()
+    db.close()
+
+    ok = dp._enqueue_build_engine_task("kb-1", "doc-1", "tape-1")
+    assert ok is True
+    # 投递走 execute_modo_job（orch 队列），调度中枢按 Job 分派 KbOrchestrationRunTask
+    assert sent["name"] == "worker.tasks.scheduler.execute_modo_job"
+    assert sent["queue"] == "orch"
+    assert sent["task_id"].startswith("ORCH_RUN_")
+
+    db = Session()
+    jobs = db.execute(select(Job)).scalars().all()
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.task_class == "KbOrchestrationRunTask"
+    assert job.queue_name == "orch"
+    assert job.state == "PENDING"
+    params = json.loads(job.task_params)
+    assert params["env"] == "prod"  # 上传链数据在 prod，编排节点同环境读写
+    assert params["runId"]
+    from api.models.orchestration import TapeRun
+
+    runs = db.execute(select(TapeRun)).scalars().all()
+    assert len(runs) == 1
+    assert runs[0].tape_id == "tape-1"
+    assert runs[0].inputs == {"kb_id": "kb-1", "document_id": "doc-1", "language": "中文"}
+    db.close()
+
+
+def test_enqueue_build_engine_task_rejects_draft(chain_env) -> None:
+    Session, _sent = chain_env
+    db = Session()
+    _seed_tape(db, "tape-draft", status="draft")
+    db.commit()
+    db.close()
+    assert dp._enqueue_build_engine_task("kb-1", "doc-1", "tape-draft") is False
+
+
+def test_kb_pipeline_flags_reads_tape(chain_env) -> None:
+    Session, _sent = chain_env
+    db = Session()
+    from api.models.knowledge import KbDatasource
+
+    _seed_tape(db, "tape-1", status="effective")
+    db.add(KbDatasource(id="kb-1", name="制度库", build_tape_id="tape-1"))
+    db.commit()
+
+    flags = dp._kb_pipeline_flags("kb-1")
+    assert flags["tape"] == "tape-1"
+    db.close()

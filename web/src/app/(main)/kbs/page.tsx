@@ -12,11 +12,9 @@ import {
   Empty,
   Form,
   Input,
-  Radio,
   Row,
   Select,
   Space,
-  Switch,
   Tag,
   Typography,
 } from "antd";
@@ -34,16 +32,16 @@ import {
 import {
   apiCreateKb,
   apiDeleteKb,
+  apiListBuildEngines,
   apiListDatasources,
   apiListKbs,
   apiListModels,
-  apiListOntologySchemas,
   apiListSkillsRegistry,
+  BuildEngineItem,
   DatasourceItem,
   KbCreatePayload,
   KbItem,
   ModelItem,
-  OntologySchemaGroup,
 } from "@/lib/api";
 import ModoPagination from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
@@ -87,7 +85,7 @@ export default function KbsPage() {
   const [skills, setSkills] = useState<{ name: string; description?: string }[]>([]);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [vectorStores, setVectorStores] = useState<DatasourceItem[]>([]);
-  const [ontologySchemas, setOntologySchemas] = useState<OntologySchemaGroup[]>([]);
+  const [buildEngines, setBuildEngines] = useState<BuildEngineItem[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
@@ -151,8 +149,6 @@ export default function KbsPage() {
     return <KbDocsPane kbId={t.kbId} />;
   };
 
-  const customWiki = Form.useWatch("custom_wiki_generation", form) ?? false;
-
   const visibleKbs = useMemo(() => {
     const q = search.trim().toLowerCase();
     return q
@@ -207,14 +203,14 @@ export default function KbsPage() {
     })();
   }, []);
 
-  // 本体 Schema 下拉数据源（抽取分类结构，多领域）
+  // 构建引擎下拉数据源：服务编排中已发布的编排程序（status=effective）
   useEffect(() => {
     void (async () => {
       try {
-        const res = await apiListOntologySchemas();
-        setOntologySchemas(res.data?.schemas || []);
+        const res = await apiListBuildEngines();
+        setBuildEngines(res.data?.items || []);
       } catch {
-        // schema 列表加载失败不阻断创建（Select 为空时由必填校验提示）
+        // 列表加载失败不阻断创建（下拉为空时留空走内置构建）
       }
     })();
   }, []);
@@ -272,11 +268,10 @@ export default function KbsPage() {
         wiki_enabled: picked.includes("wiki"),
         graph_enabled: picked.includes("graph"),
       },
-      custom_wiki_generation: values.custom_wiki_generation,
       embedding_model_id: values.embedding_model_id || undefined,
       summary_model_id: values.summary_model_id || undefined,
       vector_store_id: values.vector_store_id || undefined,
-      ontology_schema_name: values.ontology_schema_name,
+      build_tape_id: values.build_engine || undefined,
     };
     const res = await apiCreateKb(payload);
     if (res.success) {
@@ -518,12 +513,6 @@ export default function KbsPage() {
             <Form.Item name="description" label="描述（可选）">
               <Input.TextArea rows={2} placeholder="知识库用途说明" />
             </Form.Item>
-            <Form.Item name="type" label="知识库类型" initialValue="document">
-              <Radio.Group optionType="button" buttonStyle="solid">
-                <Radio.Button value="document">文档型</Radio.Button>
-                <Radio.Button value="faq">问答对型</Radio.Button>
-              </Radio.Group>
-            </Form.Item>
             <Form.Item
               name="scope"
               label="归属"
@@ -539,26 +528,26 @@ export default function KbsPage() {
               />
             </Form.Item>
             <Form.Item
+              name="build_engine"
+              label="构建引擎"
+              extra="选择服务编排中已发布的编排程序，文档解析完成后自动按该编排构建 Wiki（录入需先到「服务编排」设计并发布）；留空 = 使用内置构建"
+            >
+              <Select
+                allowClear
+                placeholder={buildEngines.length ? "选择构建引擎" : "暂无已发布的编排，请先到服务编排发布"}
+                options={buildEngines.map((t) => ({
+                  label: `${t.tape_label || t.tape_name}${t.tape_descr ? `（${t.tape_descr}）` : ""}`,
+                  value: t.id,
+                }))}
+              />
+            </Form.Item>
+            <Form.Item
               name="pipelines"
               label="索引流水线"
               initialValue={["vector", "keyword"]}
               extra="向量/关键词检索默认开启；Wiki 构建与知识图谱需显式开启（上传文档后才会自动构建）"
             >
               <Checkbox.Group options={PIPELINE_OPTIONS.map((o) => ({ label: o.label, value: o.value }))} />
-            </Form.Item>
-            <Form.Item
-              name="ontology_schema_name"
-              label="本体 Schema（抽取分类结构）"
-              rules={[{ required: true, message: "请选择本体 Schema" }]}
-              extra="定义文档抽取的业务/规则分类结构与提示词，支持多领域（市场监管法规、供管制度等）"
-            >
-              <Select
-                placeholder="选择 Schema"
-                options={ontologySchemas.map((s) => ({
-                  label: `${s.schema_label}（业务${s.business.length}类/规则${s.rule.length}类）`,
-                  value: s.schema_name,
-                }))}
-              />
             </Form.Item>
             <Form.Item
               name="embedding_model_id"
@@ -591,19 +580,6 @@ export default function KbsPage() {
             >
               <Select allowClear options={chatOptions} placeholder="选择大语言模型" />
             </Form.Item>
-            <Form.Item
-              name="custom_wiki_generation"
-              label="自定义 Wiki 生成"
-              valuePropName="checked"
-              extra="开启后上传文档不会自动构建 Wiki，需手动触发（构建引擎由所选本体 Schema 决定）"
-            >
-              <Switch />
-            </Form.Item>
-            {customWiki && (
-              <Form.Item name="wiki_skill" hidden>
-                <Select />
-              </Form.Item>
-            )}
           </Form>
         </Drawer>
 

@@ -112,6 +112,7 @@ class KBCreateRequest(BaseModel):
     vector_store_id: str | None = None
     configs: dict | None = None  # wiki/extract/faq/vlm/asr/storage 等 JSON 配置
     ontology_schema_name: str | None = None  # 绑定本体 Schema（抽取分类结构，多领域）
+    build_tape_id: str | None = None  # 构建引擎 = 服务编排中已发布的编排程序（kb_tape.id）
 
 
 class KBUpdateRequest(BaseModel):
@@ -126,6 +127,7 @@ class KBUpdateRequest(BaseModel):
     storage_backend_id: str | None = None
     vector_store_id: str | None = None
     configs: dict | None = None
+    build_tape_id: str | None = None
 
 
 class SearchRequest(BaseModel):
@@ -247,6 +249,48 @@ def get_kbs(
     }
 
 
+@router.get("/build-engines")
+def build_engines(
+    db: Session = Depends(get_db),
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+) -> dict:
+    """构建引擎下拉数据源：服务编排中已发布的编排程序（status=effective）。
+
+    知识库创建表单「构建引擎」选项；返回简表（id/tape_name/tape_label/tape_descr）。
+    """
+    identity = decode_identity_cookie(x_next_identity or "")
+    if not identity:
+        if not getattr(get_settings(), "AUTH_ANONYMOUS", False):
+            raise HTTPException(status_code=401, detail="未登录")
+    from api.models.orchestration import Tape
+    from sqlalchemy import select
+
+    rows = (
+        db.execute(
+            select(Tape)
+            .where(Tape.status == "effective")
+            .order_by(Tape.updated_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "success": True,
+        "data": {
+            "items": [
+                {
+                    "id": t.id,
+                    "tape_name": t.tape_name,
+                    "tape_label": t.tape_label or "",
+                    "tape_descr": t.tape_descr or "",
+                }
+                for t in rows
+            ],
+            "total": len(rows),
+        },
+    }
+
+
 @router.post("")
 def post_kb(
     req: KBCreateRequest,
@@ -299,6 +343,7 @@ def post_kb(
             vector_store_id=req.vector_store_id,
             configs=req.configs,
             ontology_schema_name=req.ontology_schema_name,
+            build_tape_id=req.build_tape_id,
             caller_user_id=caller_user_id or None,
             caller_team_name=caller_team_name or None,
             is_sys_admin=is_sys_admin,

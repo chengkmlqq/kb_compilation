@@ -85,7 +85,7 @@ def expected_rounds(steps: dict, loop_state: dict) -> dict:
 
 
 def dispatch_next_round(run_id: str, steps: dict, results: list, loop_state: dict,
-                        bindings: dict, step_queue_fn, send_task) -> bool:
+                        bindings: dict, step_queue_fn, send_task, env: str | None = None) -> bool:
     """对已完成的 loop 节点按 collection 逐轮投循环体。
 
     返回 True = 本函数本轮已投递（调用方应停在这里等节点回调再 advance）。
@@ -153,7 +153,7 @@ def dispatch_next_round(run_id: str, steps: dict, results: list, loop_state: dic
         st["current_round"] = round_no
         st["bindings"] = round_bindings
         for b in pending:
-            send_task(run_id, b, round_bindings, round_no, step_queue_fn(steps, b))
+            send_task(run_id, b, round_bindings, round_no, step_queue_fn(steps, b), env)
         logger.info("编排 loop 迭代 run=%s 节点=%s 第 %d/%d 轮 投 %d 步 item=%r",
                     run_id, loop_sid, round_no + 1, len(items), len(pending), item)
         return True
