@@ -70,6 +70,23 @@ const EXCEL_EXTS = new Set(["xlsx", "xls", "xlsm", "xlsb"]);
 const PPTX_EXTS = new Set(["pptx", "ppt", "odp"]);
 const DOCX_EXTS = new Set(["docx", "doc", "odt", "rtf"]);
 
+// Excel 在线预览的体积闸门与规模上限。
+// xlsx 的解析（构建单元格对象）与 sheet_to_html（拼 HTML 字符串）都是同步主线程操作，
+// 且单元格数 = 生成的 <td> 数 = 浏览器排版节点数。大表会导致解析 → 拼串 → 排版连续占满主线程，
+// 期间无法中断 → 页面假死（列被样式残留拉到 XFD 时，即使只有几行也会生成上万 <td>）。
+const EXCEL_MAX_BYTES = 20 * 1024 * 1024; // 超过则不解析，仅提供下载
+const EXCEL_MAX_ROWS = 200; // 每工作表最多预览行数
+const EXCEL_MAX_COLS = 30; // 每工作表最多预览列数
+const EXCEL_MAX_SHEETS = 5; // 最多预览工作表数
+const EXCEL_MAX_CELLS = 20000; // 全部工作表合计单元格上限（DOM 节点预算）
+
+// CSV 预览同样要限量：它走表格渲染且无分页（行数 = DOM 行数），
+// 前置的「整体解码 + 逐行正则切分」也是同步主线程操作。
+// 故只解码头部字节、只取前 N 行 / M 列，超出部分提示下载。
+const CSV_SCAN_BYTES = 2 * 1024 * 1024; // 最多解码的文本字节数
+const CSV_MAX_ROWS = 200; // 最多预览数据行（不含表头）
+const CSV_MAX_COLS = 30; // 最多预览列数
+
 function resolveKind(ext: string | null | undefined, contentType: string): PreviewKind {
   const e = (ext || "").toLowerCase().replace(/^\\./, "");
   if (IMAGE_EXTS.has(e) || contentType.startsWith("image/")) return "image";
@@ -209,35 +226,46 @@ export default function DocPreviewModal({ kbId, doc, onClose, embedded }: Props)
   const [isFullscreen, setFullscreen] = useState(false);
   const [htmlMode, setHtmlMode] = useState<"render" | "source">("render");
   const [csvRows, setCsvRows] = useState<string[][]>([]);
+  // csv 被截断时的提示（空串 = 未截断）
+  const [csvNotice, setCsvNotice] = useState("");
   const fullscreenRef = useRef<HTMLDivElement | null>(null);
   const [contentType, setContentType] = useState("");
   // docx 渲染容器 / excel 多 sheet HTML / pptx 幻灯片
   const [docxBlob, setDocxBlob] = useState<Blob | null>(null);
   const [excelHtml, setExcelHtml] = useState("");
+  // excel 被截断时的提示（空串 = 未截断）
+  const [excelNotice, setExcelNotice] = useState("");
   const [pptxSlides, setPptxSlides] = useState<string[]>([]);
   const [pptxIndex, setPptxIndex] = useState(0);
   const docxContainerRef = useRef<HTMLDivElement | null>(null);
 
+  // 预览内容只取决于「文档 id + 扩展名」：doc 对象身份会在摘要回流等场景被换新，
+  // 若直接依赖 doc，已渲染的大 Excel 会被重新下载 + 解析（重复卡顿）。
+  const docId = doc?.id ?? "";
+  const docExt = doc?.file_ext ?? "";
+
   useEffect(() => {
-    if (!doc) return;
+    if (!docId) return;
     let alive = true;
     const urlBak: string[] = [];
     setLoading(true);
     setError("");
     setText("");
     setCsvRows([]);
+    setCsvNotice("");
     setHtmlMode("render");
     setDocxBlob(null);
     setExcelHtml("");
+    setExcelNotice("");
     setPptxSlides([]);
     setPptxIndex(0);
-    setKind(resolveKind(doc.file_ext, ""));
+    setKind(resolveKind(docExt, ""));
     (async () => {
       try {
-        const { blob, contentType: ct } = await apiFetchDocumentBlob(kbId, doc.id);
+        const { blob, contentType: ct } = await apiFetchDocumentBlob(kbId, docId);
         if (!alive) return;
         setContentType(ct);
-        const k = resolveKind(doc.file_ext, ct);
+        const k = resolveKind(docExt, ct);
         setKind(k);
         const ab = await blob.arrayBuffer();
         const u8 = new Uint8Array(ab);
@@ -249,35 +277,96 @@ export default function DocPreviewModal({ kbId, doc, onClose, embedded }: Props)
           // 只存 blob：容器要等 loading=false 后才挂载（见下方渲染 effect）
           setDocxBlob(blob);
         } else if (k === "excel") {
-          const XLSX = await import("xlsx");
-          if (!alive) return;
-          const workbook = XLSX.read(u8, { type: "array" });
-          let html = "";
-          workbook.SheetNames.forEach((name, sheetIdx) => {
-            const sheet = workbook.Sheets[name];
-            const sheetHtml = XLSX.utils.sheet_to_html(sheet, { id: `kb-sheet-${sheetIdx}` });
-            html += `<div class="kb-excel-sheet">`;
-            if (workbook.SheetNames.length > 1) {
-              html += `<div class="kb-excel-sheet-name">${name}</div>`;
+          // 大文件直接不解析：解压 + 解析一次同步跑完，无法中断，必然卡死页面
+          if (blob.size > EXCEL_MAX_BYTES) {
+            setError(
+              `表格文件较大（${(blob.size / 1048576).toFixed(1)} MB），超出在线预览上限，请下载查看完整内容。`,
+            );
+          } else {
+            const XLSX = await import("xlsx");
+            if (!alive) return;
+            // sheetRows：解析阶段就跳过超出预览行数的单元格构建（大表稀疏 key 是主要卡顿源），
+            // 多读 1 行用于判断是否发生行截断（此时工作表会带 !fullref）。
+            const workbook = XLSX.read(u8, { type: "array", sheetRows: EXCEL_MAX_ROWS + 1 });
+            const names = workbook.SheetNames;
+            let html = "";
+            let shown = 0;
+            let cells = 0;
+            let cutRows = false;
+            let cutCols = false;
+            let skippedDeep = false;
+            for (const name of names) {
+              if (shown >= EXCEL_MAX_SHEETS || cells >= EXCEL_MAX_CELLS) break;
+              const sheet = workbook.Sheets[name];
+              const ref = sheet?.["!ref"];
+              // 空工作表没有 !ref，sheet_to_html 会直接抛错 → 跳过（否则整份预览都会失败）
+              if (!sheet || !ref) continue;
+              const fullRef = sheet["!fullref"];
+              if (fullRef && XLSX.utils.decode_range(fullRef).s.r > EXCEL_MAX_ROWS - 1) {
+                // 数据起始行已越过预览上限（sheetRows 按绝对行号截断）→ 该表取不到内容
+                skippedDeep = true;
+                continue;
+              }
+              const range = XLSX.utils.decode_range(ref);
+              // 行已被 sheetRows 截断；列不受其限制，需按 !ref 再收窄
+              //（样式残留会把 !ref 拉到 XFD，sheet_to_html 对范围内每个空列都会生成 <td>）
+              const rEnd = Math.min(range.e.r, EXCEL_MAX_ROWS - 1);
+              const cEnd = Math.min(range.e.c, EXCEL_MAX_COLS - 1);
+              const count = (rEnd - range.s.r + 1) * (cEnd - range.s.c + 1);
+              if (cells + count > EXCEL_MAX_CELLS) break;
+              cells += count;
+              cutRows = cutRows || rEnd < range.e.r;
+              cutCols = cutCols || cEnd < range.e.c;
+              const sheetHtml = XLSX.utils.sheet_to_html(
+                // 浅拷贝 + 收窄 !ref：sheet_to_html 只按 !ref 迭代，裁剪后规模可控
+                { ...sheet, "!ref": XLSX.utils.encode_range({ s: range.s, e: { r: rEnd, c: cEnd } }) },
+                { id: `kb-sheet-${shown}` },
+              );
+              html += `<div class="kb-excel-sheet">`;
+              if (names.length > 1) html += `<div class="kb-excel-sheet-name">${name}</div>`;
+              html += sheetHtml + `</div>`;
+              shown += 1;
             }
-            html += sheetHtml;
-            html += `</div>`;
-          });
-          setExcelHtml(html);
+            setExcelHtml(html);
+            const notes: string[] = [];
+            if (cutRows || cutCols) {
+              notes.push(`每个工作表仅取前 ${EXCEL_MAX_ROWS} 行 × ${EXCEL_MAX_COLS} 列`);
+            }
+            if (shown < names.length) notes.push(`仅取前 ${shown} 个工作表`);
+            if (skippedDeep) notes.push("部分工作表数据起始行超出预览上限，已略过");
+            setExcelNotice(notes.length ? `${notes.join("；")}，完整内容请下载查看。` : "");
+          }
         } else if (k === "pptx") {
           const slides = await extractPptxSlides(blob);
           if (!alive) return;
           setPptxSlides(slides);
-        } else if (k === "markdown" || k === "code" || k === "text" || k === "csv") {
+        } else if (k === "csv") {
+          // 大 CSV：只解码头部字节。全量解码 / 逐行切分 / 无分页表格渲染都是同步主线程操作。
+          const head = u8.subarray(0, CSV_SCAN_BYTES);
+          if (!isValidUtf8(head)) {
+            setError("文件为二进制编码，暂无法在线预览，请下载原文件查看。");
+          } else {
+            const cutByBytes = u8.length > CSV_SCAN_BYTES;
+            const all = parseSortText(head)
+              .split(/\r?\n/)
+              .filter((l) => l.trim() !== "");
+            const cutRows = all.length > CSV_MAX_ROWS + 1 || cutByBytes;
+            // 头部截断或超出上限时只取前 N 行（末尾可能是被切一半的行，多取 1 行再由空行过滤兜底）
+            const rows = (cutRows ? all.slice(0, CSV_MAX_ROWS + 1) : all).map((l) =>
+              l.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map((c) => c.replace(/^"|"$/g, "").trim()),
+            );
+            const cutCols = rows.some((r) => r.length > CSV_MAX_COLS);
+            setCsvRows(cutCols ? rows.map((r) => r.slice(0, CSV_MAX_COLS)) : rows);
+            const notes: string[] = [];
+            if (cutRows) notes.push(`仅取前 ${CSV_MAX_ROWS} 行数据`);
+            if (cutCols) notes.push(`仅取前 ${CSV_MAX_COLS} 列`);
+            setCsvNotice(notes.length ? `${notes.join("；")}，完整内容请下载查看。` : "");
+          }
+        } else if (k === "markdown" || k === "code" || k === "text") {
           if (!isValidUtf8(u8)) {
             setError("文件为二进制编码，暂无法在线预览，请下载原文件查看。");
           } else {
-            const s = parseSortText(u8);
-            setText(s);
-            if (k === "csv") {
-              const lines = s.split(/\\r?\\n/).filter((l) => l.trim() !== "");
-              setCsvRows(lines.map((l) => l.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/).map((c) => c.replace(/^\"|\"$/g, "").trim())));
-            }
+            setText(parseSortText(u8));
           }
         } else if (k === "html") {
           const u = URL.createObjectURL(new Blob([blob], { type: "text/html" }));
@@ -298,7 +387,7 @@ export default function DocPreviewModal({ kbId, doc, onClose, embedded }: Props)
       urlBak.forEach((u) => URL.revokeObjectURL(u));
       setBlobUrl("");
     };
-  }, [kbId, doc?.id, doc]);
+  }, [kbId, docId, docExt]);
 
   // docx 渲染：必须在容器挂载后（loading=false 且 kind=docx）才跑，
   // 所以与下载 effect 分离——下载只负责拿 blob。
@@ -437,11 +526,25 @@ export default function DocPreviewModal({ kbId, doc, onClose, embedded }: Props)
         );
       case "excel":
         return (
-          <div
-            className="kb-excel-preview"
-            style={{ height: "100%", overflow: "auto", background: "#fff" }}
-            dangerouslySetInnerHTML={{ __html: excelHtml }}
-          />
+          <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+            {excelNotice ? (
+              <Alert
+                type="info"
+                showIcon
+                message={excelNotice}
+                style={{ flexShrink: 0, borderRadius: 0 }}
+              />
+            ) : null}
+            {excelHtml ? (
+              <div
+                className="kb-excel-preview"
+                style={{ flex: 1, minHeight: 0, overflow: "auto", background: "#fff" }}
+                dangerouslySetInnerHTML={{ __html: excelHtml }}
+              />
+            ) : (
+              <Empty description="无可预览内容，请下载查看" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            )}
+          </div>
         );
       case "pptx":
         return pptxSlides.length > 1 ? (
@@ -527,22 +630,32 @@ export default function DocPreviewModal({ kbId, doc, onClose, embedded }: Props)
         );
       case "csv":
         return (
-          <div style={{ height: "100%", overflow: "auto" }}>
-            <Table
-              size="small"
-              rowKey={(_, i) => String(i)}
-              columns={csvRows[0]?.map((c, i) => ({
-                title: c || `列${i + 1}`,
-                dataIndex: String(i),
-                key: String(i),
-                ellipsis: true,
-              })) || []}
-              dataSource={csvRows.slice(1).map((r, ri) =>
-                Object.fromEntries(r.map((v, ci) => [String(ci), v]))
-              )}
-              pagination={false}
-              scroll={{ x: "max-content" }}
-            />
+          <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+            {csvNotice ? (
+              <Alert
+                type="info"
+                showIcon
+                message={csvNotice}
+                style={{ flexShrink: 0, borderRadius: 0 }}
+              />
+            ) : null}
+            <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+              <Table
+                size="small"
+                rowKey={(_, i) => String(i)}
+                columns={csvRows[0]?.map((c, i) => ({
+                  title: c || `列${i + 1}`,
+                  dataIndex: String(i),
+                  key: String(i),
+                  ellipsis: true,
+                })) || []}
+                dataSource={csvRows.slice(1).map((r, ri) =>
+                  Object.fromEntries(r.map((v, ci) => [String(ci), v]))
+                )}
+                pagination={false}
+                scroll={{ x: "max-content" }}
+              />
+            </div>
           </div>
         );
       default:

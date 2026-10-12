@@ -1107,7 +1107,6 @@ export default function ChatPage() {
             </div>
           ) : msgs.length === 0 ? (
             <div style={{ textAlign: "center", padding: 32 }}>
-              <Text type="secondary" style={{ fontSize: 15 }}>输入问题开始问答，回答基于知识库检索片段生成。</Text>
               {recommendations.length > 0 && (
                 <div style={{ marginTop: 20, maxWidth: CONTENT_MAX_WIDTH, marginLeft: "auto", marginRight: "auto" }}>
                   <Space style={{ justifyContent: "center", width: "100%", marginBottom: 12 }}>
