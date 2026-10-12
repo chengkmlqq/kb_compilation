@@ -671,6 +671,15 @@ def tool_text(res):
 
 
 def _kb():
+    global KB
+    if KB is None:
+        # 懒初始化（2026-10-12）：脚本仅设置环境变量 WEKNORA_KB_ID 而未显式
+        # 调 load_kb/load_config 时，首次取 KB 自动从 env > config.yaml 加载，
+        # 避免 wr.tool_call 兜底路径报「请先设置 wr.KB」。
+        try:
+            load_config()
+        except Exception:  # noqa: BLE001
+            pass
     if KB is None:
         raise RuntimeError('请先设置 wr.KB = <目标知识库 id>（或调用 wr.load_kb()）')
     return KB
