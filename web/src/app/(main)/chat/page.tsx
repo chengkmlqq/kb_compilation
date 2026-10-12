@@ -142,6 +142,22 @@ export default function ChatPage() {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
   };
 
+  // 2026-10-12: 步骤树兜底——把消息里所有仍在 running 的步骤标为 done。
+  // 后端此前只发 generation/running 从不发 done（已修复），但这里仍需要
+  // 防御：任何路径（done 事件、用户停止、流中断）漏发 done 时，不能让
+  // 「正在生成回答…」永远转 loading。
+  const finalizeRunningSteps = (msgId: string) => {
+    setMsgs((prev) =>
+      prev.map((m) => {
+        if (m.id !== msgId || !m.steps) return m;
+        const steps = m.steps.map((s) =>
+          s.status === "running" ? { ...s, status: "done" as const, title: s.title.replace(/…$/, "") } : s,
+        );
+        return { ...m, steps };
+      }),
+    );
+  };
+
   // 加载知识库列表
   useEffect(() => {
     (async () => {
@@ -677,6 +693,7 @@ export default function ChatPage() {
               // 后端已确认生成结束：立即退出循环并复位 streaming，
               // 不再依赖 HTTP 连接关闭（连接可能因 keep-alive/代理延迟关闭，
               // 否则 setStreaming(false) 永远执行不到，界面一直显示"正在回答"）。
+              finalizeRunningSteps(placeholder.id); // 兜底：漏发 stage done 时步骤树不残留 loading
               streamDone = true;
               break;
             }
@@ -694,6 +711,7 @@ export default function ChatPage() {
       }
 
       // 完成：标记 streaming 结束，触发追问建议 + 标题
+      finalizeRunningSteps(placeholder.id); // 兜底：HTTP 关闭但漏收 done 时同样复位步骤树
       setMsgs((prev) =>
         prev.map((m) =>
           m.id === placeholder.id

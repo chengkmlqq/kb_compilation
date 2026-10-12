@@ -30,6 +30,7 @@ from sqlalchemy import (
     Text,
     text,
 )
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
 from api.db import Base, KnowledgeBase
@@ -172,7 +173,14 @@ class DocChunk(Base):
         String(64), ForeignKey("kb_document.id"), nullable=False
     )
     seq: Mapped[int] = mapped_column(Integer, default=0)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # content 用 Text 变体：MySQL 落 MEDIUMTEXT（16MB），其余方言回退 Text。
+    # 2026-10-12 扩列：xlsx 等大表格文本的超长块（实测 78687 字符）曾撞
+    # TEXT 64KB 字节上限导致入库失败；MEDIUMTEXT 作为容量兜底（切片硬上限
+    # 兜底在前，见 chunking_orch.HARD_MAX_CHARS）。
+    content: Mapped[str] = mapped_column(
+        Text().with_variant(MEDIUMTEXT(length=16 * 1024 * 1024), "mysql"),
+        nullable=False,
+    )
     # page/section metadata for citation
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
