@@ -10,7 +10,7 @@ import {
   useReactFlow,
   addEdge,
 } from '@xyflow/react';
-import type { Edge, NodeChange, EdgeChange, Connection, OnSelectionChangeParams, Viewport } from '@xyflow/react';
+import type { Edge, NodeChange, EdgeChange, Connection, Viewport } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { App, Button, Input, Modal, Select, Spin, Tag, Tooltip, Typography } from 'antd';
 import {
@@ -305,9 +305,9 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
     [screenToFlowPosition, setNodes, markDirty],
   );
 
-  /** 节点选中 -> 打开右侧配参 Drawer */
-  const onSelectionChange = useCallback(({ nodes: selected }: OnSelectionChangeParams<StepFlowNode>) => {
-    setSelectedNode(selected[0] ?? null);
+  /** 节点双击 -> 打开右侧配参 Drawer（单击仅选中高亮，不进抽屉） */
+  const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: StepFlowNode) => {
+    setSelectedNode(node);
   }, []);
 
   const handleClosePanel = useCallback(() => {
@@ -666,7 +666,7 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onSelectionChange={onSelectionChange}
+            onNodeDoubleClick={onNodeDoubleClick}
             onPaneClick={handleClosePanel}
             onViewportChange={onViewportChange}
             defaultEdgeOptions={{ type: 'default' }}
