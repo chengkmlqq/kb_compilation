@@ -7,6 +7,10 @@
  * SVG 方案在节点多时（数百~上千）每帧要对每个 `<circle>/<line>/<text>` 写属性，
  * 是上万次 DOM 写 + 字符串分配，主线程必堵。改为 Canvas：一次 `fill/stroke` 画完，
  * 无 DOM 节点数量上限，命中检测用坐标反算 + 线性扫描（≤1500 节点足够）。
+ * 坐标模型（2026-10-12）：节点布局在世界坐标中完成，与视口解耦（布点半径按节点数，
+ * 收敛用向心力而非画布边界硬夹）；视口由 viewX/viewY/scale 变换负责，布点期间自动
+ * 「适应屏幕」，用户拖拽/平移/缩放后即停止自动干预。滚轮以光标为锚点缩放。
+ *
  * 交互（拖拽固定 / 空白平移 / 滚轮缩放 / hover 高亮 / 单击详情 / 双击下钻 /
  * 双击空白适应屏幕 / 箭头开关 / 图例过滤 / 开花邻域 / 扩展前沿）与样式类名
  * （`.kb-wikigraph-*`）全部保持不变。
@@ -268,8 +272,10 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
   const searchTimer = useRef<number | null>(null);
   const bloomGen = useRef<Map<string, number>>(new Map());
   const bloomCurrentGen = useRef(0);
-  // 本次布点是否已自动「适应屏幕」（重新布点时置 false，收敛后做一次）
-  const autoFitRef = useRef(false);
+  // 用户是否已接管视图（拖拽节点 / 平移 / 缩放）。未接管前，布点收敛过程中持续
+  // 自动「适应屏幕」，保证不同节点规模下图始终被正确框住；用户一旦操作即停止干预。
+  // 整图重新布点（新图）时置回 false，让新图重新自动适应。
+  const viewUserControlledRef = useRef(false);
 
   // 图数据内部状态（节点坐标等）
   const stateRef = useRef<{
@@ -591,7 +597,8 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     const bw = Math.max(maxX - minX, 120) + pad * 2;
     const bh = Math.max(maxY - minY, 120) + pad * 2;
     const s = Math.min(W / bw, H / bh, 1.5);
-    st.scale = Math.max(0.3, s);
+    // 下限放宽到 0.15：大图（bloom 上限 1500 节点）在较小画布上用 0.3 会框不全
+    st.scale = Math.max(0.15, s);
     st.viewX = W / 2 - cx * st.scale;
     st.viewY = H / 2 - cy * st.scale;
   }, []);
@@ -657,11 +664,8 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
           pinned: false,
         });
       });
-      // 首次布点把世界原点摆到视口中心（保持初始可见）；收敛后会自动 fitToView
-      st.viewX = W / 2;
-      st.viewY = H / 2;
-      st.scale = 1;
-      autoFitRef.current = false;
+      // 新图重新布点：交回自动适应（视图随后由 fitToView 框定）
+      viewUserControlledRef.current = false;
     } else if (st.nodes.size < nodeList.length) {
       const fresh = nodeList.filter((n) => !st.nodes.has(n.slug));
       let cx = 0;
@@ -683,7 +687,6 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
           pinned: false,
         });
       });
-      autoFitRef.current = false;
     }
     const radiusOf = new Map<string, number>(
       nodeList.map((n) => [n.slug, 14 + Math.min(10, n.link_count || 0) * 1.2]),
@@ -855,18 +858,18 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         a.y += a.vy;
         totalV += Math.abs(a.vx) + Math.abs(a.vy);
       }
+      // 布点期间持续自动适应屏幕：图随迭代扩张时视图同步跟随，避免节点跑到视口外；
+      // 用户一旦拖拽/平移/缩放即停止（尊重用户视图）。
+      if (!viewUserControlledRef.current) fitToView();
       render();
       simFrames += 1;
       // 稳定即停帧（省 CPU）；hover / 拖拽 / 平移缩放后按需唤醒。
-      // 收敛后自动「适应屏幕」一次，保证整体居中且完整可见。
-      const converged = entries.length > 5 && totalV < 0.5;
+      // 收敛判据用「每节点平均速度」而非绝对速度和：节点越多绝对速度和越大，
+      // 用绝对值会让大图永远判不了收敛而白跑到帧上限。simFrames 下限避免刚布点误判。
+      const converged =
+        entries.length > 5 && simFrames > 90 && totalV / entries.length < 0.05;
       if (converged || simFrames >= SIM_MAX_FRAMES) {
         st.raf = 0;
-        if (!autoFitRef.current && converged) {
-          autoFitRef.current = true;
-          fitToView();
-          render();
-        }
         return;
       }
       st.raf = requestAnimationFrame(simulate);
@@ -901,6 +904,8 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     let clickTimer: number | null = null;
 
     const onMouseDown = (ev: MouseEvent) => {
+      // 用户开始操作视图（拖节点/平移）→ 停止自动适应屏幕
+      viewUserControlledRef.current = true;
       const hit = hitNode(ev.clientX, ev.clientY);
       if (hit) {
         const p = st.nodes.get(hit);
@@ -982,6 +987,8 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
 
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault();
+      // 用户缩放 → 停止自动适应屏幕
+      viewUserControlledRef.current = true;
       const rect = canvas.getBoundingClientRect();
       const mx = ev.clientX - rect.left;
       const my = ev.clientY - rect.top;
@@ -989,7 +996,7 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
       const wx = (mx - st.viewX) / st.scale;
       const wy = (my - st.viewY) / st.scale;
       const delta = ev.deltaY > 0 ? 0.9 : 1.1;
-      st.scale = Math.max(0.3, Math.min(3, st.scale * delta));
+      st.scale = Math.max(0.15, Math.min(3, st.scale * delta));
       st.viewX = mx - wx * st.scale;
       st.viewY = my - wy * st.scale;
       render();
@@ -1006,8 +1013,7 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         focusEgo(hit);
         return;
       }
-      // 双击空白：重新适应屏幕（居中 + 完整可见）
-      autoFitRef.current = true;
+      // 双击空白：适应屏幕（居中 + 完整可见）
       fitToView();
       render();
     };
@@ -1034,6 +1040,8 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
       if (st.raf) cancelAnimationFrame(st.raf);
       resize();
       simFrames = 0;
+      // 首次绘制前先框住当前节点（用户已接管视图时除外，避免覆盖用户视图）
+      if (!viewUserControlledRef.current) fitToView();
       render();
       simulate();
     };

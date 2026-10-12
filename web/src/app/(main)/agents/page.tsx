@@ -247,8 +247,10 @@ export default function AgentsPage() {
           </Form.Item>
         </Form>
 
-        {/* 卡片列表（flex:1 占满剩余高度，内容超出时内部滚动） */}
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        {/* 卡片列表（flex:1 占满剩余高度，内容超出时内部滚动）
+            仅纵向滚动：Row 的 gutter 会给自身加 -8px 水平外边距（由 Col 的 8px padding 抵消），
+            若此容器 overflow 双轴 auto，则只要有卡片就会溢出 16px 出现横向滚动条（对齐知识库列表页做法）。 */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
           {visible.length === 0 ? (
             <Empty description="暂无智能体" />
           ) : (
@@ -258,6 +260,7 @@ export default function AgentsPage() {
                 return (
                   <Col key={agent.id} xs={24} sm={12} lg={8} xl={6}>
                     <Card
+                      className="agent-card"
                       size="small"
                       hoverable
                       style={{ height: "100%", opacity: disabled ? 0.55 : 1 }}
