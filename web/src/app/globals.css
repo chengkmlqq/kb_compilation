@@ -1858,3 +1858,100 @@ body {
   max-width: 100%;
   height: auto;
 }
+
+/* ── Agent 多轮工具调用卡片（迁移自 WeKnora AgentStreamDisplay action-card） ── */
+.kb-agent-tool-calls {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 8px;
+}
+.kb-agent-tool-card {
+  border-left: 2px solid #e5e6eb;
+  padding-left: 10px;
+  transition: border-color 0.2s ease;
+}
+.kb-agent-tool-card--pending {
+  border-left-color: #1677ff;
+}
+.kb-agent-tool-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.88);
+  transition: background-color 0.15s ease;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.kb-agent-tool-card-head:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.kb-agent-tool-tool {
+  color: #1677ff;
+  font-size: 13px;
+}
+.kb-agent-tool-name {
+  font-weight: 500;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-agent-tool-card--pending .kb-agent-tool-name {
+  color: #1677ff;
+}
+.kb-agent-tool-spin {
+  color: #1677ff;
+  font-size: 13px;
+}
+.kb-agent-tool-done {
+  color: #52c41a;
+  font-size: 13px;
+}
+.kb-agent-tool-status {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.kb-agent-tool-summary {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.kb-agent-tool-arrow {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 10px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.kb-agent-tool-details {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 6px;
+}
+.kb-agent-tool-section-title {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+  margin: 4px 0 2px;
+}
+.kb-agent-tool-pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: #fafafa;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(0, 0, 0, 0.88);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 320px;
+  overflow: auto;
+}

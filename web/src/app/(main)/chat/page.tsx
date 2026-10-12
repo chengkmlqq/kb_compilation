@@ -70,6 +70,7 @@ import {
 } from "@/lib/api";
 import MarkdownViewer from "@/components/MarkdownViewer";
 import RagPipelineProgress, { RagStep } from "@/components/RagPipelineProgress";
+import AgentToolCalls, { ToolCallEvent } from "@/components/AgentToolCalls";
 
 const { Text } = Typography;
 
@@ -79,8 +80,9 @@ interface UiMessage extends ChatMessageItem {
   followUpLoading?: boolean;
   followUpsDismissed?: boolean;
   error?: boolean;
-  steps?: RagStep[];
-}
+    steps?: RagStep[];
+    toolEvents?: ToolCallEvent[];
+  }
 
 // 切页续传锚点：qa-resume:{sessionId} → {stream_id, offset}
 const QA_RESUME_KEY = (sid: string) => `qa-resume:${sid}`;
@@ -147,16 +149,73 @@ export default function ChatPage() {
   // 防御：任何路径（done 事件、用户停止、流中断）漏发 done 时，不能让
   // 「正在生成回答…」永远转 loading。
   const finalizeRunningSteps = (msgId: string) => {
-    setMsgs((prev) =>
-      prev.map((m) => {
-        if (m.id !== msgId || !m.steps) return m;
-        const steps = m.steps.map((s) =>
-          s.status === "running" ? { ...s, status: "done" as const, title: s.title.replace(/…$/, "") } : s,
-        );
-        return { ...m, steps };
-      }),
-    );
-  };
+      setMsgs((prev) =>
+        prev.map((m) => {
+          if (m.id !== msgId) return m;
+          let updated = false;
+          let steps = m.steps;
+          if (steps) {
+            const next = steps.map((s) =>
+              s.status === "running" ? { ...s, status: "done" as const, title: s.title.replace(/…$/, "") } : s,
+            );
+            if (next.some((s, i) => s !== steps![i])) updated = true;
+            steps = next;
+          }
+          let toolEvents = m.toolEvents;
+          if (toolEvents && toolEvents.some((t) => t.status === "running")) {
+            toolEvents = toolEvents.map((t) =>
+              t.status === "running"
+                ? { ...t, status: "done" as const, result: t.result ?? "（未返回结果）" }
+                : t,
+            );
+            updated = true;
+          }
+          return updated ? { ...m, steps, toolEvents } : m;
+        }),
+      );
+    };
+
+    // tool 事件回填：把 tool_call 挂上的 running 卡片按 id（缺 id 时按顺序）标 done 并回填结果/耗时。
+    // 主发送与续传两条 SSE 分支共用。
+    const applyToolResults = (
+      msgId: string,
+      toolCalls: Array<{ id?: string; name?: string }>,
+      results: Array<{ result?: string; name?: string }>,
+      durations: number[],
+    ) => {
+      setMsgs((prev) =>
+        prev.map((m) => {
+          if (m.id !== msgId) return m;
+          const toolEvents = [...(m.toolEvents || [])];
+          (Array.isArray(toolCalls) ? toolCalls : []).forEach((tc, i) => {
+            const res = (Array.isArray(results) ? results : [])[i];
+            const dur = (Array.isArray(durations) ? durations : [])[i];
+            const tid = tc.id || "";
+            let idx = tid
+              ? toolEvents.findIndex((t) => t.id === tid && t.status === "running")
+              : -1;
+            if (idx < 0) idx = toolEvents.findIndex((t) => t.status === "running");
+            if (idx >= 0) {
+              toolEvents[idx] = {
+                ...toolEvents[idx],
+                status: "done" as const,
+                result: res?.result !== undefined ? String(res.result) : "",
+                duration: dur,
+              };
+            } else {
+              toolEvents.push({
+                id: tid || `tool_done_${Date.now()}_${i}`,
+                name: tc.name || "unknown",
+                status: "done" as const,
+                result: res?.result !== undefined ? String(res.result) : "",
+                duration: dur,
+              });
+            }
+          });
+          return { ...m, toolEvents };
+        }),
+      );
+    };
 
   // 加载知识库列表
   useEffect(() => {
@@ -380,47 +439,28 @@ export default function ChatPage() {
                 }),
               );
             } else if (ev.type === "tool_call") {
-              // 动作开始：LLM 决定调用工具 → 加「正在调用」节点（running）
-              const pendingSteps: RagStep[] = ((ev.tool_calls || []) as Array<{ id?: string; name?: string; arguments?: string }>).map(
-                (tc) => ({
-                  stage: `tool:${tc.name || "unknown"}`,
-                  status: "running" as const,
-                  title: `调用工具 ${tc.name || "unknown"}`,
-                  detail: tc.arguments ? `参数: ${tc.arguments}` : undefined,
-                }),
-              );
+              // 动作开始：LLM 决定调用工具 → 挂 running 卡片（AgentToolCalls）
+              const pendingEvents: ToolCallEvent[] = (
+                (ev.tool_calls || []) as Array<{ id?: string; name?: string; arguments?: string }>
+              ).map((tc, i) => ({
+                id: tc.id || `tool_pending_${Date.now()}_${i}`,
+                name: tc.name || "unknown",
+                arguments: tc.arguments,
+                status: "running" as const,
+              }));
               setMsgs((prev) =>
                 prev.map((m) =>
-                  m.id === applyId ? { ...m, steps: [...(m.steps || []), ...pendingSteps] } : m,
+                  m.id === applyId
+                    ? { ...m, toolEvents: [...(m.toolEvents || []), ...pendingEvents] }
+                    : m,
                 ),
               );
             } else if (ev.type === "tool") {
-              const toolSteps: RagStep[] = ((ev.tool_calls || []) as Array<{ id?: string; name?: string }>).map(
-                (tc, i) => {
-                  const res = ((ev.results || []) as Array<{ result?: string; name?: string }>)[i];
-                  const dur = ((ev.durations || []) as number[])[i];
-                  const brief = res?.result ? String(res.result) : "";
-                  const detailBits = [
-                    res?.name ? `工具: ${res.name}` : "",
-                    dur != null ? `耗时: ${dur}s` : "",
-                    brief ? `执行结果:\n${brief.slice(0, 1500)}` : "",
-                  ].filter(Boolean);
-                  return {
-                    stage: `tool:${tc.name || "unknown"}`,
-                    status: "done" as const,
-                    title: `完成工具 ${tc.name || "unknown"}`,
-                    summary: brief
-                      ? brief.slice(0, 60) + (brief.length > 60 ? "…" : "")
-                      : undefined,
-                    detail: detailBits.join("\n") || undefined,
-                    duration: dur,
-                  };
-                },
-              );
-              setMsgs((prev) =>
-                prev.map((m) =>
-                  m.id === applyId ? { ...m, steps: [...(m.steps || []), ...toolSteps] } : m,
-                ),
+              applyToolResults(
+                applyId,
+                (ev.tool_calls || []) as Array<{ id?: string; name?: string }>,
+                (ev.results || []) as Array<{ result?: string; name?: string }>,
+                (ev.durations || []) as number[],
               );
             } else if (ev.type === "done") {
               // 续传收到 done：立即结束，不再等连接关闭
@@ -635,50 +675,27 @@ export default function ChatPage() {
                 }),
               );
             } else if (evt.type === "tool_call") {
-              const pendingSteps: RagStep[] = ((evt.tool_calls || []) as Array<{ id?: string; name?: string; arguments?: string }>).map(
-                (tc) => ({
-                  stage: `tool:${tc.name || "unknown"}`,
-                  status: "running" as const,
-                  title: `调用工具 ${tc.name || "unknown"}`,
-                  detail: tc.arguments ? `参数: ${tc.arguments}` : undefined,
-                }),
-              );
+              const pendingEvents: ToolCallEvent[] = (
+                (evt.tool_calls || []) as Array<{ id?: string; name?: string; arguments?: string }>
+              ).map((tc, i) => ({
+                id: tc.id || `tool_pending_${Date.now()}_${i}`,
+                name: tc.name || "unknown",
+                arguments: tc.arguments,
+                status: "running" as const,
+              }));
               setMsgs((prev) =>
                 prev.map((m) =>
                   m.id === placeholder.id
-                    ? { ...m, steps: [...(m.steps || []), ...pendingSteps] }
+                    ? { ...m, toolEvents: [...(m.toolEvents || []), ...pendingEvents] }
                     : m,
                 ),
               );
             } else if (evt.type === "tool") {
-              const toolSteps: RagStep[] = ((evt.tool_calls || []) as Array<{ id?: string; name?: string }>).map(
-                (tc, i) => {
-                  const res = ((evt.results || []) as Array<{ result?: string; name?: string }>)[i];
-                  const dur = ((evt.durations || []) as number[])[i];
-                  const brief = res?.result ? String(res.result) : "";
-                  const detailBits = [
-                    res?.name ? `工具: ${res.name}` : "",
-                    dur != null ? `耗时: ${dur}s` : "",
-                    brief ? `执行结果:\n${brief.slice(0, 1500)}` : "",
-                  ].filter(Boolean);
-                  return {
-                    stage: `tool:${tc.name || "unknown"}`,
-                    status: "done" as const,
-                    title: `完成工具 ${tc.name || "unknown"}`,
-                    summary: brief
-                      ? brief.slice(0, 60) + (brief.length > 60 ? "…" : "")
-                      : undefined,
-                    detail: detailBits.join("\n") || undefined,
-                    duration: dur,
-                  };
-                },
-              );
-              setMsgs((prev) =>
-                prev.map((m) =>
-                  m.id === placeholder.id
-                    ? { ...m, steps: [...(m.steps || []), ...toolSteps] }
-                    : m,
-                ),
+              applyToolResults(
+                placeholder.id,
+                (evt.tool_calls || []) as Array<{ id?: string; name?: string }>,
+                (evt.results || []) as Array<{ result?: string; name?: string }>,
+                (evt.durations || []) as number[],
               );
             } else if (evt.type === "stream_meta") {
               streamId = evt.stream_id || "";
@@ -1177,6 +1194,9 @@ export default function ChatPage() {
                 >
                     {m.role === "assistant" && m.steps && m.steps.length > 0 && (
                       <RagPipelineProgress steps={m.steps} />
+                    )}
+                    {m.role === "assistant" && (
+                      <AgentToolCalls events={m.toolEvents || []} />
                     )}
                     {m.role === "assistant" && m.thinking && (
                       <ThinkingBlock thinking={m.thinking} streaming={!!m.streaming} />
