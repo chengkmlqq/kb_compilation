@@ -424,6 +424,7 @@ export default function ChatPage() {
               );
             } else if (ev.type === "done") {
               // 续传收到 done：立即结束，不再等连接关闭
+              finalizeRunningSteps(applyId); // 兜底：续传场景步骤树不残留 loading
               resumeDone = true;
               break;
             }
@@ -434,6 +435,7 @@ export default function ChatPage() {
         }
         if (resumeDone) break;
       }
+      finalizeRunningSteps(applyId); // 兜底：续传流正常结束也复位步骤树
       setMsgs((prev) =>
         prev.map((m) =>
           m.id === applyId
@@ -739,6 +741,7 @@ export default function ChatPage() {
     } catch (e) {
       if ((e as Error).name === "AbortError") {
         // 用户主动停止：保留已生成部分
+        finalizeRunningSteps(placeholder.id); // 停止后步骤树不再转 loading
         const finalContent = (() => {
           let c = "";
           setMsgs((prev) => {

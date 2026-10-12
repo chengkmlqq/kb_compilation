@@ -482,6 +482,9 @@ def test_answer_question_tool_loop_feeds_result_and_streams_final_answer(monkeyp
     deltas = "".join(e["text"] for e in events if e["type"] == "delta")
     assert deltas == "最终答案：ok"
     assert "我先调用技能" not in deltas
+    # 2026-10-12: 工具循环结束必须补发 generation done，否则前端步骤树转圈
+    gen_stages = [e for e in events if e["type"] == "stage" and e["stage"] == "generation"]
+    assert gen_stages and gen_stages[-1]["status"] == "done"
     # 第二轮请求：带 tools 且带 assistant(tool_calls) + tool 结果消息
     assert len(captured) == 2
     assert captured[1]["tools"] == tools
@@ -512,6 +515,9 @@ def test_answer_question_without_tools_is_single_shot(monkeypatch) -> None:
         kb_db=session, kb=kb, question="问题", query_embedding=None,
         chat_cfg=ChatConfig(base_url="https://x/v1", api_key="", model="m")))
     assert "".join(e.get("text", "") for e in events if e["type"] == "delta") == "普通答案"
+    # 2026-10-12: 单轮（无工具）结束必须补发 generation done，否则前端步骤树转圈
+    gen_stages = [e for e in events if e["type"] == "stage" and e["stage"] == "generation"]
+    assert gen_stages and gen_stages[-1]["status"] == "done"
     assert len(captured) == 1
     assert "tools" not in captured[0]
     session.close()
@@ -608,7 +614,12 @@ def _sse_events(text: str) -> list[dict]:
 
 
 def test_agent_qa_default_has_no_tools(api_env, monkeypatch) -> None:
-    """默认 agent（skills_enabled=false）：请求无 tools 字段，回答与旧链路一致。"""
+    """默认 agent（skills_enabled=false）：不注入技能/联网工具。
+
+    2026-10-12 更新断言：ca624ec 起 kb_search 知识库检索工具改为**默认注入**
+    （智能体对话即可多轮工具调用，无需开技能/联网），故默认 agent 的请求里
+    **会**带 tools——但只含 kb_search，不含 run_skill_script / web_search。
+    """
     captured: list[dict] = []
     monkeypatch.setattr(
         "httpx.Client",
@@ -624,7 +635,11 @@ def test_agent_qa_default_has_no_tools(api_env, monkeypatch) -> None:
     deltas = "".join(e.get("text", "") for e in events if e.get("type") == "delta")
     assert deltas == "默认回答"
     assert len(captured) == 1
-    assert "tools" not in captured[0]
+    # 只带默认注入的 kb_search，不带技能/联网工具
+    tool_names = {
+        (t.get("function") or {}).get("name") for t in (captured[0].get("tools") or [])
+    }
+    assert tool_names == {"kb_search"}
 
 
 def test_agent_qa_with_skills_injects_tool_and_executes(api_env, monkeypatch) -> None:

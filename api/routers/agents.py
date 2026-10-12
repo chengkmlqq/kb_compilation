@@ -350,6 +350,19 @@ def agent_qa_stream(
                     return f"工具不可用: 未配置执行器（{name or '?'}）"
 
                 for event in answer_question(
+                    kb_db=db,
+                    kb=kb,
+                    question=req.question,
+                    query_embedding=query_embedding,
+                    retrieval_overrides=overrides,
+                    history=history,
+                    chat_cfg=requested_cfg if req.model_id else None,  # 指定模型时复用解析结果
+                    extra_context=extra,
+                    image_urls=image_urls if idx == 0 else None,
+                    agent_prompt=agent_prompt or "",
+                    user_id=ctx_user_id,
+                    team_name=ctx_team_name,
+                    is_sys_admin=ctx_is_admin,
                     tools=per_kb_tools or None,
                     tool_executor=per_kb_executor,
                     max_tool_iterations=skill_max_rounds,
