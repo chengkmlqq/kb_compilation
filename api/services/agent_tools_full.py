@@ -275,13 +275,15 @@ def build_full_tool_context(
             return f"仅允许查询安全表: {sorted(safe)}"
         wrapped = f"SELECT * FROM ( {sql} ) AS _r LIMIT {lim}"
         try:
-            rows = db.execute(text(wrapped)).fetchall()
+            result = db.execute(text(wrapped))
+            cols = [str(c) for c in result.keys()]
+            rows = result.fetchall()
         except Exception as e:  # noqa: BLE001
-            return f"查询失败: {e}"
-        cols = list(rows.keys()) if rows else []
-        lines = [" | ".join(str(c) for c in cols)]
+            return f"查询失败: {e}（可用 SELECT * FROM <安全表> LIMIT 5 查看真实列名）"
+        lines = [" | ".join(cols)]
         for r in rows[:200]:
             lines.append(" | ".join(_txt(v, 80) for v in r))
+        lines.append(f"（{len(rows)} 行结果，显示前 200）")
         return _txt("\n".join(lines))
 
     executors["database_query"] = _db_query
