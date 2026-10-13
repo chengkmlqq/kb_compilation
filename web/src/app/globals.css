@@ -2086,3 +2086,119 @@ html[data-theme="dark"] .kb-citation-web:hover {
   max-height: 320px;
   overflow: auto;
 }
+
+/* ── 编排模板：左分类树 + 右列表（2026-10-13，参考 wiki 两栏结构） ── */
+.kb-tpl-root {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 左栏：模板分类树（240px / border-right，对齐 kb-wiki-sidebar 风格） */
+.kb-tpl-sidebar {
+  width: 240px;
+  min-width: 200px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--color-gray-3, #e3e9ef);
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.kb-tpl-sidebar-header {
+  padding: 14px 16px 10px;
+  flex-shrink: 0;
+}
+
+.kb-tpl-sidebar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kb-c-text-1, #242e43);
+}
+
+.kb-tpl-cat-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px 12px;
+  min-height: 0;
+}
+
+.kb-tpl-cat-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--kb-c-text-1, #242e43);
+  user-select: none;
+}
+
+.kb-tpl-cat-item:hover {
+  background: var(--color-gray-1, #f5f7fa);
+}
+
+.kb-tpl-cat-item.active {
+  background: var(--color-gray-2, #eff4f9);
+  color: var(--color-primary, #3261ce);
+  font-weight: 600;
+}
+
+.kb-tpl-cat-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.kb-tpl-cat-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #8a96a8;
+  background: var(--color-gray-2, #eff4f9);
+  border-radius: 10px;
+  padding: 1px 8px;
+  line-height: 18px;
+}
+
+.kb-tpl-cat-item.active .kb-tpl-cat-count {
+  background: #dbe6fb;
+  color: var(--color-primary, #3261ce);
+}
+
+/* 右栏：模板列表 */
+.kb-tpl-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.kb-tpl-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.kb-tpl-exec-params {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--kb-c-surface-2);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--kb-c-text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 320px;
+  overflow: auto;
+}
+

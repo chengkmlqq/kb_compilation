@@ -1,32 +1,45 @@
 "use client";
 
 /**
- * 编排模板管理（2026-10-12）：
+ * 编排模板管理（2026-10-12 初版 / 2026-10-13 改造）：
  * 模板 = 可复用的编排骨架（nodes/edges/exec_params），支持分类；
  * 「应用」= 复制骨架生成一条新编排（draft），可去设计器继续编辑/执行。
  *
- * 布局对齐 orchestrations/page.tsx：筛选（关键词/分类/状态）+ Table + ModoPagination，
- * 新建/编辑走抽屉表单，分类用 Select 下拉（options 来自 /templates/categories）。
+ * 布局（2026-10-13）：左侧模板分类树 + 右侧模板列表，参考知识集详情
+ * （WikiBrowseView）的两栏结构（左 280px 侧栏 border-right / 右内容区）；
+ * 分类由左树驱动筛选，右侧保留关键词/状态筛选。
+ * 新增「查看」：抽屉展示模板基本信息 + 骨架（节点/连线/执行参数）只读预览。
+ *
+ * 修复（2026-10-13）：编辑表单不回显 —— 此前 Form.Item 全部缺 name 属性，
+ * setFieldsValue 无处可挂、getFieldsValue 取不到值（保存必失败）。
  */
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   App,
   Button,
   Card,
+  Descriptions,
   Empty,
   Form,
   Input,
   Modal,
   Select,
   Space,
+  Spin,
   Table,
   Tag,
   Tooltip,
   Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { ApartmentOutlined, ExperimentOutlined } from "@ant-design/icons";
+import {
+  ApartmentOutlined,
+  AppstoreOutlined,
+  ExperimentOutlined,
+  EyeOutlined,
+  FolderOutlined,
+} from "@ant-design/icons";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
@@ -36,10 +49,12 @@ import {
   apiApplyTapeTemplate,
   apiCreateTapeTemplate,
   apiDeleteTapeTemplate,
+  apiGetTapeTemplate,
   apiListTapeTemplateCategories,
   apiListTapeTemplates,
   apiUpdateTapeTemplate,
   TapeTemplateCategory,
+  TapeTemplateDetail,
   TapeTemplateItem,
 } from "@/lib/api";
 
@@ -51,6 +66,14 @@ const STATUS_META: Record<string, { color: string; label: string }> = {
 };
 
 type TemplateTab = { key: string; title: string; children: ReactNode };
+
+/** 节点配置摘要（data.config 对象 → 单行文本，超长截断交给列 ellipsis） */
+function configSummary(config?: unknown): string {
+  if (config == null) return "-";
+  if (typeof config === "string") return config || "-";
+  const s = JSON.stringify(config);
+  return s && s.length > 2 ? s : "-";
+}
 
 export default function TapeTemplatesPage() {
   const { message, modal } = App.useApp();
@@ -65,15 +88,23 @@ export default function TapeTemplatesPage() {
     category: undefined,
     status: undefined,
   });
-  const [searchForm] = Form.useForm<{ keyword?: string; category?: string; status?: string }>();
+  const [searchForm] = Form.useForm<{ keyword?: string; status?: string }>();
 
+  // 左树：当前选中分类（"" = 全部）
+  const [selectedCategory, setSelectedCategory] = useState("");
   const [categories, setCategories] = useState<TapeTemplateCategory[]>([]);
+
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<TapeTemplateItem | null>(null);
   const [formKey, setFormKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [applying, setApplying] = useState<string | null>(null);
   const [form] = Form.useForm();
+
+  // 查看：只读详情抽屉
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewing, setViewing] = useState<TapeTemplateDetail | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
 
   // 动态选项卡（预留：模板详情/设计预览后续可 push 进来）
   const [tabs, setTabs] = useState<TemplateTab[]>([]);
@@ -109,21 +140,29 @@ export default function TapeTemplatesPage() {
     void loadCategories();
   }, [load, loadCategories]);
 
-  const doSearch = (v: { keyword?: string; category?: string; status?: string }) => {
+  const doSearch = (v: { keyword?: string; status?: string }) => {
     setPage(1);
-    setApplied({ keyword: v.keyword?.trim() || "", category: v.category, status: v.status });
+    setApplied({ keyword: v.keyword?.trim() || "", category: selectedCategory || undefined, status: v.status });
   };
 
   const doReset = () => {
     searchForm.resetFields();
+    setSelectedCategory("");
     setPage(1);
     setApplied({ keyword: "", category: undefined, status: undefined });
+  };
+
+  /** 左树点击分类：仅重置分类维度，保留关键词/状态筛选 */
+  const selectCategory = (cat: string) => {
+    setSelectedCategory(cat);
+    setPage(1);
+    setApplied((prev) => ({ ...prev, category: cat || undefined }));
   };
 
   const openCreate = () => {
     setEditing(null);
     setFormKey((k) => k + 1);
-    form.setFieldsValue({ name: "", label: "", descr: "", category: "通用" });
+    form.setFieldsValue({ name: "", label: "", descr: "", category: "通用", status: "effective" });
     setDrawerOpen(true);
   };
 
@@ -142,8 +181,12 @@ export default function TapeTemplatesPage() {
 
   const doSave = async () => {
     const v = form.getFieldsValue();
-    if (!v.name?.trim()) {
+    if (!v.label?.trim()) {
       message.warning("请填写模板名称");
+      return;
+    }
+    if (!v.name?.trim()) {
+      message.warning("请填写内部名");
       return;
     }
     setSaving(true);
@@ -152,17 +195,18 @@ export default function TapeTemplatesPage() {
       // 编辑走后端 PUT 只更新基础字段，nodes/edges 保持原值。
       const res = editing
         ? await apiUpdateTapeTemplate(editing.id, {
-            name: v.name,
-            label: v.label || "",
+            name: v.name.trim(),
+            label: v.label.trim(),
             descr: v.descr || "",
             category: v.category || "通用",
             status: v.status || "effective",
           })
         : await apiCreateTapeTemplate({
-            name: v.name,
-            label: v.label || "",
+            name: v.name.trim(),
+            label: v.label.trim(),
             descr: v.descr || "",
             category: v.category || "通用",
+            status: v.status || "effective",
             nodes: [],
             edges: [],
             exec_params: {},
@@ -180,6 +224,23 @@ export default function TapeTemplatesPage() {
     }
   };
 
+  const openView = async (row: TapeTemplateItem) => {
+    setViewing(row as TapeTemplateDetail);
+    setViewOpen(true);
+    setViewLoading(true);
+    try {
+      const res = await apiGetTapeTemplate(row.id);
+      if (res.success && res.data) {
+        setViewing(res.data);
+      } else {
+        message.error(res.message || "加载模板详情失败");
+        setViewOpen(false);
+      }
+    } finally {
+      setViewLoading(false);
+    }
+  };
+
   const doApply = async (row: TapeTemplateItem) => {
     setApplying(row.id);
     try {
@@ -190,6 +251,7 @@ export default function TapeTemplatesPage() {
       });
       if (res.success && res.data?.id) {
         message.success(`已生成新编排「${res.data.tape_name}」，去设计器查看`);
+        setViewOpen(false);
         void load();
         router.push(`/orchestrations/${res.data.id}/designer`);
       } else {
@@ -225,7 +287,9 @@ export default function TapeTemplatesPage() {
       ellipsis: true,
       render: (v: string, row) => (
         <Tooltip title={`${row.name}（${row.node_count} 节点 / ${row.edge_count} 连线）`}>
-          <span>{v || row.name}</span>
+          <span style={{ cursor: "pointer", color: "var(--color-primary, #3261ce)" }} onClick={() => void openView(row)}>
+            {v || row.name}
+          </span>
         </Tooltip>
       ),
     },
@@ -276,10 +340,11 @@ export default function TapeTemplatesPage() {
     {
       title: "操作",
       key: "act",
-      width: 150,
+      width: 190,
       render: (_, row) => (
         <ModoActionGroup
           actions={[
+            { key: "view", label: "查看", icon: <EyeOutlined />, onClick: () => void openView(row) },
             { key: "apply", label: "应用", icon: <ExperimentOutlined />, loading: applying === row.id, onClick: () => doApply(row) },
             { key: "edit", label: "编辑", onClick: () => openEdit(row) },
             ...(row.is_builtin
@@ -293,72 +358,140 @@ export default function TapeTemplatesPage() {
 
   const categoryOptions = categories.map((c) => ({ value: c.category, label: `${c.category}（${c.effective}）` }));
 
-  const listPane = (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      <Card
-        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{
-          body: {
-            flex: 1,
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            padding: "12px 16px 0",
-          },
-        }}
-      >
-        <Form form={searchForm} layout="inline" style={{ marginBottom: 12, flexShrink: 0 }} onFinish={doSearch}>
-          <Form.Item name="keyword" label="模板名称">
-            <Input allowClear placeholder="名称/标签/描述" style={{ width: 200 }} />
-          </Form.Item>
-          <Form.Item name="category" label="分类">
-            <Select allowClear placeholder="全部分类" style={{ width: 170 }} options={categoryOptions} />
-          </Form.Item>
-          <Form.Item name="status" label="状态">
-            <Select
-              allowClear
-              placeholder="全部"
-              style={{ width: 110 }}
-              options={[
-                { label: "启用", value: "effective" },
-                { label: "停用", value: "disabled" },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item>
-            <Space>
-              <Button type="primary" htmlType="submit">
-                查询
-              </Button>
-              <Button onClick={doReset}>重置</Button>
-            </Space>
-          </Form.Item>
-        </Form>
+  // ── 左树数据 ──
+  const allTotal = useMemo(() => categories.reduce((acc, c) => acc + (c.total || 0), 0), [categories]);
 
-        <Table
-          rowKey="id"
-          size="small"
-          loading={loading}
-          columns={columns}
-          dataSource={data}
-          pagination={false}
-          scroll={{ x: "100%", y: "calc(100vh - 252px)" }}
-          locale={{ emptyText: <Empty description="暂无编排模板" /> }}
-        />
-        <div style={{ flexShrink: 0, marginTop: "auto" }}>
-          <ModoPagination
-            current={page}
-            pageSize={pageSize}
-            total={total}
-            showTotal={(t) => `共 ${t} 个模板`}
-            onChange={(p, ps) => {
-              setPage(p);
-              setPageSize(ps);
-            }}
-          />
+  // ── 查看抽屉：骨架节点/连线 ──
+  const nodeIdToLabel = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const n of viewing?.nodes || []) {
+      m[n?.id] = n?.data?.label || n?.id;
+    }
+    return m;
+  }, [viewing]);
+
+  const viewNodeColumns: ColumnsType<Record<string, any>> = [
+    { title: "#", key: "idx", width: 44, render: (_, __, i) => i + 1 },
+    { title: "节点名称", dataIndex: ["data", "label"], ellipsis: true, render: (v?: string, n?: Record<string, any>) => v || n?.id || "-" },
+    { title: "步骤类型", dataIndex: ["data", "stepInst"], width: 150, ellipsis: true, render: (v?: string) => v || "-" },
+    { title: "分组", dataIndex: ["data", "group"], width: 110, ellipsis: true, render: (v?: string) => v || "-" },
+    {
+      title: "配置",
+      key: "config",
+      ellipsis: true,
+      render: (_, n) => <Tooltip title={configSummary(n?.data?.config)}><span>{configSummary(n?.data?.config)}</span></Tooltip>,
+    },
+  ];
+
+  const viewEdgeColumns: ColumnsType<Record<string, any>> = [
+    { title: "#", key: "idx", width: 44, render: (_, __, i) => i + 1 },
+    { title: "源节点", dataIndex: "source", width: 220, ellipsis: true, render: (v?: string) => nodeIdToLabel[v || ""] || v || "-" },
+    { title: "目标节点", dataIndex: "target", width: 220, ellipsis: true, render: (v?: string) => nodeIdToLabel[v || ""] || v || "-" },
+    { title: "连线 ID", dataIndex: "id", ellipsis: true, render: (v?: string) => <Text type="secondary">{v || "-"}</Text> },
+  ];
+
+  const listPane = (
+    <div className="kb-tpl-root">
+      {/* ── 左栏：模板分类树（参考知识集详情 wiki-sidebar 两栏结构） ── */}
+      <aside className="kb-tpl-sidebar">
+        <div className="kb-tpl-sidebar-header">
+          <span className="kb-tpl-sidebar-title">模板分类</span>
         </div>
-      </Card>
+        <div className="kb-tpl-cat-list">
+          <div
+            className={`kb-tpl-cat-item${!selectedCategory ? " active" : ""}`}
+            onClick={() => selectCategory("")}
+          >
+            <AppstoreOutlined style={{ fontSize: 14 }} />
+            <span className="kb-tpl-cat-name">全部模板</span>
+            <span className="kb-tpl-cat-count">{allTotal}</span>
+          </div>
+          {categories.map((c) => (
+            <div
+              key={c.category}
+              className={`kb-tpl-cat-item${selectedCategory === c.category ? " active" : ""}`}
+              onClick={() => selectCategory(c.category)}
+            >
+              <FolderOutlined style={{ fontSize: 14 }} />
+              <span className="kb-tpl-cat-name">{c.category}</span>
+              <Tooltip title={`启用 ${c.effective} 个`}>
+                <span className="kb-tpl-cat-count">{c.total}</span>
+              </Tooltip>
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      {/* ── 右栏：模板列表 ── */}
+      <div className="kb-tpl-content">
+        <Card
+          style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+          styles={{
+            body: {
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              padding: "12px 16px 0",
+            },
+          }}
+        >
+          <div className="kb-tpl-toolbar">
+            <Form form={searchForm} layout="inline" onFinish={doSearch}>
+              <Form.Item name="keyword" label="模板名称">
+                <Input allowClear placeholder="名称/标签/描述" style={{ width: 200 }} />
+              </Form.Item>
+              <Form.Item name="status" label="状态">
+                <Select
+                  allowClear
+                  placeholder="全部"
+                  style={{ width: 110 }}
+                  options={[
+                    { label: "启用", value: "effective" },
+                    { label: "停用", value: "disabled" },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item>
+                <Space>
+                  <Button type="primary" htmlType="submit">
+                    查询
+                  </Button>
+                  <Button onClick={doReset}>重置</Button>
+                </Space>
+              </Form.Item>
+            </Form>
+            <span style={{ flex: 1 }} />
+            <Button type="primary" icon={<ApartmentOutlined />} onClick={openCreate}>
+              新建模板
+            </Button>
+          </div>
+
+          <Table
+            rowKey="id"
+            size="small"
+            loading={loading}
+            columns={columns}
+            dataSource={data}
+            pagination={false}
+            scroll={{ x: "100%", y: "calc(100vh - 300px)" }}
+            locale={{ emptyText: <Empty description="暂无编排模板" /> }}
+          />
+          <div style={{ flexShrink: 0, marginTop: "auto" }}>
+            <ModoPagination
+              current={page}
+              pageSize={pageSize}
+              total={total}
+              showTotal={(t) => `共 ${t} 个模板`}
+              onChange={(p, ps) => {
+                setPage(p);
+                setPageSize(ps);
+              }}
+            />
+          </div>
+        </Card>
+      </div>
     </div>
   );
 
@@ -382,11 +515,6 @@ export default function TapeTemplatesPage() {
         onEdit={(key, action) => {
           if (action === "remove") closeTab(String(key));
         }}
-        tabBarExtraContent={
-          <Button type="primary" icon={<ApartmentOutlined />} onClick={openCreate}>
-            新建模板
-          </Button>
-        }
         items={[
           { key: "home", label: "编排模板", children: listPane },
           ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
@@ -408,13 +536,21 @@ export default function TapeTemplatesPage() {
         }
       >
         <Form key={formKey} form={form} layout="vertical">
-          <Form.Item label="模板名称" required>
+          <Form.Item
+            name="label"
+            label="模板名称"
+            rules={[{ required: true, message: "请输入模板名称" }]}
+          >
             <ModoInput placeholder="模板显示名" />
           </Form.Item>
-          <Form.Item label="内部名（唯一）" required>
+          <Form.Item
+            name="name"
+            label="内部名（唯一）"
+            rules={[{ required: true, message: "请输入内部名" }]}
+          >
             <ModoInput placeholder="如 wiki_build_04" disabled={!!editing} />
           </Form.Item>
-          <Form.Item label="分类">
+          <Form.Item name="category" label="分类">
             <Select
               showSearch
               placeholder="选择或输入新分类"
@@ -427,7 +563,7 @@ export default function TapeTemplatesPage() {
               }}
             />
           </Form.Item>
-          <Form.Item label="状态">
+          <Form.Item name="status" label="状态">
             <Select
               options={[
                 { label: "启用", value: "effective" },
@@ -435,13 +571,106 @@ export default function TapeTemplatesPage() {
               ]}
             />
           </Form.Item>
-          <Form.Item label="描述">
+          <Form.Item name="descr" label="描述">
             <ModoTextArea rows={3} placeholder="模板用途/适用场景说明" />
           </Form.Item>
         </Form>
         <Text type="secondary" style={{ fontSize: 12 }}>
           骨架（节点/连线）由设计器「存为模板」生成；此处仅维护模板基础信息。
         </Text>
+      </ModoDrawer>
+
+      {/* 查看：只读模板详情 + 骨架预览 */}
+      <ModoDrawer
+        title={`查看模板「${viewing?.label || viewing?.name || ""}」`}
+        open={viewOpen}
+        onClose={() => setViewOpen(false)}
+        width={720}
+        footer={
+          <Space>
+            <Button onClick={() => setViewOpen(false)}>关闭</Button>
+            {viewing && (
+              <Button type="primary" icon={<ExperimentOutlined />} loading={applying === viewing.id} onClick={() => void doApply(viewing)}>
+                应用模板
+              </Button>
+            )}
+          </Space>
+        }
+      >
+        {viewLoading ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+            <Spin />
+          </div>
+        ) : viewing ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <Descriptions
+              size="small"
+              bordered
+              column={2}
+              items={[
+                { key: "label", label: "模板名称", children: viewing.label || viewing.name },
+                { key: "name", label: "内部名", children: <Text type="secondary">{viewing.name}</Text> },
+                { key: "category", label: "分类", children: <Tag>{viewing.category || "未分类"}</Tag> },
+                {
+                  key: "status",
+                  label: "状态",
+                  children: (() => {
+                    const m = STATUS_META[viewing.status] || { color: "default", label: viewing.status };
+                    return <Tag color={m.color}>{m.label}</Tag>;
+                  })(),
+                },
+                { key: "nodes", label: "节点数", children: viewing.node_count ?? 0 },
+                { key: "edges", label: "连线数", children: viewing.edge_count ?? 0 },
+                { key: "apply", label: "应用次数", children: viewing.apply_count ?? 0 },
+                { key: "creator", label: "创建人", children: viewing.create_user || "-" },
+                { key: "created", label: "创建时间", children: viewing.created_at || "-" },
+                { key: "updated", label: "更新时间", children: viewing.updated_at || "-" },
+                { key: "descr", label: "描述", span: 2, children: viewing.descr || "-" },
+              ]}
+            />
+
+            <div>
+              <Typography.Title level={5} style={{ marginBottom: 8, fontSize: 14 }}>
+                骨架节点（{viewing.nodes?.length ?? 0}）
+              </Typography.Title>
+              <Table
+                rowKey={(n) => n?.id || Math.random().toString(36)}
+                size="small"
+                columns={viewNodeColumns}
+                dataSource={viewing.nodes || []}
+                pagination={false}
+                scroll={{ x: "100%", y: 220 }}
+                locale={{ emptyText: <Empty description="该模板暂无节点" /> }}
+              />
+            </div>
+
+            <div>
+              <Typography.Title level={5} style={{ marginBottom: 8, fontSize: 14 }}>
+                骨架连线（{viewing.edges?.length ?? 0}）
+              </Typography.Title>
+              <Table
+                rowKey={(e) => e?.id || Math.random().toString(36)}
+                size="small"
+                columns={viewEdgeColumns}
+                dataSource={viewing.edges || []}
+                pagination={false}
+                scroll={{ x: "100%", y: 180 }}
+                locale={{ emptyText: <Empty description="该模板暂无连线" /> }}
+              />
+            </div>
+
+            {viewing.exec_params && Object.keys(viewing.exec_params).length > 0 && (
+              <div>
+                <Typography.Title level={5} style={{ marginBottom: 8, fontSize: 14 }}>
+                  执行参数
+                </Typography.Title>
+                <pre className="kb-tpl-exec-params">
+                  {JSON.stringify(viewing.exec_params, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        ) : null}
       </ModoDrawer>
     </div>
   );
