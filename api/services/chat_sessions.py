@@ -161,7 +161,7 @@ def clear_session_messages(db: Session, user_id: str, session_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _message_dict(m: ChatMessage) -> dict:
+def _message_dict(db: Session, m: ChatMessage) -> dict:
     refs = []
     if m.refs:
         try:
@@ -176,8 +176,44 @@ def _message_dict(m: ChatMessage) -> dict:
         "thinking": m.thinking or None,
         "feedback": m.feedback or None,
         "feedback_at": m.feedback_at or None,
+        "images": _message_images(db, m),
         "created_at": m.created_at,
     }
+
+
+def _message_images(db: Session, m: ChatMessage) -> list[dict]:
+    """该条消息携带的图片附件（对齐 WeKnora 用户消息缩略图展示）。
+
+    小图（<=300KB）内联 data URL 供直接渲染；大图只给元信息（文件名/大小）。
+    """
+    if not m.images:
+        return []
+    try:
+        ids = json.loads(m.images) or []
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not ids:
+        return []
+    from sqlalchemy import select
+    import base64
+
+    rows = (
+        db.execute(select(ChatAttachment).where(ChatAttachment.id.in_(ids)))
+        .scalars()
+        .all()
+    )
+    by_id = {a.id: a for a in rows}
+
+    out = []
+    for aid in ids:
+        att = by_id.get(aid)
+        if not att or att.media_type != "image":
+            continue
+        item: dict = {"id": att.id, "file_name": att.file_name or "图片", "file_size": att.file_size or 0}
+        if att.file_data and (att.file_size or 0) <= 300 * 1024:
+            item["url"] = "data:image/jpeg;base64," + base64.b64encode(att.file_data).decode()
+        out.append(item)
+    return out
 
 
 def load_messages(db: Session, user_id: str, session_id: str) -> list[dict]:
@@ -191,7 +227,7 @@ def load_messages(db: Session, user_id: str, session_id: str) -> list[dict]:
         .scalars()
         .all()
     )
-    return [_message_dict(m) for m in rows]
+    return [_message_dict(db, m) for m in rows]
 
 
 def delete_message(db: Session, user_id: str, session_id: str, message_id: str) -> None:
@@ -243,6 +279,7 @@ def append_message(
     content: str,
     refs: list[dict] | None = None,
     thinking: str | None = None,
+    images: list[str] | None = None,
 ) -> dict:
     get_session(db, user_id, session_id)
     max_seq = db.execute(
@@ -256,6 +293,7 @@ def append_message(
         content=content or "",
         refs=json.dumps(refs or [], ensure_ascii=False) if refs else None,
         thinking=thinking or None,
+        images=json.dumps(images or [], ensure_ascii=False) if images else None,
     )
     db.add(msg)
     s = db.execute(select(ChatSession).where(ChatSession.id == session_id)).scalars().first()
@@ -278,7 +316,7 @@ def get_context_messages(db: Session, session_id: str, limit: int = 20) -> list[
         .scalars()
         .all()
     )
-    return [_message_dict(m) for m in reversed(rows)]
+    return [_message_dict(db, m) for m in reversed(rows)]
 
 
 # ---------------------------------------------------------------------------
@@ -561,6 +599,23 @@ def attachment_contents(db: Session, session_id: str, max_chars: int = 6000) -> 
     return "\n\n".join(parts)
 
 
+def attachment_image_ids(db: Session, session_id: str) -> list[str]:
+    """会话全部图片附件 id（按上传顺序），用于 user 消息 images 持久化。"""
+    rows = (
+        db.execute(
+            select(ChatAttachment.id)
+            .where(
+                ChatAttachment.session_id == session_id,
+                ChatAttachment.media_type == "image",
+            )
+            .order_by(ChatAttachment.created_at.asc())
+        )
+        .scalars()
+        .all()
+    )
+    return [str(r) for r in rows]
+
+
 def attachment_images(db: Session, session_id: str) -> list[str]:
     """图片附件转 data URL 列表（QA 时挂 user 消息 images，按上传顺序）。
 
@@ -622,7 +677,7 @@ def search_messages(db: Session, user_id: str, keyword: str, limit: int = 20) ->
     )
     out = []
     for m in rows:
-        item = _message_dict(m)
+        item = _message_dict(db, m)
         item["session_id"] = m.session_id
         item["session_title"] = ""
         # 附带会话标题

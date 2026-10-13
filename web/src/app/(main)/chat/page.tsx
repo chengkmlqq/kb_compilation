@@ -6,14 +6,12 @@ import {
   App,
   Button,
   Card,
-  Col,
   Drawer,
   Empty,
   Input,
   List,
   Modal,
   Popconfirm,
-  Row,
   Select,
   Space,
   Spin,
@@ -29,6 +27,7 @@ import {
   CopyOutlined,
   DatabaseOutlined,
   DeleteOutlined,
+  CloseOutlined,
   DownOutlined,
   EditOutlined,
   FileTextOutlined,
@@ -72,6 +71,7 @@ import {
 } from "@/lib/api";
 import MarkdownViewer from "@/components/MarkdownViewer";
 import TypewriterText from "@/components/TypewriterText";
+import ReferencePanel from "@/components/ReferencePanel";
 import RagPipelineProgress, { RagStep } from "@/components/RagPipelineProgress";
 import AgentToolCalls, { ToolCallEvent } from "@/components/AgentToolCalls";
 import { copyText } from "@/lib/clipboard";
@@ -1203,47 +1203,58 @@ export default function ChatPage() {
           style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16, position: "relative" }}
         >
           {loadingMsgs ? (
-            <div style={{ textAlign: "center", padding: 40 }}>
-              <Spin />
+            <div className="kb-chat-skeleton-list">
+              <div className="kb-chat-skeleton kb-chat-skeleton--user">
+                <div className="kb-chat-skeleton-line" style={{ width: "40%" }} />
+              </div>
+              <div className="kb-chat-skeleton kb-chat-skeleton--bot">
+                <div className="kb-chat-skeleton-line" style={{ width: "70%" }} />
+                <div className="kb-chat-skeleton-line" style={{ width: "90%" }} />
+              </div>
+              <div className="kb-chat-skeleton kb-chat-skeleton--user">
+                <div className="kb-chat-skeleton-line" style={{ width: "35%" }} />
+              </div>
+              <div className="kb-chat-skeleton kb-chat-skeleton--bot">
+                <div className="kb-chat-skeleton-line" style={{ width: "75%" }} />
+                <div className="kb-chat-skeleton-line" style={{ width: "88%" }} />
+              </div>
             </div>
           ) : msgs.length === 0 ? (
-            <div style={{ textAlign: "center", padding: 32 }}>
-              {recommendations.length > 0 && (
-                <div style={{ marginTop: 20, maxWidth: CONTENT_MAX_WIDTH, marginLeft: "auto", marginRight: "auto" }}>
-                  <Space style={{ justifyContent: "center", width: "100%", marginBottom: 12 }}>
-                    <Text type="secondary" style={{ fontSize: 13 }}>
-                      <BulbOutlined /> 推荐问题
-                    </Text>
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<ReloadOutlined />}
+            <div className="kb-sq-container" style={{ textAlign: "center", padding: 32 }}>
+              {(recommendations.length > 0 || recommendLoading) && (
+                <div className="kb-sq-inner" style={{ maxWidth: CONTENT_MAX_WIDTH, marginLeft: "auto", marginRight: "auto" }}>
+                  <div className="kb-sq-title-row">
+                    <p className="kb-sq-caption">
+                      <BulbOutlined />
+                      <span>推荐问题</span>
+                    </p>
+                    <button
+                      type="button"
+                      className="kb-sq-refresh"
+                      disabled={recommendLoading}
+                      title="换一批"
                       onClick={async () => {
                         const rec = await apiRecommendQuestions(kbId);
                         if (rec.success) setRecommendations(rec.data?.questions || []);
                       }}
                     >
-                      换一批
-                    </Button>
-                  </Space>
-                  <Row gutter={[12, 12]} justify="center">
-                    {recommendations.map((q, i) => (
-                      <Col key={i} xs={24} sm={12} lg={8}>
-                        <Card
-                          size="small"
-                          hoverable
-                          onClick={() => void send(q)}
-                          style={{ textAlign: "left", minHeight: 76 }}
-                          styles={{ body: { height: 76, display: "flex", alignItems: "center", gap: 6 } }}
-                        >
-                          <Tag color="cyan" style={{ flexShrink: 0 }}>FAQ</Tag>
-                          <Text style={{ fontSize: 13, flex: 1, minWidth: 0 }} ellipsis={{ tooltip: q }}>
-                            {q}
-                          </Text>
-                        </Card>
-                      </Col>
-                    ))}
-                  </Row>
+                      <ReloadOutlined className={recommendLoading ? "kb-sq-refresh-spin" : ""} />
+                    </button>
+                  </div>
+                  <div className="kb-sq-grid">
+                    {recommendLoading && recommendations.length === 0
+                      ? Array.from({ length: 6 }).map((_, i) => (
+                          <div className="kb-sq-card kb-sq-skeleton" key={`sq-skel-${i}`}>
+                            <div className="kb-sq-skeleton-bar" style={{ width: "100%" }} />
+                          </div>
+                        ))
+                      : recommendations.map((q, i) => (
+                          <div className="kb-sq-card" key={i} onClick={() => void send(q)}>
+                            <span className="kb-sq-badge">FAQ</span>
+                            <span className="kb-sq-text">{q}</span>
+                          </div>
+                        ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -1312,8 +1323,49 @@ export default function ChatPage() {
                       <span style={{ whiteSpace: "pre-wrap" }}>{m.content}</span>
                     )}
                 </div>
-                {/* 答案工具栏：复制 + 喜欢/不喜欢反馈（2026-10-13） */}
-                {m.role === "assistant" && !m.streaming && m.content && (
+                {/* 对齐 WeKnora usermsg：用户消息图片缩略图展示 */}
+                {m.role === "user" && m.images && m.images.length > 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 6,
+                      flexWrap: "wrap",
+                      maxWidth: 360,
+                      marginBottom: 6,
+                    }}
+                  >
+                    {m.images.map((img) =>
+                      img.url ? (
+                        <img
+                          key={img.id}
+                          src={img.url}
+                          alt={img.file_name || "图片"}
+                          style={{
+                            width: 72,
+                            height: 72,
+                            objectFit: "cover",
+                            borderRadius: 6,
+                            border: "1px solid rgba(0,0,0,0.08)",
+                          }}
+                        />
+                      ) : (
+                        <span
+                          key={img.id}
+                          style={{
+                            fontSize: 11,
+                            color: "rgba(0,0,0,0.45)",
+                            border: "1px solid rgba(0,0,0,0.08)",
+                            borderRadius: 6,
+                            padding: "4px 8px",
+                          }}
+                        >
+                          📷 {img.file_name || "图片"}
+                        </span>
+                      ),
+                    )}
+                  </div>
+                )}
+                {/* 答案工具栏：复制 + 喜欢/不喜欢反馈（2026-10-13） */}                {m.role === "assistant" && !m.streaming && m.content && (
                   <div style={{ marginTop: 6, display: "flex", gap: 4, alignItems: "center" }}>
                     <Button
                       type="text"
@@ -1360,51 +1412,14 @@ export default function ChatPage() {
                     </Button>
                   </div>
                 )}
-                {/* 引用 */}
+                {/* 引用（对齐 WeKnora docInfo：按文档分组折叠面板 + chunk hover 预览 + 跳转文档） */}
                 {m.role === "assistant" && m.refs && m.refs.length > 0 && !m.streaming && (
-                  <div style={{ marginTop: 6 }}>
-                    <Space size={4} wrap>
-                      {m.refs.slice(0, 5).map((r, i) => (
-                        <Tooltip
-                          key={i}
-                          title={
-                            <div style={{ maxWidth: 360 }}>
-                              {r.content ? (
-                                <div style={{ maxHeight: 160, overflow: "auto", marginBottom: 6 }}>
-                                  {r.content.slice(0, 300)}
-                                  {r.content.length > 300 ? "…" : ""}
-                                </div>
-                              ) : (
-                                <Text type="secondary">（无原文）</Text>
-                              )}
-                              {r.meta?.source_file && (
-                                <Text type="secondary" style={{ fontSize: 11 }}>
-                                  来源：{r.meta.source_file}
-                                </Text>
-                              )}
-                            </div>
-                          }
-                          mouseEnterDelay={0.3}
-                        >
-                          <Tag
-                            color="blue"
-                            style={{ fontSize: 11, cursor: "pointer" }}
-                            onClick={() => setRefDrawer({ open: true, refs: m.refs || [], answer: m.content })}
-                          >
-                            引用 {i + 1} · {(r.score || 0).toFixed(2)}
-                          </Tag>
-                        </Tooltip>
-                      ))}
-                      {m.refs.length > 5 && (
-                        <Tag
-                          style={{ fontSize: 11, cursor: "pointer" }}
-                          onClick={() => setRefDrawer({ open: true, refs: m.refs || [], answer: m.content })}
-                        >
-                          +{m.refs.length - 5}
-                        </Tag>
-                      )}
-                    </Space>
-                  </div>
+                  <ReferencePanel
+                    refs={m.refs}
+                    onChunkClick={(r) =>
+                      setRefDrawer({ open: true, refs: m.refs || [], answer: m.content, activeChunk: r.chunk_id })
+                    }
+                  />
                 )}
                 {/* 重新生成（对齐 WeKnora 回答操作） */}
                 {m.role === "assistant" && !m.streaming && !m.error && m.content && (
@@ -1419,14 +1434,37 @@ export default function ChatPage() {
                     </Button>
                   </div>
                 )}
-                {/* 追问建议 */}
+                {/* 追问建议（对齐 WeKnora FollowUpSuggestions：标题行 + 列表 + 关闭） */}
                 {m.role === "assistant" && !m.streaming && m.followUps && m.followUps.length > 0 && (
-                  <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {m.followUps.map((q, i) => (
-                      <Button key={i} size="small" onClick={() => askFollowUp(q)} style={{ fontSize: 12 }}>
-                        {q}
-                      </Button>
-                    ))}
+                  <div className="kb-followups" style={{ marginTop: 8 }}>
+                    <div className="kb-followups__header">
+                      <span className="kb-followups__title">推荐追问</span>
+                      <div className="kb-followups__actions">
+                        {!m.followUpsDismissed && (
+                          <button
+                            type="button"
+                            className="kb-followups__close"
+                            aria-label="关闭"
+                            onClick={() =>
+                              setMsgs((prev) =>
+                                prev.map((x) => (x.id === m.id ? { ...x, followUpsDismissed: true } : x)),
+                              )
+                            }
+                          >
+                            <CloseOutlined />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {!m.followUpsDismissed && (
+                      <div className="kb-followups__list">
+                        {m.followUps.map((q, i) => (
+                          <button key={i} type="button" className="kb-followups__item" onClick={() => askFollowUp(q)}>
+                            {q}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
                 {idx === msgs.length - 1 && m.role === "assistant" && m.streaming && (
@@ -1439,10 +1477,8 @@ export default function ChatPage() {
             </div>
           )}
           {streaming && (
-            <div style={{ textAlign: "center", padding: "8px 0 4px" }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                <RobotOutlined /> AI 正在回答…
-              </Text>
+            <div className="kb-global-wait" role="status" aria-label="思考中">
+              <span className="kb-global-wait__spinner" aria-hidden="true" />
             </div>
           )}
           {showScrollBtn && (

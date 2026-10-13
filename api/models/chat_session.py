@@ -78,6 +78,8 @@ class ChatMessage(Base):
     # 问答反馈（2026-10-13）：like / dislike / NULL=未反馈；feedback_at 记录时间
     feedback: Mapped[str | None] = mapped_column(String(16), nullable=True)
     feedback_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # JSON 字符串：该条 user 消息携带的图片附件 id 数组（对齐 WeKnora 用户消息图片展示）
+    images: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32), default=_now_iso)
 
 

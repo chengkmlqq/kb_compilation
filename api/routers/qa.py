@@ -26,6 +26,7 @@ from api.services import qa_stream_store as store
 from api.services.chat_sessions import (
     append_message,
     attachment_contents,
+    attachment_image_ids,
     attachment_images,
     get_context_messages,
     get_session,
@@ -135,7 +136,8 @@ def _run_generation(
 
         if session and user_id and req.session_id:
             try:
-                append_message(db, user_id, req.session_id, "user", req.question)
+                image_ids = attachment_image_ids(db, req.session_id)
+                append_message(db, user_id, req.session_id, "user", req.question, images=image_ids or None)
             except Exception as e:  # noqa: BLE001
                 logger.warning("persist user msg failed: %s", e)
 

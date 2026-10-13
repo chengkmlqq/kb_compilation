@@ -2124,6 +2124,14 @@ export interface ChatRefItem {
   document_title?: string;
 }
 
+export interface ChatImageItem {
+  id: string;
+  file_name?: string;
+  file_size?: number;
+  /** 小图内联 data URL（<=300KB），大图缺省仅元信息 */
+  url?: string;
+}
+
 export interface ChatMessageItem {
   id: string;
   role: "user" | "assistant";
@@ -2133,6 +2141,8 @@ export interface ChatMessageItem {
   /** 2026-10-13 问答反馈：like / dislike / null */
   feedback?: string | null;
   feedback_at?: string | null;
+  /** user 消息携带的图片附件（对齐 WeKnora usermsg 缩略图展示） */
+  images?: ChatImageItem[];
   created_at: string;
 }
 
