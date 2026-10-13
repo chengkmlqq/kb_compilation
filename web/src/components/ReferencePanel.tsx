@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { FileTextOutlined, JumpOutlined } from "@ant-design/icons";
+import { ExportOutlined, FileTextOutlined } from "@ant-design/icons";
 import { Tooltip } from "antd";
 import type { ChatRefItem } from "@/lib/api";
 
@@ -63,7 +63,7 @@ export default function ReferencePanel({ refs, onChunkClick }: ReferencePanelPro
                       onClick={(e) => e.stopPropagation()}
                       href={`/kbs/${kbId}/documents?doc=${docId}`}
                     >
-                      <JumpOutlined />
+                      <ExportOutlined />
                     </a>
                   )}
                 </div>

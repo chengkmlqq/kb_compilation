@@ -107,7 +107,8 @@ export default function ChatPage() {
   const [sessions, setSessions] = useState<ChatSessionItem[]>([]);
   const [activeSession, setActiveSession] = useState<string>();
   const [streaming, setStreaming] = useState(false);
-  const [recommendations, setRecommendations] = useState<string[]>([]);
+  const [recommendations, setRecommendations] = useState<string[]>([])
+  const [recommendLoading, setRecommendLoading] = useState(false);;
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -1234,8 +1235,13 @@ export default function ChatPage() {
                       disabled={recommendLoading}
                       title="换一批"
                       onClick={async () => {
-                        const rec = await apiRecommendQuestions(kbId);
-                        if (rec.success) setRecommendations(rec.data?.questions || []);
+                        setRecommendLoading(true);
+                        try {
+                          const rec = await apiRecommendQuestions(kbId);
+                          if (rec.success) setRecommendations(rec.data?.questions || []);
+                        } finally {
+                          setRecommendLoading(false);
+                        }
                       }}
                     >
                       <ReloadOutlined className={recommendLoading ? "kb-sq-refresh-spin" : ""} />
