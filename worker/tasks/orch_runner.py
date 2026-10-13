@@ -32,6 +32,11 @@ TASK_CLASS_ORCH_ADVANCE = "KbOrchestrationAdvanceTask"
 # 默认编排调度队列（compose 应加 -Q orch 的 worker）
 ORCH_QUEUE = "orch"
 
+# running 占位僵死阈值（秒）：同 (step_id, round) 超过此时长仍为 running，
+# 视为执行进程已消失（worker 崩溃/被杀）允许重投；未超时视为在跑，拒重复投递。
+# 取 6h：最慢节点实测 75 分钟（规范分册 LLM 解读），留足余量。
+NODE_STALE_S = 6 * 3600
+
 
 def _db(env: str | None = None):
     """会话工厂：编排执行数据（TapeRun）落开发库，编排定义（Tape/TapeStep）在生产库。
@@ -292,15 +297,46 @@ def advance_run(run_id: str, step_id: str, env: str | None = None) -> dict:
 
 # ───────────────────────── 单节点执行（节点所在 worker） ─────────────────────────
 
+def _find_step_result(run: TapeRun, step_id: str, round_no: int) -> dict | None:
+    """查同 (step_id, round) 的既有执行记录（终态或 running 占位）。"""
+    for r in (run.step_results or []):
+        if str(r.get("step_id") or "") == step_id and int(r.get("round") or 0) == round_no:
+            return r
+    return None
+
+
 def run_node(run_id: str, step_id: str, bindings: dict, round_no: int = 0, env: str | None = None) -> dict:
     """执行单个编排节点（投递到该节点指定队列的 worker）。
 
     执行完写 step_results，再 send_task advance_run 推进 DAG。
     env：执行记录所在环境（上传链触发编排传 "prod"；None 沿用历史 dev）。
+
+    幂等门（2026-10-13 修复重复投递）：调度中枢与 celery 重投都可能把同一
+    节点投多次（历史症状：同一 LLM 解读节点两个 worker 并发跑，幽灵复本的失败
+    把 run 终态顶成 failed）。同 (step_id, round) 已有终态 → 直接返回不执行；
+    已有 running 占位且未超时 → 视为在跑，返回 skip 不重复执行；running 占位
+    超时（执行进程可能已消失）→ 放行重跑。
     """
     run = _get_run(run_id, env)
     if not run:
         return {"success": False, "error": f"run not found: {run_id}"}
+    if run.status not in ("queued", "running"):
+        # 终态 run 的迟到/重复投递直接丢弃（run 已 success/failed 还在投节点）
+        logger.info("编排 run=%s 已 %s，丢弃迟到节点 %s", run_id, run.status, step_id)
+        return {"success": True, "step_id": step_id, "duplicate": True}
+    prev = _find_step_result(run, step_id, round_no)
+    if prev is not None and prev.get("status") in ("success", "failed", "skipped"):
+        logger.info("编排节点[%s %s] 已终态 %s，跳过重复投递 run=%s", step_id,
+                    prev.get("step_label") or "", prev.get("status"), run_id)
+        return {"success": True, "step_id": step_id, "duplicate": True, "status": prev.get("status")}
+    if prev is not None and prev.get("status") == "running":
+        started = float(prev.get("started_at") or 0)
+        if started and (time.time() - started) < NODE_STALE_S:
+            logger.info("编排节点[%s] running 占位未超时（%.0fs），跳过重复投递 run=%s",
+                        step_id, time.time() - started, run_id)
+            return {"success": True, "step_id": step_id, "duplicate": True, "status": "running"}
+        logger.warning("编排节点[%s] running 占位超时（%.0fs），按僵死处理重跑 run=%s",
+                       step_id, time.time() - started if started else -1, run_id)
     steps = _load_steps(run.tape_id)
     s = steps.get(step_id)
     if not s:
@@ -324,6 +360,7 @@ def run_node(run_id: str, step_id: str, bindings: dict, round_no: int = 0, env: 
         "step_id": step_id, "step_inst": s["inst"], "step_label": s["label"],
         "queue": _step_queue(steps, step_id), "status": "running",
         "body": None, "error": None, "duration_ms": 0, "round": round_no,
+        "started_at": time.time(),
     }, env)
     try:
         # 2026-10-12 环境隔离：编排节点执行产生的业务数据（wiki 页/切片等）
