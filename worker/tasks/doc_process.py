@@ -170,6 +170,16 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
     # 开关与技能绑定从 kb_datasource 读（_kb_pipeline_flags），读取失败回退历史默认。
     # 成功标志：ingest_document 返回 parse_state == "READY"（无 success 键）。
     if result.get("parse_state") == "READY" and kb_id:
+        # 2026-10-13 上传链摘要（方案A 自动路由）：文档解析成功后按 KB 摘要策略
+        # （off/auto/stuff/mapreduce/refine）触发标准摘要编排，生成摘要 wiki 页。
+        # 独立于 wiki 构建（build_tape_id），两者可并存；失败静默不阻断解析。
+        try:
+            result["summary_triggered"] = _enqueue_summary_task(
+                kb_id, document_id, parent_job_id=job_id, cookie=caller_cookie,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("failed to trigger summary task: %s", exc)
+            result["summary_triggered"] = False
         flags = _kb_pipeline_flags(kb_id, document_id)
         tape_id = flags.get("tape") or ""
         if tape_id:
@@ -290,6 +300,174 @@ def _enqueue_build_engine_task(
         )
     except Exception as exc:  # noqa: BLE001 — broker 不可达时返回 False，不抛
         logger.warning("failed to enqueue build engine run %s: %s", run_id, exc)
+        return False
+    return True
+
+
+# ───────────────────────── 上传链摘要（2026-10-13 方案A 自动路由） ─────────────────────────
+# 三个标准摘要编排（Stuff 全文直塞 / Map-Reduce 分块合并 / Refine 增量修订）的
+# tape_id 经 modo_dim(SYSTEM_CONFIG) 参数配置（seed_framework_db.py 种子写入），
+# 运维可改（用户自建/复制编排后更新参数即可，无需改代码）。
+SUMMARY_TAPE_DIM_KEYS: dict[str, str] = {
+    "stuff": "SUMMARY_TAPE_STUFF",
+    "mapreduce": "SUMMARY_TAPE_MAPREDUCE",
+    "refine": "SUMMARY_TAPE_REFINE",
+}
+# auto 路由阈值：切片数 <= 该值视为小文档 → Stuff 全文直塞
+SUMMARY_STUFF_MAX_CHUNKS = 10
+# auto 路由：切片数超过该值视为超大文档 → Map-Reduce 时调大 batch_size 减少轮次
+SUMMARY_MAPREDUCE_LARGE_CHUNKS = 60
+SUMMARY_MAPREDUCE_LARGE_BATCH = 10
+
+
+def _summary_tape_ids() -> dict[str, str]:
+    """从 modo_dim(SYSTEM_CONFIG) 读三个摘要编排 tape_id，返回 {mode: tape_id}。
+
+    缺失键跳过（auto 路由选不到对应编排时静默不触发）。
+    """
+    keys = list(SUMMARY_TAPE_DIM_KEYS.values())
+    mode_of = {v: k for k, v in SUMMARY_TAPE_DIM_KEYS.items()}
+    try:
+        from api.models.framework import Dim
+
+        db = get_sessionmaker()()
+        try:
+            rows = db.execute(
+                select(Dim.dim_code, Dim.dim_value).where(
+                    Dim.dim_group == "SYSTEM_CONFIG", Dim.dim_code.in_(keys)
+                )
+            ).all()
+            return {mode_of.get(code, code): (val or "").strip() for code, val in rows if val and val.strip()}
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 — 参数不可读（表/组缺失）不阻断
+        logger.warning("failed to read summary tape ids from modo_dim", exc_info=True)
+        return {}
+
+
+def _resolve_summary_tape(
+    kb_strategy: str, chunk_count: int, has_prev_summary: bool, tape_ids: dict[str, str]
+) -> tuple[str, str] | None:
+    """按 KB 摘要策略 + 文档规模 + 历史摘要选编排，返回 (mode, tape_id)。
+
+    规则（auto）：
+      - 已有历史摘要（kb_document.summary 非空，重解析/修订版）→ refine 增量修订
+      - 无历史摘要且 chunk_count <= SUMMARY_STUFF_MAX_CHUNKS → stuff 全文直塞
+      - 其余（中大/超大文档）→ mapreduce 分块合并（超大时上层传大 batch_size）
+    指定模式（stuff/mapreduce/refine）直接映射；off 或参数缺失返回 None。
+    """
+    strategy = (kb_strategy or "auto").strip() or "auto"
+    if strategy == "off":
+        return None
+    if strategy in ("stuff", "mapreduce", "refine"):
+        tape = tape_ids.get(strategy)
+        return (strategy, tape) if tape else None
+    # auto
+    if has_prev_summary:
+        mode = "refine"
+    elif chunk_count <= SUMMARY_STUFF_MAX_CHUNKS:
+        mode = "stuff"
+    else:
+        mode = "mapreduce"
+    tape = tape_ids.get(mode)
+    return (mode, tape) if tape else None
+
+
+def _enqueue_summary_task(
+    kb_id: str,
+    document_id: str,
+    parent_job_id: str | None = None,
+    cookie: str = "",
+) -> bool:
+    """文档解析 READY 后按 KB 摘要策略触发标准摘要编排（生成摘要 wiki 页）。
+
+    与 _enqueue_build_engine_task 同链路：建 kb_tape_run(env=prod) → 写
+    modo_job 行（KbOrchestrationRunTask，任务监控可见）→ 投 orch 队列。
+    失败（策略 off / 参数缺失 / 编排不可用）静默返回 False，不使解析任务失败。
+    """
+    from api.models.framework import Dim  # noqa: F401
+    from api.models.knowledge import KbDatasource
+
+    db = get_sessionmaker()()
+    try:
+        kb = db.execute(select(KbDatasource).where(KbDatasource.id == kb_id)).scalars().first()
+        doc = db.execute(select(KbDocument).where(KbDocument.id == document_id)).scalars().first()
+        if not kb or not doc:
+            logger.warning("summary trigger skipped: kb/doc not found kb=%s doc=%s", kb_id, document_id)
+            return False
+        tape_ids = _summary_tape_ids()
+        resolved = _resolve_summary_tape(
+            kb.summary_strategy or "auto",
+            doc.chunk_count or 0,
+            bool((doc.summary or "").strip()),
+            tape_ids,
+        )
+        if not resolved:
+            return False  # off / 参数缺失：不生成摘要
+        mode, tape_id = resolved
+        inputs = {
+            "kb_id": kb_id,
+            "document_id": document_id,
+            "doc_id": document_id,  # 兼容存量编排 def/script 读 doc_id
+            "x_next_identity": cookie,
+            "limit": "",
+            "only_codes": "",
+            "build_summary": "",
+            "language": "中文",
+            # 2026-10-13 增量修订：Refine 编排把历史摘要（kb_document.summary）
+            # 作为滚动起点（n2 读 prev_summary）；其它模式忽略该键。
+            "prev_summary": (doc.summary or "").strip(),
+        }
+        # 超大文档走 Map-Reduce 时调大 batch_size（减少串行轮次，避免撞限流）
+        if mode == "mapreduce" and (doc.chunk_count or 0) > SUMMARY_MAPREDUCE_LARGE_CHUNKS:
+            inputs["batch_size"] = str(SUMMARY_MAPREDUCE_LARGE_BATCH)
+        from api.services.orchestration import _create_tape_run
+
+        created = _create_tape_run(
+            db, tape_id, inputs=inputs, env="prod",
+        )
+    except Exception as exc:  # noqa: BLE001 — 摘要触发失败不使解析任务失败
+        logger.warning("failed to create summary run (kb=%s doc=%s): %s", kb_id, document_id, exc)
+        return False
+    finally:
+        db.close()
+    run_id, run_env = created["run_id"], created["run_env"]
+
+    job_id = f"SUMMARY_RUN_{uuid.uuid4().hex[:12]}"
+    task_params = json.dumps({"runId": run_id, "env": run_env}, ensure_ascii=False)
+    db2 = get_sessionmaker()()
+    try:
+        from api.models.framework import Job
+
+        db2.add(
+            Job(
+                id=job_id,
+                task_id=job_id,
+                task_class="KbOrchestrationRunTask",
+                queue_name="orch",
+                task_params=task_params,
+                trigger_type="API",
+                state="PENDING",
+                parent_id=parent_job_id,  # 挂链头解析任务
+            )
+        )
+        db2.commit()
+    except Exception:  # noqa: BLE001
+        db2.rollback()
+        return False
+    finally:
+        db2.close()
+    try:
+        from worker.celery_app import celery_app
+
+        celery_app.send_task(
+            "worker.tasks.scheduler.execute_modo_job",
+            args=[job_id],
+            task_id=job_id,
+            queue="orch",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("failed to enqueue summary run %s: %s", run_id, exc)
         return False
     return True
 

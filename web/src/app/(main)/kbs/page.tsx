@@ -272,6 +272,7 @@ export default function KbsPage() {
       summary_model_id: values.summary_model_id || undefined,
       vector_store_id: values.vector_store_id || undefined,
       build_tape_id: values.build_engine || undefined,
+      summary_strategy: values.summary_strategy || "auto",
     };
     const res = await apiCreateKb(payload);
     if (res.success) {
@@ -539,6 +540,22 @@ export default function KbsPage() {
                   label: `${t.tape_label || t.tape_name}${t.tape_descr ? `（${t.tape_descr}）` : ""}`,
                   value: t.id,
                 }))}
+              />
+            </Form.Item>
+            <Form.Item
+              name="summary_strategy"
+              label="文档摘要策略"
+              initialValue="auto"
+              extra="上传文档解析成功后自动生成摘要页：自动＝按文档大小与是否已有摘要选择（小文档全文直塞，大文档分块合并，已有摘要增量修订）；也可固定使用某一种模式；关＝不生成"
+            >
+              <Select
+                options={[
+                  { label: "自动（按文档规模选择）", value: "auto" },
+                  { label: "小文档全文直塞（Stuff）", value: "stuff" },
+                  { label: "大文档分块合并（Map-Reduce）", value: "mapreduce" },
+                  { label: "增量修订（Refine，需已有摘要）", value: "refine" },
+                  { label: "关（不生成摘要）", value: "off" },
+                ]}
               />
             </Form.Item>
             <Form.Item

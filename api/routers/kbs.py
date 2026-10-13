@@ -113,6 +113,7 @@ class KBCreateRequest(BaseModel):
     configs: dict | None = None  # wiki/extract/faq/vlm/asr/storage 等 JSON 配置
     ontology_schema_name: str | None = None  # 绑定本体 Schema（抽取分类结构，多领域）
     build_tape_id: str | None = None  # 构建引擎 = 服务编排中已发布的编排程序（kb_tape.id）
+    summary_strategy: str | None = None  # 上传摘要策略: off/auto/stuff/mapreduce/refine（默认 auto）
 
 
 class KBUpdateRequest(BaseModel):
@@ -128,6 +129,7 @@ class KBUpdateRequest(BaseModel):
     vector_store_id: str | None = None
     configs: dict | None = None
     build_tape_id: str | None = None
+    summary_strategy: str | None = None
 
 
 class SearchRequest(BaseModel):
@@ -341,6 +343,7 @@ def post_kb(
             configs=req.configs,
             ontology_schema_name=req.ontology_schema_name,
             build_tape_id=req.build_tape_id,
+            summary_strategy=req.summary_strategy,
             caller_user_id=caller_user_id or None,
             caller_team_name=caller_team_name or None,
             is_sys_admin=is_sys_admin,

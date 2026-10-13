@@ -159,6 +159,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
       extraction_granularity: kb.wiki_config?.extraction_granularity || "standard",
       embedding_model_id: kb.embedding_model_id || undefined,
       summary_model_id: kb.wiki_config?.synthesis_model_id || kb.summary_model_id || undefined,
+      summary_strategy: kb.summary_strategy || "auto",
       graph_extract: !!kb.extract_config?.enabled,
       faq_index_mode: kb.faq_config?.index_mode || "question_answer",
       question_generation: !!kb.question_generation_config?.enabled,
@@ -232,6 +233,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
       custom_wiki_generation: v.custom_wiki_generation,
       embedding_model_id: v.embedding_model_id || null,
       summary_model_id: v.summary_model_id || null,
+      summary_strategy: v.summary_strategy || "auto",
       configs: {
         wiki_config: {
           skill: v.wiki_skill || "",
@@ -332,6 +334,21 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
           </Form.Item>
           <Form.Item name="summary_model_id" label="Wiki 合成模型（LLM）">
             <Select allowClear placeholder="留空 = 系统默认" options={modelOptions("chat")} />
+          </Form.Item>
+          <Form.Item
+            name="summary_strategy"
+            label="文档摘要策略"
+            extra="上传文档解析成功后自动生成摘要页；自动＝按文档规模与是否已有摘要选择（小文档全文直塞/大文档分块合并/已有摘要增量修订）"
+          >
+            <Select
+              options={[
+                { label: "自动（按文档规模选择）", value: "auto" },
+                { label: "小文档全文直塞（Stuff）", value: "stuff" },
+                { label: "大文档分块合并（Map-Reduce）", value: "mapreduce" },
+                { label: "增量修订（Refine，需已有摘要）", value: "refine" },
+                { label: "关（不生成摘要）", value: "off" },
+              ]}
+            />
           </Form.Item>
 
           {kbType === "document" && (

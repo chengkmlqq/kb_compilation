@@ -160,6 +160,8 @@ export interface KbItem {
   question_generation_config?: QuestionGenerationConfig;
   custom_wiki_generation?: boolean;
   build_tape_id?: string | null;
+  /** 上传摘要策略（2026-10-13）：off 不生成 / auto 自动路由 / stuff / mapreduce / refine */
+  summary_strategy?: string;
   wiki_config?: {
     skill?: string;
     extraction_granularity?: string;
@@ -190,6 +192,8 @@ export interface KbUpdatePayload {
   embedding_model_id?: string | null;
   summary_model_id?: string | null;
   configs?: Record<string, unknown>;
+  /** 上传摘要策略（2026-10-13）：off / auto / stuff / mapreduce / refine */
+  summary_strategy?: string;
 }
 
 export function apiUpdateKb(kbId: string, payload: KbUpdatePayload) {
@@ -226,6 +230,8 @@ export interface KbCreatePayload {
   ontology_schema_name?: string;
   /** 构建引擎 = 服务编排中已发布的编排程序（kb_tape.id） */
   build_tape_id?: string | null;
+  /** 上传摘要策略（2026-10-13）：off 不生成 / auto 自动路由 / stuff / mapreduce / refine */
+  summary_strategy?: string;
 }
 
 export function apiCreateKb(payload: KbCreatePayload) {
@@ -3221,6 +3227,7 @@ export interface TapeItem {
   tape_label: string;
   tape_descr?: string | null;
   tape_type: string;
+  category?: string;
   status: string; // draft | effective | offline
   create_user?: string;
   created_at?: string;
@@ -3312,10 +3319,20 @@ export function apiDeleteStepDefine(id: string) {
   return request<{ ok: boolean }>(`/api/v1/orchestrations/step-defines/${id}`, { method: "DELETE" });
 }
 
-export function apiListTapes(page = 1, pageSize = 20, keyword = "", status = "") {
+export function apiListTapes(page = 1, pageSize = 20, keyword = "", status = "", category = "") {
   return request<{ total: number; items: TapeItem[] }>(
-    `/api/v1/orchestrations?page=${page}&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}&status=${encodeURIComponent(status)}`,
+    `/api/v1/orchestrations?page=${page}&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}&status=${encodeURIComponent(status)}&category=${encodeURIComponent(category)}`,
   );
+}
+
+export interface TapeCategory {
+  category: string;
+  total: number;
+  effective: number;
+}
+
+export function apiListTapeCategories() {
+  return request<TapeCategory[]>(`/api/v1/orchestrations/categories`);
 }
 
 export function apiGetTape(id: string) {

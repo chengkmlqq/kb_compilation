@@ -156,6 +156,12 @@ SYSTEM_CONFIG_DIMS: list[tuple[str, str, str, int]] = [
     ("ai_chat_model", "", "问答模型名，如 deepseek-v4-pro（留空=容器 env AI_CHAT_MODEL）", 6),
     ("metadata_full_collection_enabled", "true", "元数据全量采集开关（true/false）", 9),
     ("dify_chat_api_endpoint", "", "兼容端点回退（问答/向量的兜底项；留空=不使用）", 37),
+    # 2026-10-13 上传链摘要：三个标准摘要编排的 tape_id（Stuff/Map-Reduce/Refine）。
+    # 留空 = 上传不触发摘要（即使 KB summary_strategy=auto 也静默跳过）；
+    # 写入后 KB 上传按策略自动路由。运维换编排（自建复制）改这里即可，无需改代码。
+    ("SUMMARY_TAPE_STUFF", "", "上传摘要编排-Stuff全文直塞（kb_tape.id，留空=不触发）", 38),
+    ("SUMMARY_TAPE_MAPREDUCE", "", "上传摘要编排-Map-Reduce分块合并（kb_tape.id，留空=不触发）", 39),
+    ("SUMMARY_TAPE_REFINE", "", "上传摘要编排-Refine增量修订（kb_tape.id，留空=不触发）", 40),
 ]
 
 

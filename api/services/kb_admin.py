@@ -196,6 +196,7 @@ def create_kb(
     configs: dict | None = None,
     ontology_schema_name: str | None = None,
     build_tape_id: str | None = None,
+    summary_strategy: str | None = None,
     caller_user_id: str | None = None,
     caller_team_name: str | None = None,
     is_sys_admin: bool = False,
@@ -218,6 +219,9 @@ def create_kb(
         _validate_vector_store_ref(db, vector_store_id)
     if build_tape_id:
         _validate_build_tape_ref(db, build_tape_id)
+    strategy = str(summary_strategy or "auto").strip() or "auto"
+    if strategy not in SUMMARY_STRATEGIES:
+        raise ValueError(f"摘要策略不合法: {strategy}（可选 off/auto/stuff/mapreduce/refine）")
     _validate_bound_model(
         db, embedding_model_id, "向量化", caller_user_id, caller_team_name, is_sys_admin
     )
@@ -240,6 +244,7 @@ def create_kb(
         owner_user_id=owner_user_id,
         created_by=created_by,
         build_tape_id=build_tape_id,
+        summary_strategy=strategy,
         indexing_strategy=normalize_indexing_strategy(indexing_strategy),
         wiki_config=normalize_wiki_config(cfg.get("wiki_config")),
         extract_config=normalize_extract_config(cfg.get("extract_config")),
@@ -345,6 +350,11 @@ def update_kb(
         if new_tape:
             _validate_build_tape_ref(db, new_tape)
         kb.build_tape_id = new_tape
+    if "summary_strategy" in fields:
+        strategy = str(fields.get("summary_strategy") or "auto").strip() or "auto"
+        if strategy not in SUMMARY_STRATEGIES:
+            raise ValueError(f"摘要策略不合法: {strategy}（可选 off/auto/stuff/mapreduce/refine）")
+        kb.summary_strategy = strategy
     for f in ("embedding_model_id", "summary_model_id", "storage_backend_id"):
         if f in fields:
             setattr(kb, f, str(fields.get(f) or "") or None)
@@ -513,6 +523,7 @@ def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0) -> dict:
         "type": kb.type or "document",
         "custom_wiki_generation": bool(getattr(kb, "custom_wiki_generation", False)),
         "build_tape_id": getattr(kb, "build_tape_id", None) or "",
+        "summary_strategy": getattr(kb, "summary_strategy", None) or "auto",
         "embedding_model_id": getattr(kb, "embedding_model_id", None) or "",
         "summary_model_id": getattr(kb, "summary_model_id", None) or "",
         "wiki_config": getattr(kb, "wiki_config", None) or {},
@@ -635,6 +646,11 @@ def create_document(
     db.refresh(doc)
     return doc
 
+
+# 上传摘要策略（2026-10-13）：off=不生成；auto=按规模+历史摘要自动路由
+# （详情见 worker/tasks/doc_process.py::_resolve_summary_tape）；
+# stuff/mapreduce/refine=指定模式强制用该编排。
+SUMMARY_STRATEGIES: tuple[str, ...] = ("off", "auto", "stuff", "mapreduce", "refine")
 
 SUMMARY_SYSTEM_PROMPT = (
     "你是专业的文档摘要助手。请阅读用户提供的文档内容，生成一段简洁、准确的中文摘要："

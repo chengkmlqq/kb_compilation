@@ -42,7 +42,9 @@ for i in range(0, len(chunks), batch_size):
         batches.append({'idx': len(batches), 'text': '\\n\\n'.join(texts)})
 bindings['batches'] = batches
 bindings['_total'] = len(batches)
-bindings['running_summary'] = ''
+# 2026-10-13 增量语义：已有历史摘要（上传链注入 prev_summary）作为滚动摘要起点，
+# 后续每批在其基础上增量融合；无历史摘要则从空开始（首轮直接生成）。
+bindings['running_summary'] = str(bindings.get('prev_summary') or '').strip()
 """
 
 N4_CODE = """batch = bindings.get('batch') or {}
@@ -53,13 +55,16 @@ prev = str(bindings.get('running_summary') or '').strip()
 cur = str(batch.get('text') or '')
 if prev:
     bindings['refine_prompt'] = (
-        '【已有摘要（必须完整保留其全部要点，不得遗漏）】\\n' + prev +
+        '【已有摘要（必须完整保留其全部要点，不得遗漏、不得压缩为更短，'
+        '逐点核对后全部保留）】\\n' + prev +
         '\\n\\n【新内容（第 %d/%d 片段）】\\n' % (idx + 1, total) + cur +
         '\\n\\n请基于「已有摘要 + 新内容」输出更新后的完整文档摘要。\\n'
         '要求：\\n'
-        '1) 完整保留已有摘要的全部要点，融入新内容的新要点，合并重复表述；\\n'
-        '2) 输出精炼连贯的中文摘要：先一句话概括主题，再分点列出核心要点；\\n'
-        '3) 直接输出摘要正文，不要附加任何说明、复述或多余文字。')
+        '1) 已有摘要的每一个要点都必须保留在结果中（只允许合并重复表述，'
+        '不允许删减或过度压缩）；\\n'
+        '2) 完整融入新内容的新要点，结果要点数 >= 已有摘要要点数；\\n'
+        '3) 输出精炼连贯的中文摘要：先一句话概括主题，再分点列出核心要点；\\n'
+        '4) 直接输出摘要正文，不要附加任何说明、复述或多余文字。')
 else:
     bindings['refine_prompt'] = (
         '根据以下文档内容生成中文摘要。\\n'

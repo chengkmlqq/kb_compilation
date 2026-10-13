@@ -95,6 +95,10 @@ class KbDatasource(Base):
     # 构建引擎（2026-10-12）：绑定「服务编排」中已发布的编排程序（kb_tape.id）。
     # 绑定后文档解析成功自动按该编排构建 wiki（空 = 使用内置 wiki 构建链）。
     build_tape_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    # 上传摘要策略（2026-10-13）：off(默认不生成) | auto(按规模+历史摘要路由) |
+    # stuff | mapreduce | refine(指定模式强制用该编排)。路由实现见
+    # worker/tasks/doc_process.py::_resolve_summary_tape。
+    summary_strategy: Mapped[str] = mapped_column(String(16), default="auto")
 
     state: Mapped[str] = mapped_column(String(16), default="1")  # 1=active 0=deleted
     created_by: Mapped[str | None] = mapped_column(String(64))
