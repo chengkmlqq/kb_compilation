@@ -15,6 +15,7 @@ import { registerAllModules } from "handsontable/registry";
 import "handsontable/styles/handsontable.min.css";
 import "handsontable/styles/ht-theme-main.min.css";
 import type { ResultTab } from "../store/use-datagrid-store";
+import { copyText } from "@/lib/clipboard";
 
 registerAllModules();
 
@@ -97,8 +98,11 @@ export default function TableViewer({ tabData }: { tabData: ResultTab }) {
       });
       lines.push(cells.join("\t"));
     }
-    await navigator.clipboard.writeText(lines.join("\n"));
-    message.success("已复制当前表格（含表头）");
+    if (await copyText(lines.join("\n"))) {
+      message.success("已复制当前表格（含表头）");
+    } else {
+      message.error("复制失败，请检查浏览器剪贴板权限");
+    }
   };
 
   const viewRow = () => {

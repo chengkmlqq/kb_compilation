@@ -73,6 +73,7 @@ import MarkdownViewer from "@/components/MarkdownViewer";
 import TypewriterText from "@/components/TypewriterText";
 import RagPipelineProgress, { RagStep } from "@/components/RagPipelineProgress";
 import AgentToolCalls, { ToolCallEvent } from "@/components/AgentToolCalls";
+import { copyText } from "@/lib/clipboard";
 
 const { Text } = Typography;
 
@@ -1346,12 +1347,11 @@ export default function ChatPage() {
                       icon={<CopyOutlined />}
                       style={{ fontSize: 12, padding: "0 4px", height: "auto", color: token.colorTextTertiary }}
                       onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(m.content);
-                          toast.success("已复制回答");
-                        } catch {
-                          toast.error("复制失败");
-                        }
+                        // copyText：HTTP 非安全上下文下 navigator.clipboard 不可用，
+                        // 自动降级 execCommand（否则固定提示「复制失败」）
+                        const ok = await copyText(m.content);
+                        if (ok) toast.success("已复制回答");
+                        else toast.error("复制失败，请检查浏览器剪贴板权限");
                       }}
                     >
                       复制

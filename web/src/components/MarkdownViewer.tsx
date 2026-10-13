@@ -4,6 +4,7 @@ import { Fragment, ReactNode, useCallback, useState } from "react";
 import { CheckOutlined, CopyOutlined } from "@ant-design/icons";
 import { CitationRef, preprocessCitations, parsePayload, CitationPayload } from "@/lib/citation";
 import { tokenizeCode, hasHighlight } from "@/lib/highlight";
+import { copyText } from "@/lib/clipboard";
 
 /** 轻量 Markdown 渲染（标题/粗体/斜体/行内代码/代码块/列表/链接/引用/表格/引用胶囊）。
  * 对齐 WeKnora 消息渲染的常用子集，避免引入额外依赖。
@@ -25,12 +26,10 @@ function CodeBlock({ code, lang }: { code: string; lang: string }) {
   const copy = async (ev: React.MouseEvent) => {
     ev.preventDefault();
     ev.stopPropagation();
-    try {
-      await navigator.clipboard.writeText(code);
+    const ok = await copyText(code);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // 忽略剪贴板不可用
     }
   };
   let nodes: ReactNode;

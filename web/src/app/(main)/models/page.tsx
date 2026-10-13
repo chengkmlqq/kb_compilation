@@ -61,6 +61,7 @@ import {
   ModelScope,
   ModelType,
 } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import ModoPagination from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 
@@ -993,12 +994,9 @@ function ModelDebugDrawer({
 
   const copyResult = async () => {
     if (!result) return;
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(result, null, 2));
-      message.success("已复制");
-    } catch {
-      message.error("复制失败");
-    }
+    const ok = await copyText(JSON.stringify(result, null, 2));
+    if (ok) message.success("已复制");
+    else message.error("复制失败，请检查浏览器剪贴板权限");
   };
 
   const formattedResult = useMemo(() => {
