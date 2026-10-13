@@ -2,7 +2,15 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-13（问答「喜欢/不喜欢」反馈）
+最后更新：2026-10-13（编排运行历史 500 修复：kb_tape_run filesort 1038）
+
+## 11. 当前状态（2026-10-13 编排「运行历史」列表 500 修复，commit 待定）
+
+- **症状**：编排管理「运行历史」抽屉 `GET /api/v1/orchestrations/{tape_id}/runs?page=1&pageSize=20` 500（nginx 实测连续 500，body 21B）；同 tape 的 `runs/{run_id}` 详情轮询 200（447KB body）
+- **根因**：`list_tape_runs`（api/services/orchestration.py）`db.query(TapeRun)...ORDER BY created_at DESC` 全列排序 —— kb_tape_run 大 JSON 列（step_results/bindings 单行可达 ~940KB，见 §8 同一 run `ee8d9044` 详情响应 447KB），16 行小表优化器选 filesort，宽行塞 256KB sort_buffer → MySQL 1038 `Out of sort memory`。容器内直跑 SQL 复现：`SELECT * FROM kb_tape_run WHERE tape_id=... ORDER BY created_at DESC LIMIT 20` → 1038
+- **修复**：与 §8 jobs parents 同模式——排序只取窄列 id（filesort 只碰 id 行），再 `IN` 回表取全行按 pos 保持顺序；count 用窄列子查询。容器内直调 list_tape_runs 正常（total 17/17 全返 + 翻页空）；HTTP 全链（admin 登录 → /runs）200 total 17；pytest test_orchestration_engine + test_jobs_monitor* 30 passed
+- **坑位（同类再踩）**：**凡是 `kb_tape_run`（及任何含大 JSON 列的表）的 ORDER BY 全列查询，一律先排窄列 id 再回表**——§8 parents 只修了 jobs.py，编排 runs 端点同款未修，隔几小时又爆。排查此类 500 的快捷实锤：容器内直接跑同款 SQL 看 1038
+- **部署**：api/services/orchestration.py 已 docker cp 热修 + restart api-server（重启不丢，重建容器回镜像），正式代码已提交，下次 CI 构建固化
 
 ## 9. 当前状态（2026-10-13 问答反馈「喜欢/不喜欢」，commit 待推）
 
@@ -10,7 +18,19 @@
 - **后端**：`chat_message` 新增 `feedback` / `feedback_at` 两列（迁移 **0014_chat_message_feedback**，链 0013，幂等 ALTER）；`POST /api/v1/sessions/{sid}/messages/{mid}/feedback` 体 `{feedback_type: like|dislike|null}`（null=清除；仅 assistant 消息，越权/消息不存在 404 拦截）；`_message_dict` 透出 feedback/feedback_at 供前端回显
 - **前端**：chat/page.tsx `toggleFeedback`（乐观更新 + 失败回滚 + toast）；api.ts 新增 `apiSubmitMessageFeedback`
 - **测试**：test_chat_sessions.py +2 例（like→切换 dislike→清除、用户消息拒绝、他人会话越权、消息不存在），全量 **571 passed**（2 个既有失败 test_files/test_storage 仍为 storage prod/ 前缀断言未同步，与本次无关）
-- **部署注意**：0014 依赖其他会话的 0013_job_sort_indexes（已提交 9c5d15b），部署后 api-server 启动自动 upgrade head 到 0014；改码需 CI 重建镜像
+
+## 10. 当前状态（2026-10-13 编排「摘要-Refine（增量修订）」质量优化，commit 待定）
+
+- **背景**：用户要求测试该编排（tape `103e45f4`，draft，7 节点链：读切片→分批→循环→拼Prompt→LLM→回写→写页），摘要质量差
+- **实测质量结论**：初版输出整段思考草稿（英文推理+逐字数字数+自我修正，2281 字符写进 wiki 页）；换 system/prompt 约束后模型行为仍不稳定（中文复述/英文条款草稿/草稿+最终版混排）
+- **根因**：inferai 网关的 deepseek-v4-pro **默认 thinking 开启**，思考过程直接写进 content（reasoning_content 通道之外的 content 内输出）。ChatClient 有 `thinking` 参数（payload `{"type":"disabled"}`）但编排节点不透传
+- **修复（三层）**：
+  1. **引擎**（`api/services/orchestration_engine.py` KbLlmChatStep）：① config.system 支持（{{ }} 模板渲染，此前只发 user 消息）；② **config.thinking 透传**（"disabled" 根治思考草稿）；③ **429/403/5xx 退避重试**（此前无重试，多轮循环撞 inferaiapi 限流 ~3 次/分必失败——凌晨 run 第 6 轮 429 实证）；max_attempts 默认 5、429 退避 15s→45s
+  2. **编排数据**（kb_tape_step + kb_tape.nodes + kb_tape_template 0104d61d 同步）：n5 加 system（禁思考/复述）+ thinking=disabled；n4 prompt 结构化（已有摘要/新内容分块、去字数数字避免数数焦虑）；n2 batch_size 3→5（少轮次降限流）；n6 逐行过滤思考特征词兜底
+  3. **测试夹具**：test_kb_llm_chat_skip_empty 的 fake_chat 补 thinking 参数
+- **验证**：小样本（山东省厂务公开条例 docx，5 chunks/2 轮）实测 6 轮 run 全 success；thinking=disabled 后输出干净（613 字符：主题句+6 要点，无草稿/复述/数数），wiki 页纯净写入；引擎测试 15 passed + build/jobs 24 passed
+- **坑位**：deepseek-v4-pro（inferai）做自由文本生成（摘要类）默认输出思考过程到 content——**编排内 LLM 任务一律配 thinking=disabled**；wr.llm_call 脚本（带 system「只输出JSON」）不受影响
+- **注意**：编排数据为库内修改，用户在服务编排页「保存设计」会覆盖式同步回库（模板/tape 均已同步，覆盖也只回同一配置）
 
 ## 8. 当前状态（2026-10-13 任务监控页 500 修复，commit 待定）
 

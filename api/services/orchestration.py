@@ -358,23 +358,42 @@ def get_tape_run(db, run_id: str) -> TapeRun:
 def list_tape_runs(db, tape_id: str, page=1, page_size=20) -> dict:
     # 编排不存在 → KeyError → router _guarded 转 404（与其它编排端点一致）。
     get_tape(db, tape_id)
-    q = db.query(TapeRun).filter(TapeRun.tape_id == tape_id)
-    total = q.count()
-    items = q.order_by(TapeRun.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
-    return {
-        "total": total,
-        "items": [
-            {
-                "id": r.id,
-                "tape_id": r.tape_id,
-                "tape_name": r.tape_name,
-                "status": r.status,
-                "created_at": r.created_at.isoformat() if r.created_at else "",
-                "updated_at": r.updated_at.isoformat() if r.updated_at else "",
-            }
-            for r in items
-        ],
-    }
+    # 2026-10-13 fix(1038 Out of sort memory)：kb_tape_run 含大 JSON 列
+    # （step_results/bindings，实测单行可达 ~940KB），全列 SELECT + ORDER BY
+    # 时优化器按小表成本模型选 filesort，宽行塞 sort_buffer（256KB）即溢出
+    # → 端点 500（与任务监控 parents 修复 9c5d15b 同源）。
+    # 列表只展示窄字段，排序只取窄列 id（filesort 只碰 id 行），
+    # 再按 id 回表取全行并保持排序顺序（不依赖优化器选索引）。
+    from sqlalchemy import func, select
+
+    total_stmt = select(func.count()).select_from(TapeRun).where(TapeRun.tape_id == tape_id)
+    total = db.execute(total_stmt).scalar() or 0
+    run_id_stmt = select(TapeRun.id).where(TapeRun.tape_id == tape_id)
+    run_ids: list[str] = list(
+        db.execute(
+            run_id_stmt.order_by(TapeRun.created_at.desc(), TapeRun.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        .scalars()
+        .all()
+    )
+    items: list[dict] = []
+    if run_ids:
+        pos = {rid: i for i, rid in enumerate(run_ids)}
+        fetched = db.execute(select(TapeRun).where(TapeRun.id.in_(run_ids))).scalars().all()
+        for r in sorted(fetched, key=lambda r: pos.get(r.id, len(run_ids))):
+            items.append(
+                {
+                    "id": r.id,
+                    "tape_id": r.tape_id,
+                    "tape_name": r.tape_name,
+                    "status": r.status,
+                    "created_at": r.created_at.isoformat() if r.created_at else "",
+                    "updated_at": r.updated_at.isoformat() if r.updated_at else "",
+                }
+            )
+    return {"total": total, "items": items}
 
 
 def serialize_tape_run(run: TapeRun) -> dict:
