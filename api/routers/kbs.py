@@ -146,6 +146,7 @@ class WikiPageCreate(BaseModel):
     content: str = Field(default="", max_length=200000)
     summary: str | None = Field(default=None)
     folder_id: str | None = Field(default=None)
+    folder_ids: list | None = Field(default=None)  # 多目录挂载（首项为主目录）
     source_refs: list | None = Field(default=None)
 
 
@@ -155,6 +156,7 @@ class WikiPageUpdate(BaseModel):
     content: str | None = Field(default=None)
     summary: str | None = Field(default=None)
     folder_id: str | None = Field(default=None)
+    folder_ids: list | None = Field(default=None)  # 多目录挂载全量替换
     status: str | None = Field(default=None, max_length=32)
 
 
@@ -1152,6 +1154,7 @@ def create_wiki_pages_batch(
                     "content": item.content,
                     "page_type": item.page_type,
                     "folder_id": item.folder_id,
+                    "folder_ids": item.folder_ids,
                     "summary": item.summary,
                     "source_refs": item.source_refs or [],
                 },
