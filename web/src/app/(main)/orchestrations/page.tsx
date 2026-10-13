@@ -17,6 +17,7 @@ import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 import { ExecuteInputModal } from "./_components/execute-input-modal";
+import { TapeRunLogDrawer } from "./_components/tape-run-log-drawer";
 import {
   apiApplyTapeTemplate,
   apiCreateTape,
@@ -543,74 +544,16 @@ export default function OrchestrationsPage() {
         />
       </Modal>
 
-      {/* 执行结果弹窗（异步执行：轮询 runs/{run_id} 展示逐步日志） */}
-      <Modal
-        title={`执行结果 · ${execRun?.tape_name || ""}`}
+      {/* 执行结果抽屉（异步执行：轮询 runs/{run_id} 展示逐步日志；2026-10-13 Modal → Drawer） */}
+      <TapeRunLogDrawer
         open={execOpen}
-        onCancel={() => {
+        run={execRun}
+        polling={polling}
+        onClose={() => {
           stopPolling();
           setExecOpen(false);
         }}
-        footer={<Button onClick={() => { stopPolling(); setExecOpen(false); }}>关闭</Button>}
-        width={680}
-      >
-        {execRun && (
-          <div>
-            <Space style={{ marginBottom: 10 }}>
-              <Tag color={execRun.status === "success" ? "green" : execRun.status === "failed" ? "red" : "blue"}>
-                {execRun.status === "success" ? "成功" : execRun.status === "failed" ? "失败" : execRun.status === "cancelled" ? "已取消" : "执行中"}
-              </Tag>
-              <Text type="secondary">run_id: {execRun.id}</Text>
-              {polling && <Text type="secondary">（轮询中…）</Text>}
-            </Space>
-            {execRun.error && (
-              <pre style={{ margin: "0 0 8px", fontSize: 12, color: "#cf1322", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 120, overflow: "auto" }}>
-                {execRun.error}
-              </pre>
-            )}
-            <div style={{ maxHeight: 360, overflow: "auto", border: "1px solid #f0f0f0", borderRadius: 8, padding: 8 }}>
-              {(execRun.step_results || []).map((s, i) => (
-                <div key={s.step_id || i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "4px 0", borderBottom: "1px dashed #f5f5f5" }}>
-                  <Tag color={s.status === "success" ? "green" : s.status === "skipped" ? "orange" : "red"} style={{ width: 62, textAlign: "center" }}>
-                    {s.status === "success" ? "成功" : s.status === "skipped" ? "跳过" : "失败"}
-                  </Tag>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <Text strong style={{ fontSize: 13 }}>
-                      [{s.step_inst}] {s.step_label}
-                    </Text>
-                    <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
-                      {s.duration_ms ?? 0}ms
-                    </Text>
-                    {s.error && (
-                      <pre style={{ margin: "4px 0 0", fontSize: 12, color: "#cf1322", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 120, overflow: "auto" }}>
-                        {s.error}
-                      </pre>
-                    )}
-                    {s.body !== null && s.body !== undefined && !s.error && (
-                      <pre style={{ margin: "4px 0 0", fontSize: 12, color: "#555", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 160, overflow: "auto" }}>
-                        {typeof s.body === "string" ? s.body : JSON.stringify(s.body, null, 2)}
-                      </pre>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {(execRun.step_results || []).length === 0 && (
-                <Text type="secondary">尚无步骤日志{execRun.status === "queued" ? "（排队中）" : "（执行中）"}…</Text>
-              )}
-            </div>
-            {execRun.bindings && Object.keys(execRun.bindings).length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <Text strong style={{ fontSize: 12 }}>
-                  最终变量
-                </Text>
-                <pre style={{ margin: "4px 0 0", fontSize: 12, background: "#fafafa", padding: 8, borderRadius: 6, maxHeight: 140, overflow: "auto" }}>
-                  {JSON.stringify(execRun.bindings, null, 2)}
-                </pre>
-              </div>
-            )}
-          </div>
-        )}
-      </Modal>
+      />
 
       {/* 执行入参弹窗：填写初始调用参数后提交执行 */}
       <ExecuteInputModal

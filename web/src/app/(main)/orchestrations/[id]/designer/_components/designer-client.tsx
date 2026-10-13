@@ -12,7 +12,7 @@ import {
 } from '@xyflow/react';
 import type { Edge, NodeChange, EdgeChange, Connection, Viewport } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { App, Button, Input, Modal, Select, Spin, Tag, Tooltip, Typography } from 'antd';
+import { App, Button, Input, Modal, Select, Spin, Tag, Tooltip } from 'antd';
 import {
   ArrowLeftOutlined,
   SaveOutlined,
@@ -47,9 +47,8 @@ import { CustomNode, nodeTypes } from './custom-node';
 import type { StepFlowNode, StepNodeData } from './custom-node';
 import { TapeImportModal } from './tape-import-modal';
 import { ExecuteInputModal } from '@/app/(main)/orchestrations/_components/execute-input-modal';
+import { TapeRunLogDrawer } from '@/app/(main)/orchestrations/_components/tape-run-log-drawer';
 import { parseJsonRecord } from '../_utils/json';
-
-const { Text } = Typography;
 
 /** 编排设计器 —— 从 data-synth designer-client.tsx(1931行) 迁移的裁剪版。
  *
@@ -58,7 +57,7 @@ const { Text } = Typography;
  *  - 删除节点/删除边（节点菜单删除 + 键盘 Delete 原生删除）
  *  - 左栏组件拖入（onDrop 依据 dataTransfer 中的 StepDefineItem 生成节点）
  *  - 点节点打开右侧配参 Drawer（DynamicForm 渲染 step_cfg，改动实时写回 node.data.config）
- *  - 顶栏：返回列表 / 保存 / 保存并发布 / 执行（执行结果 Modal 逐步展示）
+ *  - 顶栏：返回列表 / 保存 / 保存并发布 / 执行（执行结果 Drawer 逐步展示）
  *  - 脏标记：有未保存改动时保存按钮高亮 + 「未保存」Tag
  *
  * 不再迁移（data-synth 专有）：自动保存、undo/redo、SSE 运行日志轮询、运行历史/版本回滚、
@@ -716,11 +715,12 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
         onConfigChange={handleConfigChange}
       />
 
-      {/* ============ 执行结果弹窗（异步执行：轮询 runs/{run_id} 展示逐步日志） ============ */}
-      <Modal
-        title={`执行结果 · ${execRun?.tape_name || ''}`}
+      {/* ============ 执行结果抽屉（异步执行：轮询 runs/{run_id} 展示逐步日志；2026-10-13 Modal → Drawer） ============ */}
+      <TapeRunLogDrawer
         open={execOpen}
-        onCancel={() => {
+        run={execRun}
+        polling={polling}
+        onClose={() => {
           if (pollTimer.current) {
             clearInterval(pollTimer.current);
             pollTimer.current = null;
@@ -728,70 +728,7 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
           setPolling(false);
           setExecOpen(false);
         }}
-        footer={<Button onClick={() => {
-          if (pollTimer.current) {
-            clearInterval(pollTimer.current);
-            pollTimer.current = null;
-          }
-          setPolling(false);
-          setExecOpen(false);
-        }}>关闭</Button>}
-        width={680}
-      >
-        {execRun && (
-          <div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
-              <Tag color={execRun.status === 'success' ? 'green' : execRun.status === 'failed' ? 'red' : 'blue'}>
-                {execRun.status === 'success' ? '成功' : execRun.status === 'failed' ? '失败' : execRun.status === 'cancelled' ? '已取消' : '执行中'}
-              </Tag>
-              <Text type="secondary" style={{ fontSize: 12 }}>run_id: {execRun.id}</Text>
-              {polling && <Text type="secondary" style={{ fontSize: 12 }}>（轮询中…）</Text>}
-            </div>
-            {execRun.error && (
-              <pre style={{ margin: '0 0 8px', fontSize: 12, color: '#cf1322', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflow: 'auto' }}>
-                {execRun.error}
-              </pre>
-            )}
-            <div style={{ maxHeight: 360, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>
-              {(execRun.step_results || []).map((s, i) => (
-                <div key={s.step_id || i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 0', borderBottom: '1px dashed #f5f5f5' }}>
-                  <Tag color={s.status === 'success' ? 'green' : s.status === 'skipped' ? 'orange' : s.status === 'running' ? 'blue' : 'red'} style={{ width: 62, textAlign: 'center', margin: 0, flexShrink: 0 }}>
-                    {s.status === 'success' ? '成功' : s.status === 'skipped' ? '跳过' : s.status === 'running' ? '执行中' : '失败'}
-                  </Tag>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <Text strong style={{ fontSize: 13 }}>
-                      [{s.step_inst}] {s.step_label}
-                    </Text>
-                    <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>{s.duration_ms ?? 0}ms</Text>
-                    {s.error ? (
-                      <pre style={{ margin: '4px 0 0', fontSize: 12, color: '#cf1322', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflow: 'auto' }}>
-                        {s.error}
-                      </pre>
-                    ) : (
-                      s.body !== null && s.body !== undefined && (
-                        <pre style={{ margin: '4px 0 0', fontSize: 12, color: '#555', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 160, overflow: 'auto' }}>
-                          {typeof s.body === 'string' ? s.body : JSON.stringify(s.body, null, 2)}
-                        </pre>
-                      )
-                    )}
-                  </div>
-                </div>
-              ))}
-              {(execRun.step_results || []).length === 0 && (
-                <Text type="secondary">尚无步骤日志{execRun.status === 'queued' ? '（排队中）' : '（执行中）'}…</Text>
-              )}
-            </div>
-            {execRun.bindings && Object.keys(execRun.bindings).length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <Text strong style={{ fontSize: 12 }}>最终变量</Text>
-                <pre style={{ margin: '4px 0 0', fontSize: 12, background: '#fafafa', padding: 8, borderRadius: 6, maxHeight: 140, overflow: 'auto' }}>
-                  {JSON.stringify(execRun.bindings, null, 2)}
-                </pre>
-              </div>
-            )}
-          </div>
-        )}
-      </Modal>
+      />
 
       {/* ============ 执行入参弹窗：填写初始调用参数后提交执行 ============ */}
       <ExecuteInputModal
