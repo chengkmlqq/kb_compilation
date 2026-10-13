@@ -20,6 +20,8 @@ interface TapeRunLogDrawerProps {
 }
 
 const RUN_STATUS_META: Record<string, { color: string; label: string }> = {
+  queued: { color: "blue", label: "排队中" },
+  running: { color: "blue", label: "执行中" },
   success: { color: "green", label: "成功" },
   failed: { color: "red", label: "失败" },
   cancelled: { color: "orange", label: "已取消" },

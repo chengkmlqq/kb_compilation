@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { useRouter } from "next/navigation";
 import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, PauseCircleOutlined, FileAddOutlined } from "@ant-design/icons";
+import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, HistoryOutlined, PauseCircleOutlined, FileAddOutlined } from "@ant-design/icons";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
 import { ModoSelect } from "@/components/biz/modo-select";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
@@ -18,12 +18,14 @@ import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 import { ExecuteInputModal } from "./_components/execute-input-modal";
 import { TapeRunLogDrawer } from "./_components/tape-run-log-drawer";
+import { TapeRunHistoryDrawer } from "./_components/tape-run-history-drawer";
 import {
   apiApplyTapeTemplate,
   apiCreateTape,
   apiDeleteTape,
   apiExecuteTape,
   apiGetTapeRun,
+  apiListTapeRuns,
   apiListTapes,
   apiListTapeTemplates,
   apiOfflineTape,
@@ -66,8 +68,8 @@ export default function OrchestrationsPage() {
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
 
-  // 执行结果弹窗（异步执行 2026-10-09：execute 返回 run_id，轮询 runs/{run_id} 拿逐步日志）
-  const [running, setRunning] = useState(false);
+  // 执行结果抽屉（异步执行 2026-10-09：execute 返回 run_id，轮询 runs/{run_id} 拿逐步日志）
+  const [submitting, setSubmitting] = useState(false);
   const [execOpen, setExecOpen] = useState(false);
   const [execRun, setExecRun] = useState<TapeRunDetail | null>(null);
   const [polling, setPolling] = useState(false);
@@ -75,6 +77,9 @@ export default function OrchestrationsPage() {
   // 执行入参弹窗（先填初始调用参数，再提交执行）
   const [execInputOpen, setExecInputOpen] = useState(false);
   const [execInputTape, setExecInputTape] = useState<TapeItem | null>(null);
+  // 运行历史抽屉（2026-10-13：关闭日志抽屉后仍可回看历史运行）
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyTape, setHistoryTape] = useState<TapeItem | null>(null);
 
   // 从模板新建（2026-10-12）
   const [tplPickerOpen, setTplPickerOpen] = useState(false);
@@ -89,6 +94,51 @@ export default function OrchestrationsPage() {
     }
     setPolling(false);
   }, []);
+
+  /** 启动轮询：queued/running → 持续拉逐步日志；终态（success/failed/cancelled）停止 */
+  const startPolling = useCallback(
+    (runId: string) => {
+      stopPolling();
+      setPolling(true);
+      pollTimer.current = setInterval(async () => {
+        try {
+          const r = await apiGetTapeRun(runId);
+          if (r.success && r.data) {
+            setExecRun(r.data);
+            if (["success", "failed", "cancelled"].includes(r.data.status)) {
+              stopPolling();
+            }
+          }
+        } catch {
+          // 轮询失败不中断：下次 tick 重试，直至弹窗关闭/终态
+        }
+      }, 1500);
+    },
+    [stopPolling],
+  );
+
+  /** 打开日志抽屉（新建执行结果 / 运行中重开 / 历史回看共用）：拉详情后按状态决定是否轮询 */
+  const openRunLog = useCallback(
+    async (runId: string) => {
+      setExecOpen(true);
+      try {
+        const r = await apiGetTapeRun(runId);
+        if (r.success && r.data) {
+          setExecRun(r.data);
+          if (["queued", "running"].includes(r.data.status)) {
+            startPolling(runId);
+          } else {
+            stopPolling();
+          }
+        } else {
+          stopPolling();
+        }
+      } catch {
+        stopPolling();
+      }
+    },
+    [startPolling, stopPolling],
+  );
 
   // 卸载时清理轮询定时器
   useEffect(() => stopPolling, [stopPolling]);
@@ -230,40 +280,16 @@ export default function OrchestrationsPage() {
   };
 
   const doExecute = async (row: TapeItem, inputs: Record<string, unknown>) => {
-    setRunning(true);
+    setSubmitting(true);
     try {
       const res = await apiExecuteTape(row.id, inputs);
       if (res.success && res.data?.run_id) {
-        const runId = res.data.run_id;
-        setExecOpen(true);
-        setExecRun({
-          id: runId,
-          tape_id: row.id,
-          tape_name: row.tape_name,
-          status: "queued",
-          step_results: [],
-          bindings: {},
-        });
-        setPolling(true);
-        // 轮询执行进度：queued/running → 逐步日志；终态（success/failed/cancelled）停止
-        pollTimer.current = setInterval(async () => {
-          try {
-            const r = await apiGetTapeRun(runId);
-            if (r.success && r.data) {
-              setExecRun(r.data);
-              if (["success", "failed", "cancelled"].includes(r.data.status)) {
-                stopPolling();
-              }
-            }
-          } catch {
-            // 轮询失败不中断：下次 tick 重试，直至弹窗关闭
-          }
-        }, 1500);
+        await openRunLog(res.data.run_id);
       } else {
         message.error(res.message || "执行失败");
       }
     } finally {
-      setRunning(false);
+      setSubmitting(false);
     }
   };
 
@@ -323,19 +349,46 @@ export default function OrchestrationsPage() {
       title: "操作",
       key: "act",
       width: 140,
-      render: (_, row) => (
-        <ModoActionGroup
-          actions={[
-            { key: "design", label: "设计", icon: <ExperimentOutlined />, onClick: () => router.push(`/orchestrations/${row.id}/designer`) },
-            { key: "edit", label: "编辑", onClick: () => openEdit(row) },
-            ...(row.status === "effective"
-              ? [{ key: "offline", label: "下线", icon: <PauseCircleOutlined />, onClick: () => doOffline(row) }]
-              : [{ key: "publish", label: "发布", icon: <ExportOutlined />, onClick: () => doPublish(row) }]),
-            { key: "run", label: running ? "执行中…" : "执行", icon: <CheckCircleOutlined />, onClick: () => { setExecInputTape(row); setExecInputOpen(true); } },
-            { key: "del", label: "删除", danger: true, onClick: () => doDelete(row) },
-          ]}
-        />
-      ),
+      render: (_, row) => {
+        // 该编排当前有活跃运行（queued/running）→ 执行按钮变「运行中…」，点击重新打开日志抽屉
+        const hasActiveRun = !!execRun && ["queued", "running"].includes(execRun.status) && execRun.tape_id === row.id;
+        return (
+          <ModoActionGroup
+            maxCount={3}
+            actions={[
+              { key: "design", label: "设计", icon: <ExperimentOutlined />, onClick: () => router.push(`/orchestrations/${row.id}/designer`) },
+              {
+                key: "run",
+                label: hasActiveRun ? "运行中…" : "执行",
+                icon: <CheckCircleOutlined />,
+                loading: submitting,
+                onClick: () => {
+                  if (hasActiveRun && execRun) {
+                    void openRunLog(execRun.id);
+                  } else {
+                    setExecInputTape(row);
+                    setExecInputOpen(true);
+                  }
+                },
+              },
+              { key: "edit", label: "编辑", onClick: () => openEdit(row) },
+              ...(row.status === "effective"
+                ? [{ key: "offline", label: "下线", icon: <PauseCircleOutlined />, onClick: () => doOffline(row) }]
+                : [{ key: "publish", label: "发布", icon: <ExportOutlined />, onClick: () => doPublish(row) }]),
+              {
+                key: "history",
+                label: "历史",
+                icon: <HistoryOutlined />,
+                onClick: () => {
+                  setHistoryTape(row);
+                  setHistoryOpen(true);
+                },
+              },
+              { key: "del", label: "删除", danger: true, onClick: () => doDelete(row) },
+            ]}
+          />
+        );
+      },
     },
   ];
 
@@ -555,11 +608,22 @@ export default function OrchestrationsPage() {
         }}
       />
 
+      {/* 运行历史抽屉（2026-10-13：关闭日志抽屉后仍可回看历史运行） */}
+      <TapeRunHistoryDrawer
+        open={historyOpen}
+        tape={historyTape}
+        onClose={() => setHistoryOpen(false)}
+        onViewRun={(runId) => {
+          setHistoryOpen(false);
+          void openRunLog(runId);
+        }}
+      />
+
       {/* 执行入参弹窗：填写初始调用参数后提交执行 */}
       <ExecuteInputModal
         open={execInputOpen}
         tapeName={execInputTape?.tape_name || ""}
-        loading={running}
+        loading={submitting}
         onCancel={() => setExecInputOpen(false)}
         onOk={(inputs) => {
           const row = execInputTape;

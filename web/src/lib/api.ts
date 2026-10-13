@@ -2113,6 +2113,9 @@ export interface ChatMessageItem {
   content: string;
   refs?: ChatRefItem[];
   thinking?: string | null;
+  /** 2026-10-13 问答反馈：like / dislike / null */
+  feedback?: string | null;
+  feedback_at?: string | null;
   created_at: string;
 }
 
@@ -2257,6 +2260,18 @@ export function apiLoadSessionMessages(sessionId: string) {
 
 export function apiDeleteSessionMessage(sessionId: string, messageId: string) {
   return request(`/api/v1/sessions/${sessionId}/messages/${messageId}`, { method: "DELETE" });
+}
+
+/** 2026-10-13 问答反馈：feedbackType = "like" | "dislike" | null（null=清除） */
+export function apiSubmitMessageFeedback(
+  sessionId: string,
+  messageId: string,
+  feedbackType: "like" | "dislike" | null,
+) {
+  return request<ChatMessageItem>(
+    `/api/v1/sessions/${sessionId}/messages/${messageId}/feedback`,
+    { method: "POST", body: JSON.stringify({ feedback_type: feedbackType }) },
+  );
 }
 
 export function apiSearchMessages(keyword: string, limit = 20) {
@@ -3252,6 +3267,16 @@ export interface TapeRunDetail {
   updated_at?: string;
 }
 
+/** 执行记录摘要（GET /orchestrations/{tape_id}/runs 列表项） */
+export interface TapeRunSummary {
+  id: string;
+  tape_id: string;
+  tape_name: string;
+  status: string; // queued | running | success | failed | cancelled
+  created_at?: string;
+  updated_at?: string;
+}
+
 export function apiListStepDefines(page = 1, pageSize = 20, keyword = "", groupType = "") {
   return request<{ total: number; items: StepDefineItem[] }>(
     `/api/v1/orchestrations/step-defines?page=${page}&pageSize=${pageSize}&keyword=${encodeURIComponent(keyword)}&group_type=${encodeURIComponent(groupType)}`,
@@ -3352,6 +3377,14 @@ export function apiGetTapeRun(runId: string) {
   return request<TapeRunDetail>(`/api/v1/orchestrations/runs/${runId}`, {
     method: "GET",
   });
+}
+
+/** 执行历史列表（2026-10-13：运行记录回看） */
+export function apiListTapeRuns(tapeId: string, page = 1, pageSize = 20) {
+  return request<{ total: number; items: TapeRunSummary[] }>(
+    `/api/v1/orchestrations/${tapeId}/runs?page=${page}&pageSize=${pageSize}`,
+    { method: "GET" },
+  );
 }
 
 // ---- 编排模板（2026-10-12）----
