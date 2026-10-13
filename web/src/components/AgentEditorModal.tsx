@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   App,
+  Checkbox,
   Col,
   Divider,
   Form,
@@ -18,6 +19,7 @@ import {
   Space,
   Switch,
   Tabs,
+  Tooltip,
   Typography,
 } from "antd";
 import {
@@ -32,7 +34,16 @@ import {
   ThunderboltOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
-import { apiListKbs, apiListMcps, apiListModels, apiListSkillsRegistry, KbItem, ModelItem } from "@/lib/api";
+import {
+  apiAgentToolCatalog,
+  apiListKbs,
+  apiListMcps,
+  apiListModels,
+  apiListSkillsRegistry,
+  AgentToolCatalogItem,
+  KbItem,
+  ModelItem,
+} from "@/lib/api";
 import AgentAvatar from "@/components/AgentAvatar";
 
 const { TextArea } = Input;
@@ -74,6 +85,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
   const [kbs, setKbs] = useState<KbItem[]>([]);
   const [mcpOptions, setMcpOptions] = useState<{ value: string; label: string }[]>([]);
   const [skillOptions, setSkillOptions] = useState<{ value: string; label: string }[]>([]);
+  const [toolCatalog, setToolCatalog] = useState<AgentToolCatalogItem[]>([]);
 
   const isEdit = mode === "edit";
   const agentMode = Form.useWatch("agent_mode", form) ?? "quick-answer";
@@ -89,11 +101,12 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
     if (!open) return;
     void (async () => {
       try {
-        const [m, k, mc, sk] = await Promise.all([
+        const [m, k, mc, sk, tc] = await Promise.all([
           apiListModels().catch(() => null),
           apiListKbs(1, 100).catch(() => null),
           apiListMcps().catch(() => null),
           apiListSkillsRegistry().catch(() => null),
+          apiAgentToolCatalog().catch(() => null),
         ]);
         if (m?.success && m.data) setModels(m.data.items);
         if (k?.success && k.data) setKbs(k.data.items);
@@ -105,6 +118,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
           const items = sk.data.items ?? [];
           setSkillOptions(items.map((s) => ({ value: s.name, label: s.name })));
         }
+        if (tc?.success && tc.data?.tools) setToolCatalog(tc.data.tools);
       } catch { /* 不阻断 */ }
     })();
   }, [open]);
@@ -490,18 +504,48 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
                 <Form.Item
                   name="allowed_tools"
                   label="可用工具白名单"
-                  extra="留空 = 全部允许；勾选后仅启用勾选项"
+                  extra={
+                    <>
+                      留空 = 全部允许；勾选后仅启用勾选项。
+                      <Tooltip title="勾选后仅启用勾选项；留空 = 全部允许">
+                        <Typography.Text type="secondary"> ｜ 工具目录对齐 WeKnora 全量</Typography.Text>
+                      </Tooltip>
+                    </>
+                  }
                 >
-                  <Select
-                    mode="multiple"
-                    allowClear
-                    placeholder="选择工具（如 run_skill_script / web_search…）"
-                    options={[
-                      { value: "web_search", label: "web_search 联网搜索" },
-                      { value: "run_skill_script", label: "run_skill_script 技能执行" },
-                      { value: "kb_search", label: "kb_search 知识库检索" },
-                    ]}
-                  />
+                  <Checkbox.Group style={{ width: "100%" }}>
+                    {(() => {
+                      const groups: { group: string; items: AgentToolCatalogItem[] }[] = [];
+                      const byGroup = new Map<string, AgentToolCatalogItem[]>();
+                      for (const t of toolCatalog) {
+                        if (!byGroup.has(t.group)) byGroup.set(t.group, []);
+                        byGroup.get(t.group)!.push(t);
+                      }
+                      for (const [g, items] of byGroup) groups.push({ group: g, items });
+                      // 平台内置工具（routers 层装配，非知识库上下文）
+                      const platformTools: AgentToolCatalogItem[] = [
+                        { name: "web_search", group: "平台内置", description: "联网搜索（websearch provider）" },
+                        { name: "run_skill_script", group: "平台内置", description: "技能脚本执行（skill registry）" },
+                      ];
+                      groups.push({ group: "平台内置", items: platformTools });
+                      return groups.map((g) => (
+                        <div key={g.group} style={{ marginBottom: 12 }}>
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            {g.group}
+                          </Typography.Text>
+                          <div>
+                            {g.items.map((t) => (
+                              <Checkbox key={t.name} value={t.name} style={{ marginLeft: 8, marginBottom: 4 }}>
+                                <Tooltip title={t.description}>
+                                  <span>{t.name}</span>
+                                </Tooltip>
+                              </Checkbox>
+                            ))}
+                          </div>
+                        </div>
+                      ));
+                    })()}
+                  </Checkbox.Group>
                 </Form.Item>
               </>
             )}

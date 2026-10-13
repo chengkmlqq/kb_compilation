@@ -39,6 +39,7 @@ dependencies = [
     "playwright>=1.55",
     "trafilatura>=2.0",
     "mcp>=2.2.0",
+    "duckdb",
 ]
 
 [dependency-groups]

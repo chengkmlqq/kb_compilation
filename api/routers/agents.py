@@ -68,6 +68,14 @@ def list_agents_route(page: int = Query(1, ge=1), page_size: int = Query(10, ge=
     return {"success": True, "data": list_agents(db, page=page, page_size=page_size)}
 
 
+@router.get("/tool-catalog")
+def tool_catalog_route() -> dict:
+    """可装配的工具目录（前端工具选择列表，对齐 WeKnora 全目录）。"""
+    from api.services.agent_tools_full import TOOL_CATALOG
+
+    return {"success": True, "data": {"tools": TOOL_CATALOG}}
+
+
 @router.put("/{agent_id}")
 def update(agent_id: str, req: AgentUpdateRequest, db: Session = Depends(get_db)) -> dict:
     agent = update_agent(db, agent_id, req.model_dump(exclude_none=True))
@@ -324,13 +332,13 @@ def agent_qa_stream(
             for idx, kb in enumerate(kbs):
                 last_kb_id = kb.id
                 extra = attachment_ctx if idx == 0 else ""
-                # 知识库检索工具（按 kb 绑定：LLM 可在多轮循环中按需再检索当前知识库）
+                # 知识库工具（对齐 WeKnora 全套：RAG/图谱/Wiki 读写/数据分析；按 kb 绑定）
                 kb_tools: list[dict] = []
                 kb_executor = None
                 try:
-                    from api.services.agent_tools import agent_kbsearch_tool_context
+                    from api.services.agent_tools_full import build_full_tool_context
 
-                    kb_tools, kb_executor = agent_kbsearch_tool_context(
+                    kb_tools, kb_executor = build_full_tool_context(
                         db,
                         agent,
                         kb=kb,
@@ -338,15 +346,17 @@ def agent_qa_stream(
                         caller_team_name=ctx_team_name,
                         is_sys_admin=ctx_is_admin,
                     )
-                except Exception:  # noqa: BLE001 — 检索工具装配失败不阻断问答
-                    logger.exception("agent kb_search tool resolution failed; kb_search disabled for this call")
+                except Exception:  # noqa: BLE001 — 工具装配失败不阻断问答
+                    logger.exception("agent full tools resolution failed; tools disabled for this call")
                     kb_tools, kb_executor = [], None
                 # allowed_tools 白名单裁剪（非空仅注入白名单内工具；空=全部允许）
                 per_kb_tools = filter_by_whitelist((merged_tools or []) + kb_tools)
 
                 def per_kb_executor(tool_call: dict) -> str:
                     name = str(tool_call.get("name") or "")
-                    if name == "kb_search" and kb_executor is not None:
+                    from api.services.agent_tools_full import EXECUTOR_NAMES
+
+                    if name in EXECUTOR_NAMES and kb_executor is not None:
                         return kb_executor(tool_call)
                     if merged_executor is not None:
                         return merged_executor(tool_call)

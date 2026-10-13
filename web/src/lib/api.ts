@@ -779,6 +779,17 @@ export function apiUpdateAgent(agentId: string, payload: { name?: string; descri
   });
 }
 
+export interface AgentToolCatalogItem {
+  name: string;
+  group: string;
+  description: string;
+  capability?: string;
+}
+
+export function apiAgentToolCatalog() {
+  return request<{ tools: AgentToolCatalogItem[] }>("/api/v1/agents/tool-catalog");
+}
+
 export function apiDeleteAgent(agentId: string) {
   return request(`/api/v1/agents/${agentId}`, { method: "DELETE" });
 }
