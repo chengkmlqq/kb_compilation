@@ -87,7 +87,7 @@ def test_kb_llm_chat_skip_empty(monkeypatch) -> None:
 
     called = []
 
-    def fake_chat(cfg, messages, temperature=None, max_tokens=None):
+    def fake_chat(cfg, messages, temperature=None, max_tokens=None, thinking=None):
         called.append(messages[-1].content)
         return "摘要结果"
 

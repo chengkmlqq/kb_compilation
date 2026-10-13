@@ -429,15 +429,57 @@ class KbLlmChatStep(BaseStep):
                 client = ChatClient(cfg)
                 from api.services.chat import ChatMessage
 
-                raw = client.chat(
-                    [ChatMessage(role="user", content=prompt)],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
+                # 2026-10-13 质量修复：支持 config.system（支持 {{ }} 模板）。
+                # 此前只发 user 消息 → 模型无角色/输出纪律约束，思考草稿混入
+                # content（实测 Refine 摘要输出英文推理+逐字数字数）。其他脚本
+                # 均带 system「只输出JSON，不要思考过程」故正常。
+                system_prompt = str(context.render(self.config.get("system") or "")).strip()
+                msgs: list = []
+                if system_prompt:
+                    msgs.append(ChatMessage(role="system", content=system_prompt))
+                msgs.append(ChatMessage(role="user", content=prompt))
+
+                # 2026-10-13 可靠性修复：429/403/5xx 退避重试。此前无重试，
+                # 多轮循环编排撞 inferaiapi 限流（~3 次/分）即失败（实测凌晨
+                # Refine run 第 6 轮 429 挂掉）。429 退避 15s 起逐步到 45s，
+                # 5xx 3s 起；max_attempts 默认 5。
+                import time as _time
+
+                max_attempts = max(1, int(self.config.get("max_attempts") or 5))
+                last_exc: Exception | None = None
+                raw = ""
+                # 2026-10-13 质量修复：config.thinking 透传（"disabled" 常见）——
+                # inferai 网关的 deepseek-v4-pro 默认 thinking 开启，会习惯性把
+                # 思考过程写进 content（实测摘要输出英文推理+字数统计+草稿），
+                # 禁掉 thinking 后模型被迫直接输出答案。None=不传保持原行为。
+                thinking_cfg = str(self.config.get("thinking") or "").strip().lower()
+                thinking: bool | None = None
+                if thinking_cfg == "enabled":
+                    thinking = True
+                elif thinking_cfg == "disabled":
+                    thinking = False
+                for attempt in range(max_attempts):
+                    try:
+                        raw = client.chat(
+                            msgs, temperature=temperature, max_tokens=max_tokens, thinking=thinking
+                        )
+                        last_exc = None
+                        break
+                    except Exception as e:  # noqa: BLE001
+                        last_exc = e
+                        resp = getattr(e, "response", None)
+                        code = getattr(resp, "status_code", None) if resp is not None else None
+                        retryable = code in (403, 429, 500, 502, 503, 504, 520, 521, 522, 524)
+                        if not retryable:
+                            break
+                        base = 15 if code == 429 else 3
+                        _time.sleep(min(base * (attempt + 1), 45))
             finally:
                 _db.close()
         except Exception as e:  # noqa: BLE001
             return StepResponse.fail(f"LLM 调用失败: {e}")
+        if last_exc is not None:
+            return StepResponse.fail(f"LLM 调用失败: {last_exc}")
         if json_mode:
             import json as _json
 
