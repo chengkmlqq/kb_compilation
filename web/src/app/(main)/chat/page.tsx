@@ -50,7 +50,6 @@ import {
   apiDeleteAttachment,
   apiDeleteSession,
   apiFollowUp,
-  apiForkSession,
   apiGenerateTitle,
   apiListAgents,
   apiListAttachments,
@@ -59,7 +58,6 @@ import {
   apiListSessions,
   apiLoadSessionMessages,
   apiRecommendQuestions,
-  apiRewindSession,
   apiSearchMessages,
   apiUpdateSession,
   apiUploadAttachment,
@@ -354,49 +352,6 @@ export default function ChatPage() {
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sessions],
-  );
-
-  // 2026-10-07 对齐 WeKnora 分支交互：从某条消息分叉出新会话
-  const forkFrom = useCallback(
-    async (msgId: string) => {
-      if (!activeSession) return;
-      try {
-        const res = await apiForkSession(activeSession, msgId);
-        if (!res.success || !res.data) {
-          void toast.error(res.message || "分叉失败");
-          return;
-        }
-        const sid = res.data.id;
-        await loadSessions();
-        await openSession(sid);
-        void toast.success(`已从该消息分叉出新会话（复制 ${res.data.message_count} 条消息）`);
-      } catch {
-        void toast.error("分叉失败，请稍后重试");
-      }
-    },
-    [activeSession, loadSessions, openSession, toast],
-  );
-
-  // 2026-10-07 对齐 WeKnora 分支交互：回溯到某条消息（删除其后消息）
-  const rewindTo = useCallback(
-    async (msgId: string) => {
-      if (!activeSession) return;
-      try {
-        const res = await apiRewindSession(activeSession, msgId);
-        if (!res.success || !res.data) {
-          void toast.error(res.message || "回溯失败");
-          return;
-        }
-        const msgsRes = await apiLoadSessionMessages(activeSession);
-        setMsgs(
-          (msgsRes.data?.items || []).map((m) => ({ ...m, agent: !!agentMode })) as UiMessage[],
-        );
-        void toast.success(`已回溯到该消息（清理 ${res.data.removed} 条后续消息）`);
-      } catch {
-        void toast.error("回溯失败，请稍后重试");
-      }
-    },
-    [activeSession, toast],
   );
 
   // 切页续传：读取 localStorage 锚点，从 offset 续拉后台仍在生成的流
@@ -1357,27 +1312,6 @@ export default function ChatPage() {
                       <span style={{ whiteSpace: "pre-wrap" }}>{m.content}</span>
                     )}
                 </div>
-                {/* 2026-10-07 对齐 WeKnora 分支交互：用户消息 → 分叉 / 回溯 */}
-                {m.role === "user" && (
-                  <div style={{ marginTop: 6, display: "flex", gap: 2, justifyContent: "flex-end" }}>
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ padding: "0 4px", height: "auto", fontSize: 12 }}
-                      onClick={() => void forkFrom(m.id)}
-                    >
-                      分叉
-                    </Button>
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ padding: "0 4px", height: "auto", fontSize: 12 }}
-                      onClick={() => void rewindTo(m.id)}
-                    >
-                      回溯到此
-                    </Button>
-                  </div>
-                )}
                 {/* 答案工具栏：复制 + 喜欢/不喜欢反馈（2026-10-13） */}
                 {m.role === "assistant" && !m.streaming && m.content && (
                   <div style={{ marginTop: 6, display: "flex", gap: 4, alignItems: "center" }}>
@@ -1482,14 +1416,6 @@ export default function ChatPage() {
                       onClick={() => regenerate(msgs, idx)}
                     >
                       重新生成
-                    </Button>
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ padding: 0, height: "auto", fontSize: 12, marginLeft: 8 }}
-                      onClick={() => void forkFrom(m.id)}
-                    >
-                      分叉
                     </Button>
                   </div>
                 )}
