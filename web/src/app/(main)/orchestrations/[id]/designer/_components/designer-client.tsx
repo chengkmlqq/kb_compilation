@@ -146,9 +146,17 @@ const TAPE_STATUS_META: Record<string, { color: string; label: string }> = {
 
 interface DesignerClientProps {
   tapeId: string;
+  /**
+   * 「返回」动作的宿主回调（动态选项卡内嵌模式）。
+   * 传入则点「返回」/「保存并发布」成功后调用它（由宿主页关闭当前 tab），
+   * 不传则保持独立路由行为：router.push('/orchestrations')。
+   */
+  onBack?: () => void;
+  /** dirty 状态变化回调（宿主据此在关闭 tab 前提示「有未保存的修改」） */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
-export function DesignerClient({ tapeId }: DesignerClientProps) {
+export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClientProps) {
   const { message } = App.useApp();
   const router = useRouter();
   const { screenToFlowPosition, fitView, zoomIn, zoomOut } = useReactFlow();
@@ -165,6 +173,11 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
   // 脏标记：有未保存改动时顶栏保存按钮高亮
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // 内嵌模式：dirty 同步给宿主（关闭 tab 前可提示未保存）
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   // 执行结果弹窗（异步执行 2026-10-09：execute 返回 run_id，轮询 runs/{run_id} 拿逐步日志）
   const [execLoading, setExecLoading] = useState(false);
@@ -408,8 +421,12 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
   );
 
   const handleBack = useCallback(() => {
+    if (onBack) {
+      onBack();
+      return;
+    }
     router.push('/orchestrations');
-  }, [router]);
+  }, [router, onBack]);
 
   /** 存为模板：先静默保存当前草稿，再把骨架存为模板 */
   const openTplModal = async () => {
@@ -471,6 +488,10 @@ export function DesignerClient({ tapeId }: DesignerClientProps) {
     const res = await apiPublishTape(tapeId);
     if (res.success) {
       message.success({ content: '发布成功', key: 'publish' });
+      if (onBack) {
+        onBack();
+        return;
+      }
       router.push('/orchestrations');
     } else {
       message.error({ content: res.message || '发布失败', key: 'publish' });

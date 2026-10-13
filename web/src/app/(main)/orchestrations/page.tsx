@@ -3,10 +3,10 @@
 /**
  * 编排管理（迁移自 data-synth algorithm/tapes）：
  * Card + inline 筛选（关键词/状态）+ antd Table + ModoPagination；
- * 操作：设计(React Flow 画布跳转) / 编辑 / 发布 / 下线 / 执行(逐步日志弹窗) / 删除。
+ * 操作：设计(动态选项卡打开 React Flow 画布) / 编辑 / 发布 / 下线 / 执行(逐步日志弹窗) / 删除。
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ReactFlowProvider } from "@xyflow/react";
 import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, HistoryOutlined, PauseCircleOutlined, FileAddOutlined } from "@ant-design/icons";
@@ -16,6 +16,7 @@ import { ModoDrawer } from "@/components/biz/modo-drawer";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
+import { DesignerClient } from "./[id]/designer/_components/designer-client";
 import { ExecuteInputModal } from "./_components/execute-input-modal";
 import { TapeRunLogDrawer } from "./_components/tape-run-log-drawer";
 import { TapeRunHistoryDrawer } from "./_components/tape-run-history-drawer";
@@ -44,12 +45,12 @@ const STATUS_META: Record<string, { color: string; label: string }> = {
   offline: { color: "orange", label: "已下线" },
 };
 
-/** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
-type OrchestrationTab = { key: string; title: string; children: ReactNode };
+/** 动态选项卡条目（对齐知识库页面模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的设计器 tab。
+ *  只存元数据（tapeId），children 由 renderDesignerPane 按 tab 渲染——避免把 ReactNode 塞进 state。 */
+type OrchestrationTab = { key: string; title: string; tapeId: string };
 
 export default function OrchestrationsPage() {
   const { message, modal } = App.useApp();
-  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<TapeItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -143,16 +144,62 @@ export default function OrchestrationsPage() {
   // 卸载时清理轮询定时器
   useEffect(() => stopPolling, [stopPolling]);
 
-  // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
-  // 首个 tab「编排管理」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
-  // 本轮先预留能力（容器 + 开关 tab 机制就位），具体接入哪些内容后续再定。
+  // ---- 动态选项卡（对齐知识库页面模式：tab 只存元数据，children 由渲染函数按需构造）----
+  // 首个 tab「编排管理」= 页面标题 + 列表，不可关闭；「设计」打开的设计器作为可关闭 tab。
   const [tabs, setTabs] = useState<OrchestrationTab[]>([]);
   const [activeTab, setActiveTab] = useState("home");
+  // 各设计器 tab 的脏标记（有未保存改动时关闭 tab 需确认）
+  const [dirtyTabs, setDirtyTabs] = useState<Record<string, boolean>>({});
 
   const closeTab = (key: string) => {
-    setTabs((prev) => prev.filter((t) => t.key !== key));
-    if (activeTab === key) setActiveTab("home");
+    const dirty = dirtyTabs[key];
+    const doClose = () => {
+      setTabs((prev) => prev.filter((t) => t.key !== key));
+      setDirtyTabs((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      if (activeTab === key) setActiveTab("home");
+    };
+    if (dirty) {
+      modal.confirm({
+        title: "放弃未保存的修改？",
+        content: "设计器里有未保存的改动，关闭选项卡后将丢失。",
+        okText: "放弃并关闭",
+        okButtonProps: { danger: true },
+        onOk: doClose,
+      });
+      return;
+    }
+    doClose();
   };
+
+  /** 打开某编排的设计器选项卡：已存在则仅激活，否则新增后激活（对齐知识库 openKbSection） */
+  const openDesignerTab = (row: { id: string; tape_name: string; tape_label?: string }) => {
+    const key = `tape-${row.id}`;
+    const title = `设计 · ${row.tape_label || row.tape_name}`;
+    setTabs((prev) => {
+      if (prev.some((t) => t.key === key)) return prev;
+      return [...prev, { key, title, tapeId: row.id }];
+    });
+    setActiveTab(key);
+  };
+
+  /** 按 tab 渲染设计器 pane（渲染时构造 children；每个 tab 独立 ReactFlowProvider=独立 store，多 tab 互不干扰） */
+  const renderDesignerPane = (t: OrchestrationTab) => (
+    <div style={{ height: "100%", width: "100%", overflow: "hidden", background: "#f9fbfd" }}>
+      <ReactFlowProvider>
+        <DesignerClient
+          tapeId={t.tapeId}
+          onBack={() => closeTab(t.key)}
+          onDirtyChange={(d) =>
+            setDirtyTabs((prev) => (prev[t.key] === d ? prev : { ...prev, [t.key]: d }))
+          }
+        />
+      </ReactFlowProvider>
+    </div>
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -257,7 +304,7 @@ export default function OrchestrationsPage() {
     }
   };
 
-  /** 应用模板 → 生成新编排草稿 → 跳设计器 */
+  /** 应用模板 → 生成新编排草稿 → 在设计器选项卡打开 */
   const doApplyTemplate = async (tpl: TapeTemplateItem) => {
     setTplApplying(tpl.id);
     try {
@@ -270,7 +317,11 @@ export default function OrchestrationsPage() {
         message.success(`已生成新编排「${res.data.tape_name}」`);
         setTplPickerOpen(false);
         void load();
-        router.push(`/orchestrations/${res.data.id}/designer`);
+        openDesignerTab({
+          id: res.data.id,
+          tape_name: res.data.tape_name,
+          tape_label: res.data.tape_label || res.data.tape_name,
+        });
       } else {
         message.error(res.message || "应用模板失败");
       }
@@ -317,7 +368,7 @@ export default function OrchestrationsPage() {
       ellipsis: true,
       render: (v: string, row) => (
         <Tooltip title="打开设计器">
-          <a onClick={() => router.push(`/orchestrations/${row.id}/designer`)}>{v}</a>
+          <a onClick={() => openDesignerTab(row)}>{v}</a>
         </Tooltip>
       ),
     },
@@ -356,7 +407,7 @@ export default function OrchestrationsPage() {
           <ModoActionGroup
             maxCount={3}
             actions={[
-              { key: "design", label: "设计", icon: <ExperimentOutlined />, onClick: () => router.push(`/orchestrations/${row.id}/designer`) },
+              { key: "design", label: "设计", icon: <ExperimentOutlined />, onClick: () => openDesignerTab(row) },
               {
                 key: "run",
                 label: hasActiveRun ? "运行中…" : "执行",
@@ -496,7 +547,7 @@ export default function OrchestrationsPage() {
                 }
         items={[
           { key: "home", label: "编排管理", children: listPane },
-          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: renderDesignerPane(t) })),
         ]}
       />
 
