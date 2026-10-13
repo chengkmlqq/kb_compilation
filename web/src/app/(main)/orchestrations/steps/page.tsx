@@ -108,7 +108,7 @@ export default function OrchestrationStepsPage() {
       group_type: "基础",
       step_seq: 10,
       status: "effective",
-      step_cfg: [{ name: "", label: "", type: "input" }],
+      step_cfg: JSON.stringify([{ name: "", label: "", type: "input" }], null, 2),
     });
     setDrawerOpen(true);
   };
@@ -132,7 +132,10 @@ export default function OrchestrationStepsPage() {
   const doSave = async () => {
     const v = form.getFieldsValue();
     let cfg: unknown[] = [];
-    if (String(v.step_cfg || "").trim()) {
+    // 正常是 textarea 里的 JSON 字符串；防呆：若拿到已解析的数组（如旧版本残留）直接使用
+    if (Array.isArray(v.step_cfg)) {
+      cfg = v.step_cfg;
+    } else if (String(v.step_cfg ?? "").trim()) {
       try {
         cfg = JSON.parse(String(v.step_cfg));
         if (!Array.isArray(cfg)) throw new Error("不是数组");
