@@ -289,6 +289,30 @@ class WikiPage(Base):
         DateTime, server_default=text("CURRENT_TIMESTAMP"), onupdate=datetime.utcnow
     )
 
+    folder_ids: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class WikiPageFolder(Base):
+    """多目录挂载关联表（对齐 WeKnora wiki_page_folders）：页面 ↔ 目录 多对多。
+
+    2026-10-13 供管技能移植新增——跨文档合并实体/关键词挂多个本体目录的核心机制。
+    主目录仍存 wiki_page.folder_id；本表记录全部挂载（含主目录）。
+    """
+
+    __tablename__ = "wiki_page_folder"
+    __table_args__ = (
+        Index("idx_wiki_page_folder_page", "page_id"),
+        Index("idx_wiki_page_folder_folder", "folder_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kb_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    page_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    folder_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+
 
 class WikiLink(Base):
     """Bidirectional link between wiki pages."""

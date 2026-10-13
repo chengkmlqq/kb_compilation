@@ -1372,6 +1372,7 @@ def get_wiki_page(db: Session, kb_id: str, slug: str) -> dict | None:
         "summary": page.summary,
         "source_refs": page.source_refs or [],
         "folder_id": page.folder_id or "",
+        "folder_ids": page.folder_ids or ([page.folder_id] if page.folder_id else []),
         "links": linked_pages,
         "in_links": in_links,
         "created_at": page.created_at.isoformat() if page.created_at else None,
@@ -1791,6 +1792,32 @@ def wiki_stats(db: Session, kb_id: str) -> dict:
     }
 
 
+def _sync_page_folders(db: Session, kb_id: str, page: WikiPage, folder_ids: list) -> None:
+    """同步页面多目录挂载（wiki_page_folder 关联表 + folder_ids JSON 冗余列）。
+
+    主目录仍存 page.folder_id（取 folder_ids 首项）；关联表记全部挂载（含主目录）。
+    folder_ids 为空/None → 清空挂载（仅保留 folder_id 主目录本身）。
+    """
+    from api.models.knowledge import WikiPageFolder
+
+    db.execute(
+        select(WikiPageFolder).where(
+            WikiPageFolder.kb_id == kb_id, WikiPageFolder.page_id == page.id
+        ).delete()
+    )
+    if folder_ids:
+        fids = [str(f) for f in folder_ids if str(f)]
+        page.folder_ids = fids
+        if not page.folder_id:
+            page.folder_id = fids[0]
+        for fid in fids:
+            db.add(WikiPageFolder(
+                id=uuid.uuid4().hex, kb_id=kb_id, page_id=page.id, folder_id=fid,
+            ))
+    else:
+        page.folder_ids = [page.folder_id] if page.folder_id else []
+
+
 def wiki_create_page(db: Session, kb_id: str, data: dict, user_id: str | None = None) -> dict:
     """创建 wiki 页面。slug 缺省由 title 生成（保证 kb 内唯一，重复加序号）。"""
     title = str(data.get("title") or "").strip()
@@ -1816,6 +1843,8 @@ def wiki_create_page(db: Session, kb_id: str, data: dict, user_id: str | None = 
         created_by=user_id,
     )
     db.add(page)
+    fids = data.get("folder_ids") or ([str(data.get("folder_id") or "")] if data.get("folder_id") else [])
+    _sync_page_folders(db, kb_id, page, fids)
     wiki_log_action(
         db, kb_id, "page_create", slug=page.slug, title=page.title,
         detail=f"page_type={page.page_type}", operator=user_id or "",
@@ -1844,6 +1873,8 @@ def wiki_update_page(db: Session, kb_id: str, slug: str, data: dict) -> dict:
         page.page_type = str(data["page_type"] or "entity")
     if "folder_id" in data:
         page.folder_id = str(data["folder_id"] or "")
+    if "folder_ids" in data:
+        _sync_page_folders(db, kb_id, page, data["folder_ids"] or [])
     if "status" in data:
         page.status = str(data["status"] or "active")
     wiki_log_action(
@@ -2110,13 +2141,21 @@ def list_wiki_pages(
     status: str = "active",
 ) -> dict:
     """分页列出 wiki 页（对齐 WeKnora list_wiki_pages）。"""
+    from api.models.knowledge import WikiPageFolder
+
     stmt = select(WikiPage).where(WikiPage.kb_id == kb_id)
     if status:
         stmt = stmt.where(WikiPage.status == status)
     if page_type:
         stmt = stmt.where(WikiPage.page_type == page_type)
     if folder_id:
-        stmt = stmt.where(WikiPage.folder_id == folder_id)
+        # 主目录或挂载目录命中均算（多目录挂载页面在任一挂载目录下可见）
+        sub = (
+            select(WikiPageFolder.page_id)
+            .where(WikiPageFolder.kb_id == kb_id, WikiPageFolder.folder_id == folder_id)
+            .scalar_subquery()
+        )
+        stmt = stmt.where((WikiPage.folder_id == folder_id) | (WikiPage.id.in_(sub)))
     total = len(db.execute(stmt).scalars().all())
     rows = (
         db.execute(
@@ -2136,6 +2175,7 @@ def list_wiki_pages(
             "summary": p.summary,
             "content": p.content,
             "folder_id": p.folder_id or "",
+            "folder_ids": p.folder_ids or ([p.folder_id] if p.folder_id else []),
             "status": p.status,
             "source_refs": p.source_refs or [],
             "created_at": p.created_at.isoformat() if p.created_at else None,
