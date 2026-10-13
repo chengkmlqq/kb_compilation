@@ -672,3 +672,104 @@ def test_parent_child_jobs_view(monkeypatch) -> None:
         assert by_id["DOC_doc2"]["child_count"] == 0
     finally:
         app.dependency_overrides.clear()
+
+
+def test_parents_run_state_filter_mapping_and_mixed_paging(monkeypatch) -> None:
+    """编排 run 与任务监控枚举对齐（2026-10-13）：
+
+    - 状态筛选：前端传大写（RUNNING/SUCCESS...），TapeRun.status 是小写
+      （running/success...）——必须映射，否则「选状态就看不到编排」。
+    - run 与 modo_job 同页混排（时间倒序），翻页后 run 不再消失。
+    - 序列化出的 state 统一为大写枚举（前端两表共用一套 STATE_LABEL）。
+    """
+    from api.models.orchestration import TapeRun
+
+    db = _make_session()
+    db.query(Job).delete()
+    db.commit()
+    db.query(TapeRun).delete()
+    db.commit()
+
+    t0 = datetime(2026, 10, 13, 1, 0, 0, tzinfo=timezone.utc)
+    # 2 个 job 父任务 + 2 个编排 run（一 success 一 failed），时间错开验证混排
+    db.add(Job(id="JOB_old", task_id="j1", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"kbId": "kb1"}),
+               trigger_type="API", state="SUCCESS", create_time=t0))
+    db.add(TapeRun(id="run_succ", tape_id="tape1", tape_name="编排A", status="success",
+                   created_at=t0 + timedelta(minutes=1), updated_at=t0 + timedelta(minutes=2),
+                   step_results=[]))
+    db.add(Job(id="JOB_running", task_id="j2", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"kbId": "kb2"}),
+               trigger_type="API", state="RUNNING", create_time=t0 + timedelta(minutes=3)))
+    db.add(TapeRun(id="run_fail", tape_id="tape2", tape_name="编排B", status="failed",
+                   created_at=t0 + timedelta(minutes=4), updated_at=t0 + timedelta(minutes=5),
+                   step_results=[]))
+    db.commit()
+
+    app.dependency_overrides[get_db] = lambda: db
+    client = _jobs_client(db, monkeypatch)
+    try:
+        # ── 状态筛选：RUNNING（大写）应同时命中 job 大写 state 与 run 小写 status ──
+        r = client.get("/api/v1/jobs/parents", params={"state": "RUNNING"})
+        assert r.status_code == 200
+        items = r.json()["data"]["items"]
+        ids = {it["id"] for it in items}
+        assert "JOB_running" in ids, f"job RUNNING 应命中: {ids}"
+        assert "run_succ" not in ids and "run_fail" not in ids  # 非 running 的 run 不命中
+
+        # ── 同页混排：时间倒序（run_fail 最新 → 排最前）──
+        r = client.get("/api/v1/jobs/parents")
+        assert r.status_code == 200
+        order = [it["id"] for it in r.json()["data"]["items"]]
+        assert order[0] == "run_fail", f"最新 run 应排最前: {order}"
+
+        # 再建一条 running 的 run 验证映射反向也成立（此时它最新，排在首位）
+        db.add(TapeRun(id="run_run", tape_id="tape3", tape_name="编排C", status="running",
+                       created_at=t0 + timedelta(minutes=6), updated_at=t0 + timedelta(minutes=7),
+                       step_results=[]))
+        db.commit()
+        r = client.get("/api/v1/jobs/parents", params={"state": "RUNNING"})
+        items = r.json()["data"]["items"]
+        ids = {it["id"] for it in items}
+        assert "run_run" in ids, f"RUNNING 筛选应命中 running run: {ids}"
+
+        # ── 序列化 state 大写化：run 输出 RUNNING/SUCCESS/FAILED ──
+        r = client.get("/api/v1/jobs/parents")
+        assert r.status_code == 200
+        by_id = {it["id"]: it for it in r.json()["data"]["items"]}
+        assert by_id["run_run"]["state"] == "RUNNING"
+        assert by_id["run_succ"]["state"] == "SUCCESS"
+        assert by_id["run_fail"]["state"] == "FAILED"
+        assert by_id["JOB_running"]["state"] == "RUNNING"
+
+        # ── 全部任务视图（list_jobs）也含编排 run ──
+        r = client.get("/api/v1/jobs")
+        assert r.status_code == 200
+        all_ids = {it["id"] for it in r.json()["data"]["items"]}
+        assert "run_run" in all_ids and "run_fail" in all_ids, f"list_jobs 应含 run: {all_ids}"
+        # task_class 显式筛选非 OrchestrationRun 时 run 被排除
+        r = client.get("/api/v1/jobs", params={"task_class": "KbDocumentProcessTask"})
+        all_ids = {it["id"] for it in r.json()["data"]["items"]}
+        assert "run_run" not in all_ids
+
+        # ── statistics 并入 run 状态 ──
+        r = client.get("/api/v1/jobs/statistics")
+        assert r.status_code == 200
+        stats = r.json()["data"]
+        assert stats["running"] == 2  # JOB_running + run_run
+        assert stats["success"] >= 1 and stats["failed"] >= 1
+
+        # ── get_job / stop_job 支持编排 run ──
+        r = client.get(f"/api/v1/jobs/{'run_run'}")
+        assert r.status_code == 200 and r.json()["data"]["task_class"] == "OrchestrationRun"
+        r = client.post(f"/api/v1/jobs/{'run_run'}/stop")
+        assert r.status_code == 200 and r.json()["data"]["state"] == "STOPPED"
+        from sqlalchemy import select
+
+        run = db.execute(select(TapeRun).where(TapeRun.id == "run_run")).scalars().first()
+        assert run.status == "cancelled"
+        # 已终态 run 再 stop → 400
+        r = client.post(f"/api/v1/jobs/{'run_run'}/stop")
+        assert r.status_code == 400
+    finally:
+        app.dependency_overrides.clear()

@@ -73,6 +73,7 @@ const TASK_CLASS_LABEL: Record<string, string> = {
   KbGraphBuildTask: "图谱构建",
   KbOrphanRecoveryTask: "孤儿任务恢复",
   KbAgentGatewayTask: "智能体网关",
+  OrchestrationRun: "编排执行",
 };
 
 function taskClassLabel(v?: string | null): string {

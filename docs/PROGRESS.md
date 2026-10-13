@@ -2,7 +2,26 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-13（编排运行历史 500 修复：kb_tape_run filesort 1038）
+最后更新：2026-10-13（任务监控页编排 run 可见性全面修复 + 卡住 run 终态化，commit 待定）
+
+## 12. 当前状态（2026-10-13 任务监控页「看不到编排任务」全面修复，commit 待推）
+
+- **问题现象**：任务监控页看不到编排执行（编排管理页执行后，监控页像没有该任务）
+- **根因（3 处盲区，全部实测确认）**：
+  1. **状态筛选大小写不匹配**：前端筛选下拉传大写（RUNNING/SUCCESS/... job-filter.tsx），后端对编排 run 直接 `TapeRun.status == state`（小写库值）→ **选任何状态筛选，编排 run 全被过滤掉**
+  2. **「全部任务」视图不含编排**：list_jobs 只查 modo_job，编排 run（kb_tape_run）完全不在列
+  3. **主任务视图 run 只在第 1 页**：list_parent_jobs 里 `if page == 1:` 才查 run，且 run append 在 20 条 job **后面**（注释写"并置最前"但实现相反）；total 又是 job+run 相加 → 数字对不上，翻页 run 消失
+  4. **附带**：statistics 只 group by Job 表，统计卡不含编排；get_job/stop/delete 对 run id 全 404（点编排行「日志/停止/删除」都不可用）
+- **修复（api/routers/jobs.py 5 处 + 前端 1 处）**：
+  1. 新增状态映射 `_RUN_STATE_TO_JOB`/`_JOB_STATE_TO_RUN` + `_run_state_to_job`/`_job_state_to_run`：筛选（前端大写→查库小写）与序列化（库小写→输出大写）双向归一化，两个视图两处筛选统一经此
+  2. list_parent_jobs / list_jobs 均重写为**窄列全量载入（只取 id+时间戳，不触碰大 JSON 列）+ 应用层合并排序（时间倒序 job/run 混排）+ 切片 + 按 id 回表**：既根治 §8/§11 的 1038 filesort，又让 run 真正混入时间线（翻页不再消失、最新 run 排最前、total 与行数对账）
+  3. list_jobs 并入编排 run（task_class/queue_name 显式筛选非 OrchestrationRun/orch 时 run 不参与）
+  4. job_statistics 并入 run 状态（映射大写后合入 counts），统计卡口径与列表一致
+  5. get_job / stop_job / delete_job 支持 TapeRun：详情返回 `_run_to_job_dict`；停止置 run.status=cancelled（引擎 advance 终态守卫 status not in (queued,running) 即不再推进）；删除删 run 行
+  6. 前端 job-table.tsx（全部任务视图）补 `OrchestrationRun: "编排执行"` 标签（主任务视图 parent-job-table 早已适配）；顺手修 delete_job 里 `logger` 从未定义（原 revoke 失败分支会 NameError）
+- **验证**：test_jobs_monitor 14 passed（新增 `test_parents_run_state_filter_mapping_and_mixed_paging` 覆盖状态映射/混排/全部视图/statistics/get/stop）+ test_jobs_monitor_ext + test_orchestration_engine 17 passed；`tsc --noEmit` 通过；.venv py_compile OK
+- **卡住 run 处理（闭环 §8 遗留）**：`5e9d3f1b`（03:53 429）与 `ee8d9044`（06:16 read timeout）两条 Refine run 卡 running 数小时——最后节点 LLM failed 但旧镜像 advance 未把终态写回 run。确认 5 个 celery worker active 队列全空（无活跃执行者）后置 status=failed + error 标注"最后节点失败未传播"，现库内无 running/queued 残留
+- **部署**：本机容器为镜像版本（api-server 42 分钟前 Up 但未含本次改动）→ 本次已提交推送，等 GitHub Actions 构建后 pull 生效
 
 ## 11. 当前状态（2026-10-13 编排「运行历史」列表 500 修复，commit 待定）
 

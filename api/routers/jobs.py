@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -23,7 +25,11 @@ from api.config import get_settings
 from api.models.framework import Job, JobQueue
 from api.services.identity import decode_identity_cookie
 
+if TYPE_CHECKING:  # 编排模型运行期仍在函数内局部 import（避免循环依赖）
+    from api.models.orchestration import TapeRun
+
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+logger = logging.getLogger(__name__)
 
 
 def _require_user_id(
@@ -99,113 +105,89 @@ def list_parent_jobs(
     include_system: bool = Query(False, description="包含系统周期任务"),
     db: Session = Depends(get_db),
 ) -> dict:
-    """父任务列表（2026-10-12 任务监控首屏）：
+    """父任务列表（2026-10-12 任务监控首屏，2026-10-13 合并分页重写）：
 
-    两种父任务统一展示：
+    两种父任务统一展示，且同页混排（时间倒序）：
       1. modo_job 链头（parent_id IS NULL 且非系统周期任务）
       2. 编排执行 kb_tape_run（虚拟父任务，子任务 = step_results 节点）
 
     每个父任务带 child_count（子任务数）与 child_states（各状态聚合），
     供前端首屏显示「进度 X/Y 完成」。
+
+    分页实现（2026-10-13）：kb_tape_run 含大 JSON 列（step_results/bindings
+    实测单行可达 ~940KB），SQL 全列 ORDER BY 会 filesort 爆 sort_buffer
+    （1038 Out of sort memory，见 dc63463）。因此窄列全量载入
+    （只取 id + 时间戳，不触碰大列）+ 应用层合并排序 + 切片 + 按 id 回表：
+    既不爆 sort_buffer，也让编排 run 真正混入时间线（此前 run 只在 page==1
+    出现，翻页即消失）。状态筛选经 _job_state_to_run 归一化（前端筛选值是
+    modo_job 大写枚举，TapeRun.status 是小写——不映射则「选状态就看不到编排」）。
     """
     from api.models.orchestration import TapeRun
 
-    # ── 1) modo_job 链头父任务
-    stmt = select(Job).where(Job.parent_id.is_(None))
-    count_stmt = select(func.count()).select_from(Job).where(Job.parent_id.is_(None))
+    # ── 窄列全量载入（不触碰大 JSON 列 → 无 filesort 宽行风险）──
+    job_stmt = select(Job.id, Job.create_time).where(Job.parent_id.is_(None))
     if not include_system:
-        stmt = stmt.where(Job.task_class.not_in(SYSTEM_TASK_CLASSES))
-        count_stmt = count_stmt.where(Job.task_class.not_in(SYSTEM_TASK_CLASSES))
+        job_stmt = job_stmt.where(Job.task_class.not_in(SYSTEM_TASK_CLASSES))
     if state:
-        stmt = stmt.where(Job.state == state)
-        count_stmt = count_stmt.where(Job.state == state)
+        job_stmt = job_stmt.where(Job.state == state)
     if keyword:
         like = f"%{keyword}%"
-        stmt = stmt.where(Job.id.like(like) | Job.task_id.like(like))
-        count_stmt = count_stmt.where(Job.id.like(like) | Job.task_id.like(like))
-    job_total = db.execute(count_stmt).scalar() or 0
-    jobs = (
-        db.execute(
-            stmt.order_by(Job.create_time.desc(), Job.id.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-        )
-        .scalars()
-        .all()
-    )
+        job_stmt = job_stmt.where(Job.id.like(like) | Job.task_id.like(like))
+    job_rows = db.execute(job_stmt).all()  # [(id, create_time), ...]
+    job_total = len(job_rows)
 
-    # ── 2) 编排 run 虚拟父任务（独立分页：parent 列表第 1 页并置最前）
-    run_total = 0
-    runs: list = []
-    if page == 1:
-        run_count_stmt = select(func.count()).select_from(TapeRun)
-        if state:
-            run_count_stmt = run_count_stmt.where(TapeRun.status == state)
-        if keyword:
-            like = f"%{keyword}%"
-            run_count_stmt = run_count_stmt.where(TapeRun.id.like(like) | TapeRun.tape_name.like(like))
-        run_total = db.execute(run_count_stmt).scalar() or 0
-        # 2026-10-13 fix(1038 Out of sort memory)：kb_tape_run 含大 JSON 列
-        # （step_results/bindings，实测单行可达 ~940KB），全列 ORDER BY 时优化器
-        # 按小表成本模型选 filesort，宽行塞 sort_buffer（256KB）即溢出 → 端点 500。
-        # 改为：排序只取窄列 id（filesort 只碰 id 行，永不爆 buffer），
-        # 再按 id 回表取全行并保持排序顺序（不依赖优化器选索引）。
-        run_id_stmt = select(TapeRun.id)
-        if state:
-            run_id_stmt = run_id_stmt.where(TapeRun.status == state)
-        if keyword:
-            like = f"%{keyword}%"
-            run_id_stmt = run_id_stmt.where(TapeRun.id.like(like) | TapeRun.tape_name.like(like))
-        run_ids: list[str] = list(
-            db.execute(
-                run_id_stmt.order_by(TapeRun.created_at.desc(), TapeRun.id.desc()).limit(page_size)
-            )
-            .scalars()
-            .all()
-        )
-        runs = []
-        if run_ids:
-            pos = {rid: i for i, rid in enumerate(run_ids)}
-            fetched = db.execute(select(TapeRun).where(TapeRun.id.in_(run_ids))).scalars().all()
-            runs = sorted(fetched, key=lambda r: pos.get(r.id, len(run_ids)))
+    run_stmt = select(TapeRun.id, TapeRun.created_at)
+    run_state = _job_state_to_run(state) if state else None
+    if run_state:
+        run_stmt = run_stmt.where(TapeRun.status == run_state)
+    if keyword:
+        like = f"%{keyword}%"
+        run_stmt = run_stmt.where(TapeRun.id.like(like) | TapeRun.tape_name.like(like))
+    run_rows = db.execute(run_stmt).all()  # [(id, created_at), ...]
+    run_total = len(run_rows)
 
-    # 子任务聚合（modo_job 链头）
-    agg = _child_agg(db, [j.id for j in jobs])
-    items = [
-        _parent_job_to_dict(
-            j,
-            child_count=agg.get(j.id, {}).get("count", 0),
-            child_states=agg.get(j.id, {}).get("states", {}),
-        )
-        for j in jobs
+    # ── 应用层合并排序：时间倒序（job.create_time / run.created_at），同刻按 id 倒序 ──
+    merged: list[tuple[str, object | None, str]] = [
+        (rid, create_time, "job") for rid, create_time in job_rows
     ]
-    # 编排 run（子任务 = step_results）
-    for run in runs:
-        steps = run.step_results or []
-        states: dict[str, int] = {}
-        for s in steps:
-            st = str(s.get("status") or "")
-            states[st] = states.get(st, 0) + 1
-        items.append(
-            {
-                "id": run.id,
-                "task_id": run.id,
-                "task_class": "OrchestrationRun",  # 虚拟任务类（前端按此渲染「编排执行」）
-                "queue_name": "orch",
-                "trigger_type": "API",
-                "state": run.status,
-                "start_time": (run.created_at.isoformat() if run.created_at else None),
-                "end_time": (run.updated_at.isoformat() if run.updated_at else None),
-                "duration_ms": None,
-                "error_message": run.error,
-                "log_path": None,
-                "create_time": (run.created_at.isoformat() if run.created_at else None),
-                "params": {"tape_id": run.tape_id, "tape_name": run.tape_name, "inputs": run.inputs or {}},
-                "parent_id": None,
-                "child_count": len(steps),
-                "child_states": states,
-            }
-        )
+    merged += [(rid, created_at, "run") for rid, created_at in run_rows]
+    merged.sort(key=lambda t: (t[1] or datetime.min, t[0]), reverse=True)
+
+    start = (page - 1) * page_size
+    page_merged = merged[start : start + page_size]
+
+    # ── 按 id 回表取全行 ──
+    job_ids = [rid for rid, _ts, kind in page_merged if kind == "job"]
+    run_ids = [rid for rid, _ts, kind in page_merged if kind == "run"]
+    jobs = (
+        db.execute(select(Job).where(Job.id.in_(job_ids))).scalars().all() if job_ids else []
+    )
+    runs = (
+        db.execute(select(TapeRun).where(TapeRun.id.in_(run_ids))).scalars().all()
+        if run_ids
+        else []
+    )
+    jobs_by_id = {j.id: j for j in jobs}
+    runs_by_id = {r.id: r for r in runs}
+
+    agg = _child_agg(db, job_ids)
+    items: list[dict] = []
+    for rid, _ts, kind in page_merged:
+        if kind == "job":
+            j = jobs_by_id.get(rid)
+            if not j:
+                continue
+            items.append(
+                _parent_job_to_dict(
+                    j,
+                    child_count=agg.get(j.id, {}).get("count", 0),
+                    child_states=agg.get(j.id, {}).get("states", {}),
+                )
+            )
+        else:
+            r = runs_by_id.get(rid)
+            if r:
+                items.append(_run_to_job_dict(r))
 
     return {
         "success": True,
@@ -264,6 +246,57 @@ def list_job_children(
 # 系统自愈周期任务（默认从任务列表隐藏，避免每 5 分钟刷屏）
 SYSTEM_TASK_CLASSES: tuple[str, ...] = ("KbOrphanRecoveryTask",)
 
+# ── 编排 run（kb_tape_run）与任务监控枚举对齐 ──────────────────────────
+# 任务监控页的状态枚举沿用 modo_job 的大写形态（PENDING/RUNNING/SUCCESS/
+# FAILED/STOPPED），而 TapeRun.status 是小写（queued/running/success/failed/
+# cancelled）。筛选/统计/序列化统一经此映射，避免「选了状态就看不到编排」。
+_RUN_STATE_TO_JOB = {
+    "queued": "PENDING",
+    "running": "RUNNING",
+    "success": "SUCCESS",
+    "failed": "FAILED",
+    "cancelled": "STOPPED",
+}
+_JOB_STATE_TO_RUN = {v: k for k, v in _RUN_STATE_TO_JOB.items()}
+
+
+def _run_state_to_job(state: str | None) -> str:
+    """TapeRun.status（小写）→ 任务监控大写枚举；未知值原样返回。"""
+    return _RUN_STATE_TO_JOB.get((state or "").lower(), state or "PENDING")
+
+
+def _job_state_to_run(state: str | None) -> str | None:
+    """任务监控筛选值（大写）→ TapeRun.status（小写）；非编排状态返回 None。"""
+    return _JOB_STATE_TO_RUN.get((state or "").upper())
+
+
+def _run_to_job_dict(run: TapeRun) -> dict:
+    """编排 run → 任务监控 JobItem 同构序列化（虚拟父任务，state 统一大写）。"""
+    steps = run.step_results or []
+    states: dict[str, int] = {}
+    for s in steps:
+        st = str(s.get("status") or "")
+        states[st] = states.get(st, 0) + 1
+    return {
+        "id": run.id,
+        "task_id": run.id,
+        "task_class": "OrchestrationRun",  # 虚拟任务类（前端按此渲染「编排执行」）
+        "queue_name": "orch",
+        "trigger_type": "API",
+        "state": _run_state_to_job(run.status),
+        "start_time": (run.created_at.isoformat() if run.created_at else None),
+        "end_time": (run.updated_at.isoformat() if run.updated_at else None),
+        "duration_ms": None,
+        "error_message": run.error,
+        "log_path": None,
+        "create_time": (run.created_at.isoformat() if run.created_at else None),
+        "params": {"tape_id": run.tape_id, "tape_name": run.tape_name, "inputs": run.inputs or {}},
+        "parent_id": None,
+        "child_count": len(steps),
+        "child_states": states,
+    }
+
+
 
 @router.get("")
 def list_jobs(
@@ -277,47 +310,88 @@ def list_jobs(
     include_system: bool = Query(False, description="包含系统周期任务（默认隐藏，避免 OrphanRecovery 刷屏）"),
     db: Session = Depends(get_db),
 ) -> dict:
-    """任务列表：时间倒序，支持 task_class / state / keyword 过滤 + 分页。
+    """任务列表：时间倒序，支持 task_class / state / keyword / queue 过滤 + 分页。
+
+    2026-10-13：并入编排 run（OrchestrationRun 虚拟行），与 modo_job 同页
+    混排（时间倒序）。窄列全量载入 + 应用层合并排序切片 + 回表，避免
+    kb_tape_run 大 JSON 列 filesort 爆 sort_buffer（1038）。
 
     系统周期任务（如 KbOrphanRecoveryTask 每 5 分钟一条）默认隐藏，
     include_system=true 或显式 task_class 时才展示。只读。
     """
-    stmt = select(Job)
-    count_stmt = select(func.count()).select_from(Job)
+    from api.models.orchestration import TapeRun
 
+    # ── 窄列全量载入 ──
+    job_stmt = select(Job.id, Job.create_time)
     if task_class:
-        stmt = stmt.where(Job.task_class == task_class)
-        count_stmt = count_stmt.where(Job.task_class == task_class)
+        job_stmt = job_stmt.where(Job.task_class == task_class)
     elif not include_system:
-        # 隐藏系统自愈周期任务（孤儿回收等），避免刷屏淹没真实任务
-        stmt = stmt.where(Job.task_class.not_in(SYSTEM_TASK_CLASSES))
-        count_stmt = count_stmt.where(Job.task_class.not_in(SYSTEM_TASK_CLASSES))
+        job_stmt = job_stmt.where(Job.task_class.not_in(SYSTEM_TASK_CLASSES))
     if state:
-        stmt = stmt.where(Job.state == state)
-        count_stmt = count_stmt.where(Job.state == state)
+        job_stmt = job_stmt.where(Job.state == state)
     if keyword:
         like = f"%{keyword}%"
-        stmt = stmt.where(Job.id.like(like) | Job.task_id.like(like))
-        count_stmt = count_stmt.where(Job.id.like(like) | Job.task_id.like(like))
+        job_stmt = job_stmt.where(Job.id.like(like) | Job.task_id.like(like))
     if queue_name:
-        stmt = stmt.where(Job.queue_name == queue_name)
-        count_stmt = count_stmt.where(Job.queue_name == queue_name)
+        job_stmt = job_stmt.where(Job.queue_name == queue_name)
+    job_rows = db.execute(job_stmt).all()
+    job_total = len(job_rows)
 
-    total = db.execute(count_stmt).scalar() or 0
-    rows = (
-        db.execute(
-            stmt.order_by(Job.create_time.desc(), Job.id.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-        )
-        .scalars()
-        .all()
+    run_rows: list = []
+    # 编排 run 的任务类恒为 OrchestrationRun、队列恒为 orch：显式筛选
+    # 其他值（task_class/queue_name）时 run 不参与。
+    if not (task_class and task_class != "OrchestrationRun") and not (
+        queue_name and queue_name != "orch"
+    ):
+        run_stmt = select(TapeRun.id, TapeRun.created_at)
+        run_state = _job_state_to_run(state) if state else None
+        if run_state:
+            run_stmt = run_stmt.where(TapeRun.status == run_state)
+        if keyword:
+            like = f"%{keyword}%"
+            run_stmt = run_stmt.where(TapeRun.id.like(like) | TapeRun.tape_name.like(like))
+        run_rows = list(db.execute(run_stmt).all())
+    run_total = len(run_rows)
+
+    # ── 应用层合并排序 + 切片 + 回表 ──
+    merged: list[tuple[str, object | None, str]] = [
+        (rid, create_time, "job") for rid, create_time in job_rows
+    ]
+    merged += [(rid, created_at, "run") for rid, created_at in run_rows]
+    merged.sort(key=lambda t: (t[1] or datetime.min, t[0]), reverse=True)
+
+    start = (page - 1) * page_size
+    page_merged = merged[start : start + page_size]
+
+    job_ids = [rid for rid, _ts, kind in page_merged if kind == "job"]
+    run_ids = [rid for rid, _ts, kind in page_merged if kind == "run"]
+    jobs = (
+        db.execute(select(Job).where(Job.id.in_(job_ids))).scalars().all() if job_ids else []
     )
+    runs = (
+        db.execute(select(TapeRun).where(TapeRun.id.in_(run_ids))).scalars().all()
+        if run_ids
+        else []
+    )
+    jobs_by_id = {j.id: j for j in jobs}
+    runs_by_id = {r.id: r for r in runs}
+
+    items: list[dict] = []
+    for rid, _ts, kind in page_merged:
+        if kind == "job":
+            j = jobs_by_id.get(rid)
+            if j:
+                items.append(_job_to_dict(j))
+        else:
+            r = runs_by_id.get(rid)
+            if r:
+                items.append(_run_to_job_dict(r))
+
     return {
         "success": True,
         "data": {
-            "items": [_job_to_dict(j) for j in rows],
-            "total": total,
+            "items": items,
+            "total": job_total + run_total,
             "page": page,
             "page_size": page_size,
         },
@@ -329,13 +403,26 @@ def job_statistics(
     _user_id: str = Depends(_require_user_id),
     db: Session = Depends(get_db),
 ) -> dict:
-    """任务统计：按 state 分组计数（对齐 data-synth JobStatistics）。"""
+    """任务统计：按 state 分组计数（对齐 data-synth JobStatistics）。
+
+    2026-10-13：并入编排 run（kb_tape_run）状态——run 状态小写枚举经
+    _run_state_to_job 映射为大写后合入对应计数，统计卡与列表口径一致。
+    """
+    from api.models.orchestration import TapeRun
+
     rows = db.execute(
         select(Job.state, func.count()).group_by(Job.state)
     ).all()
     counts: dict[str, int] = {}
     for state, count in rows:
         counts[str(state or "")] = int(count)
+
+    run_rows = db.execute(
+        select(TapeRun.status, func.count()).group_by(TapeRun.status)
+    ).all()
+    for status, count in run_rows:
+        key = _run_state_to_job(status)
+        counts[key] = counts.get(key, 0) + int(count)
 
     return {
         "success": True,
@@ -381,7 +468,28 @@ def stop_job(
     置 STOPPED 后 worker 执行前检查（scheduler.execute_modo_job 的
     "job not executable" 守卫）会拒执行；执行中停掉的任务，handler 跑完后
     终态保护保证不再覆盖成 SUCCESS/FAILED（2026-10-05 修复「取消复活」）。
+
+    2026-10-13：编排 run（OrchestrationRun）也支持停止——run 在
+    queued/running 时置 cancelled，引擎 advance 的终态守卫
+    （status not in (queued, running) 即不再推进）保证不再执行后续节点。
     """
+    from api.models.orchestration import TapeRun
+
+    run = db.execute(select(TapeRun).where(TapeRun.id == job_id)).scalars().first()
+    if run:
+        if run.status not in ("queued", "running"):
+            raise HTTPException(
+                status_code=400, detail=f"编排 run 当前状态 {run.status}，不可停止"
+            )
+        run.status = "cancelled"
+        run.error = (run.error or "") + " [任务监控页手动停止]"
+        db.add(run)
+        db.commit()
+        return {
+            "success": True,
+            "data": {"id": job_id, "state": "STOPPED", "kind": "orchestration"},
+        }
+
     job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
     if not job:
         raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
@@ -454,11 +562,19 @@ def delete_job(
     _user_id: str = Depends(_require_user_id),
     db: Session = Depends(get_db),
 ) -> dict:
-    """删除任务记录（modo_job 行）。
+    """删除任务记录（modo_job 行；2026-10-13 起支持编排 run 记录）。
 
     2026-10-05 实测: 运行中/排队中任务直接删行，agent 仍会跑完（孤儿页）——
     删除前先 revoke celery（terminate），真正取消执行。
     """
+    from api.models.orchestration import TapeRun
+
+    run = db.execute(select(TapeRun).where(TapeRun.id == job_id)).scalars().first()
+    if run:
+        db.delete(run)
+        db.commit()
+        return {"success": True, "data": {"id": job_id, "deleted": True, "kind": "orchestration"}}
+
     job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
     if not job:
         raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
@@ -480,7 +596,17 @@ def get_job(
     _user_id: str = Depends(_require_user_id),
     db: Session = Depends(get_db),
 ) -> dict:
-    """单任务详情（含解析后的 task_params / error_message 全文）。"""
+    """单任务详情（含解析后的 task_params / error_message 全文）。
+
+    2026-10-13：编排 run（OrchestrationRun）同样可查——JobLogDrawer
+    打开编排行的「日志」走的就是本端点，此前 404。
+    """
+    from api.models.orchestration import TapeRun
+
+    run = db.execute(select(TapeRun).where(TapeRun.id == job_id)).scalars().first()
+    if run:
+        return {"success": True, "data": _run_to_job_dict(run)}
+
     job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
     if not job:
         raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
