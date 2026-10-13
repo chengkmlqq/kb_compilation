@@ -20,6 +20,7 @@ import { DesignerClient } from "./[id]/designer/_components/designer-client";
 import { ExecuteInputModal } from "./_components/execute-input-modal";
 import { TapeRunLogDrawer } from "./_components/tape-run-log-drawer";
 import { TapeRunHistoryDrawer } from "./_components/tape-run-history-drawer";
+import { useUserNames } from "@/lib/use-user-names";
 import {
   apiApplyTapeTemplate,
   apiCreateTape,
@@ -51,6 +52,8 @@ type OrchestrationTab = { key: string; title: string; tapeId: string };
 
 export default function OrchestrationsPage() {
   const { message, modal } = App.useApp();
+  // 创建人列：user_id → 中文用户名映射（拉全量用户一次）
+  const userNames = useUserNames();
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<TapeItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -395,7 +398,7 @@ export default function OrchestrationsPage() {
         return <Tag color={m.color}>{m.label}</Tag>;
       },
     },
-    { title: "创建人", dataIndex: "create_user", width: 100, render: (v?: string) => v || "-" },
+    { title: "创建人", dataIndex: "create_user", width: 100, render: (v?: string) => (v ? userNames[v] || v : "-") },
     {
       title: "操作",
       key: "act",

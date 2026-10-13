@@ -45,6 +45,7 @@ import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
 import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
+import { useUserNames } from "@/lib/use-user-names";
 import {
   apiApplyTapeTemplate,
   apiCreateTapeTemplate,
@@ -78,6 +79,8 @@ function configSummary(config?: unknown): string {
 export default function TapeTemplatesPage() {
   const { message, modal } = App.useApp();
   const router = useRouter();
+  // 创建人展示：user_id → 中文用户名映射（拉全量用户一次）
+  const userNames = useUserNames();
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<TapeTemplateItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -336,7 +339,7 @@ export default function TapeTemplatesPage() {
         return <Tag color={m.color}>{m.label}</Tag>;
       },
     },
-    { title: "创建人", dataIndex: "create_user", width: 90, render: (v?: string) => v || "-" },
+    { title: "创建人", dataIndex: "create_user", width: 90, render: (v?: string) => (v ? userNames[v] || v : "-") },
     {
       title: "操作",
       key: "act",
@@ -622,7 +625,7 @@ export default function TapeTemplatesPage() {
                 { key: "nodes", label: "节点数", children: viewing.node_count ?? 0 },
                 { key: "edges", label: "连线数", children: viewing.edge_count ?? 0 },
                 { key: "apply", label: "应用次数", children: viewing.apply_count ?? 0 },
-                { key: "creator", label: "创建人", children: viewing.create_user || "-" },
+                { key: "creator", label: "创建人", children: (viewing.create_user ? userNames[viewing.create_user] || viewing.create_user : "-") },
                 { key: "created", label: "创建时间", children: viewing.created_at || "-" },
                 { key: "updated", label: "更新时间", children: viewing.updated_at || "-" },
                 { key: "descr", label: "描述", span: 2, children: viewing.descr || "-" },
