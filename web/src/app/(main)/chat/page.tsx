@@ -85,6 +85,8 @@ interface UiMessage extends ChatMessageItem {
   error?: boolean;
     steps?: RagStep[];
     toolEvents?: ToolCallEvent[];
+  /** 2026-10-13 对齐 WeKnora：智能体模式回复（隐藏思考大块，思考折叠进工具步骤） */
+  agent?: boolean;
   }
 
 // 切页续传锚点：qa-resume:{sessionId} → {stream_id, offset}
@@ -315,8 +317,11 @@ export default function ChatPage() {
       setLoadingMsgs(true);
       try {
         const res = await apiLoadSessionMessages(sessionId);
-        setMsgs((res.data?.items || []) as UiMessage[]);
         const s = sessions.find((x) => x.id === sessionId);
+        // 2026-10-13 对齐 WeKnora：智能体会话的历史消息标记 agent=true（隐藏思考大块）
+        setMsgs(
+          (res.data?.items || []).map((m) => ({ ...m, agent: !!s?.agent_id })) as UiMessage[],
+        );
         if (s?.kb_id) setKbId(s.kb_id);
         if (s?.agent_id) {
           setAgentMode(s.agent_id);
@@ -380,7 +385,9 @@ export default function ChatPage() {
           return;
         }
         const msgsRes = await apiLoadSessionMessages(activeSession);
-        setMsgs((msgsRes.data?.items || []) as UiMessage[]);
+        setMsgs(
+          (msgsRes.data?.items || []).map((m) => ({ ...m, agent: !!agentMode })) as UiMessage[],
+        );
         void toast.success(`已回溯到该消息（清理 ${res.data.removed} 条后续消息）`);
       } catch {
         void toast.error("回溯失败，请稍后重试");
@@ -429,6 +436,7 @@ export default function ChatPage() {
             content: "",
             refs: [],
             streaming: true,
+            agent: !!agentMode,
             created_at: new Date().toISOString(),
           },
         ]);
@@ -578,6 +586,8 @@ export default function ChatPage() {
       content: "",
       refs: [],
       streaming: true,
+      // 2026-10-13 对齐 WeKnora：智能体模式回复标记 agent（隐藏思考大块）
+      agent: !!effectiveAgent,
       created_at: new Date().toISOString(),
     };
     setMsgs((prev) => [...prev, userMsg, placeholder]);
@@ -1270,7 +1280,11 @@ export default function ChatPage() {
                     {m.role === "assistant" && (
                       <AgentToolCalls events={m.toolEvents || []} />
                     )}
-                    {m.role === "assistant" && m.thinking && (
+                    {/* 2026-10-13 对齐 WeKnora：智能体模式隐藏思考大块，思考折叠进工具步骤区 */}
+                    {m.role === "assistant" && m.thinking && m.agent && (
+                      <AgentThinkingRow thinking={m.thinking} streaming={!!m.streaming} />
+                    )}
+                    {m.role === "assistant" && m.thinking && !m.agent && (
                       <ThinkingBlock thinking={m.thinking} streaming={!!m.streaming} />
                     )}
                     {m.error ? (
@@ -1965,6 +1979,48 @@ function ThinkingBlock({ thinking, streaming }: { thinking: string; streaming?: 
             wordBreak: "break-word",
             maxHeight: 240,
             overflow: "auto",
+          }}
+        >
+          {thinking}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 智能体模式思考折叠行（2026-10-13 对齐 WeKnora：AgentStreamDisplay 把 thinking
+// 事件渲染成步骤时间线里可展开的「思考」行；kb 侧折叠进工具步骤区，不再显示大块）
+// ---------------------------------------------------------------------------
+
+function AgentThinkingRow({ thinking, streaming }: { thinking: string; streaming?: boolean }) {
+  const [open, setOpen] = useState(false);
+  // 思考中强制展开跟随显示；完成后保持展开（可点击折叠/展开）
+  const expanded = streaming || open;
+  return (
+    <div className="kb-agent-tool-card" style={{ margin: "0 0 8px" }}>
+      <div
+        className="kb-agent-tool-card-head"
+        onClick={() => setOpen((v) => !v)}
+        style={streaming ? { cursor: "default" } : undefined}
+      >
+        <BulbOutlined className="kb-agent-tool-tool" style={streaming ? undefined : { color: "#fa8c16" }} />
+        <span className="kb-agent-tool-name">{streaming ? "思考中…" : "思考过程"}</span>
+        <span className="kb-agent-tool-status">
+          {streaming ? "进行中" : open ? "收起" : "展开"}
+        </span>
+        <span className="kb-agent-tool-arrow">{expanded ? "▾" : "▸"}</span>
+      </div>
+      {expanded && (
+        <div
+          className="kb-agent-tool-details"
+          style={{
+            padding: "8px 12px",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            maxHeight: 240,
+            overflow: "auto",
+            fontSize: 12,
           }}
         >
           {thinking}
