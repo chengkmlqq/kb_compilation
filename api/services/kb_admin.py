@@ -1801,9 +1801,9 @@ def _sync_page_folders(db: Session, kb_id: str, page: WikiPage, folder_ids: list
     from api.models.knowledge import WikiPageFolder
 
     db.execute(
-        select(WikiPageFolder).where(
+        delete(WikiPageFolder).where(
             WikiPageFolder.kb_id == kb_id, WikiPageFolder.page_id == page.id
-        ).delete()
+        )
     )
     if folder_ids:
         fids = [str(f) for f in folder_ids if str(f)]
