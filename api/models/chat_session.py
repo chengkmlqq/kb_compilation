@@ -75,6 +75,9 @@ class ChatMessage(Base):
     refs: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 思考过程全文（assistant 消息，LLM reasoning_content）
     thinking: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 问答反馈（2026-10-13）：like / dislike / NULL=未反馈；feedback_at 记录时间
+    feedback: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    feedback_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[str] = mapped_column(String(32), default=_now_iso)
 
 

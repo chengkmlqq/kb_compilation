@@ -174,6 +174,8 @@ def _message_dict(m: ChatMessage) -> dict:
         "content": m.content,
         "refs": refs,
         "thinking": m.thinking or None,
+        "feedback": m.feedback or None,
+        "feedback_at": m.feedback_at or None,
         "created_at": m.created_at,
     }
 
@@ -203,6 +205,34 @@ def delete_message(db: Session, user_id: str, session_id: str, message_id: str) 
         raise HTTPException(status_code=404, detail=f"消息不存在: {message_id}")
     db.delete(m)
     db.commit()
+
+
+def set_message_feedback(
+    db: Session, user_id: str, session_id: str, message_id: str, feedback_type: str | None
+) -> dict:
+    """设置/清除单条消息的问答反馈（like / dislike，None=清除）。
+
+    同会话同消息只保留一条反馈；切换或清除直接覆盖。返回更新后的消息字典。
+    """
+    get_session(db, user_id, session_id)
+    m = db.execute(
+        select(ChatMessage).where(
+            ChatMessage.id == message_id, ChatMessage.session_id == session_id
+        )
+    ).scalars().first()
+    if not m:
+        raise HTTPException(status_code=404, detail=f"消息不存在: {message_id}")
+    if m.role != "assistant":
+        raise HTTPException(status_code=400, detail="仅可对 AI 回复进行反馈")
+    if feedback_type in ("like", "dislike"):
+        m.feedback = feedback_type
+        m.feedback_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    else:
+        m.feedback = None
+        m.feedback_at = None
+    db.commit()
+    db.refresh(m)
+    return _message_dict(m)
 
 
 def append_message(

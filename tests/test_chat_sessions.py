@@ -97,3 +97,42 @@ def test_delete_message(db) -> None:
     svc.delete_message(db, "user1", s["id"], m1["id"])
     left = svc.load_messages(db, "user1", s["id"])
     assert [m["id"] for m in left] == [m2["id"]]
+
+
+def test_set_message_feedback_like_then_switch_and_clear(db) -> None:
+    s = svc.create_session(db, "user1", "kb1", None)
+    u = svc.append_message(db, "user1", s["id"], "user", "问题")
+    a = svc.append_message(db, "user1", s["id"], "assistant", "回答", thinking="思考")
+
+    got = svc.set_message_feedback(db, "user1", s["id"], a["id"], "like")
+    assert got["feedback"] == "like"
+    assert got["feedback_at"] is not None
+    assert svc.load_messages(db, "user1", s["id"])[1]["feedback"] == "like"
+
+    # 切换为 dislike
+    got = svc.set_message_feedback(db, "user1", s["id"], a["id"], "dislike")
+    assert got["feedback"] == "dislike"
+
+    # 清除
+    got = svc.set_message_feedback(db, "user1", s["id"], a["id"], None)
+    assert got["feedback"] is None
+    assert got["feedback_at"] is None
+    assert svc.load_messages(db, "user1", s["id"])[1]["feedback"] is None
+
+    # 用户消息不可反馈
+    with pytest.raises(Exception):
+        svc.set_message_feedback(db, "user1", s["id"], u["id"], "like")
+
+
+def test_set_message_feedback_ownership_and_missing(db) -> None:
+    s = svc.create_session(db, "user1", "kb1", None)
+    a = svc.append_message(db, "user1", s["id"], "assistant", "回答")
+
+    # 他人会话内消息不可反馈（get_session 越权拦截）
+    s2 = svc.create_session(db, "user2", "kb1", None)
+    with pytest.raises(Exception):
+        svc.set_message_feedback(db, "user2", s2["id"], a["id"], "like")
+
+    # 消息不存在 404
+    with pytest.raises(Exception):
+        svc.set_message_feedback(db, "user1", s["id"], "no-such-msg", "like")

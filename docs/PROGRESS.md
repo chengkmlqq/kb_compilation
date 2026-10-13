@@ -2,7 +2,15 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-13（任务监控 500 修复：kb_tape_run filesort 1038）
+最后更新：2026-10-13（问答「喜欢/不喜欢」反馈）
+
+## 9. 当前状态（2026-10-13 问答反馈「喜欢/不喜欢」，commit 待推）
+
+- **功能**：智能问答页每条 AI 回复答案工具栏（复制旁）新增「喜欢 / 不喜欢」按钮，再点一次取消；选中态高亮（喜欢主色 / 不喜欢红色）。未选中的会话级别无入口限制，仅对 AI 回复可反馈
+- **后端**：`chat_message` 新增 `feedback` / `feedback_at` 两列（迁移 **0014_chat_message_feedback**，链 0013，幂等 ALTER）；`POST /api/v1/sessions/{sid}/messages/{mid}/feedback` 体 `{feedback_type: like|dislike|null}`（null=清除；仅 assistant 消息，越权/消息不存在 404 拦截）；`_message_dict` 透出 feedback/feedback_at 供前端回显
+- **前端**：chat/page.tsx `toggleFeedback`（乐观更新 + 失败回滚 + toast）；api.ts 新增 `apiSubmitMessageFeedback`
+- **测试**：test_chat_sessions.py +2 例（like→切换 dislike→清除、用户消息拒绝、他人会话越权、消息不存在），全量 **571 passed**（2 个既有失败 test_files/test_storage 仍为 storage prod/ 前缀断言未同步，与本次无关）
+- **部署注意**：0014 依赖其他会话的 0013_job_sort_indexes（已提交 9c5d15b），部署后 api-server 启动自动 upgrade head 到 0014；改码需 CI 重建镜像
 
 ## 8. 当前状态（2026-10-13 任务监控页 500 修复，commit 待定）
 

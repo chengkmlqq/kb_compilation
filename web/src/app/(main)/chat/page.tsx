@@ -41,6 +41,8 @@ import {
   SearchOutlined,
   SendOutlined,
   StopOutlined,
+  LikeOutlined,
+  DislikeOutlined,
 } from "@ant-design/icons";
 import {
   apiCreateAgentSession,
@@ -68,6 +70,7 @@ import {
   ChatSessionItem,
   KbItem,
   ModelItem,
+  apiSubmitMessageFeedback,
 } from "@/lib/api";
 import MarkdownViewer from "@/components/MarkdownViewer";
 import TypewriterText from "@/components/TypewriterText";
@@ -878,6 +881,29 @@ export default function ChatPage() {
     toast.warning("未找到可重新生成的问题");
   };
 
+  // 2026-10-13 问答反馈：喜欢/不喜欢（再点一次取消）。乐观更新，失败回滚。
+  const toggleFeedback = useCallback(
+    async (m: UiMessage, type: "like" | "dislike") => {
+      if (!activeSession) {
+        toast.warning("请先发送消息后再反馈");
+        return;
+      }
+      const prev = m.feedback ?? null;
+      const next = prev === type ? null : type;
+      setMsgs((prevMsgs) =>
+        prevMsgs.map((x) => (x.id === m.id ? { ...x, feedback: next } : x)),
+      );
+      const res = await apiSubmitMessageFeedback(activeSession, m.id, next);
+      if (!res.success) {
+        setMsgs((prevMsgs) =>
+          prevMsgs.map((x) => (x.id === m.id ? { ...x, feedback: prev } : x)),
+        );
+        toast.error(res.message || "反馈失败，请稍后重试");
+      }
+    },
+    [activeSession, toast],
+  );
+
   const deleteSession = async (id: string) => {
     await apiDeleteSession(id);
     if (activeSession === id) {
@@ -1352,9 +1378,9 @@ export default function ChatPage() {
                     </Button>
                   </div>
                 )}
-                {/* 答案工具栏：复制 */}
+                {/* 答案工具栏：复制 + 喜欢/不喜欢反馈（2026-10-13） */}
                 {m.role === "assistant" && !m.streaming && m.content && (
-                  <div style={{ marginTop: 6, display: "flex", gap: 4 }}>
+                  <div style={{ marginTop: 6, display: "flex", gap: 4, alignItems: "center" }}>
                     <Button
                       type="text"
                       size="small"
@@ -1369,6 +1395,34 @@ export default function ChatPage() {
                       }}
                     >
                       复制
+                    </Button>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<LikeOutlined />}
+                      style={{
+                        fontSize: 12,
+                        padding: "0 4px",
+                        height: "auto",
+                        color: m.feedback === "like" ? token.colorPrimary : token.colorTextTertiary,
+                      }}
+                      onClick={() => void toggleFeedback(m, "like")}
+                    >
+                      喜欢
+                    </Button>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<DislikeOutlined />}
+                      style={{
+                        fontSize: 12,
+                        padding: "0 4px",
+                        height: "auto",
+                        color: m.feedback === "dislike" ? token.colorError : token.colorTextTertiary,
+                      }}
+                      onClick={() => void toggleFeedback(m, "dislike")}
+                    >
+                      不喜欢
                     </Button>
                   </div>
                 )}

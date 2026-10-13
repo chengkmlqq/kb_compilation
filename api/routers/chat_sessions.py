@@ -13,6 +13,7 @@ Backs the frontend "智能问答" conversation UI:
 - POST   /api/v1/sessions/follow-up              follow-up suggestions
 - GET    /api/v1/sessions/{id}/messages          load history
 - DELETE /api/v1/sessions/{id}/messages/{mid}    delete one message
+- POST   /api/v1/sessions/{id}/messages/{mid}/feedback   like/dislike/clear
 Requires the x-next-identity cookie (user ownership).
 """
 
@@ -46,6 +47,7 @@ from api.services.chat_sessions import (
     load_messages,
     recommended_questions,
     search_messages,
+    set_message_feedback,
     update_session,
 )
 from api.services.identity import decode_identity_cookie
@@ -258,6 +260,24 @@ def api_delete_message(
 ) -> dict:
     delete_message(db, user_id, session_id, message_id)
     return {"success": True, "data": {"deleted": message_id}}
+
+
+class MessageFeedbackRequest(BaseModel):
+    """问答反馈：feedback_type = like / dislike / null（清除）。"""
+
+    feedback_type: str | None = None
+
+
+@router.post("/{session_id}/messages/{message_id}/feedback")
+def api_set_message_feedback(
+    session_id: str,
+    message_id: str,
+    req: MessageFeedbackRequest,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(_require_user_id),
+) -> dict:
+    msg = set_message_feedback(db, user_id, session_id, message_id, req.feedback_type)
+    return {"success": True, "data": msg}
 
 
 # ---------------------------------------------------------------------------
