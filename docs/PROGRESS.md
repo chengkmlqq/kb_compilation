@@ -2,7 +2,16 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-12（智能问答页全量对齐 WeKnora）
+最后更新：2026-10-13（任务监控 500 修复：kb_tape_run filesort 1038）
+
+## 8. 当前状态（2026-10-13 任务监控页 500 修复，commit 待定）
+
+- **症状**：任务监控页首屏 `GET /api/v1/jobs/parents?page=1&page_size=20` 500
+- **根因**：`kb_tape_run` 含大 JSON 列（step_results/bindings，实测单行 ~940KB：来自 03:53 的 Refine 编排 run `5e9d3f1b`，step_results 330KB + bindings 607KB）。端点按 `created_at DESC, id DESC` 全列排序，表只有 19 行 → 优化器按成本模型选 filesort（EXPLAIN key=NULL, Using filesort，不认新建索引），宽行塞 256KB sort_buffer → MySQL 1038 `Out of sort memory`
+- **修复（双层）**：① `api/routers/jobs.py` run 查询改为**先取窄列 id 排序分页 → IN 回表取全行**（filesort 只碰 id 行，永不爆 buffer，不依赖优化器选索引）；② 迁移 **0013_job_sort_indexes** 补 `kb_tape_run(created_at DESC, id DESC)` + `modo_job(create_time DESC, id DESC)` 降序索引（数据量大后优化器走索引序；已在运行库手动建，迁移幂等跳过）
+- **验证**：容器内直调 list_parent_jobs/list_jobs 正常（parents 1057 / jobs 1066）；HTTP 全链（admin 登录 → /jobs/parents）200；jobs 相关 pytest **17 passed**（test_jobs_monitor* + test_job_trace_api）
+- **坑位**：宽行 JSON 表 + 小表 filesort 是隐蔽炸弹——优化器按行数估成本不会为 filesort 预留 sort_buffer，行宽上千 KB 时任何 ORDER BY 都可能 1038；排序查询要么走索引要么只排窄列
+- **遗留**：Refine 编排 run（`5e9d3f1b`，tape「xx-Refine」）status=running 数小时且 bindings/step_results 异常大，疑似把大上下文快照写 bindings，待查（未删数据）；容器 jobs.py 为 docker cp 热修（重启不丢，重建容器会回镜像），正式代码已提交，下次 CI 构建固化
 
 ## 7. 当前状态（2026-10-12 智能问答页对齐 WeKnora，commit ad3b132，已推送 main）
 

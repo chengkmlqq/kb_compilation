@@ -138,24 +138,36 @@ def list_parent_jobs(
     run_total = 0
     runs: list = []
     if page == 1:
-        run_stmt = select(TapeRun)
         run_count_stmt = select(func.count()).select_from(TapeRun)
         if state:
-            run_stmt = run_stmt.where(TapeRun.status == state)
             run_count_stmt = run_count_stmt.where(TapeRun.status == state)
         if keyword:
             like = f"%{keyword}%"
-            run_stmt = run_stmt.where(TapeRun.id.like(like) | TapeRun.tape_name.like(like))
             run_count_stmt = run_count_stmt.where(TapeRun.id.like(like) | TapeRun.tape_name.like(like))
         run_total = db.execute(run_count_stmt).scalar() or 0
-        runs = (
+        # 2026-10-13 fix(1038 Out of sort memory)：kb_tape_run 含大 JSON 列
+        # （step_results/bindings，实测单行可达 ~940KB），全列 ORDER BY 时优化器
+        # 按小表成本模型选 filesort，宽行塞 sort_buffer（256KB）即溢出 → 端点 500。
+        # 改为：排序只取窄列 id（filesort 只碰 id 行，永不爆 buffer），
+        # 再按 id 回表取全行并保持排序顺序（不依赖优化器选索引）。
+        run_id_stmt = select(TapeRun.id)
+        if state:
+            run_id_stmt = run_id_stmt.where(TapeRun.status == state)
+        if keyword:
+            like = f"%{keyword}%"
+            run_id_stmt = run_id_stmt.where(TapeRun.id.like(like) | TapeRun.tape_name.like(like))
+        run_ids: list[str] = list(
             db.execute(
-                run_stmt.order_by(TapeRun.created_at.desc(), TapeRun.id.desc())
-                .limit(page_size)
+                run_id_stmt.order_by(TapeRun.created_at.desc(), TapeRun.id.desc()).limit(page_size)
             )
             .scalars()
             .all()
         )
+        runs = []
+        if run_ids:
+            pos = {rid: i for i, rid in enumerate(run_ids)}
+            fetched = db.execute(select(TapeRun).where(TapeRun.id.in_(run_ids))).scalars().all()
+            runs = sorted(fetched, key=lambda r: pos.get(r.id, len(run_ids)))
 
     # 子任务聚合（modo_job 链头）
     agg = _child_agg(db, [j.id for j in jobs])
