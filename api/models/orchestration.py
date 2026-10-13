@@ -50,6 +50,7 @@ class Tape(Base):
     tape_label: Mapped[str] = mapped_column(String(128), default="")
     tape_descr: Mapped[str | None] = mapped_column(String(2000))
     tape_type: Mapped[str] = mapped_column(String(32), default="general")
+    category: Mapped[str] = mapped_column(String(64), default="通用", index=True)  # 编排分类（左树分组，2026-10-13）
     status: Mapped[str] = mapped_column(String(32), default="draft")  # draft | effective | offline
     nodes: Mapped[list | None] = mapped_column(JSON)  # React Flow nodes
     edges: Mapped[list | None] = mapped_column(JSON)  # React Flow edges

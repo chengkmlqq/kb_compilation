@@ -302,3 +302,43 @@ def test_metric_wiki_lib_build_page() -> None:
     assert page["summary"]
     # 无 document_id 时 source_refs 为空（兼容历史调用）
     assert mwl.build_page({"指标编码": "A001"}, "", "", {})["source_refs"] == []
+
+
+# ───────────────────────── 编排分类（2026-10-13 左右结构）─────────────────────────
+
+
+def test_tape_category_roundtrip(be_db) -> None:
+    """编排分类：create/list 过滤/serialize 输出/list_tape_categories 聚合。"""
+    from api.services.orchestration import (
+        create_tape,
+        list_tape_categories,
+        list_tapes,
+        serialize_tape,
+    )
+
+    # create 带分类（默认兜底「通用」）
+    t1 = create_tape(be_db, {"tape_name": "清洗流水线", "category": "数据治理"}, "u1")
+    t2 = create_tape(be_db, {"tape_name": "摘要生成"}, "u1")  # 不带 category → 通用
+    be_db.commit()
+
+    assert serialize_tape(t1)["category"] == "数据治理"
+    assert serialize_tape(t2)["category"] == "通用"
+
+    # list_tapes 按分类过滤
+    r = list_tapes(be_db, category="数据治理")
+    assert r["total"] == 1 and r["items"][0]["id"] == t1.id
+    r = list_tapes(be_db, category="通用")
+    assert r["total"] == 1 and r["items"][0]["id"] == t2.id
+    r = list_tapes(be_db, category="不存在")
+    assert r["total"] == 0
+
+    # 分类聚合（每类计数 + effective 计数）
+    cats = {c["category"]: c for c in list_tape_categories(be_db)}
+    assert cats["数据治理"]["total"] == 1 and cats["数据治理"]["effective"] == 0
+    assert cats["通用"]["total"] == 1
+
+    # update 改分类
+    from api.services.orchestration import update_tape
+
+    update_tape(be_db, t2.id, {"category": "智能问答"})
+    assert serialize_tape(t2)["category"] == "智能问答"

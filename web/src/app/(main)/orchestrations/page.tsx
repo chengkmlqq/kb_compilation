@@ -5,11 +5,11 @@
  * Card + inline 筛选（关键词/状态）+ antd Table + ModoPagination；
  * 操作：设计(动态选项卡打开 React Flow 画布) / 编辑 / 发布 / 下线 / 执行(逐步日志弹窗) / 删除。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, HistoryOutlined, PauseCircleOutlined, FileAddOutlined } from "@ant-design/icons";
+import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, HistoryOutlined, PauseCircleOutlined, FileAddOutlined, AppstoreOutlined, FolderOutlined } from "@ant-design/icons";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
 import { ModoSelect } from "@/components/biz/modo-select";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
@@ -27,12 +27,14 @@ import {
   apiDeleteTape,
   apiExecuteTape,
   apiGetTapeRun,
+  apiListTapeCategories,
   apiListTapeRuns,
   apiListTapes,
   apiListTapeTemplates,
   apiOfflineTape,
   apiPublishTape,
   apiUpdateTape,
+  TapeCategory,
   TapeItem,
   TapeRunDetail,
   TapeTemplateItem,
@@ -60,11 +62,16 @@ export default function OrchestrationsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   // 筛选：applied 为「已提交」条件（驱动查询），表单值由 searchForm 托管
-  const [applied, setApplied] = useState<{ keyword: string; status?: string }>({
+  const [applied, setApplied] = useState<{ keyword: string; status?: string; category?: string }>({
     keyword: "",
     status: undefined,
+    category: undefined,
   });
   const [searchForm] = Form.useForm<{ keyword?: string; status?: string }>();
+
+  // 左侧分类树（2026-10-13：编排管理页左右结构，参照编排模板页）
+  const [selectedCategory, setSelectedCategory] = useState("");
+  const [categories, setCategories] = useState<TapeCategory[]>([]);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<TapeItem | null>(null);
@@ -207,7 +214,7 @@ export default function OrchestrationsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiListTapes(page, pageSize, applied.keyword, applied.status ?? "");
+      const res = await apiListTapes(page, pageSize, applied.keyword, applied.status ?? "", applied.category ?? "");
       if (res.success) {
         setData(res.data?.items || []);
         setTotal(res.data?.total || 0);
@@ -219,25 +226,39 @@ export default function OrchestrationsPage() {
     }
   }, [page, pageSize, applied, message]);
 
+  const loadCategories = useCallback(async () => {
+    const res = await apiListTapeCategories();
+    if (res.success) setCategories(res.data || []);
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadCategories();
+  }, [load, loadCategories]);
 
   const doSearch = (v: { keyword?: string; status?: string }) => {
     setPage(1);
-    setApplied({ keyword: v.keyword?.trim() || "", status: v.status });
+    setApplied({ keyword: v.keyword?.trim() || "", status: v.status, category: selectedCategory || undefined });
   };
 
   const doReset = () => {
     searchForm.resetFields();
+    setSelectedCategory("");
     setPage(1);
-    setApplied({ keyword: "", status: undefined });
+    setApplied({ keyword: "", status: undefined, category: undefined });
+  };
+
+  /** 左树点击分类：仅重置分类维度，保留关键词/状态筛选 */
+  const selectCategory = (cat: string) => {
+    setSelectedCategory(cat);
+    setPage(1);
+    setApplied((prev) => ({ ...prev, category: cat || undefined }));
   };
 
   const openCreate = () => {
     setEditing(null);
     setFormKey((k) => k + 1);
-    form.setFieldsValue({ tape_name: "", tape_label: "", tape_descr: "", tape_type: "general" });
+    form.setFieldsValue({ tape_name: "", tape_label: "", tape_descr: "", tape_type: "general", category: "通用" });
     setDrawerOpen(true);
   };
 
@@ -249,6 +270,7 @@ export default function OrchestrationsPage() {
       tape_label: row.tape_label,
       tape_descr: row.tape_descr || "",
       tape_type: row.tape_type || "general",
+      category: row.category || "通用",
     });
     setDrawerOpen(true);
   };
@@ -363,6 +385,11 @@ export default function OrchestrationsPage() {
     });
   };
 
+  // 分类下拉选项（表单「选择或输入新分类」数据源）
+  const categoryOptions = categories.map((c) => ({ value: c.category, label: `${c.category}（${c.effective}）` }));
+  // 左树「全部」计数
+  const allTotal = useMemo(() => categories.reduce((acc, c) => acc + (c.total || 0), 0), [categories]);
+
   const columns: ColumnsType<TapeItem> = [
     {
       title: "编排名称",
@@ -376,6 +403,12 @@ export default function OrchestrationsPage() {
       ),
     },
     { title: "标签", dataIndex: "tape_label", width: 160, ellipsis: true, render: (v?: string) => v || "-" },
+    {
+      title: "分类",
+      dataIndex: "category",
+      width: 110,
+      render: (v?: string) => <Tag>{v || "通用"}</Tag>,
+    },
     {
       title: "描述",
       dataIndex: "tape_descr",
@@ -446,22 +479,54 @@ export default function OrchestrationsPage() {
     },
   ];
 
-  // 列表区（首个选项卡内容）：筛选 + 表格 + 钉底分页
+  // 列表区（首个选项卡内容）：左分类树 + 右筛选/表格/分页（2026-10-13 左右结构）
   const listPane = (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      <Card
-        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{
-          body: {
-            flex: 1,
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            padding: "12px 16px 0",
-          },
-        }}
-      >
+    <div className="kb-tpl-root">
+      {/* ── 左栏：编排分类树（参照编排模板页 kb-tpl-sidebar） ── */}
+      <aside className="kb-tpl-sidebar">
+        <div className="kb-tpl-sidebar-header">
+          <span className="kb-tpl-sidebar-title">编排分类</span>
+        </div>
+        <div className="kb-tpl-cat-list">
+          <div
+            className={`kb-tpl-cat-item${!selectedCategory ? " active" : ""}`}
+            onClick={() => selectCategory("")}
+          >
+            <AppstoreOutlined style={{ fontSize: 14 }} />
+            <span className="kb-tpl-cat-name">全部编排</span>
+            <span className="kb-tpl-cat-count">{allTotal}</span>
+          </div>
+          {categories.map((c) => (
+            <div
+              key={c.category}
+              className={`kb-tpl-cat-item${selectedCategory === c.category ? " active" : ""}`}
+              onClick={() => selectCategory(c.category)}
+            >
+              <FolderOutlined style={{ fontSize: 14 }} />
+              <span className="kb-tpl-cat-name">{c.category}</span>
+              <Tooltip title={`启用 ${c.effective} 个`}>
+                <span className="kb-tpl-cat-count">{c.total}</span>
+              </Tooltip>
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      {/* ── 右栏：筛选 + 表格 + 钉底分页 ── */}
+      <div className="kb-tpl-content">
+        <Card
+          style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+          styles={{
+            body: {
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              padding: "12px 16px 0",
+            },
+          }}
+        >
         {/* 筛选表单（对齐用户管理页：查询/重置） */}
         <Form form={searchForm} layout="inline" style={{ marginBottom: 12, flexShrink: 0 }} onFinish={doSearch}>
           <Form.Item name="keyword" label="编排名称">
@@ -511,7 +576,8 @@ export default function OrchestrationsPage() {
             }}
           />
         </div>
-      </Card>
+        </Card>
+      </div>
     </div>
   );
 
@@ -575,6 +641,19 @@ export default function OrchestrationsPage() {
                 { label: "通用编排", value: "general" },
                 { label: "数据合成", value: "data_synthesis" },
               ]}
+            />
+          </Form.Item>
+          <Form.Item name="category" label="分类">
+            <Select
+              showSearch
+              placeholder="选择或输入新分类"
+              options={categoryOptions}
+              optionFilterProp="label"
+              onSearch={(v) => {
+                if (v && !categoryOptions.some((o) => o.value === v)) {
+                  form.setFieldsValue({ category: v });
+                }
+              }}
             />
           </Form.Item>
           <Form.Item name="tape_descr" label="描述">

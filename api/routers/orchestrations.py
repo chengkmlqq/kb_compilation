@@ -79,10 +79,17 @@ def tapes(
     page_size: int = Query(20, ge=1, le=100),
     keyword: str = "",
     status: str = "",
+    category: str = "",
     db: Session = Depends(get_db),
     _user: str = Depends(_current_user),
 ):
-    return _guarded(svc.list_tapes, db, page, page_size, keyword, status)
+    return _guarded(svc.list_tapes, db, page, page_size, keyword, status, category)
+
+
+@router.get("/categories")
+def tape_categories(db: Session = Depends(get_db), _user: str = Depends(_current_user)):
+    """编排分类列表（含每类计数，供左侧分类树与分类下拉展示）。"""
+    return _guarded(svc.list_tape_categories, db)
 
 
 @router.post("")

@@ -115,17 +115,39 @@ def _tape_payload_to_model(obj: Tape, payload: dict) -> None:
         obj.tape_descr = descr[:2000] or None
     if "tape_type" in payload:
         obj.tape_type = str(payload["tape_type"] or "general") or "general"
+    if "category" in payload:
+        cat = str(payload["category"] or "").strip() or "通用"
+        obj.category = cat[:64]
 
 
-def list_tapes(db, page=1, page_size=20, keyword="", status=""):
+def list_tapes(db, page=1, page_size=20, keyword="", status="", category=""):
     q = db.query(Tape)
     if keyword:
         q = q.filter(Tape.tape_name.like(f"%{keyword}%") | Tape.tape_label.like(f"%{keyword}%"))
     if status:
         q = q.filter(Tape.status == status)
+    if category:
+        q = q.filter(Tape.category == category)
     total = q.count()
     items = q.order_by(Tape.updated_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return {"total": total, "items": [serialize_tape(t) for t in items]}
+
+
+def list_tape_categories(db):
+    """编排分类列表（含每类计数，供左侧分类树与分类下拉展示）。
+
+    2026-10-13：编排管理页左右结构（左分类树 + 右编排列表），分类聚合自
+    kb_tape.category（与 TapeTemplate 分类同模式）。
+    """
+    rows = db.query(Tape.category, Tape.status).all()
+    buckets: dict[str, dict] = {}
+    for cat, st in rows:
+        cat = (cat or "通用").strip() or "通用"
+        b = buckets.setdefault(cat, {"category": cat, "total": 0, "effective": 0})
+        b["total"] += 1
+        if st == "effective":
+            b["effective"] += 1
+    return list(buckets.values())
 
 
 def serialize_tape(t: Tape, with_design: bool = False) -> dict:
@@ -135,6 +157,7 @@ def serialize_tape(t: Tape, with_design: bool = False) -> dict:
         "tape_label": t.tape_label or "",
         "tape_descr": t.tape_descr or "",
         "tape_type": t.tape_type or "general",
+        "category": t.category or "通用",
         "status": t.status or "draft",
         "create_user": t.create_user or "",
         "created_at": t.created_at.isoformat() if t.created_at else "",
@@ -162,6 +185,7 @@ def create_tape(db, payload: dict, user_id: str = "") -> Tape:
         tape_label=str(payload.get("tape_label") or name)[:128] or None,
         tape_descr=str(payload.get("tape_descr") or "").strip()[:2000] or None,
         tape_type=str(payload.get("tape_type") or "general") or "general",
+        category=str(payload.get("category") or "通用").strip()[:64] or "通用",
         status="draft",
         nodes=payload.get("nodes") or [],
         edges=payload.get("edges") or [],
@@ -663,6 +687,7 @@ def apply_tape_template(db, template_id: str, payload: dict | None = None, user_
         tape_label=str(payload.get("tape_label") or tpl.label or tape_name)[:128],
         tape_descr=str(payload.get("tape_descr") or tpl.descr or "").strip()[:2000] or None,
         tape_type=str(payload.get("tape_type") or "general") or "general",
+        category=str(payload.get("category") or tpl.category or "通用").strip()[:64] or "通用",
         status="draft",
         nodes=nodes,
         edges=edges,
