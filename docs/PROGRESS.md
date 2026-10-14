@@ -2,7 +2,17 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-14（智能问答「喜欢 / 不喜欢」报「消息不存在」修复）
+最后更新：2026-10-14（数据查询页「看不到数据源」修复）
+
+## 14. 当前状态（2026-10-14 数据查询页左树看不到数据源修复）
+
+- **症状**：数据查询（/datagrid）页左侧 Database 目录树永远为空，数据源管理页配置的数据源一个都不显示（连 mysql 这类可查询类型也不显示）
+- **实测证据**：playwright 驱动真实 Chromium 打开线上 /wiki/datagrid（admin/ROOT）——`GET /api/v1/datagrid/datasources` 返回 200（含 kb_biz/mysql 一条），但 DOM 中 `.ant-tree-title` 节点数 = 0；同账号 `GET /api/v1/open/datasources`（数据源管理页）有 2 条（kb_biz + Minio）
+- **根因（前端状态初始化）**：`datagrid/components/db-tree.tsx` 用 `useState(() => (data || []).map(...))` 建树，初始化只在挂载时执行一次；而数据源列表由父组件 `components/client.tsx` 的 `useEffect` **异步**拉取（首帧 dsList=[]），数据到位后组件只重渲染、`treeData` 状态不更新 → 树永远停在空态。父组件 PanelGroup 的 `key`（`h-{key}-{leftSize}`）在挂载后会因 leftSize 计算而 +1 触发一次重挂载，但该重挂载发生在 fetch 返回之前，救不回来（上游 data-synth 传的是服务端预取的 initialData，迁到 kb 后改成客户端拉取，漏了 prop→state 同步）
+- **修复**：抽出 `buildInitialTree(data)`，`useState` 初始化复用它，并新增 `useEffect(..., [data])`——data 变化时重建 treeData / expandedKeys 并清空懒加载缓存
+- **验证（本机生产构建 + 线上真实后端）**：`tsc --noEmit` exit 0；`bun run build` 通过；本地起构建产物（:3111）+ 反向代理（:3112，/api/* 转发线上后端），playwright 实测：初始树出现「kb_compilation 业务库」→ 展开数据源得到 表/视图/函数/过程/序列 → 展开「表」经 /datagrid/tables 拉回 kb_frame 真实 80 张表
+- **附带口径说明（非 bug）**：数据查询只列**可 SQL 查询**的类型（`api/services/datagrid.py` SUPPORTED_DS_TYPES = mysql/postgresql/postgres/dm/oracle/elasticsearch/kingbasees8/hive/trino/trinodb）+ state=1；对象存储类（minio/s3/oss/obs）与 goldendb/pg 不在列，故数据源管理里的 Minio 本就不会出现在数据查询树（数据源管理页无类型/状态过滤，两页口径不同）。非 admin 用户还受团队授权限制（modo_team_ds_map，当前为空 → 非 ROOT/默认团队成员看不到任何数据源）
+- **部署**：前端为源码改动 → 需 CI 重建 kb-web 镜像后 `docker-compose pull web && up -d web && restart nginx` 才生效
 
 ## 13. 当前状态（2026-10-14 问答反馈报「消息不存在」修复，commit 待推）
 

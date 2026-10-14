@@ -11,7 +11,7 @@
  *  columns 返回 { success, rows: [{name,data_type,is_nullable,default_value,comment,...}] }
  *  ddl 返回 { success, ddl }
  */
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App, Input, Tree } from "antd";
 import type { DataNode as AntDataNode } from "antd/es/tree";
 import {
@@ -66,32 +66,45 @@ const OBJECT_FOLDERS: Array<{ key: string; label: string; icon: React.ReactNode 
   { key: "sequences", label: "序列", icon: <MoreOutlined /> },
 ];
 
+/** 由数据源列表构建初始树（分类 → 数据源节点，数据源子节点懒加载） */
+function buildInitialTree(data: DatagridDsItem[]): DataNode[] {
+  return (data || []).map((item, index) => ({
+    title: item.dsLabel || item.dsName,
+    key: `category-${index}`,
+    icon: <DatabaseOutlined />,
+    isLeaf: false,
+    data: { type: "category" as const, dsName: item.dsName },
+    children: [
+      {
+        title: item.dsLabel || item.dsName,
+        key: `ds-${item.dsName}`,
+        icon: <DatabaseOutlined />,
+        isLeaf: false,
+        data: { type: "datasource" as const, dsName: item.dsName, schema: item.schema || "" },
+        children: undefined, // 懒加载
+      },
+    ],
+  }));
+}
+
 export default function DbTree({ data }: DbTreeProps) {
   const { message } = App.useApp();
-  const [treeData, setTreeData] = useState<DataNode[]>(() =>
-    (data || []).map((item, index) => ({
-      title: item.dsLabel || item.dsName,
-      key: `category-${index}`,
-      icon: <DatabaseOutlined />,
-      isLeaf: false,
-      data: { type: "category" as const, dsName: item.dsName },
-      children: [
-        {
-          title: item.dsLabel || item.dsName,
-          key: `ds-${item.dsName}`,
-          icon: <DatabaseOutlined />,
-          isLeaf: false,
-          data: { type: "datasource" as const, dsName: item.dsName, schema: item.schema || "" },
-          children: undefined, // 懒加载
-        },
-      ],
-    })),
-  );
+  const [treeData, setTreeData] = useState<DataNode[]>(() => buildInitialTree(data));
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>(() =>
-    (data || []).map((_item, index) => `category-${index}`),
+    buildInitialTree(data).map((node) => node.key),
   );
   const [search, setSearch] = useState("");
   const listCache = useRef<Map<string, Array<Record<string, unknown>>>>(new Map());
+
+  // 数据源列表由父组件异步加载：useState 初始化只在挂载时执行一次，
+  // 若挂载时 data 还是空数组，树会永远停在空态（看不到任何数据源）。
+  // data 到位后必须重建树 —— 2026-10-14 修复「数据查询页看不到数据源管理里配置的数据源」。
+  useEffect(() => {
+    const nodes = buildInitialTree(data || []);
+    setTreeData(nodes);
+    setExpandedKeys(nodes.map((node) => node.key));
+    listCache.current.clear();
+  }, [data]);
 
   const { addDbToolTab } = useDataGridStore();
 
