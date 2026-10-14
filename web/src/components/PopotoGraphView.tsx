@@ -322,18 +322,37 @@ export default function PopotoGraphView({ kbId, height = 640 }: PopotoGraphViewP
     return <Alert type="error" showIcon message="Popoto 图谱初始化失败" description={<pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>{error}</pre>} />;
   }
 
+  // 渲染结构对齐系统 UI：白底细边框分区面板 + 点阵画布。
+  // 作用域类 kb-popoto-root 承载 globals.css 中的 popoto 亮色主题覆盖。
   return (
-    <div ref={rootRef} style={{ minHeight: height }}>
-      {!ready && <Spin style={{ display: "block", margin: "48px auto" }} />}
+    <div ref={rootRef} className="kb-popoto-root">
       <link rel="stylesheet" href="/wiki/vendor/popoto.min.css" />
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 260px", gap: 12, minHeight: height }}>
-        <div>
-          <div id="popoto-graph" style={{ height: Math.round(height * 0.55) }} />
-          <div id="popoto-results" style={{ marginTop: 12, minHeight: 120 }} />
-          <div id="popoto-query" style={{ marginTop: 8 }} />
-          <div id="popoto-cypher" style={{ marginTop: 8 }} />
+      {!ready && <Spin style={{ display: "block", margin: "40px auto" }} />}
+      <div className="kb-popoto-grid">
+        <div className="kb-popoto-main">
+          <section className="kb-popoto-panel">
+            <div className="kb-popoto-panel-title">关系图谱</div>
+            <div id="popoto-graph" className="kb-popoto-graph" style={{ height: Math.round(height * 0.55) }} />
+          </section>
+          <section className="kb-popoto-panel">
+            <div className="kb-popoto-panel-title">查询条件</div>
+            <div id="popoto-query" className="kb-popoto-query" />
+          </section>
+          <section className="kb-popoto-panel">
+            <div className="kb-popoto-panel-title">Cypher 语句</div>
+            <div id="popoto-cypher" className="kb-popoto-cypher" />
+          </section>
+          <section className="kb-popoto-panel">
+            <div className="kb-popoto-panel-title">查询结果</div>
+            <div id="popoto-results" className="kb-popoto-results" />
+          </section>
         </div>
-        <div id="popoto-taxonomy" />
+        <aside className="kb-popoto-aside">
+          <section className="kb-popoto-panel">
+            <div className="kb-popoto-panel-title">实体分类</div>
+            <div id="popoto-taxonomy" className="kb-popoto-taxonomy" />
+          </section>
+        </aside>
       </div>
     </div>
   );

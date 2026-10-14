@@ -2202,6 +2202,220 @@ html[data-theme="dark"] .kb-citation-web:hover {
   overflow: auto;
 }
 
+/* ═══ 2026-10-14 知识图谱（Popoto）亮色主题：对齐系统 UI 风格 ═══
+   popoto.min.css 是官方 demo 的深色主题，其中容器类（ppt-body / ppt-container-*）
+   在 popoto.min.js 里根本不存在，运行时不会生效 —— 容器样式由组件自身的
+   kb-popoto-* 类接管；真正需要重绘的是 SVG 图形与少数运行时类。
+   SVG 的节点/连线颜色由 d3 以 presentation attribute 写入，CSS 规则优先级高于
+   presentation attribute，可直接覆盖（无需 !important）。全部覆盖限定在
+   .kb-popoto-root 作用域内，避免影响其它页面。 */
+
+/* ── 分区面板：白底 + 细边框 + 小圆角 ── */
+.kb-popoto-root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* 面板由内容决定高度，滚动交给外层 Card body；补足底边距 */
+  padding-bottom: 12px;
+  color: var(--color-gray-10, #242e43);
+}
+.kb-popoto-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 12px;
+  align-items: start;
+}
+.kb-popoto-main,
+.kb-popoto-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+@media (max-width: 1100px) {
+  .kb-popoto-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.kb-popoto-panel {
+  background: #fff;
+  border: 1px solid var(--color-gray-2, #eff4f9);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.kb-popoto-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-gray-10, #242e43);
+  border-bottom: 1px solid var(--color-gray-2, #eff4f9);
+}
+.kb-popoto-panel-title::before {
+  content: "";
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--color-primary, #3261ce);
+}
+
+/* 画布：浅底 + 点阵，对齐设计器画布观感；relative 让 popoto 工具条定位于此 */
+.kb-popoto-graph {
+  position: relative;
+  background-color: #fbfcfe;
+  background-image: radial-gradient(#dfe7f2 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+.kb-popoto-query,
+.kb-popoto-cypher {
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.8;
+  word-break: break-word;
+}
+.kb-popoto-cypher {
+  background: var(--kb-c-surface-2, #fafafa);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #4b5670;
+  white-space: pre-wrap;
+}
+.kb-popoto-results {
+  max-height: 320px;
+  overflow: auto;
+}
+.kb-popoto-taxonomy {
+  padding: 8px;
+  max-height: 520px;
+  overflow: auto;
+}
+
+/* ── 覆盖 popoto 深色主题 ── */
+
+/* 查询条件 / Cypher 文本片段 */
+.kb-popoto-root .ppt-query-elements,
+.kb-popoto-root .ppt-query-constraint-elements { margin: 0; }
+.kb-popoto-root .ppt-span { color: var(--color-gray-10, #242e43); }
+.kb-popoto-root .ppt-span-link { color: var(--color-gray-10, #242e43); }
+.kb-popoto-root .ppt-span-root { color: var(--color-primary, #3261ce); }
+.kb-popoto-root .ppt-span-root-value { color: #722ed1; }
+.kb-popoto-root .ppt-span-choose { color: #52c41a; }
+.kb-popoto-root .ppt-span-value { color: #d48806; }
+.kb-popoto-root .ppt-span-group { color: #8a96a8; }
+.kb-popoto-root .ppt-span-link.hover,
+.kb-popoto-root .ppt-span-root.hover,
+.kb-popoto-root .ppt-span-root-value.hover,
+.kb-popoto-root .ppt-span-choose.hover,
+.kb-popoto-root .ppt-span-value.hover,
+.kb-popoto-root .ppt-span-group.hover { color: #ff4d4f; }
+
+/* 结果列表 */
+.kb-popoto-root .ppt-result {
+  padding: 8px 12px;
+  margin: 0;
+  background: transparent;
+  color: var(--color-gray-10, #242e43);
+  border-bottom: 1px solid var(--color-gray-2, #eff4f9);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.kb-popoto-root .ppt-result:hover { background: #f5f8fd; }
+.kb-popoto-root .ppt-result-attribute-div { display: flex; gap: 8px; }
+.kb-popoto-root .ppt-result-attribute-div > span:first-child {
+  color: var(--color-gray-6, #79879c);
+  min-width: 76px;
+  flex-shrink: 0;
+}
+
+/* 分类树 */
+.kb-popoto-root .ppt-taxo-ul,
+.kb-popoto-root .ppt-taxo-sub-ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.kb-popoto-root .ppt-taxo-sub-ul { padding-left: 14px; }
+.kb-popoto-root .ppt-taxo-li > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--color-gray-10, #242e43);
+  cursor: pointer;
+}
+.kb-popoto-root .ppt-taxo-li > span:hover { background: var(--color-gray-2, #eff4f9); }
+.kb-popoto-root .ppt-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-popoto-root .ppt-label:hover { color: var(--color-primary, #3261ce); }
+.kb-popoto-root .ppt-count { color: var(--color-gray-6, #79879c); font-size: 12px; }
+.kb-popoto-root .ppt-taxo__span-icon:before { color: var(--color-primary, #3261ce); }
+
+/* 工具条图标（保留 popoto 图标字体，仅调色） */
+.kb-popoto-root .ppt-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  z-index: 2;
+}
+.kb-popoto-root .ppt-toolbar .ppt-menu {
+  margin-left: 2px;
+  padding: 6px;
+  border-radius: 4px;
+  font-size: 16px;
+  color: var(--color-gray-6, #79879c);
+}
+.kb-popoto-root .ppt-toolbar .ppt-menu:hover {
+  color: var(--color-primary, #3261ce);
+  background: var(--color-gray-2, #eff4f9);
+}
+
+/* 画布图形：节点 / 连线 / 箭头 / 角标（白底重配色） */
+.kb-popoto-root .ppt-node__circle--root { fill: var(--color-primary, #3261ce); stroke: none; }
+.kb-popoto-root .ppt-node__circle--choose { fill: #52c41a; stroke: none; }
+.kb-popoto-root .ppt-node__circle--value { fill: #faad14; stroke: none; }
+.kb-popoto-root .ppt-node__circle--group { fill: #79879c; stroke: none; }
+.kb-popoto-root .ppt-node__circle--root--disabled,
+.kb-popoto-root .ppt-node__circle--choose--disabled,
+.kb-popoto-root .ppt-node__circle--value--disabled { fill: #d5dbe6; opacity: 0.6; }
+
+.kb-popoto-root .ppt-node__text--root,
+.kb-popoto-root .ppt-node__text--choose,
+.kb-popoto-root .ppt-node__text--value,
+.kb-popoto-root .ppt-node__text--group { fill: #fff; }
+
+.kb-popoto-root .ppt-link__path--relation { stroke: #c2cddc; }
+.kb-popoto-root .ppt-link__path--hover--relation { stroke: var(--color-primary, #3261ce); }
+.kb-popoto-root .ppt-link__path--value { fill: #faad14; }
+.kb-popoto-root .ppt-link__path--hover--value { stroke: #faad14; }
+.kb-popoto-root .ppt-link__text--relation { fill: #8a96a8; }
+.kb-popoto-root .ppt-link__text--hover--relation { fill: var(--color-primary, #3261ce); }
+.kb-popoto-root .ppt-link__text--hover--value { fill: #d48806; }
+.kb-popoto-root .ppt-marker-arrow,
+.kb-popoto-root .ppt-marker-reverse-arrow { fill: #9fb0c6; }
+.kb-popoto-root .ppt-marker-cross { stroke: #ff4d4f; }
+
+/* 展开节点的左右箭头（原为白描边 + 深底，白底上不可见） */
+.kb-popoto-root .ppt-larrow,
+.kb-popoto-root .ppt-rarrow { stroke: #dfe7f2; fill: #f4f8fd; }
+.kb-popoto-root .ppt-larrow.enabled,
+.kb-popoto-root .ppt-rarrow.enabled { fill: var(--color-primary, #3261ce); }
+.kb-popoto-root .ppt-arrow { fill: var(--color-gray-6, #79879c); }
+.kb-popoto-root .ppt-larrow.enabled ~ .ppt-arrow,
+.kb-popoto-root .ppt-rarrow.enabled ~ .ppt-arrow { fill: #fff; }
+
+/* 数量角标 / 环形分段描边 */
+.kb-popoto-root .ppt-count-box.root { fill: var(--color-primary, #3261ce); stroke: #fff; }
+.kb-popoto-root .ppt-count-box.value { fill: #52c41a; stroke: #fff; }
+.kb-popoto-root .ppt-count-text { fill: #fff; }
+.kb-popoto-root .ppt-node-ellipse,
+.kb-popoto-root .ppt-segment { stroke: #fff; }
+
 /* ═══ 2026-10-14 问答对齐 WeKnora：引用面板 / 推荐问题卡 / 骨架屏 / 回底按钮 / 全局等待 ═══ */
 
 /* ── 引用面板（对齐 docInfo.vue .refer/.doc-group）── */
