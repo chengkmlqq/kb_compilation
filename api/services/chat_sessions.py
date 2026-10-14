@@ -369,7 +369,13 @@ def _llm_chat(
     for attempt in range(retries):
         try:
             last = client.chat(
-                [ChatMessage(role="user", content=prompt)],
+                [
+                    ChatMessage(
+                        role="system",
+                        content="你是知识库平台的助手。严格只输出最终结果本身，不要输出任何操作指令、任务描述或说明。",
+                    ),
+                    ChatMessage(role="user", content=prompt),
+                ],
                 temperature=temperature,
                 max_tokens=max_tokens,
             ).strip()
@@ -407,6 +413,11 @@ def generate_title(
         is_sys_admin=ctx.get("is_admin", False),
     )
     title = "".join(title.split())[:20]
+    # 防 prompt 泄漏：LLM 偶发把任务指令当标题输出（如「我们被要求…」「不超过…」），
+    # 命中指令特征即回退用户消息截断
+    _NOISE = ("被要求", "不超过", "直接输出", "不要引号", "不要标点", "每行一个", "字数", "生成简短")
+    if any(n in title for n in _NOISE):
+        title = ""
     if not title:
         title = (first_user["content"] or "").strip()[:20] or "新会话"
     update_session(db, user_id, session_id, title=title)
@@ -451,7 +462,10 @@ def recommended_questions(
         is_sys_admin=ctx.get("is_admin", False),
     )
     lines = [l.strip(" -·•") for l in text.splitlines() if l.strip()]
-    return lines[:count] or ["这个知识库有哪些文档？", "文档的主要内容是什么？"]
+    # 防 prompt 泄漏：LLM 偶发把任务指令行也输出（如「我们被要求…」「每行一个…」），剔除
+    _NOISE = ("被要求", "每行一个", "不要编号", "直接输出", "确保问题", "开场问题", "输出问题", "适合知识库问答")
+    clean = [l for l in lines if not any(n in l for n in _NOISE)]
+    return clean[:count] or ["这个知识库有哪些文档？", "文档的主要内容是什么？"]
 
 
 def follow_up_suggestions(
