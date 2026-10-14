@@ -165,6 +165,11 @@ class ScriptStep(BaseStep):
             ns = {"context": context, "bindings": context.bindings, "config": self.config}
             exec(str(code), ns, ns)  # noqa: S102  (编排脚本 = 平台管理员授权能力)
             return StepResponse.success("Script executed successfully")
+        except SystemExit as se:  # 脚本用 raise SystemExit(0) 表示"干净提前退出/跳过"
+            code_ = se.code
+            if code_ in (0, None):
+                return StepResponse.success("Script exited cleanly (SystemExit)")
+            return StepResponse.fail(f"Script exited with code {code_}")
         except Exception as e:  # noqa: BLE001
             import traceback
 

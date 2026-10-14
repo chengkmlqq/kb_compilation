@@ -20,6 +20,7 @@ exec_params.domain 默认该领域；运行入参 kid/doc_name/source_file/kb_id
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -189,8 +190,8 @@ def transform_code(label: str, code: str) -> str:
 
 def build_tape(draft: dict, domain: str) -> dict:
     """由参考编排草稿生成某领域编排（nodes/edges/exec_params）。"""
-    nodes = [dict(n) for n in draft["draft"]["nodes"]]
-    edges = [dict(e) for e in draft["draft"]["edges"]]
+    nodes = [copy.deepcopy(n) for n in draft["draft"]["nodes"]]
+    edges = [copy.deepcopy(e) for e in draft["draft"]["edges"]]
     for n in nodes:
         data = n["data"]
         label = data.get("label", "")
