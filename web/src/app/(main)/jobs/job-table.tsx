@@ -184,6 +184,13 @@ const JobTable: React.FC<JobTableProps> = ({
       render: (val: string | null) => fmtTime(val),
     },
     {
+      title: "结束时间",
+      dataIndex: "end_time",
+      key: "end_time",
+      width: 175,
+      render: (val: string | null) => fmtTime(val),
+    },
+    {
       title: "耗时",
       dataIndex: "duration_ms",
       key: "duration_ms",
@@ -203,23 +210,6 @@ const JobTable: React.FC<JobTableProps> = ({
         }
         return text;
       },
-    },
-    {
-      title: "进度 / 错误",
-      dataIndex: "error_message",
-      key: "error_message",
-      ellipsis: true,
-      render: (v: string | null, row) =>
-        v ? (
-          <Text
-            type={row.state === "FAILED" ? "danger" : "secondary"}
-            style={{ fontSize: 12 }}
-          >
-            {v.length > 70 ? `${v.slice(0, 70)}…` : v}
-          </Text>
-        ) : (
-          <Text type="secondary">-</Text>
-        ),
     },
     {
       title: "操作",

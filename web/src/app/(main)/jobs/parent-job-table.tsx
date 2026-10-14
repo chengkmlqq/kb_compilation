@@ -90,6 +90,19 @@ function fmtDur(ms?: number | null): string {
   return `${(ms / 60000).toFixed(1)}min`;
 }
 
+/** 单行耗时：运行中 → 按本地时钟实时累加；已结束 → 后端 duration_ms，
+ *  缺失时（如编排 run 的 duration_ms 恒为 null）用「结束时间 - 开始时间」兜底。 */
+function rowDurationMs(record: ParentJobItem, now: number): number | null {
+  const start = record.start_time ? parseIsoUtc(record.start_time).getTime() : NaN;
+  const running = record.state === "RUNNING" || record.state === "running";
+  // 负值钳 0：后台标签页定时器被节流或浏览器/服务器时钟偏斜时会短暂为负
+  if (running && !Number.isNaN(start)) return Math.max(0, now - start);
+  if (record.duration_ms != null) return record.duration_ms;
+  const end = record.end_time ? parseIsoUtc(record.end_time).getTime() : NaN;
+  if (!Number.isNaN(start) && !Number.isNaN(end)) return Math.max(0, end - start);
+  return null;
+}
+
 function renderStateTag(state?: string | null) {
   const color = STATE_COLOR[state || ""] || "default";
   const label = STATE_LABEL[state || ""] || state || "-";
@@ -247,18 +260,25 @@ const ParentJobTable: React.FC<ParentJobTableProps> = ({
       render: (val) => fmtTime(val),
     },
     {
-      title: "信息 / 错误",
-      dataIndex: "error_message",
-      key: "error_message",
-      ellipsis: true,
-      render: (v, row) =>
-        v ? (
-          <Text type={row.state === "FAILED" || row.state === "failed" ? "danger" : "secondary"} style={{ fontSize: 12 }}>
-            {String(v).length > 70 ? `${String(v).slice(0, 70)}…` : String(v)}
-          </Text>
+      title: "结束时间",
+      dataIndex: "end_time",
+      key: "end_time",
+      width: 175,
+      render: (val) => fmtTime(val),
+    },
+    {
+      title: "耗时",
+      key: "duration_ms",
+      width: 100,
+      render: (_, record) => {
+        const text = fmtDur(rowDurationMs(record, now));
+        // 运行中：套实时样式（与「全部任务」表一致）
+        return record.state === "RUNNING" || record.state === "running" ? (
+          <span className="modo-running-duration">{text}</span>
         ) : (
-          <Text type="secondary">-</Text>
-        ),
+          text
+        );
+      },
     },
     {
       title: "操作",
@@ -315,7 +335,7 @@ const ParentJobTable: React.FC<ParentJobTableProps> = ({
       dataSource={data}
       columns={columns}
       pagination={false}
-      scroll={{ x: 1200, y: scrollY }}
+      scroll={{ x: 1220, y: scrollY }}
       expandable={{
         expandedRowRender: (record) => <ChildTable parent={record} />,
         rowExpandable: (record) => (record.child_count || 0) > 0,
