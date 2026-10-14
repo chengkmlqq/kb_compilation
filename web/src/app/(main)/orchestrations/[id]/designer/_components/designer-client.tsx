@@ -10,7 +10,7 @@ import {
   useReactFlow,
   addEdge,
 } from '@xyflow/react';
-import type { Edge, NodeChange, EdgeChange, Connection, Viewport } from '@xyflow/react';
+import type { Edge, Connection, Viewport } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { App, Button, Input, Modal, Select, Spin, Tag, Tooltip } from 'antd';
 import {
@@ -138,6 +138,27 @@ function toPersistableNode(n: StepFlowNode): {
   };
 }
 
+/**
+ * 画布「可持久化内容」指纹 —— 仅节点（含位置/配置）与连线的实际变化才改变指纹。
+ * 用于脏标记判断：ReactFlow 初始化/选中会派发 dimensions、select 等不影响持久化
+ * 内容的变更，不能据此认为用户改动过设计。
+ */
+function designSignature(nodes: StepFlowNode[], edges: Edge[]): string {
+  const persistNodes = nodes
+    .map(toPersistableNode)
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const persistEdges = edges
+    .map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      sourceHandle: e.sourceHandle ?? null,
+      targetHandle: e.targetHandle ?? null,
+    }))
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return JSON.stringify({ nodes: persistNodes, edges: persistEdges });
+}
+
 const TAPE_STATUS_META: Record<string, { color: string; label: string }> = {
   draft: { color: 'default', label: '草稿' },
   effective: { color: 'green', label: '已发布' },
@@ -204,19 +225,30 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
   // 画布重载信号（导入成功后自增触发重新拉取）
   const [reloadKey, setReloadKey] = useState(0);
 
-  /** 初始加载期间不标记 dirty（ReactFlow 初始化可能派发维度/选择类变更） */
+  /**
+   * 脏标记基线：最近一次「已加载 / 已保存」状态的画布指纹。
+   * 初始加载期间 ReactFlow 会派发 dimensions（节点测量）、select 等变更，
+   * 它们不影响持久化内容；因此不采用「收到变更即置脏」，而是比对指纹——
+   * 只有节点/连线/位置/配置真的与基线不同时才算有未保存的修改。
+   */
+  const baselineRef = useRef<string>('');
   const isInitialLoadRef = useRef(true);
 
-  const markDirty = useCallback(() => {
+  /** 当前画布的可持久化内容指纹（忽略选中态、测量尺寸等运行时字段） */
+  const currentSignature = useMemo(() => designSignature(nodes, edges), [nodes, edges]);
+
+  useEffect(() => {
     if (isInitialLoadRef.current || loading) return;
-    setDirty(true);
-  }, [loading]);
+    setDirty(currentSignature !== baselineRef.current);
+  }, [currentSignature, loading]);
 
   // ---------------- 数据加载 ----------------
   useEffect(() => {
     let cancelled = false;
     isInitialLoadRef.current = true;
     setLoading(true);
+    // 基线先归零：加载失败时也不会因空画布被判成「有未保存改动」
+    baselineRef.current = designSignature([], []);
 
     (async () => {
       const [tapeRes, defRes] = await Promise.all([
@@ -229,8 +261,12 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
         setTape(tapeRes.data);
         const rawNodes = (tapeRes.data.nodes ?? []) as unknown as RawFlowNode[];
         const rawEdges = (tapeRes.data.edges ?? []) as unknown as RawFlowEdge[];
-        setNodes(rawNodes.map(normalizeNode));
-        setEdges(rawEdges.map(normalizeEdge));
+        const loadedNodes = rawNodes.map(normalizeNode);
+        const loadedEdges = rawEdges.map(normalizeEdge);
+        setNodes(loadedNodes);
+        setEdges(loadedEdges);
+        // 以服务端加载到的内容作为脏标记基线
+        baselineRef.current = designSignature(loadedNodes, loadedEdges);
       } else {
         message.error(tapeRes.message || '加载编排失败');
       }
@@ -254,28 +290,12 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
   }, [tapeId, reloadKey, setNodes, setEdges, fitView, message]);
 
   // ---------------- 画布事件 ----------------
-  const onNodesChange = useCallback(
-    (changes: NodeChange<StepFlowNode>[]) => {
-      if (changes.some((c) => c.type !== 'select')) markDirty();
-      onNodesChangeRaw(changes);
-    },
-    [markDirty, onNodesChangeRaw],
-  );
-
-  const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) => {
-      if (changes.some((c) => c.type !== 'select')) markDirty();
-      onEdgesChangeRaw(changes);
-    },
-    [markDirty, onEdgesChangeRaw],
-  );
-
+  // 脏标记由上面的指纹比对统一负责（内容变了才置脏），此处无需再手工置脏。
   const onConnect = useCallback(
     (connection: Connection) => {
-      markDirty();
       setEdges((eds) => addEdge({ ...connection, type: 'default' }, eds));
     },
-    [markDirty, setEdges],
+    [setEdges],
   );
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -311,10 +331,9 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
           config: {},
         },
       };
-      markDirty();
       setNodes((nds) => nds.concat(newNode));
     },
-    [screenToFlowPosition, setNodes, markDirty],
+    [screenToFlowPosition, setNodes],
   );
 
   /** 节点双击 -> 打开右侧配参 Drawer（单击仅选中高亮，不进抽屉） */
@@ -333,9 +352,8 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
       setNodes((nds) => nds.filter((n) => n.id !== nodeId));
       setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
       setSelectedNode((prev) => (prev && prev.id === nodeId ? null : prev));
-      markDirty();
     },
-    [setNodes, setEdges, setSelectedNode, markDirty],
+    [setNodes, setEdges, setSelectedNode],
   );
 
   /** 右侧面板参数改动 -> 实时写回 node.data.config（受控） */
@@ -351,9 +369,8 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
       setSelectedNode((prev) =>
         prev && prev.id === nodeId ? { ...prev, data: { ...prev.data, label: pickLabel(prev.data), config: values } } : prev,
       );
-      markDirty();
     },
-    [setNodes, setSelectedNode, markDirty],
+    [setNodes, setSelectedNode],
   );
 
   /** 视口变化 -> 同步缩放百分比显示 */
@@ -407,6 +424,8 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
         if (!silent) message.loading({ content: '保存中...', key: 'saveDesign' });
         const res = await apiSaveTapeDesign(tapeId, nodes.map(toPersistableNode), edges, tape.exec_params);
         if (res.success) {
+          // 保存成功：当前内容成为新的脏标记基线
+          baselineRef.current = designSignature(nodes, edges);
           setDirty(false);
           if (!silent) message.success({ content: '保存成功', key: 'saveDesign' });
           return true;
@@ -683,8 +702,8 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
             nodes={renderedNodes}
             edges={edges}
             nodeTypes={nodeTypes}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
+            onNodesChange={onNodesChangeRaw}
+            onEdgesChange={onEdgesChangeRaw}
             onConnect={onConnect}
             onNodeDoubleClick={onNodeDoubleClick}
             onPaneClick={handleClosePanel}
