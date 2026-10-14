@@ -2,7 +2,15 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-14（数据查询页「看不到数据源」修复）
+最后更新：2026-10-14（全量 pytest 既有红修复：chat_sessions 漏改调用 + 模型白名单漂移）
+
+## 15. 当前状态（2026-10-14 全量 pytest 既有红修复：11 failed → 3 failed）
+
+- **背景**：修数据查询左树（§14）后跑全量 pytest 得 564 passed / 11 failed；用父提交 1c21c3f 的干净 worktree 复跑同样 11 个失败（一模一样的用例）证明均早于本次改动，非新增回归。逐条归因后修掉两类：
+- **① `api/services/chat_sessions.py` 两处调用漏传 db（真 bug，非测试问题）**：`set_message_feedback`（原 271 行）与 `append_message`（原 304 行）调用 `_message_dict(m)`，而该函数签名早已是 `_message_dict(db, m)` → `TypeError: _message_dict() missing 1 required positional argument: 'm'`。回归来自 ba53a28（「问答对齐 WeKnora 交互样式 7 项」给签名加 db 时改了 4 处调用、漏了这 2 处）。**影响面不止测试**：`append_message` 是消息持久化必经路径、`set_message_feedback` 是反馈成功路径，部署后这两条路都会 500。已修（两处补 `db`），test_chat_sessions 6 例转绿
+- **② `tests/test_framework_models.py` 白名单漂移**：KNOWLEDGE_BUSINESS_TABLES 缺 `wiki_page_folder`（迁移 0015）、`kb_quality_run` / `kb_quality_report`（迁移 0018，随 5f52ff0 引入）→ 补白名单（PROGRESS 坑位 6 的同款：他人新增表未同步白名单，补上即绿），2 例转绿
+- **剩余 3 红（不在本次范围，留给对应负责人）**：`test_agent_skills_scope::test_agent_qa_default_has_no_tools`（默认 agent 现已注入 wiki_write_page/database_query/get_document_info/data_analysis 等内置工具，断言仍写死 `{kb_search}`，属他人功能改动后的用例过期）；`test_storage::test_is_remote_and_parse_build`、`test_files::test_files_minio_tree_zip_and_raw_download`（storage `prod/` 前缀断言未同步，PROGRESS 已在案的既有失败，勿动 storage 语义）
+- **验证**：全量 `.venv/bin/python -m pytest tests/ -q` → **575 passed / 3 failed**（失败均为上述既有项）
 
 ## 14. 当前状态（2026-10-14 数据查询页左树看不到数据源修复）
 

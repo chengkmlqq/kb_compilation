@@ -62,6 +62,8 @@ KNOWLEDGE_BUSINESS_TABLES = {
     "doc_chunk",
     "wiki_folder",
     "wiki_page",
+    # wiki_page_folder（页面↔目录多挂载，迁移 0015）随 2026-10-13 引入，2026-10-14 补白名单。
+    "wiki_page_folder",
     "wiki_link",
     "wiki_operation_log",
     "wiki_feedback",
@@ -69,6 +71,9 @@ KNOWLEDGE_BUSINESS_TABLES = {
     "kb_agent",
     "ontology_schema",
     "kb_ontology_schema",
+    # 质量评估（迁移 0018）随 5f52ff0 引入，2026-10-14 补白名单。
+    "kb_quality_run",
+    "kb_quality_report",
 }
 
 # Chat conversation persistence (chat_session / chat_message / chat_attachment) — framework store.

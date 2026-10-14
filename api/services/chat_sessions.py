@@ -268,7 +268,7 @@ def set_message_feedback(
         m.feedback_at = None
     db.commit()
     db.refresh(m)
-    return _message_dict(m)
+    return _message_dict(db, m)
 
 
 def append_message(
@@ -301,7 +301,7 @@ def append_message(
         s.updated_at = dt.datetime.now(dt.timezone.utc).isoformat()
         s.title = s.title if s.title and s.title != "新会话" else (content[:30] or "新会话")
     db.commit()
-    return _message_dict(msg)
+    return _message_dict(db, msg)
 
 
 def get_context_messages(db: Session, session_id: str, limit: int = 20) -> list[dict]:
