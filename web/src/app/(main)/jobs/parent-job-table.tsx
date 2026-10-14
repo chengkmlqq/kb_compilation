@@ -139,6 +139,42 @@ function childProgress(record: ParentJobItem): string {
 }
 
 /** 展开行：子任务列表（文档链子任务 或 编排节点） */
+/** 编排节点明细列（模块级，一级展开的子任务表与二级展开的节点明细表共用）。 */
+const ORCH_STEP_COLS: ColumnsType<Record<string, unknown>> = [
+  { title: "节点", dataIndex: "step_label", width: 180, render: (v, r) => v || String((r as Record<string, unknown>).step_id || "") },
+  { title: "指令", dataIndex: "step_inst", width: 160, render: (v) => <Text code>{v || "-"}</Text> },
+  { title: "状态", dataIndex: "status", width: 110, render: (v) => renderStateTag(String(v || "")) },
+  { title: "耗时", dataIndex: "duration_ms", width: 100, render: (v) => fmtDur(v as number | null) },
+  { title: "信息", dataIndex: "error", ellipsis: true, render: (v, r) => v ? <Text type="danger">{String(v).slice(0, 80)}</Text> : <Text type="secondary">{((r as Record<string, unknown>).stdout_tail as string) || "-"}</Text> },
+];
+
+/** 子任务行是否带 step_results（KbOrchestrationRunTask 附加的编排节点明细，可二级展开）。 */
+function hasStepResults(r: Record<string, unknown>): boolean {
+  return Array.isArray(r.step_results) && (r.step_results as Array<Record<string, unknown>>).length > 0;
+}
+
+/** 二级展开：编排子任务（KbOrchestrationRunTask）内部的 step_results 节点明细。 */
+function OrchStepsTable({ row }: { row: Record<string, unknown> }) {
+  const steps = (row.step_results as Array<Record<string, unknown>> | undefined) || [];
+  const tapeName = (row.run_tape_name as string | undefined) || "";
+  return (
+    <div style={{ padding: "4px 8px 4px 32px", background: "#F5F7FA" }}>
+      <div style={{ fontSize: 12, color: "rgba(0,0,0,.45)", marginBottom: 4 }}>
+        {tapeName ? `编排「${tapeName}」节点明细` : "编排节点明细"}
+      </div>
+      <Table<Record<string, unknown>>
+        rowKey={(s) => String((s as Record<string, unknown>).step_id || "")}
+        size="small"
+        dataSource={steps}
+        columns={ORCH_STEP_COLS}
+        pagination={false}
+        scroll={{ x: "100%" }}
+        locale={{ emptyText: "暂无节点明细" }}
+      />
+    </div>
+  );
+}
+
 function ChildTable({ parent }: { parent: ParentJobItem }) {
   const { message } = App.useApp();
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
@@ -160,13 +196,6 @@ function ChildTable({ parent }: { parent: ParentJobItem }) {
 
   // 编排节点：step_results 结构 {step_id, step_inst, step_label, status, duration_ms, error}
   const isOrch = parent.task_class === "OrchestrationRun";
-  const stepCols: ColumnsType<Record<string, unknown>> = [
-    { title: "节点", dataIndex: "step_label", width: 180, render: (v, r) => v || String(r.step_id || "") },
-    { title: "指令", dataIndex: "step_inst", width: 160, render: (v) => <Text code>{v || "-"}</Text> },
-    { title: "状态", dataIndex: "status", width: 110, render: (v) => renderStateTag(String(v || "")) },
-    { title: "耗时", dataIndex: "duration_ms", width: 100, render: (v) => fmtDur(v as number | null) },
-    { title: "信息", dataIndex: "error", ellipsis: true, render: (v, r) => v ? <Text type="danger">{String(v).slice(0, 80)}</Text> : <Text type="secondary">{(r.stdout_tail as string) || "-"}</Text> },
-  ];
   const jobCols: ColumnsType<Record<string, unknown>> = [
     { title: "子任务ID", dataIndex: "id", width: 200, render: (v) => <Text style={{ fontFamily: "monospace", fontSize: 12 }}>{String(v)}</Text> },
     { title: "任务类", dataIndex: "task_class", width: 150, render: (v) => taskClassLabel(String(v || "")) },
@@ -210,10 +239,15 @@ function ChildTable({ parent }: { parent: ParentJobItem }) {
         size="small"
         loading={loading}
         dataSource={rows}
-        columns={isOrch ? stepCols : jobCols}
+        columns={isOrch ? ORCH_STEP_COLS : jobCols}
         pagination={false}
         scroll={{ x: "100%" }}
         locale={{ emptyText: "暂无子任务" }}
+        // 2026-10-14 二级展开：编排子任务（KbOrchestrationRunTask）行带 step_results 时可再展开看节点明细
+        expandable={{
+          rowExpandable: (r) => !isOrch && hasStepResults(r),
+          expandedRowRender: (r) => <OrchStepsTable row={r} />,
+        }}
       />
     </div>
   );
