@@ -39,6 +39,7 @@ import {
   apiListSkillsRegistry,
   BuildEngineItem,
   DatasourceItem,
+  DocItem,
   KbCreatePayload,
   KbItem,
   ModelItem,
@@ -50,6 +51,7 @@ import KbDocsPane from "@/components/kb/KbDocsPane";
 import KbWikiPane from "@/components/kb/KbWikiPane";
 import KbGraphPane from "@/components/kb/KbGraphPane";
 import WikiGraphView from "@/components/WikiGraphView";
+import DocDetailPanel from "@/components/DocDetailPanel";
 
 const PIPELINE_OPTIONS = [
   { label: "向量检索", value: "vector", default: true },
@@ -77,6 +79,13 @@ const SECTION_LABEL: Record<KbSection, string> = {
   "wiki-graph": "wiki 关系图",
 };
 
+/** 文档详情选项卡（点击文件打开，可关闭）：key = doc-<docId>，内容为 DocDetailPanel */
+type KbDocTab = {
+  key: string;
+  kbId: string;
+  doc: DocItem;
+};
+
 export default function KbsPage() {
   const { message, modal } = App.useApp();
   const [kbs, setKbs] = useState<KbItem[]>([]);
@@ -100,9 +109,71 @@ export default function KbsPage() {
   const [tabs, setTabs] = useState<KbSectionTab[]>([]);
   const [activeTab, setActiveTab] = useState("home");
 
+  // 文档详情动态选项卡：点击文件打开（可关闭），不再是抽屉
+  const [docTabs, setDocTabs] = useState<KbDocTab[]>([]);
+  // 各知识库的文档列表刷新信号（详情页签内删除/重解析后 +1）
+  const [refreshTicks, setRefreshTicks] = useState<Record<string, number>>({});
+
   const closeTab = (key: string) => {
     setTabs((prev) => prev.filter((t) => t.key !== key));
+    // 关闭「文档」分段页签时，一并关闭其下打开的文档详情页签
+    const m = /^kb-(.+)-docs$/.exec(key);
+    if (m) setDocTabs((prev) => prev.filter((t) => t.kbId !== m[1]));
     if (activeTab === key) setActiveTab("home");
+  };
+
+  /** 该知识库「文档」分段页签的 key；若未打开则回落到首页 */
+  const docsTabKey = (kbId: string) => {
+    const key = `kb-${kbId}-docs`;
+    return tabs.some((t) => t.key === key) ? key : "home";
+  };
+
+  /** 打开文档详情页签：已存在则仅更新 doc 数据并激活 */
+  const openDoc = (kbId: string, doc: DocItem) => {
+    const key = `doc-${doc.id}`;
+    setDocTabs((prev) => {
+      const exists = prev.find((t) => t.key === key);
+      if (exists) return prev.map((t) => (t.key === key ? { ...t, doc } : t));
+      return [...prev, { key, kbId, doc }];
+    });
+    setActiveTab(key);
+  };
+
+  /** 关闭文档详情页签：若当前激活则回落到该库「文档」页签 */
+  const closeDocTab = (key: string) => {
+    const tab = docTabs.find((t) => t.key === key);
+    setDocTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab(tab ? docsTabKey(tab.kbId) : "home");
+  };
+
+  /** 文档列表变化时同步已打开详情页签的 doc 数据（如自动摘要回填） */
+  const syncDocs = (kbId: string, list: DocItem[]) => {
+    setDocTabs((prev) => {
+      let changed = false;
+      const next = prev.map((t) => {
+        if (t.kbId !== kbId) return t;
+        const found = list.find((x) => x.id === t.doc.id);
+        if (found && found !== t.doc) {
+          changed = true;
+          return { ...t, doc: found };
+        }
+        return t;
+      });
+      return changed ? next : prev;
+    });
+  };
+
+  /** 详情页签内删除成功：关闭页签并刷新该库文档列表 */
+  const removeDoc = (kbId: string, docId: string) => {
+    const key = `doc-${docId}`;
+    setDocTabs((prev) => prev.filter((t) => t.key !== key));
+    setRefreshTicks((prev) => ({ ...prev, [kbId]: (prev[kbId] || 0) + 1 }));
+    if (activeTab === key) setActiveTab(docsTabKey(kbId));
+  };
+
+  /** 详情页签内重解析成功：刷新该库文档列表 */
+  const reparseDoc = (kbId: string) => {
+    setRefreshTicks((prev) => ({ ...prev, [kbId]: (prev[kbId] || 0) + 1 }));
   };
 
   /** 打开某知识库的某个分段选项卡：已存在则仅激活，否则新增后激活 */
@@ -146,7 +217,15 @@ export default function KbsPage() {
     if (t.section === "wiki-graph") {
       return <WikiGraphView kbId={t.kbId} focusSlug={t.focusSlug} />;
     }
-    return <KbDocsPane kbId={t.kbId} />;
+    return (
+      <KbDocsPane
+        kbId={t.kbId}
+        refreshTick={refreshTicks[t.kbId] || 0}
+        onOpenDoc={(doc) => openDoc(t.kbId, doc)}
+        onDocsChange={(list) => syncDocs(t.kbId, list)}
+        onDocRemoved={(docId) => removeDoc(t.kbId, docId)}
+      />
+    );
   };
 
   const visibleKbs = useMemo(() => {
@@ -631,7 +710,10 @@ export default function KbsPage() {
         activeKey={activeTab}
         onChange={setActiveTab}
         onEdit={(key, action) => {
-          if (action === "remove") closeTab(String(key));
+          if (action !== "remove") return;
+          const k = String(key);
+          if (k.startsWith("doc-")) closeDocTab(k);
+          else closeTab(k);
         }}
         tabBarExtraContent={
           <Button type="primary" onClick={openCreate}>
@@ -645,6 +727,20 @@ export default function KbsPage() {
             label: t.title,
             closable: true,
             children: renderKbSection(t),
+          })),
+          // 文档详情：点击文件打开的动态选项卡（可关闭），承载 DocDetailPanel
+          ...docTabs.map((t) => ({
+            key: t.key,
+            label: t.doc.file_name,
+            closable: true,
+            children: (
+              <DocDetailPanel
+                kbId={t.kbId}
+                doc={t.doc}
+                onDocReparsed={() => reparseDoc(t.kbId)}
+                onDocRemoved={(docId) => removeDoc(t.kbId, docId)}
+              />
+            ),
           })),
         ]}
       />

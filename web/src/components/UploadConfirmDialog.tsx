@@ -16,7 +16,7 @@
  * 确认后返回 UploadConfirmResult { files, processConfig }，由调用方逐文件上传。
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { App, Button, Col, Form, InputNumber, Modal, Row, Select, Space, Switch, Typography } from "antd";
+import { App, Button, Col, Collapse, Form, InputNumber, Modal, Row, Select, Space, Switch, Typography } from "antd";
 import { DeleteOutlined, FileTextOutlined, LinkOutlined, PlusOutlined } from "@ant-design/icons";
 import { apiListParserEngines, BuildEngineItem, ParserEngineItem } from "@/lib/api";
 
@@ -109,7 +109,6 @@ export default function UploadConfirmDialog({
 }: Props) {
   const { message } = App.useApp();
   const [files, setFiles] = useState<File[]>([]);
-  const [activeSection, setActiveSection] = useState<string>("overview");
   const [chunking, setChunking] = useState<Record<string, unknown>>({ ...DEFAULT_CHUNKING });
   const [rules, setRules] = useState<Array<{ file_types: string[]; engine: string }>>([]);
   const [engines, setEngines] = useState<ParserEngineItem[]>([]);
@@ -124,7 +123,6 @@ export default function UploadConfirmDialog({
   useEffect(() => {
     if (!open) return;
     setFiles([...initialFiles]);
-    setActiveSection("overview");
     setBuildEngine(""); // 每次打开重置为「跟随知识库默认」
     setSummaryStrategy(""); // 每次打开重置为「跟随知识库默认」
     void apiListParserEngines()
@@ -225,12 +223,26 @@ export default function UploadConfirmDialog({
     return `Wiki 构建：${wiki} · 摘要：${summary}`;
   }, [buildEngine, summaryStrategy, buildEngines]);
 
-  // overview 行
-  const overviewRows = [
-    { key: "chunking", title: "切片配置", value: chunkingSummary },
-    { key: "parser", title: "解析引擎", value: parserSummary },
-    { key: "build", title: "构建配置", value: buildSummary },
-  ];
+  // 右侧配置面板标题（配置项名 + 当前取值摘要），供 Collapse 逐项展开使用
+  const panelLabel = (title: string, value: string, highlight = false) => (
+    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+      <span style={{ fontSize: 13, color: "rgba(0,0,0,.65)", width: 80, flexShrink: 0 }}>{title}</span>
+      <span
+        style={{
+          flex: 1,
+          minWidth: 0,
+          fontSize: 12,
+          color: highlight ? "#1677ff" : "rgba(0,0,0,.88)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+        title={value}
+      >
+        {value}
+      </span>
+    </span>
+  );
 
   return (
     <Modal
@@ -311,206 +323,170 @@ export default function UploadConfirmDialog({
           />
         </div>
 
-        {/* 右侧配置（对齐 main-panel：overview / section） */}
+        {/* 右侧配置（对齐 main-panel：处理配置 Collapse 逐项就地展开） */}
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-          {activeSection === "overview" ? (
-            <>
-              <div style={{ marginBottom: 12 }}>
-                <Text style={{ fontSize: 15, fontWeight: 600 }}>处理配置</Text>
-                <div style={{ fontSize: 12, color: "rgba(0,0,0,.45)", marginTop: 2 }}>
-                  可为本次上传指定处理配置（文件级覆盖），留空则使用知识库默认配置
-                </div>
-              </div>
-              {overviewRows.map((row) => (
-                <button
-                  key={row.key}
-                  type="button"
-                  onClick={() => setActiveSection(row.key)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    width: "100%",
-                    padding: "10px 12px",
-                    border: "1px solid #e8eaed",
-                    borderRadius: 4,
-                    background: "#fff",
-                    cursor: "pointer",
-                    marginBottom: 8,
-                    textAlign: "left",
-                  }}
-                >
-                  <span style={{ fontSize: 13, color: "rgba(0,0,0,.65)", width: 80, flexShrink: 0 }}>{row.title}</span>
-                  <span
-                    style={{
-                      flex: 1,
-                      fontSize: 12,
-                      color: row.key === "parser" && showParser ? "#1677ff" : "rgba(0,0,0,.88)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                    title={row.value}
-                  >
-                    {row.value}
-                  </span>
-                  <span style={{ color: "#bfbfbf" }}>›</span>
-                </button>
-              ))}
-              <div style={{ fontSize: 12, color: "rgba(0,0,0,.35)", marginTop: 4 }}>
-                本次配置仅作用于本次上传的文件，不修改知识库默认配置
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                <Button type="text" size="small" onClick={() => setActiveSection("overview")} style={{ padding: "0 4px" }}>
-                  ‹ 返回概览
-                </Button>
-                <Text style={{ fontSize: 15, fontWeight: 600 }}>
-                  {activeSection === "chunking" ? "切片配置" : activeSection === "parser" ? "解析引擎" : "构建配置"}
-                </Text>
-              </div>
-
-              {activeSection === "chunking" && (
-                <div style={{ overflow: "auto" }}>
-                  <Row gutter={16}>
-                    <Col span={8}>
-                      <Form.Item label="分块大小">
-                        <InputNumber min={64} max={32768} style={{ width: "100%" }} value={chunking.chunk_size as number}
-                          onChange={(v) => setChunking((p) => ({ ...p, chunk_size: v ?? 800 }))} />
-                      </Form.Item>
-                    </Col>
-                    <Col span={8}>
-                      <Form.Item label="重叠长度">
-                        <InputNumber min={0} max={4096} style={{ width: "100%" }} value={chunking.chunk_overlap as number}
-                          onChange={(v) => setChunking((p) => ({ ...p, chunk_overlap: v ?? 80 }))} />
-                      </Form.Item>
-                    </Col>
-                    <Col span={8}>
-                      <Form.Item label="Token 上限" tooltip="0 = 按字符数">
-                        <InputNumber min={0} style={{ width: "100%" }} value={chunking.token_limit as number}
-                          onChange={(v) => setChunking((p) => ({ ...p, token_limit: v ?? 0 }))} />
-                      </Form.Item>
-                    </Col>
-                  </Row>
-                  <Form.Item label="分隔符">
-                    <Select mode="tags" style={{ width: "100%" }} value={chunking.separators as string[]}
-                      options={SEPARATOR_PRESETS.map((v) => ({ value: v, label: JSON.stringify(v) }))}
-                      onChange={(v) => setChunking((p) => ({ ...p, separators: v }))} />
-                  </Form.Item>
-                  <Form.Item label="父子分块">
-                    <Space>
-                      <Switch checked={!!chunking.enable_parent_child}
-                        onChange={(v) => setChunking((p) => ({ ...p, enable_parent_child: v }))} />
-                      <Text type="secondary" style={{ fontSize: 12 }}>开启后子块用于匹配、命中返回父块全文</Text>
-                    </Space>
-                  </Form.Item>
-                  {!!chunking.enable_parent_child && (
+          <div style={{ marginBottom: 12 }}>
+            <Text style={{ fontSize: 15, fontWeight: 600 }}>处理配置</Text>
+            <div style={{ fontSize: 12, color: "rgba(0,0,0,.45)", marginTop: 2 }}>
+              可为本次上传指定处理配置（文件级覆盖），留空则使用知识库默认配置
+            </div>
+          </div>
+          {/* 2026-10-14: 由「点开某项即整块替换」改为 Collapse 就地展开（展开一项不再覆盖其余）；
+              顺序：解析引擎 → 切片配置 → 构建配置；构建配置内 摘要生成 在 Wiki 构建 之前。 */}
+          <Collapse
+            items={[
+              {
+                key: "parser",
+                label: panelLabel("解析引擎", parserSummary, showParser),
+                children: (
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <Switch checked={showParser} onChange={setShowParser} size="small" />
+                      <Text style={{ fontSize: 13 }}>启用按文件类型指定解析引擎</Text>
+                    </div>
+                    {showParser && (
+                      <>
+                        {batchExts.length > 0 && (
+                          <div style={{ fontSize: 12, color: "rgba(0,0,0,.45)", marginBottom: 8 }}>
+                            本批次文件类型：{batchExts.map((e) => `.${e}`).join(" ")}
+                          </div>
+                        )}
+                        {rules.map((r, idx) => (
+                          <Row key={idx} gutter={8} align="middle" style={{ marginBottom: 8 }}>
+                            <Col span={11}>
+                              <Select mode="multiple" placeholder="文件类型" style={{ width: "100%" }}
+                                value={r.file_types} options={FILE_TYPE_OPTIONS}
+                                onChange={(v) => setRules((prev) => prev.map((x, i) => (i === idx ? { ...x, file_types: v } : x)))} />
+                            </Col>
+                            <Col span={11}>
+                              <Select placeholder="解析引擎" style={{ width: "100%" }} value={r.engine}
+                                options={engineOptions}
+                                onChange={(v) => setRules((prev) => prev.map((x, i) => (i === idx ? { ...x, engine: v } : x)))} />
+                            </Col>
+                            <Col span={2}>
+                              <Button type="text" danger size="small" onClick={() => setRules((prev) => prev.filter((_, i) => i !== idx))}>
+                                删除
+                              </Button>
+                            </Col>
+                          </Row>
+                        ))}
+                        <Button type="dashed" block onClick={() => setRules((prev) => [...prev, { file_types: [], engine: "docreader" }])}>
+                          添加规则
+                        </Button>
+                      </>
+                    )}
+                    <div style={{ marginTop: 8 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        提示：不可用的引擎已置灰（如 MinerU endpoint 未配置）
+                      </Text>
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                key: "chunking",
+                label: panelLabel("切片配置", chunkingSummary),
+                children: (
+                  <div>
                     <Row gutter={16}>
-                      <Col span={12}>
-                        <Form.Item label="父块大小" tooltip="512–8192">
-                          <InputNumber min={512} max={8192} step={128} style={{ width: "100%" }} value={chunking.parent_chunk_size as number}
-                            onChange={(v) => setChunking((p) => ({ ...p, parent_chunk_size: v ?? 4096 }))} />
+                      <Col span={8}>
+                        <Form.Item label="分块大小">
+                          <InputNumber min={64} max={32768} style={{ width: "100%" }} value={chunking.chunk_size as number}
+                            onChange={(v) => setChunking((p) => ({ ...p, chunk_size: v ?? 800 }))} />
                         </Form.Item>
                       </Col>
-                      <Col span={12}>
-                        <Form.Item label="子块大小" tooltip="64–2048">
-                          <InputNumber min={64} max={2048} step={32} style={{ width: "100%" }} value={chunking.child_chunk_size as number}
-                            onChange={(v) => setChunking((p) => ({ ...p, child_chunk_size: v ?? 384 }))} />
+                      <Col span={8}>
+                        <Form.Item label="重叠长度">
+                          <InputNumber min={0} max={4096} style={{ width: "100%" }} value={chunking.chunk_overlap as number}
+                            onChange={(v) => setChunking((p) => ({ ...p, chunk_overlap: v ?? 80 }))} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={8}>
+                        <Form.Item label="Token 上限" tooltip="0 = 按字符数">
+                          <InputNumber min={0} style={{ width: "100%" }} value={chunking.token_limit as number}
+                            onChange={(v) => setChunking((p) => ({ ...p, token_limit: v ?? 0 }))} />
                         </Form.Item>
                       </Col>
                     </Row>
-                  )}
-                  <Form.Item label="语言（留空自动识别）">
-                    <Select mode="multiple" style={{ width: "100%" }} value={chunking.languages as string[]}
-                      options={LANG_OPTIONS} allowClear
-                      onChange={(v) => setChunking((p) => ({ ...p, languages: v }))} />
-                  </Form.Item>
-                  <Text type="secondary" style={{ fontSize: 12 }}>仅对本次上传生效，不修改知识库默认配置</Text>
-                </div>
-              )}
-
-              {activeSection === "parser" && (
-                <div style={{ overflow: "auto" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                    <Switch checked={showParser} onChange={setShowParser} size="small" />
-                    <Text style={{ fontSize: 13 }}>启用按文件类型指定解析引擎</Text>
+                    <Form.Item label="分隔符">
+                      <Select mode="tags" style={{ width: "100%" }} value={chunking.separators as string[]}
+                        options={SEPARATOR_PRESETS.map((v) => ({ value: v, label: JSON.stringify(v) }))}
+                        onChange={(v) => setChunking((p) => ({ ...p, separators: v }))} />
+                    </Form.Item>
+                    <Form.Item label="父子分块">
+                      <Space>
+                        <Switch checked={!!chunking.enable_parent_child}
+                          onChange={(v) => setChunking((p) => ({ ...p, enable_parent_child: v }))} />
+                        <Text type="secondary" style={{ fontSize: 12 }}>开启后子块用于匹配、命中返回父块全文</Text>
+                      </Space>
+                    </Form.Item>
+                    {!!chunking.enable_parent_child && (
+                      <Row gutter={16}>
+                        <Col span={12}>
+                          <Form.Item label="父块大小" tooltip="512–8192">
+                            <InputNumber min={512} max={8192} step={128} style={{ width: "100%" }} value={chunking.parent_chunk_size as number}
+                              onChange={(v) => setChunking((p) => ({ ...p, parent_chunk_size: v ?? 4096 }))} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item label="子块大小" tooltip="64–2048">
+                            <InputNumber min={64} max={2048} step={32} style={{ width: "100%" }} value={chunking.child_chunk_size as number}
+                              onChange={(v) => setChunking((p) => ({ ...p, child_chunk_size: v ?? 384 }))} />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                    )}
+                    <Form.Item label="语言（留空自动识别）">
+                      <Select mode="multiple" style={{ width: "100%" }} value={chunking.languages as string[]}
+                        options={LANG_OPTIONS} allowClear
+                        onChange={(v) => setChunking((p) => ({ ...p, languages: v }))} />
+                    </Form.Item>
+                    <Text type="secondary" style={{ fontSize: 12 }}>仅对本次上传生效，不修改知识库默认配置</Text>
                   </div>
-                  {showParser && (
-                    <>
-                      {batchExts.length > 0 && (
-                        <div style={{ fontSize: 12, color: "rgba(0,0,0,.45)", marginBottom: 8 }}>
-                          本批次文件类型：{batchExts.map((e) => `.${e}`).join(" ")}
-                        </div>
-                      )}
-                      {rules.map((r, idx) => (
-                        <Row key={idx} gutter={8} align="middle" style={{ marginBottom: 8 }}>
-                          <Col span={11}>
-                            <Select mode="multiple" placeholder="文件类型" style={{ width: "100%" }}
-                              value={r.file_types} options={FILE_TYPE_OPTIONS}
-                              onChange={(v) => setRules((prev) => prev.map((x, i) => (i === idx ? { ...x, file_types: v } : x)))} />
-                          </Col>
-                          <Col span={11}>
-                            <Select placeholder="解析引擎" style={{ width: "100%" }} value={r.engine}
-                              options={engineOptions}
-                              onChange={(v) => setRules((prev) => prev.map((x, i) => (i === idx ? { ...x, engine: v } : x)))} />
-                          </Col>
-                          <Col span={2}>
-                            <Button type="text" danger size="small" onClick={() => setRules((prev) => prev.filter((_, i) => i !== idx))}>
-                              删除
-                            </Button>
-                          </Col>
-                        </Row>
-                      ))}
-                      <Button type="dashed" block onClick={() => setRules((prev) => [...prev, { file_types: [], engine: "docreader" }])}>
-                        添加规则
-                      </Button>
-                    </>
-                  )}
-                  <div style={{ marginTop: 8 }}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      提示：不可用的引擎已置灰（如 MinerU endpoint 未配置）
-                    </Text>
+                ),
+              },
+              {
+                key: "build",
+                label: panelLabel("构建配置", buildSummary),
+                children: (
+                  <div>
+                    <Form.Item
+                      label="摘要生成服务"
+                      tooltip="文档解析成功后自动生成摘要页；留空跟随知识库默认摘要策略"
+                      extra={summaryStrategy ? undefined : "当前跟随知识库默认摘要策略"}
+                    >
+                      <Select
+                        style={{ width: "100%" }}
+                        allowClear
+                        placeholder="跟随知识库默认"
+                        value={summaryStrategy || undefined}
+                        onChange={setSummaryStrategy}
+                        options={SUMMARY_STRATEGY_OPTIONS}
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      label="Wiki 构建服务"
+                      tooltip="选择后本文档构建 Wiki 走该编排（服务编排中已发布的编排）；留空跟随知识库默认"
+                      extra={buildEngine ? undefined : defaultBuildTapeId ? "当前跟随知识库默认编排" : "当前跟随知识库默认（未设置）"}
+                    >
+                      <Select
+                        style={{ width: "100%" }}
+                        allowClear
+                        placeholder="跟随知识库默认"
+                        value={buildEngine || undefined}
+                        onChange={setBuildEngine}
+                        options={buildEngines.map((t) => ({ label: t.tape_label || t.tape_name, value: t.id }))}
+                      />
+                    </Form.Item>
+                    <Text type="secondary" style={{ fontSize: 12 }}>仅对本次上传的文件生效，不修改知识库默认配置</Text>
                   </div>
-                </div>
-              )}
-
-              {activeSection === "build" && (
-                <div style={{ overflow: "auto" }}>
-                  <Form.Item
-                    label="Wiki 构建服务"
-                    tooltip="选择后本文档构建 Wiki 走该编排（服务编排中已发布的编排）；留空跟随知识库默认"
-                    extra={buildEngine ? undefined : defaultBuildTapeId ? "当前跟随知识库默认编排" : "当前跟随知识库默认（未设置）"}
-                  >
-                    <Select
-                      style={{ width: "100%" }}
-                      allowClear
-                      placeholder="跟随知识库默认"
-                      value={buildEngine || undefined}
-                      onChange={setBuildEngine}
-                      options={buildEngines.map((t) => ({ label: t.tape_label || t.tape_name, value: t.id }))}
-                    />
-                  </Form.Item>
-                  <Form.Item
-                    label="摘要生成服务"
-                    tooltip="文档解析成功后自动生成摘要页；留空跟随知识库默认摘要策略"
-                    extra={summaryStrategy ? undefined : "当前跟随知识库默认摘要策略"}
-                  >
-                    <Select
-                      style={{ width: "100%" }}
-                      allowClear
-                      placeholder="跟随知识库默认"
-                      value={summaryStrategy || undefined}
-                      onChange={setSummaryStrategy}
-                      options={SUMMARY_STRATEGY_OPTIONS}
-                    />
-                  </Form.Item>
-                  <Text type="secondary" style={{ fontSize: 12 }}>仅对本次上传的文件生效，不修改知识库默认配置</Text>
-                </div>
-              )}
-            </>
-          )}
+                ),
+              },
+            ]}
+          />
+          <div style={{ fontSize: 12, color: "rgba(0,0,0,.35)", marginTop: 8 }}>
+            本次配置仅作用于本次上传的文件，不修改知识库默认配置
+          </div>
         </div>
       </div>
     </Modal>

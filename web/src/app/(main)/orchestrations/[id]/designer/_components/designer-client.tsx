@@ -21,6 +21,7 @@ import {
   DownloadOutlined,
   UploadOutlined,
   ApartmentOutlined,
+  HistoryOutlined,
   ZoomInOutlined,
   ZoomOutOutlined,
   FullscreenOutlined,
@@ -34,12 +35,13 @@ import {
   apiPublishTape,
   apiExecuteTape,
   apiGetTapeRun,
+  apiListTapeRuns,
   apiExportTapeDraft,
   apiImportTapeDraft,
   apiSaveTapeAsTemplate,
   apiListTapeTemplateCategories,
 } from '@/lib/api';
-import type { StepDefineItem, TapeDetail, TapeRunDetail } from '@/lib/api';
+import type { StepDefineItem, TapeDetail, TapeRunDetail, TapeRunSummary } from '@/lib/api';
 
 import { LeftSidebar } from './left-sidebar';
 import { RightPanel } from './right-panel';
@@ -48,7 +50,9 @@ import type { StepFlowNode, StepNodeData } from './custom-node';
 import { TapeImportModal } from './tape-import-modal';
 import { ExecuteInputModal } from '@/app/(main)/orchestrations/_components/execute-input-modal';
 import { TapeRunLogDrawer } from '@/app/(main)/orchestrations/_components/tape-run-log-drawer';
-import { parseJsonRecord } from '../_utils/json';
+import { TapeRunHistoryDrawer } from '@/app/(main)/orchestrations/_components/tape-run-history-drawer';
+import { normalizeEdge, normalizeNode, uid } from '../_utils/flow';
+import type { RawFlowEdge, RawFlowNode } from '../_utils/flow';
 
 /** 编排设计器 —— 从 data-synth designer-client.tsx(1931行) 迁移的裁剪版。
  *
@@ -64,58 +68,6 @@ import { parseJsonRecord } from '../_utils/json';
  * 导入导出草稿、节点单独运行、数据集/样本源绑定（config-helper.ts、runtime-status.ts、
  * tape-import-modal.tsx、sample-source-transformer.ts 全部裁掉）。
  */
-
-/** 画布节点 ID 生成（无 nanoid 依赖） */
-function uid(prefix: string): string {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/** 后端 nodes 原始结构（TapeDetail.nodes 为宽松结构，此处限定读取字段） */
-interface RawFlowNode {
-  id?: unknown;
-  type?: unknown;
-  position?: { x?: unknown; y?: unknown };
-  data?: { stepInst?: unknown; label?: unknown; icon?: unknown; group?: unknown; config?: unknown };
-}
-
-/** 后端 edges 原始结构 */
-interface RawFlowEdge {
-  id?: unknown;
-  source?: unknown;
-  target?: unknown;
-  sourceHandle?: unknown;
-  targetHandle?: unknown;
-  type?: unknown;
-}
-
-function normalizeNode(raw: RawFlowNode): StepFlowNode {
-  return {
-    id: String(raw.id ?? uid('node')),
-    type: 'stepNode',
-    position: {
-      x: Number(raw.position?.x ?? 0),
-      y: Number(raw.position?.y ?? 0),
-    },
-    data: {
-      stepInst: String(raw.data?.stepInst ?? ''),
-      label: String(raw.data?.label ?? ''),
-      icon: typeof raw.data?.icon === 'string' ? raw.data.icon : null,
-      group: typeof raw.data?.group === 'string' ? raw.data.group : null,
-      config: parseJsonRecord(raw.data?.config ?? {}),
-    },
-  };
-}
-
-function normalizeEdge(raw: RawFlowEdge): Edge {
-  return {
-    id: String(raw.id ?? `${raw.source}-${raw.target}`),
-    source: String(raw.source ?? ''),
-    target: String(raw.target ?? ''),
-    sourceHandle: typeof raw.sourceHandle === 'string' ? raw.sourceHandle : undefined,
-    targetHandle: typeof raw.targetHandle === 'string' ? raw.targetHandle : undefined,
-    type: typeof raw.type === 'string' ? raw.type : 'default',
-  };
-}
 
 /** 持久化节点：只保留数据契约字段，剔除运行时注入的回调 */
 function toPersistableNode(n: StepFlowNode): {
@@ -165,6 +117,18 @@ const TAPE_STATUS_META: Record<string, { color: string; label: string }> = {
   offline: { color: 'orange', label: '已下线' },
 };
 
+/** 运行状态展示（顶栏实时状态 Tag）：与运行历史抽屉保持一致 */
+const RUN_STATUS_META: Record<string, { color: string; label: string }> = {
+  queued: { color: 'blue', label: '排队中' },
+  running: { color: 'blue', label: '执行中' },
+  success: { color: 'green', label: '成功' },
+  failed: { color: 'red', label: '失败' },
+  cancelled: { color: 'orange', label: '已取消' },
+};
+
+/** 活跃运行状态（未结束）：用于防重复发起（禁用执行按钮） */
+const ACTIVE_RUN_STATUS = ['queued', 'running'];
+
 interface DesignerClientProps {
   tapeId: string;
   /**
@@ -206,6 +170,84 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
   const [execRun, setExecRun] = useState<TapeRunDetail | null>(null);
   const [polling, setPolling] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 运行历史抽屉（2026-10-14：从编排管理列表迁入设计页）
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // 该编排最近一次运行（顶栏实时展示运行状态 + 防重复发起）
+  const [latestRun, setLatestRun] = useState<TapeRunSummary | null>(null);
+  const hasActiveRun = !!latestRun && ACTIVE_RUN_STATUS.includes(latestRun.status);
+
+  /** 停止逐步日志轮询 */
+  const stopPolling = useCallback(() => {
+    if (pollTimer.current) {
+      clearInterval(pollTimer.current);
+      pollTimer.current = null;
+    }
+    setPolling(false);
+  }, []);
+
+  /** 启动逐步日志轮询：queued/running → 持续拉取；终态停止 */
+  const startPolling = useCallback(
+    (runId: string) => {
+      if (pollTimer.current) {
+        clearInterval(pollTimer.current);
+        pollTimer.current = null;
+      }
+      setPolling(true);
+      pollTimer.current = setInterval(async () => {
+        try {
+          const r = await apiGetTapeRun(runId);
+          if (r.success && r.data) {
+            setExecRun(r.data);
+            if (['success', 'failed', 'cancelled'].includes(r.data.status)) stopPolling();
+          }
+        } catch {
+          // 轮询失败不中断：下次 tick 重试，直至抽屉关闭/终态
+        }
+      }, 1500);
+    },
+    [stopPolling],
+  );
+
+  /** 打开运行日志抽屉（新执行 / 历史回看共用）：拉详情后按状态决定是否轮询 */
+  const openRunLog = useCallback(
+    async (runId: string) => {
+      setExecOpen(true);
+      try {
+        const r = await apiGetTapeRun(runId);
+        if (r.success && r.data) {
+          setExecRun(r.data);
+          if (ACTIVE_RUN_STATUS.includes(r.data.status)) startPolling(runId);
+          else stopPolling();
+        } else {
+          stopPolling();
+        }
+      } catch {
+        stopPolling();
+      }
+    },
+    [startPolling, stopPolling],
+  );
+
+  /** 拉取该编排最近一次运行（顶栏状态 Tag 数据源） */
+  const refreshLatestRun = useCallback(async () => {
+    const res = await apiListTapeRuns(tapeId, 1, 1);
+    if (res.success) setLatestRun(res.data?.items?.[0] ?? null);
+  }, [tapeId]);
+
+  // 进入设计页即拉一次最近运行状态，便于刷新后仍能看到「执行中」
+  useEffect(() => {
+    void refreshLatestRun();
+  }, [refreshLatestRun]);
+
+  // 运行中时轮询刷新状态（终态后自动停止）——同时驱动执行按钮的禁用
+  useEffect(() => {
+    if (!hasActiveRun) return;
+    const t = setInterval(() => void refreshLatestRun(), 3000);
+    return () => clearInterval(t);
+  }, [hasActiveRun, refreshLatestRun]);
+
+  // 卸载时清理轮询定时器
+  useEffect(() => stopPolling, [stopPolling]);
 
   // 导入弹窗
   const [importOpen, setImportOpen] = useState(false);
@@ -530,7 +572,7 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
       const res = await apiExecuteTape(tapeId, inputs);
       if (res.success && res.data?.run_id) {
         const runId = res.data.run_id;
-        setExecOpen(true);
+        // 先占位展示 queued，再拉详情并按状态轮询
         setExecRun({
           id: runId,
           tape_id: tapeId,
@@ -539,25 +581,8 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
           step_results: [],
           bindings: {},
         });
-        setPolling(true);
-        // 轮询执行进度：queued/running → 逐步日志；终态（success/failed/cancelled）停止
-        pollTimer.current = setInterval(async () => {
-          try {
-            const r = await apiGetTapeRun(runId);
-            if (r.success && r.data) {
-              setExecRun(r.data);
-              if (['success', 'failed', 'cancelled'].includes(r.data.status)) {
-                if (pollTimer.current) {
-                  clearInterval(pollTimer.current);
-                  pollTimer.current = null;
-                }
-                setPolling(false);
-              }
-            }
-          } catch {
-            // 轮询失败不中断：下次 tick 重试，直至弹窗关闭
-          }
-        }, 1500);
+        await openRunLog(runId);
+        void refreshLatestRun();
       } else {
         message.error(res.message || '执行失败');
       }
@@ -565,17 +590,6 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
       setExecLoading(false);
     }
   };
-
-  // 卸载时清理轮询定时器
-  useEffect(
-    () => () => {
-      if (pollTimer.current) {
-        clearInterval(pollTimer.current);
-        pollTimer.current = null;
-      }
-    },
-    [],
-  );
 
   /** 导出：先静默保存当前草稿，再拉取导出 JSON 并触发浏览器下载 */
   const handleExport = async () => {
@@ -652,6 +666,18 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
           </p>
           {statusMeta && <Tag color={statusMeta.color} style={{ flexShrink: 0 }}>{statusMeta.label}</Tag>}
           {dirty && <Tag color="orange" style={{ flexShrink: 0 }}>未保存</Tag>}
+          {/* 运行状态（最近一次运行）：点击回看该次日志；运行中每 3s 自动刷新 */}
+          {latestRun && (
+            <Tooltip title="点击查看最近一次运行日志">
+              <Tag
+                color={(RUN_STATUS_META[latestRun.status] || { color: 'default' }).color}
+                style={{ flexShrink: 0, cursor: 'pointer' }}
+                onClick={() => void openRunLog(latestRun.id)}
+              >
+                {(RUN_STATUS_META[latestRun.status] || { label: latestRun.status }).label}
+              </Tag>
+            </Tooltip>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
@@ -680,12 +706,26 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
               导入
             </Button>
           </Tooltip>
+          <Tooltip title="查看该编排的历史运行记录">
+            <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>
+              历史
+            </Button>
+          </Tooltip>
           <Button icon={<RocketOutlined />} loading={saving} onClick={() => void handleSaveAndPublish()}>
             保存并发布
           </Button>
-          <Button icon={<PlayCircleOutlined />} type="primary" ghost loading={execLoading} onClick={() => setExecInputOpen(true)}>
-            执行
-          </Button>
+          <Tooltip title={hasActiveRun ? '该编排已有运行中的任务，请等待其结束' : '填写参数并执行'}>
+            <Button
+              icon={<PlayCircleOutlined />}
+              type="primary"
+              ghost
+              loading={execLoading}
+              disabled={hasActiveRun}
+              onClick={() => setExecInputOpen(true)}
+            >
+              {hasActiveRun ? '运行中' : '执行'}
+            </Button>
+          </Tooltip>
         </div>
       </header>
 
@@ -761,12 +801,19 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
         run={execRun}
         polling={polling}
         onClose={() => {
-          if (pollTimer.current) {
-            clearInterval(pollTimer.current);
-            pollTimer.current = null;
-          }
-          setPolling(false);
+          stopPolling();
           setExecOpen(false);
+        }}
+      />
+
+      {/* ============ 运行历史抽屉（2026-10-14：从编排管理列表迁入设计页） ============ */}
+      <TapeRunHistoryDrawer
+        open={historyOpen}
+        tape={tape}
+        onClose={() => setHistoryOpen(false)}
+        onViewRun={(runId) => {
+          setHistoryOpen(false);
+          void openRunLog(runId);
         }}
       />
 

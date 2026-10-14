@@ -9,12 +9,15 @@
  * （WikiBrowseView）的两栏结构（左 280px 侧栏 border-right / 右内容区）；
  * 分类由左树驱动筛选，右侧保留关键词/状态筛选。
  * 新增「查看」：抽屉展示模板基本信息 + 骨架（节点/连线/执行参数）只读预览。
+ * 新增「设计」（2026-10-14）：对齐编排管理，点模板名/设计按钮在动态选项卡里用
+ * ReactFlow 只读渲染骨架（TemplateDesignView），点击节点可看该节点配置。
  *
  * 修复（2026-10-13）：编辑表单不回显 —— 此前 Form.Item 全部缺 name 属性，
  * setFieldsValue 无处可挂、getFieldsValue 取不到值（保存必失败）。
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { ReactFlowProvider } from "@xyflow/react";
 import {
   App,
   Button,
@@ -46,6 +49,7 @@ import { ModoDrawer } from "@/components/biz/modo-drawer";
 import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 import { useUserNames } from "@/lib/use-user-names";
+import { TemplateDesignView } from "./_components/template-design-view";
 import {
   apiApplyTapeTemplate,
   apiCreateTapeTemplate,
@@ -109,13 +113,40 @@ export default function TapeTemplatesPage() {
   const [viewing, setViewing] = useState<TapeTemplateDetail | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
 
-  // 动态选项卡（预留：模板详情/设计预览后续可 push 进来）
+  // 动态选项卡：承载「模板设计」只读预览（对齐编排管理）
   const [tabs, setTabs] = useState<TemplateTab[]>([]);
   const [activeTab, setActiveTab] = useState("home");
 
   const closeTab = (key: string) => {
     setTabs((prev) => prev.filter((t) => t.key !== key));
     if (activeTab === key) setActiveTab("home");
+  };
+
+  /**
+   * 查看设计（对齐编排管理：动态选项卡 + ReactFlow 只读骨架预览）。
+   * 每个 tab 独立 ReactFlowProvider = 独立画布 store，多 tab 互不干扰。
+   */
+  const openDesignTab = (row: TapeTemplateItem) => {
+    const key = `tpl-design-${row.id}`;
+    const title = `设计 · ${row.label || row.name}`;
+    setTabs((prev) => {
+      if (prev.some((t) => t.key === key)) return prev;
+      return [
+        ...prev,
+        {
+          key,
+          title,
+          children: (
+            <div style={{ height: "100%", width: "100%", overflow: "hidden" }}>
+              <ReactFlowProvider>
+                <TemplateDesignView templateId={row.id} onBack={() => closeTab(key)} />
+              </ReactFlowProvider>
+            </div>
+          ),
+        },
+      ];
+    });
+    setActiveTab(key);
   };
 
   const load = useCallback(async () => {
@@ -289,8 +320,8 @@ export default function TapeTemplatesPage() {
       width: 190,
       ellipsis: true,
       render: (v: string, row) => (
-        <Tooltip title={`${row.name}（${row.node_count} 节点 / ${row.edge_count} 连线）`}>
-          <span style={{ cursor: "pointer", color: "var(--color-primary, #3261ce)" }} onClick={() => void openView(row)}>
+        <Tooltip title={`查看设计｜${row.name}（${row.node_count} 节点 / ${row.edge_count} 连线）`}>
+          <span style={{ cursor: "pointer", color: "var(--color-primary, #3261ce)" }} onClick={() => openDesignTab(row)}>
             {v || row.name}
           </span>
         </Tooltip>
@@ -347,6 +378,7 @@ export default function TapeTemplatesPage() {
       render: (_, row) => (
         <ModoActionGroup
           actions={[
+            { key: "design", label: "设计", icon: <ApartmentOutlined />, onClick: () => openDesignTab(row) },
             { key: "view", label: "查看", icon: <EyeOutlined />, onClick: () => void openView(row) },
             { key: "apply", label: "应用", icon: <ExperimentOutlined />, loading: applying === row.id, onClick: () => doApply(row) },
             { key: "edit", label: "编辑", onClick: () => openEdit(row) },

@@ -255,39 +255,42 @@ export const CustomNode = memo(function CustomNode({ id, data, selected }: NodeP
             </p>
           </div>
 
-          <Dropdown
-            menu={{
-              items: [
-                {
-                  key: 'delete',
-                  label: '删除',
-                  danger: true,
-                  icon: <DeleteOutlined />,
-                  onClick: (info: { domEvent: { stopPropagation: () => void } }) => {
-                    info.domEvent.stopPropagation();
-                    data.onDelete?.(id);
+          {/* 只读预览（如模板设计）不注入 onDelete → 不渲染操作菜单，避免误导 */}
+          {data.onDelete ? (
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: 'delete',
+                    label: '删除',
+                    danger: true,
+                    icon: <DeleteOutlined />,
+                    onClick: (info: { domEvent: { stopPropagation: () => void } }) => {
+                      info.domEvent.stopPropagation();
+                      data.onDelete?.(id);
+                    },
                   },
-                },
-              ],
-            }}
-            trigger={['click']}
-            placement="bottomRight"
-          >
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 2,
-                borderRadius: '50%',
-                color: '#79879c',
-                cursor: 'pointer',
+                ],
               }}
-              onClick={(e) => e.stopPropagation()}
+              trigger={['click']}
+              placement="bottomRight"
             >
-              <MoreOutlined style={{ fontSize: 16 }} />
-            </div>
-          </Dropdown>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 2,
+                  borderRadius: '50%',
+                  color: '#79879c',
+                  cursor: 'pointer',
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <MoreOutlined style={{ fontSize: 16 }} />
+              </div>
+            </Dropdown>
+          ) : null}
         </div>
 
         {/* 配置摘要 */}

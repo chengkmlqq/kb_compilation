@@ -349,6 +349,16 @@ def execute_tape(db, tape_id: str, inputs: dict | None = None, env: str | None =
     前端通过 GET runs/{run_id} 轮询逐步日志。
     env：None 按原逻辑（路由开启时编排→dev）；worker 上传链传 "prod"。
     """
+    # 防重复发起（2026-10-14）：同一编排已有未结束（queued/running）的运行时不重复投递。
+    # 只拦手动执行路径（API/质量评估）；worker 自动构建走 _create_tape_run 直调，不受影响。
+    active = (
+        db.query(TapeRun)
+        .filter(TapeRun.tape_id == tape_id, TapeRun.status.in_(("queued", "running")))
+        .first()
+    )
+    if active:
+        raise ValueError("该编排已有运行中的任务，请等待其结束后再执行（可查看运行历史）")
+
     created = _create_tape_run(db, tape_id, inputs, env=env)
     run_id, run_env = created["run_id"], created["run_env"]
 

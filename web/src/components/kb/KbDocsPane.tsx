@@ -5,7 +5,7 @@
  *
  * 从 kbs/[id]/page.tsx 抽出，供「动态选项卡」与详情路由复用：
  * KB 概览 + 文档工具条（筛选/上传）+ 文档卡片视图/表格 + 分页。
- * 仅依赖 kbId prop，自包含（自带文档列表与上传相关 state、Drawer、Modal）。
+ * 文档详情不再内置抽屉，点击文件时通过 onOpenDoc 回调交由父级以动态选项卡打开。
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
@@ -46,7 +46,6 @@ import DocCardView, {
 } from "@/components/DocCardView";
 import ModoTable from "@/components/biz/modo-table";
 import ModoPagination from "@/components/biz/modo-pagination";
-import DocDetailDrawer from "@/components/DocDetailDrawer";
 import UploadConfirmDialog, { UploadProcessConfig } from "@/components/UploadConfirmDialog";
 import SelectTableDialog from "@/components/SelectTableDialog";
 import DocBuildProcessDrawer from "@/components/DocBuildProcessDrawer";
@@ -80,9 +79,17 @@ const PARSE_STATE_COLOR: Record<string, string> = {
 
 export interface KbDocsPaneProps {
   kbId: string;
+  /** 父级刷新信号：值变化时重新拉取文档列表与目录（用于详情页签中删除/重解析后同步） */
+  refreshTick?: number;
+  /** 打开文档详情（由父级以动态选项卡承载，不再用抽屉） */
+  onOpenDoc: (doc: DocItem) => void;
+  /** 文档列表变化回调（父级用于同步已打开详情页签的 doc 数据，如自动摘要回填） */
+  onDocsChange?: (docs: DocItem[]) => void;
+  /** 单个文档被删除后回调（父级关闭对应详情页签） */
+  onDocRemoved?: (docId: string) => void;
 }
 
-export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
+export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange, onDocRemoved }: KbDocsPaneProps) {
   const { message, modal } = App.useApp();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // 所在页签可见性：antd Tabs 默认不销毁隐藏 pane，隐藏时应暂停轮询/摘要，
@@ -123,7 +130,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
     }
   };
 
-  const [detailDoc, setDetailDoc] = useState<DocItem | null>(null);
   // 上传确认弹窗（对齐 WeKnora：选文件 → 弹确认框可选处理配置 → 确认后上传）
   const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
   const [uploadConfirmOpen, setUploadConfirmOpen] = useState(false);
@@ -257,6 +263,24 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
     void loadDocFolders();
   }, [loadDocFolders]);
 
+  // 父级刷新信号：refreshTick 变化时重新拉取文档列表与目录。
+  // 用 useRef 记录上次值，避免挂载时（值未变）重复加载。
+  const lastRefreshTick = useRef(refreshTick);
+  useEffect(() => {
+    if (refreshTick === undefined || lastRefreshTick.current === refreshTick) return;
+    lastRefreshTick.current = refreshTick;
+    void load();
+    void loadDocFolders();
+  }, [refreshTick, load, loadDocFolders]);
+
+  // 文档列表变化后通知父级（同步已打开详情页签的 doc 数据）。
+  // 用 ref 保存回调，effect 仅依赖 docs，避免父级内联函数每次渲染触发循环。
+  const onDocsChangeRef = useRef(onDocsChange);
+  onDocsChangeRef.current = onDocsChange;
+  useEffect(() => {
+    onDocsChangeRef.current?.(docs);
+  }, [docs]);
+
   // 页签可见性守卫：隐藏页签（display:none，rect 为零 → 不交叉）时置 false，停掉轮询与摘要
   useEffect(() => {
     const el = paneRef.current;
@@ -305,8 +329,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             summary_error: null,
           };
           setDocs((prev) => prev.map((d) => (d.id === target.id ? updated : d)));
-          // 抽屉正打开该文档时同步刷新展示（原 onSummaryUpdated 职责，按钮移除后由自动摘要接管）
-          setDetailDoc((prev) => (prev && prev.id === target.id ? updated : prev));
+          // 已打开该文档详情页签时由文档列表同步机制（onDocsChange）回填展示
         }
       })
       .catch(() => {
@@ -330,7 +353,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
         const res = await apiDeleteDocument(kbId, doc.id);
         if (res.success) {
           message.success("文档已删除");
-          if (detailDoc?.id === doc.id) setDetailDoc(null);
+          onDocRemoved?.(doc.id);
           // 删除当前页最后一条且不在第 1 页时回退一页，避免空页
           if (docs.length === 1 && docPage > 1) setDocPage(docPage - 1);
           else void load();
@@ -354,7 +377,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
     const res = await apiReparseDocument(kbId, doc.id);
     if (res.success) {
       message.success("已重新入队解析");
-      setDetailDoc(null);
       void load();
     } else {
       message.error(res.message || "重新解析失败");
@@ -797,7 +819,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
             <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
               <DocCardView
                 items={docs}
-                onOpen={setDetailDoc}
+                onOpen={onOpenDoc}
                 onDownload={onDownloadDoc}
                 onReparse={onReparseDoc}
                 onDelete={onDeleteDoc}
@@ -832,7 +854,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
                 selectedRowKeys: [...selectedDocs],
                 onChange: (keys) => setSelectedDocs(new Set(keys as string[])),
               }}
-              onRow={(doc) => ({ onClick: () => setDetailDoc(doc) })}
+              onRow={(doc) => ({ onClick: () => onOpenDoc(doc) })}
               locale={{ emptyText: <Empty description="暂无文档，拖拽文件到右上角上传" /> }}
               columns={[
                 {
@@ -841,7 +863,7 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
                   render: (v: string, doc: DocItem) => (
                     <Space>
                       <span style={{ fontSize: 16 }}>{fileTypeIcon(doc.file_ext)}</span>
-                      <a onClick={() => setDetailDoc(doc)}>{v}</a>
+                      <a onClick={() => onOpenDoc(doc)}>{v}</a>
                     </Space>
                   ),
                 },
@@ -947,16 +969,6 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
           setDocPage(1);
           void load();
         }}
-      />
-
-      {/* 文档详情抽屉（对齐 WeKnora DocContent：元数据 + AI 摘要展示 + 三视图 + 下载/重解析/删除） */}
-      <DocDetailDrawer
-        kbId={kbId}
-        doc={detailDoc}
-        onClose={() => setDetailDoc(null)}
-        onDownload={onDownloadDoc}
-        onReparse={onReparseDoc}
-        onDelete={onDeleteDoc}
       />
 
       {/* 构建过程抽屉：文档列表就地查看 wiki 构建执行轨迹/LLM 明细/日志 */}

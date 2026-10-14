@@ -21,6 +21,8 @@ import KbDocsPane from "@/components/kb/KbDocsPane";
 import KbWikiPane from "@/components/kb/KbWikiPane";
 import KbGraphPane from "@/components/kb/KbGraphPane";
 import WikiGraphView from "@/components/WikiGraphView";
+import DocDetailPanel from "@/components/DocDetailPanel";
+import { DocItem } from "@/lib/api";
 
 export default function KbDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -38,6 +40,44 @@ export default function KbDetailPage() {
   // 有值 = wiki 关联关系图（ego 邻域）；无值 = Neo4j 全库图谱。
   const [graphFocus, setGraphFocus] = useState<string | undefined>(urlFocus);
   const focusSlug = urlFocus;
+
+  // 文档详情动态选项卡：点击文件打开（可关闭），不再是抽屉
+  const [docTabs, setDocTabs] = useState<DocItem[]>([]);
+  // 详情页签内删除/重解析后，通知文档列表重新拉取
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  const openDoc = (doc: DocItem) => {
+    setDocTabs((prev) => (prev.some((d) => d.id === doc.id) ? prev : [...prev, doc]));
+    setActiveTab(`doc-${doc.id}`);
+  };
+
+  const closeDocTab = (docId: string) => {
+    setDocTabs((prev) => prev.filter((d) => d.id !== docId));
+    if (activeTab === `doc-${docId}`) setActiveTab("docs");
+  };
+
+  /** 文档列表变化时同步已打开详情页签的 doc 数据（如自动摘要回填） */
+  const syncDocTabs = (list: DocItem[]) => {
+    setDocTabs((prev) => {
+      let changed = false;
+      const next = prev.map((d) => {
+        const found = list.find((x) => x.id === d.id);
+        if (found && found !== d) {
+          changed = true;
+          return found;
+        }
+        return d;
+      });
+      return changed ? next : prev;
+    });
+  };
+
+  /** 详情页签内删除成功：关闭页签并刷新文档列表 */
+  const removeDoc = (docId: string) => {
+    setDocTabs((prev) => prev.filter((d) => d.id !== docId));
+    if (activeTab === `doc-${docId}`) setActiveTab("docs");
+    setRefreshTick((v) => v + 1);
+  };
 
   /** Wiki 页内「在图谱中查看」：带上当前页 slug → wiki 关联图 ego 模式 */
   const handleOpenGraph = (slug?: string) => {
@@ -62,8 +102,24 @@ export default function KbDetailPage() {
         hideAdd
         activeKey={activeTab}
         onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeDocTab(String(key).replace(/^doc-/, ""));
+        }}
         items={[
-          { key: "docs", label: "文档", closable: false, children: <KbDocsPane kbId={kbId} /> },
+          {
+            key: "docs",
+            label: "文档",
+            closable: false,
+            children: (
+              <KbDocsPane
+                kbId={kbId}
+                refreshTick={refreshTick}
+                onOpenDoc={openDoc}
+                onDocsChange={syncDocTabs}
+                onDocRemoved={removeDoc}
+              />
+            ),
+          },
           {
             key: "wiki",
             label: "Wiki",
@@ -88,6 +144,20 @@ export default function KbDetailPage() {
             closable: false,
             children: <WikiGraphView kbId={kbId} focusSlug={graphFocus} />,
           },
+          // 文档详情：点击文件打开的动态选项卡（可关闭），承载 DocDetailPanel
+          ...docTabs.map((d) => ({
+            key: `doc-${d.id}`,
+            label: d.file_name,
+            closable: true,
+            children: (
+              <DocDetailPanel
+                kbId={kbId}
+                doc={d}
+                onDocReparsed={() => setRefreshTick((v) => v + 1)}
+                onDocRemoved={removeDoc}
+              />
+            ),
+          })),
         ]}
       />
     </div>

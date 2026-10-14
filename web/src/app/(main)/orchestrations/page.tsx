@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, HistoryOutlined, PauseCircleOutlined, FileAddOutlined, AppstoreOutlined, FolderOutlined } from "@ant-design/icons";
+import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, PauseCircleOutlined, FileAddOutlined, AppstoreOutlined, FolderOutlined } from "@ant-design/icons";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
 import { ModoSelect } from "@/components/biz/modo-select";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
@@ -19,7 +19,6 @@ import { ModoTabs } from "@/components/biz/modo-tabs";
 import { DesignerClient } from "./[id]/designer/_components/designer-client";
 import { ExecuteInputModal } from "./_components/execute-input-modal";
 import { TapeRunLogDrawer } from "./_components/tape-run-log-drawer";
-import { TapeRunHistoryDrawer } from "./_components/tape-run-history-drawer";
 import { useUserNames } from "@/lib/use-user-names";
 import {
   apiApplyTapeTemplate,
@@ -88,9 +87,6 @@ export default function OrchestrationsPage() {
   // 执行入参弹窗（先填初始调用参数，再提交执行）
   const [execInputOpen, setExecInputOpen] = useState(false);
   const [execInputTape, setExecInputTape] = useState<TapeItem | null>(null);
-  // 运行历史抽屉（2026-10-13：关闭日志抽屉后仍可回看历史运行）
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyTape, setHistoryTape] = useState<TapeItem | null>(null);
 
   // 从模板新建（2026-10-12）
   const [tplPickerOpen, setTplPickerOpen] = useState(false);
@@ -436,46 +432,29 @@ export default function OrchestrationsPage() {
       title: "操作",
       key: "act",
       width: 140,
-      render: (_, row) => {
-        // 该编排当前有活跃运行（queued/running）→ 执行按钮变「运行中…」，点击重新打开日志抽屉
-        const hasActiveRun = !!execRun && ["queued", "running"].includes(execRun.status) && execRun.tape_id === row.id;
-        return (
-          <ModoActionGroup
-            maxCount={3}
-            actions={[
-              { key: "design", label: "设计", icon: <ExperimentOutlined />, onClick: () => openDesignerTab(row) },
-              {
-                key: "run",
-                label: hasActiveRun ? "运行中…" : "执行",
-                icon: <CheckCircleOutlined />,
-                loading: submitting,
-                onClick: () => {
-                  if (hasActiveRun && execRun) {
-                    void openRunLog(execRun.id);
-                  } else {
-                    setExecInputTape(row);
-                    setExecInputOpen(true);
-                  }
-                },
+      render: (_, row) => (
+        <ModoActionGroup
+          maxCount={3}
+          actions={[
+            { key: "design", label: "设计", icon: <ExperimentOutlined />, onClick: () => openDesignerTab(row) },
+            {
+              key: "run",
+              label: "执行",
+              icon: <CheckCircleOutlined />,
+              loading: submitting,
+              onClick: () => {
+                setExecInputTape(row);
+                setExecInputOpen(true);
               },
-              { key: "edit", label: "编辑", onClick: () => openEdit(row) },
-              ...(row.status === "effective"
-                ? [{ key: "offline", label: "下线", icon: <PauseCircleOutlined />, onClick: () => doOffline(row) }]
-                : [{ key: "publish", label: "发布", icon: <ExportOutlined />, onClick: () => doPublish(row) }]),
-              {
-                key: "history",
-                label: "历史",
-                icon: <HistoryOutlined />,
-                onClick: () => {
-                  setHistoryTape(row);
-                  setHistoryOpen(true);
-                },
-              },
-              { key: "del", label: "删除", danger: true, onClick: () => doDelete(row) },
-            ]}
-          />
-        );
-      },
+            },
+            { key: "edit", label: "编辑", onClick: () => openEdit(row) },
+            ...(row.status === "effective"
+              ? [{ key: "offline", label: "下线", icon: <PauseCircleOutlined />, onClick: () => doOffline(row) }]
+              : [{ key: "publish", label: "发布", icon: <ExportOutlined />, onClick: () => doPublish(row) }]),
+            { key: "del", label: "删除", danger: true, onClick: () => doDelete(row) },
+          ]}
+        />
+      ),
     },
   ];
 
@@ -738,17 +717,6 @@ export default function OrchestrationsPage() {
         onClose={() => {
           stopPolling();
           setExecOpen(false);
-        }}
-      />
-
-      {/* 运行历史抽屉（2026-10-13：关闭日志抽屉后仍可回看历史运行） */}
-      <TapeRunHistoryDrawer
-        open={historyOpen}
-        tape={historyTape}
-        onClose={() => setHistoryOpen(false)}
-        onViewRun={(runId) => {
-          setHistoryOpen(false);
-          void openRunLog(runId);
         }}
       />
 
