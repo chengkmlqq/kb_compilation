@@ -93,6 +93,10 @@ interface UiMessage extends ChatMessageItem {
 // 切页续传锚点：qa-resume:{sessionId} → {stream_id, offset}
 const QA_RESUME_KEY = (sid: string) => `qa-resume:${sid}`;
 
+// 本地占位消息 id（local-user-* / local-ai-* / resume-ai-*）只存在于浏览器内存，
+// 服务端没有对应记录——按此类 id 调反馈/删除接口会返回 404「消息不存在」。
+const LOCAL_MSG_ID_RE = /^(local|resume)-/;
+
 // 内容区统一宽度基准：消息列表 / 输入卡片 / 推荐问题共用，保证左右边缘对齐
 const CONTENT_MAX_WIDTH = 960;
 
@@ -400,7 +404,7 @@ export default function ChatPage() {
           },
         ]);
       }
-      const applyId = needPlaceholder ? placeholderId : (lastMsg?.id ?? placeholderId);
+      let applyId = needPlaceholder ? placeholderId : (lastMsg?.id ?? placeholderId);
       while (true) {
         if (resumeDone) break;
         const { done, value } = await reader.read();
@@ -477,6 +481,16 @@ export default function ChatPage() {
             } else if (ev.type === "done") {
               // 续传收到 done：立即结束，不再等连接关闭
               finalizeRunningSteps(applyId); // 兜底：续传场景步骤树不残留 loading
+              // 2026-10-14 续传同样对齐服务端 id（resume-ai-* 占位 → 持久化消息 id），
+              // 否则续传结束后点赞/反馈会按占位 id 请求，报「消息不存在」
+              const serverId = (ev.message_id || "").trim();
+              if (serverId && serverId !== applyId) {
+                const localId = applyId;
+                setMsgs((prev) =>
+                  prev.map((m) => (m.id === localId ? { ...m, id: serverId } : m)),
+                );
+                applyId = serverId;
+              }
               resumeDone = true;
               break;
             }
@@ -521,6 +535,27 @@ export default function ChatPage() {
     } else {
       toast.error(res.message || "创建会话失败");
     }
+  };
+
+  // 2026-10-14 服务端消息 id 对齐：done 事件带回持久化后的消息 id，把本地占位 id
+  // （local-user-* / local-ai-* / resume-ai-*）替换为服务端 id。
+  // 占位 id 只存在于前端内存，反馈/删除接口按 id 查库，不替换会 404「消息不存在」。
+  const adoptServerMessageIds = (
+    evt: QaStreamEvent,
+    assistantLocalId: string,
+    userLocalId?: string,
+  ): string => {
+    const serverAssistantId = (evt.message_id || "").trim();
+    const serverUserId = (evt.user_message_id || "").trim();
+    if (serverAssistantId && serverAssistantId !== assistantLocalId) {
+      setMsgs((prev) =>
+        prev.map((m) => (m.id === assistantLocalId ? { ...m, id: serverAssistantId } : m)),
+      );
+    }
+    if (userLocalId && serverUserId && serverUserId !== userLocalId) {
+      setMsgs((prev) => prev.map((m) => (m.id === userLocalId ? { ...m, id: serverUserId } : m)));
+    }
+    return serverAssistantId || assistantLocalId;
   };
 
   const send = async (textOverride?: string) => {
@@ -728,6 +763,9 @@ export default function ChatPage() {
               // 不再依赖 HTTP 连接关闭（连接可能因 keep-alive/代理延迟关闭，
               // 否则 setStreaming(false) 永远执行不到，界面一直显示"正在回答"）。
               finalizeRunningSteps(placeholder.id); // 兜底：漏发 stage done 时步骤树不残留 loading
+              // 2026-10-14 对齐服务端 id：本轮流已持久化，改用服务端消息 id
+              // （否则点赞/反馈仍按本地占位 id 请求，报「消息不存在」）
+              placeholder.id = adoptServerMessageIds(evt, placeholder.id, userMsg.id);
               streamDone = true;
               break;
             }
@@ -837,6 +875,29 @@ export default function ChatPage() {
     toast.warning("未找到可重新生成的问题");
   };
 
+  // 本地占位 id 的回答（停止生成后未收到 done、或旧流未回传 id）：从会话消息里
+  // 回捞该回答的真实 id —— 内容一致或为本地内容的续写（停止生成时本地只收到前半段）。
+  // 回捞失败不猜测，交由调用方提示「尚未保存」。
+  const resolveServerMessageId = async (
+    sessionId: string,
+    m: UiMessage,
+  ): Promise<string> => {
+    const res = await apiLoadSessionMessages(sessionId);
+    const assistants = (res.data?.items || []).filter((x) => x.role === "assistant");
+    const local = (m.content || "").trim();
+    if (!local) return "";
+    const target = [...assistants]
+      .reverse()
+      .find((x) => {
+        const server = (x.content || "").trim();
+        return server === local || server.startsWith(local);
+      });
+    if (!target) return "";
+    // 同步到本地列表：后续点击/删除直接命中服务端 id
+    setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, id: target.id } : x)));
+    return target.id;
+  };
+
   // 2026-10-13 问答反馈：喜欢/不喜欢（再点一次取消）。乐观更新，失败回滚。
   const toggleFeedback = useCallback(
     async (m: UiMessage, type: "like" | "dislike") => {
@@ -844,12 +905,21 @@ export default function ChatPage() {
         toast.warning("请先发送消息后再反馈");
         return;
       }
+      // 2026-10-14 本地占位 id 在服务端不存在，先换成服务端 id 再提交（否则 404「消息不存在」）
+      let messageId = m.id;
+      if (LOCAL_MSG_ID_RE.test(messageId)) {
+        messageId = await resolveServerMessageId(activeSession, m);
+        if (!messageId) {
+          toast.error("该回答尚未保存，请稍后重试");
+          return;
+        }
+      }
       const prev = m.feedback ?? null;
       const next = prev === type ? null : type;
       setMsgs((prevMsgs) =>
         prevMsgs.map((x) => (x.id === m.id ? { ...x, feedback: next } : x)),
       );
-      const res = await apiSubmitMessageFeedback(activeSession, m.id, next);
+      const res = await apiSubmitMessageFeedback(activeSession, messageId, next);
       if (!res.success) {
         setMsgs((prevMsgs) =>
           prevMsgs.map((x) => (x.id === m.id ? { ...x, feedback: prev } : x)),

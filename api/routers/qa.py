@@ -102,6 +102,9 @@ def _run_generation(
         # Session mode: validate + load history, persist user msg
         session = None
         user_id = None
+        # 2026-10-14 持久化后的消息 id 回传前端：done 事件带回服务端 id，
+        # 否则前端只能保留本地占位 id（local-ai-*），点赞/反馈按 id 查库会 404「消息不存在」。
+        user_message_id = ""
         attachment_ctx = ""
         image_urls: list[str] = []
         history: list[dict] = []
@@ -137,7 +140,10 @@ def _run_generation(
         if session and user_id and req.session_id:
             try:
                 image_ids = attachment_image_ids(db, req.session_id)
-                append_message(db, user_id, req.session_id, "user", req.question, images=image_ids or None)
+                persisted = append_message(
+                    db, user_id, req.session_id, "user", req.question, images=image_ids or None
+                )
+                user_message_id = persisted.get("id") or ""
             except Exception as e:  # noqa: BLE001
                 logger.warning("persist user msg failed: %s", e)
 
@@ -262,15 +268,26 @@ def _run_generation(
             store.append_event(stream_id, {"type": "error", "message": str(e)})
         finally:
             # persist assistant message (content + refs + thinking)
+            assistant_message_id = ""
             if session and user_id and req.session_id:
                 try:
                     payload = {"content": "".join(answer_parts), "refs": refs}
                     if thinking_parts:
                         payload["thinking"] = "".join(thinking_parts)
-                    append_message(db, user_id, req.session_id, "assistant", **payload)
+                    saved = append_message(db, user_id, req.session_id, "assistant", **payload)
+                    assistant_message_id = saved.get("id") or ""
                 except Exception as e:  # noqa: BLE001
                     logger.warning("persist assistant failed: %s", e)
-            store.append_event(stream_id, {"type": "done"})
+            # 2026-10-14 done 事件带回持久化消息 id：前端据此把本地占位 id
+            # （local-ai-*）替换为服务端 id，点赞/反馈接口才能按 id 命中消息。
+            store.append_event(
+                stream_id,
+                {
+                    "type": "done",
+                    "message_id": assistant_message_id,
+                    "user_message_id": user_message_id,
+                },
+            )
             store.mark_done(stream_id)
     except Exception as e:  # noqa: BLE001
         logger.exception("qa generation crashed")

@@ -2,7 +2,19 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-13（任务监控页编排 run 可见性全面修复 + 卡住 run 终态化，commit 待定）
+最后更新：2026-10-14（智能问答「喜欢 / 不喜欢」报「消息不存在」修复）
+
+## 13. 当前状态（2026-10-14 问答反馈报「消息不存在」修复，commit 待推）
+
+- **症状**：智能问答页点「喜欢 / 不喜欢」报错 `消息不存在: local-ai-1791941609271`（HTTP 404）
+- **根因**：前端流式渲染时助手消息用**本地占位 id**（`local-ai-<时间戳>`，chat/page.tsx 的 placeholder；用户消息 `local-user-*`、续传占位 `resume-ai-*`），而后端 `done` 事件只发 `{"type":"done"}` 不带持久化消息 id → 前端永远保留占位 id；反馈接口 `POST /api/v1/sessions/{sid}/messages/{mid}/feedback` 按 id 查库 → 404。刷新页面后消息 id 来自 `GET .../messages`（服务端 id），反馈又正常——这正是该问题「看起来偶发」的原因
+- **修复**：
+  1. 后端 `api/routers/qa.py`（知识库问答流）：持久化用户/助手消息时取出返回的 `id`，`done` 事件回传 `{"type":"done","message_id":<助手消息id>,"user_message_id":<用户消息id>}`
+  2. 后端 `api/routers/agents.py`（智能体问答流）：会话模式同款回传
+  3. 前端 `chat/page.tsx`：`send()` 收到 done 时经 `adoptServerMessageIds()` 把占位 id 替换为服务端 id（同时改写 `placeholder.id`，后续 streaming / 追问建议更新继续命中同一条消息）；续传 `tryResume()` 收到 done 同样对齐（`resume-ai-*` → 服务端 id）
+  4. 前端兜底：`toggleFeedback()` 遇到本地占位 id（`^(local|resume)-`）先经 `resolveServerMessageId()` 从 `GET .../messages` 回捞真实 id（内容一致，或为本地内容的续写——停止生成时本地只收到前半段），回捞不到则提示「该回答尚未保存，请稍后重试」，不猜测
+  5. `web/src/lib/api.ts`：`QaStreamEvent` 补 `message_id` / `user_message_id` 字段
+- **验证**：本轮按用户指定未跑 pytest / tsc，改动已静态复核（占位 id 相关分支逐一核对）；实机验证需重建 kb-web / kb-api-server 镜像（前端为源码改动）
 
 ## 12. 当前状态（2026-10-13 任务监控页「看不到编排任务」全面修复，commit 待推）
 
@@ -328,6 +340,8 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下；type-
    - **报错信息修复**：ChatClient 遇网关 404 时改抛中文可定位提示（含模型名+接口地址，指向「模型配置」页自查），不再裸抛 httpx 串。测试 test_chat_client_404_becomes_actionable_message。
    - **数据修复（待用户在模型配置页操作）**：默认 chat 模型 `aliyun/deepseek-v4-flash`（kb_model，is_default=1）需改成网关可用的名字（如 aliyun/deepseek-v4-pro）。
    - **教训**：接入企业内网网关（tokenerpgw/erp 等）时，模型名必须**实测打一次 chat/completions 验证**——`GET /models` 列出 ≠ 可调用，且这类网关普遍用 404（非标准 400）表达 model_not_found。
+
+33. **前端本地占位消息 id 不能直接调服务端接口（2026-10-14 定位+已修复）**：流式问答期间助手消息 id 是前端自造的 `local-ai-<ts>`（用户消息 `local-user-<ts>`、续传占位 `resume-ai-<ts>`），服务端库里没有对应记录；任何按消息 id 的服务端调用（反馈、删除）都会 404「消息不存在」，而**刷新页面后又能用**（id 变成 `GET .../messages` 返回的库内 id），极易被当成偶发问题。修复后两个问答流端点的 `done` 事件回传持久化 id，前端在 done / 续传时替换占位 id，并对残留占位 id 做回捞兜底（`toggleFeedback`）。**同类注意**：后续新增任何按消息 id 的接口（编辑、引用、回溯、分享）前，先确认前端拿到的确实是服务端 id。
 
 ## 8. 剩余工作（按优先级）
 

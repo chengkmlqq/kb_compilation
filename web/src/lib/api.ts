@@ -2152,6 +2152,9 @@ export interface QaStreamEvent {
   hits?: ChatRefItem[];
   text?: string;
   message?: string;
+  /** 2026-10-14 done 事件回传：本次问答持久化后的助手/用户消息 id */
+  message_id?: string;
+  user_message_id?: string;
   stage?: string;
   status?: "running" | "done";
   title?: string;

@@ -151,6 +151,8 @@ def agent_qa_stream(
 
         # 会话模式：校验 + 加载历史 + 附件
         user_id = None
+        # 2026-10-14 done 事件回传持久化消息 id（前端对齐服务端 id，避免点赞 404「消息不存在」）
+        user_message_id = ""
         history: list[dict] = []
         attachment_ctx = ""
         image_urls: list[str] = []
@@ -190,7 +192,8 @@ def agent_qa_stream(
                 attachment_ctx = attachment_contents(db, req.session_id)
                 image_urls = attachment_images(db, req.session_id)
                 # 持久化用户消息
-                append_message(db, user_id, req.session_id, "user", req.question)
+                persisted = append_message(db, user_id, req.session_id, "user", req.question)
+                user_message_id = persisted.get("id") or ""
             except Exception as e:  # noqa: BLE001
                 yield _sse({"type": "error", "message": str(e)})
                 yield _sse({"type": "done"})
@@ -395,16 +398,26 @@ def agent_qa_stream(
             yield _sse({"type": "error", "message": str(e), "kb_id": last_kb_id})
         finally:
             # 会话模式：持久化助手回答
+            assistant_message_id = ""
             if req.session_id and user_id:
                 try:
                     from api.services.chat_sessions import append_message
 
-                    append_message(
+                    saved = append_message(
                         db, user_id, req.session_id, "assistant", "".join(answer_parts), refs=refs
                     )
+                    assistant_message_id = saved.get("id") or ""
                 except Exception as e:  # noqa: BLE001
                     logger.warning("failed to persist agent assistant message: %s", e)
-            yield _sse({"type": "done"})
+            # 2026-10-14 done 事件带回持久化消息 id：前端据此把本地占位 id 换成服务端 id，
+            # 否则点赞/反馈按 id 查库会 404「消息不存在」。
+            yield _sse(
+                {
+                    "type": "done",
+                    "message_id": assistant_message_id,
+                    "user_message_id": user_message_id,
+                }
+            )
 
     return StreamingResponse(
         generator(),
