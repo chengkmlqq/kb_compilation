@@ -11,7 +11,7 @@
  * 布局（2026-10-14）：对齐整体 UI —— 外层定高不滚动 + ModoTabs（首 tab「质量评估」= 页面标题 + 列表）
  * + Card 内「筛选固定 / 表格吃满剩余高度 / 分页钉底」；抽屉/弹窗统一 ModoDrawer/ModoModal。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { App, Button, Card, Empty, Form, Select, Space, Tag, Typography } from "antd";
 import {
   ApiOutlined,
@@ -30,8 +30,10 @@ import { ModoTable } from "@/components/biz/modo-table";
 import {
   apiGetQualityRun,
   apiLaunchQualityRun,
+  apiListDocuments,
   apiListQualityRuns,
   apiListKbs,
+  DocItem,
   KbItem,
   QualityAttribution,
   QualityIssue,
@@ -110,6 +112,40 @@ export default function QualityPage() {
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [launchForm] = Form.useForm<{ kb_id: string; mode: string; doc_ids: string[] }>();
+  // 发起评估弹窗：文档下拉（随知识库联动 + 输入远程搜索，参照 ExecuteInputModal 模式）
+  const [docOptions, setDocOptions] = useState<{ value: string; label: string }[]>([]);
+  const [docLoading, setDocLoading] = useState(false);
+  const docSearchRef = useRef("");
+
+  const loadDocs = useCallback(async (kb: string, keyword = "") => {
+    setDocLoading(true);
+    try {
+      const res = await apiListDocuments(kb, 1, 200, { keyword });
+      if (res.success) {
+        setDocOptions(
+          (res.data?.items || []).map((d: DocItem) => ({ value: d.id, label: d.file_name })),
+        );
+      } else {
+        message.error(res.message || "加载文档列表失败");
+      }
+    } catch (e) {
+      message.error(`加载文档列表失败: ${String(e)}`);
+    } finally {
+      setDocLoading(false);
+    }
+  }, [message]);
+
+  const handleKbChange = (v: string) => {
+    launchForm.setFieldValue("doc_ids", undefined);
+    docSearchRef.current = "";
+    if (v) void loadDocs(v);
+  };
+
+  const handleDocSearch = (kw: string) => {
+    docSearchRef.current = kw;
+    const kbId = launchForm.getFieldValue("kb_id");
+    if (kbId) void loadDocs(kbId, kw);
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -396,7 +432,11 @@ export default function QualityPage() {
             <Button
               type="primary"
               icon={<PlayCircleOutlined />}
-              onClick={() => setLaunchOpen(true)}
+              onClick={() => {
+                setDocOptions([]);
+                docSearchRef.current = "";
+                setLaunchOpen(true);
+              }}
             >
               发起评估
             </Button>
@@ -421,6 +461,7 @@ export default function QualityPage() {
               showSearch
               placeholder="选择知识库"
               optionFilterProp="label"
+              onChange={handleKbChange}
               options={kbs.map((k) => ({ label: k.name, value: k.id }))}
             />
           </Form.Item>
@@ -444,7 +485,16 @@ export default function QualityPage() {
                   label={getFieldValue("mode") === "multi" ? "批量选择文档" : "选择文档"}
                   rules={[{ required: true, message: "请选择文档" }]}
                 >
-                  <Select mode="multiple" placeholder="选择文档（支持多选）" />
+                  <Select
+                    mode="multiple"
+                    showSearch
+                    loading={docLoading}
+                    placeholder={launchForm.getFieldValue("kb_id") ? "选择文档（可输入名称搜索）" : "请先选择知识库"}
+                    options={docOptions}
+                    onSearch={handleDocSearch}
+                    filterOption={false}
+                    notFoundContent={docSearchRef.current ? "未找到匹配文档" : "请先选择知识库"}
+                  />
                 </Form.Item>
               )
             }
