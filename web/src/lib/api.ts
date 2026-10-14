@@ -36,6 +36,22 @@ async function request<T = unknown>(path: string, init?: RequestInit): Promise<A
     headers,
     cache: "no-store",
   });
+  // 401 = 会话失效（cookie 过期/清除/换签失败）统一处理：清 cookie 跳登录。
+  // 此前 401 只变成 {success:false} 被页面 toast，不跳登录——登录守卫只在页面
+  // 挂载时校验一次，运行中 cookie 失效后任何页面都会「报错但不跳转」（2026-10-14 修复）。
+  if (res.status === 401 && typeof window !== "undefined") {
+    // 已在登录页则不重复跳转
+    if (!window.location.pathname.endsWith("/login")) {
+      try {
+        document.cookie = "x-next-identity=; path=/; max-age=0";
+      } catch {
+        /* ignore */
+      }
+      const base = window.location.pathname.startsWith("/wiki") ? "/wiki" : "";
+      window.location.replace(`${base}/login`);
+      return { success: false, message: "登录已失效，请重新登录" };
+    }
+  }
   const text = await res.text();
   if (!text) {
     return { success: res.ok, message: `HTTP ${res.status}` };
@@ -79,6 +95,18 @@ function requestUpload<T = unknown>(
       }
     };
     xhr.onload = () => {
+      // 401 = 会话失效统一处理（与 request() 同口径，2026-10-14）
+      if (xhr.status === 401 && typeof window !== "undefined" && !window.location.pathname.endsWith("/login")) {
+        try {
+          document.cookie = "x-next-identity=; path=/; max-age=0";
+        } catch {
+          /* ignore */
+        }
+        const base = window.location.pathname.startsWith("/wiki") ? "/wiki" : "";
+        window.location.replace(`${base}/login`);
+        resolve({ success: false, message: "登录已失效，请重新登录" });
+        return;
+      }
       const text = xhr.responseText;
       if (!text) {
         resolve({ success: xhr.status >= 200 && xhr.status < 300, message: `HTTP ${xhr.status}` });
