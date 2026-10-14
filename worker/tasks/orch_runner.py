@@ -183,7 +183,7 @@ def _advance_impl(run_id: str, env: str | None = None) -> None:
         return
     steps = _load_steps(run.tape_id)
     results = list(run.step_results or [])
-    done = {r["step_id"] for r in results}
+    done = {r["step_id"] for r in results if r.get("status") in ("success", "failed", "skipped")}
     loop_state = orch_loop.init_state(run.bindings)
     # 2026-10-09 实测坑: 失败传播缺失——run_script 失败后 print 仍执行。
     # 语义: 任一 pre 失败 → 后继阻断(skipped 标记,不投递)。
@@ -226,7 +226,7 @@ def _advance_impl(run_id: str, env: str | None = None) -> None:
         # 重新取 run（结果已变更），继续推进以标记完整条阻断链
         run = _get_run(run_id, env)
         results = list(run.step_results or [])
-        done = {r["step_id"] for r in results}
+        done = {r["step_id"] for r in results if r.get("status") in ("success", "failed", "skipped")}
         failed_ids = {r["step_id"] for r in results if r.get("status") == "failed"}
         skip_ids = {r["step_id"] for r in results if r.get("status") == "skipped"}
 

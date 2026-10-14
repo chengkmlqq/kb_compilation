@@ -677,6 +677,10 @@ def main(argv: list[str] | None = None) -> None:
         #    业界经典摘要模式，全部用基础原子组装（读切片→分批→LLM→合并/修订→写摘要页）。
         _seed_summary_tapes(db)
 
+        # 13) 种子编排模板：质量评估（2026-10-13）
+        #    文档构建质量评估：切片/wiki/图数据三维度检查 + 规则归因汇总落库。
+        _seed_quality_tape(db)
+
         print("\nDONE — 登录: " + SEED_USER_ID + "/" + SEED_PASSWORD + "（编排内置组件 " + str(len(ORCH_STEP_DEFINES)) + " 个）")
     finally:
         db.close()
@@ -1309,6 +1313,130 @@ SUMMARY_REFINE_TAPE: dict = {
         {"source": "n6", "target": "n7"},
     ],
 }
+
+
+# ── 质量评估编排（2026-10-13 v1）──────────────────────────────
+# 文档构建质量评估：切片/wiki/图数据三维度检查（并行）+ 规则归因汇总落库。
+# 脚本节点 import worker/builtin_engine/code_rev_src 下的 quality_*.py。
+QUALITY_TAPE: dict = {
+    "exec_params": {"kb_id": "", "doc_ids": "", "scope": "all"},
+    "nodes": [
+        {
+            "id": "n01", "type": "custom",
+            "data": {"label": "输入定义", "stepInst": "def",
+                     "config": {"queue": "build", "assignments": (
+                         "[{\"variable\": \"kb_id\", \"expression\": \"bindings.get('kb_id', '')\"},"
+                         "{\"variable\": \"doc_ids\", \"expression\": \"bindings.get('doc_ids', '')\"},"
+                         "{\"variable\": \"scope\", \"expression\": \"bindings.get('scope', 'all')\"}]"
+                     )}},
+        },
+        {
+            "id": "n02", "type": "custom",
+            "data": {"label": "切片质量检查", "stepInst": "script",
+                     "config": {"queue": "build", "code": (
+                         "import sys, os, json\n"
+                         "sys.path.insert(0, '/srv/kb/worker/builtin_engine/code_rev_src')\n"
+                         "import quality_chunk\n"
+                         "_kb = bindings.get('kb_id') or ''\n"
+                         "_docs = [d.strip() for d in str(bindings.get('doc_ids') or '').split(',') if d.strip()] or None\n"
+                         "r = quality_chunk.run(_kb, _docs)\n"
+                         "bindings['chunk_r'] = r\n"
+                         "print(f\"[n02] 切片质量: 健康分 {r['metrics'].get('health_score')} 问题 {len(r['issues'])}\")\n"
+                     )}},
+        },
+        {
+            "id": "n03", "type": "custom",
+            "data": {"label": "Wiki质量检查", "stepInst": "script",
+                     "config": {"queue": "build", "code": (
+                         "import sys, os, json\n"
+                         "sys.path.insert(0, '/srv/kb/worker/builtin_engine/code_rev_src')\n"
+                         "import quality_wiki\n"
+                         "_kb = bindings.get('kb_id') or ''\n"
+                         "r = quality_wiki.run(_kb)\n"
+                         "bindings['wiki_r'] = r\n"
+                         "print(f\"[n03] Wiki质量: 健康分 {r['metrics'].get('health_score')} 问题 {len(r['issues'])}\")\n"
+                     )}},
+        },
+        {
+            "id": "n04", "type": "custom",
+            "data": {"label": "图数据质量检查", "stepInst": "script",
+                     "config": {"queue": "build", "code": (
+                         "import sys, os, json\n"
+                         "sys.path.insert(0, '/srv/kb/worker/builtin_engine/code_rev_src')\n"
+                         "import quality_graph\n"
+                         "_kb = bindings.get('kb_id') or ''\n"
+                         "r = quality_graph.run(_kb)\n"
+                         "bindings['graph_r'] = r\n"
+                         "print(f\"[n04] 图数据质量: 健康分 {r['metrics'].get('health_score')} 问题 {len(r['issues'])}\")\n"
+                     )}},
+        },
+        {
+            "id": "n05", "type": "custom",
+            "data": {"label": "汇总+落库", "stepInst": "script",
+                     "config": {"queue": "build", "code": (
+                         "import sys, os, json\n"
+                         "sys.path.insert(0, '/srv/kb/worker/builtin_engine/code_rev_src')\n"
+                         "import quality_summary\n"
+                         "_kb = bindings.get('kb_id') or ''\n"
+                         "_docs = [d.strip() for d in str(bindings.get('doc_ids') or '').split(',') if d.strip()] or None\n"
+                         "_scope = str(bindings.get('scope') or 'all')\n"
+                         "r = quality_summary.run(_kb, '', _scope, _docs,\n"
+                         "                          bindings.get('chunk_r'), bindings.get('wiki_r'), bindings.get('graph_r'))\n"
+                         "bindings['quality_summary'] = r\n"
+                         "print(f\"[n05] {r.get('summary', '')}\")\n"
+                     )}},
+        },
+        {
+            "id": "n06", "type": "custom",
+            "data": {"label": "完成汇总", "stepInst": "print",
+                     "config": {"text": "{{quality_summary}}", "queue": "build"}},
+        },
+    ],
+    "edges": [
+        {"source": "n01", "target": "n02"},
+        {"source": "n01", "target": "n03"},
+        {"source": "n01", "target": "n04"},
+        {"source": "n02", "target": "n05"},
+        {"source": "n03", "target": "n05"},
+        {"source": "n04", "target": "n05"},
+        {"source": "n05", "target": "n06"},
+    ],
+}
+
+
+def _seed_quality_tape(db) -> None:
+    """幂等建「质量评估-QA」编排模板（存在则 skip；内容变更用 seed 重跑覆盖字段不删步骤）。"""
+    from api.models.orchestration import Tape
+
+    TAPE_NAME = "质量评估-QA"
+    existing = db.execute(select(Tape).where(Tape.tape_name == TAPE_NAME)).scalars().first()
+    if existing:
+        print(f"[13/13] 种子编排「{TAPE_NAME}」已存在 (skip)")
+        return
+
+    tape = Tape(
+        id=uuid.uuid4().hex[:32],
+        tape_name=TAPE_NAME,
+        tape_label="文档构建质量评估（切片/wiki/图数据三维度）",
+        tape_descr=(
+            "对文档构建产物做质量评估：切片质量(chunk 长度分布/截断/重复)、wiki 质量"
+            "(空页/孤立/断链/占位/证据链)、图数据质量(哑节点/边类型/可回溯性)。"
+            "输入 bindings：kb_id / doc_ids(逗号分隔,空=整库) / scope(single|multi|all)。"
+            "结果落 kb_quality_run + kb_quality_report,供质量评估页面查询。"
+        ),
+        tape_type="general",
+        status="draft",
+        nodes=list(QUALITY_TAPE["nodes"]),
+        edges=list(QUALITY_TAPE["edges"]),
+        exec_params=QUALITY_TAPE.get("exec_params") or {},
+        create_user=None,
+    )
+    db.add(tape)
+    db.commit()
+    from api.services.orchestration import save_tape_design
+
+    save_tape_design(db, tape.id, QUALITY_TAPE["nodes"], QUALITY_TAPE["edges"], QUALITY_TAPE.get("exec_params") or {})
+    print(f"[13/13] 种子编排「{TAPE_NAME}」OK: id={tape.id[:12]}… 节点 {len(QUALITY_TAPE['nodes'])} 边 {len(QUALITY_TAPE['edges'])}（status=draft，页面点执行即可用）")
 
 
 def _seed_summary_tapes(db) -> None:

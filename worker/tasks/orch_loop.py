@@ -28,8 +28,18 @@ LOOP_STATE_KEY = "__loop_state__"
 
 
 def done_pairs(results: Iterable[dict]) -> set:
-    """已完成的 (step_id, round) 集合——loop 迭代同一 body 要跑 N 轮，故带轮次。"""
-    return {(r["step_id"], int(r.get("round") or 0)) for r in results}
+    """已完成的 (step_id, round) 集合——loop 迭代同一 body 要跑 N 轮，故带轮次。
+
+    只统计终态（success/failed/skipped）——running 占位只是「开始执行」的
+    占位标记，不等于完成。曾因此把 running 节点当已完成提前放行后继
+    （质量评估编排三检查并行时，汇总节点在慢的图检查仍 running 时提前执行，
+    拿不到 graph_r 结果）——2026-10-14 修复。
+    """
+    return {
+        (r["step_id"], int(r.get("round") or 0))
+        for r in results
+        if r.get("status") in ("success", "failed", "skipped")
+    }
 
 
 def collect_body_ids(steps: dict, loop_sid: str) -> list:

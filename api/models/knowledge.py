@@ -394,6 +394,56 @@ class WikiPageIssue(Base):
     )
 
 
+class QualityRun(Base):
+    """文档构建质量评估任务（质量评估编排 v1，2026-10-13）。
+
+    scope=single|multi|all；三维度指标 + 问题清单 + 规则归因，供质量评估页面
+    查询/汇总。编排汇总节点落库。
+    """
+
+    __tablename__ = "kb_quality_run"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kb_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    scope: Mapped[str] = mapped_column(String(32), default="single")  # single|multi|all
+    doc_ids: Mapped[list | None] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(32), default="queued")  # queued|running|success|failed
+    chunk_metrics: Mapped[dict | None] = mapped_column(JSON)
+    wiki_metrics: Mapped[dict | None] = mapped_column(JSON)
+    graph_metrics: Mapped[dict | None] = mapped_column(JSON)
+    issues: Mapped[list | None] = mapped_column(JSON)
+    attribution: Mapped[list | None] = mapped_column(JSON)  # [{dim, cause, suggestion}]
+    summary: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
+    )
+
+
+class QualityReport(Base):
+    """质量评估维度报告（kb_quality_report）：每维度一条，页面按 run 聚合。
+
+    dim=chunk|wiki|graph；metrics 为该维度指标，issues 为该维度问题清单。
+    """
+
+    __tablename__ = "kb_quality_report"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    kb_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    doc_id: Mapped[str | None] = mapped_column(String(64))
+    dim: Mapped[str] = mapped_column(String(32), nullable=False)  # chunk|wiki|graph
+    metrics: Mapped[dict | None] = mapped_column(JSON)
+    issues: Mapped[list | None] = mapped_column(JSON)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
 class KbAgent(Base):
     """An AI agent (QA assistant) bound to knowledge bases.
 
