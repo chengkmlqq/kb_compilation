@@ -15,7 +15,7 @@
  *
  * 确认后返回 UploadConfirmResult { files, processConfig }，由调用方逐文件上传。
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Col, Form, InputNumber, Modal, Row, Select, Space, Switch, Typography } from "antd";
 import { DeleteOutlined, FileTextOutlined, LinkOutlined, PlusOutlined } from "@ant-design/icons";
 import { apiListParserEngines, BuildEngineItem, ParserEngineItem } from "@/lib/api";
@@ -25,6 +25,8 @@ const { Text } = Typography;
 export interface UploadProcessConfig {
   chunking?: Record<string, unknown>;
   parser_engine_rules?: Array<{ file_types: string[]; engine: string }>;
+  /** 摘要生成策略（文件级覆盖 KB 默认 summary_strategy）：off/auto/stuff/mapreduce/refine */
+  summary_strategy?: string;
 }
 
 export interface UploadConfirmResult {
@@ -32,6 +34,8 @@ export interface UploadConfirmResult {
   processConfig: UploadProcessConfig | null;
   /** 文档级构建引擎（重选覆盖 KB 默认；空 = 跟随知识库默认） */
   buildEngine?: string;
+  /** 文档级摘要生成策略（重选覆盖 KB 默认 summary_strategy；空 = 跟随知识库默认） */
+  summaryStrategy?: string;
 }
 
 interface Props {
@@ -61,6 +65,15 @@ const FILE_TYPE_OPTIONS = [
   "pdf", "docx", "doc", "pptx", "xlsx", "xls", "csv", "md", "markdown", "txt",
   "epub", "html", "htm", "json", "xml", "yaml", "yml", "py", "js", "ts", "java",
 ].map((v) => ({ value: v, label: v }));
+
+/** 摘要生成策略（对齐 KBConfigModal 文档摘要策略，文件级覆盖 KB 默认） */
+const SUMMARY_STRATEGY_OPTIONS = [
+  { value: "auto", label: "自动（按文档规模选择）" },
+  { value: "stuff", label: "小文档全文直塞（Stuff）" },
+  { value: "mapreduce", label: "大文档分块合并（Map-Reduce）" },
+  { value: "refine", label: "增量修订（Refine，需已有摘要）" },
+  { value: "off", label: "关（不生成摘要）" },
+];
 
 const DEFAULT_CHUNKING = {
   chunk_size: 800,
@@ -102,6 +115,10 @@ export default function UploadConfirmDialog({
   const [engines, setEngines] = useState<ParserEngineItem[]>([]);
   const [showParser, setShowParser] = useState(false);
   const [buildEngine, setBuildEngine] = useState<string>("");
+  const [summaryStrategy, setSummaryStrategy] = useState<string>("");
+  // 「继续添加」按钮点击不到隐藏 input（label 包裹 button 时 antd Button 会阻止
+  // label 默认激活）——改用 ref 显式 click，见文件末尾 input。
+  const addInputRef = useRef<HTMLInputElement | null>(null);
 
   // 打开时同步外部文件并拉引擎列表
   useEffect(() => {
@@ -109,6 +126,7 @@ export default function UploadConfirmDialog({
     setFiles([...initialFiles]);
     setActiveSection("overview");
     setBuildEngine(""); // 每次打开重置为「跟随知识库默认」
+    setSummaryStrategy(""); // 每次打开重置为「跟随知识库默认」
     void apiListParserEngines()
       .then((res) => {
         if (res.success && Array.isArray(res.data)) setEngines(res.data);
@@ -181,10 +199,12 @@ export default function UploadConfirmDialog({
       pc.chunking = { ...chunking };
       if (rules.length > 0) pc.parser_engine_rules = rules;
     }
+    if (summaryStrategy) pc.summary_strategy = summaryStrategy;
     onConfirm({
       files: [...files],
-      processConfig: hasChunkingDiff ? pc : null,
+      processConfig: hasChunkingDiff || !!summaryStrategy ? pc : null,
       buildEngine: buildEngine || undefined,
+      summaryStrategy: summaryStrategy || undefined,
     });
   };
 
@@ -194,10 +214,22 @@ export default function UploadConfirmDialog({
     </Button>
   );
 
+  // 构建配置摘要（wiki 构建服务 + 摘要生成服务，对齐 WeKnora buildOverviewValue）
+  const buildSummary = useMemo(() => {
+    const wiki = buildEngine
+      ? (buildEngines.find((t) => t.id === buildEngine)?.tape_label || buildEngine)
+      : "跟随知识库默认";
+    const summary = summaryStrategy
+      ? (SUMMARY_STRATEGY_OPTIONS.find((o) => o.value === summaryStrategy)?.label || summaryStrategy)
+      : "跟随知识库默认";
+    return `Wiki 构建：${wiki} · 摘要：${summary}`;
+  }, [buildEngine, summaryStrategy, buildEngines]);
+
   // overview 行
   const overviewRows = [
     { key: "chunking", title: "切片配置", value: chunkingSummary },
     { key: "parser", title: "解析引擎", value: parserSummary },
+    { key: "build", title: "构建配置", value: buildSummary },
   ];
 
   return (
@@ -214,35 +246,6 @@ export default function UploadConfirmDialog({
       }
       destroyOnClose
     >
-      {/* 构建服务（文档级重选，覆盖 KB 默认） */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "2px 0 10px",
-          borderBottom: "1px solid #f0f0f0",
-          marginBottom: 12,
-        }}
-      >
-        <span style={{ fontSize: 13, color: "rgba(0,0,0,.85)", fontWeight: 600, flexShrink: 0 }}>
-          构建服务
-        </span>
-        <Select
-          style={{ width: 320 }}
-          allowClear
-          placeholder={defaultBuildTapeId ? "跟随知识库默认（已选）" : "跟随知识库默认（未设置）"}
-          value={buildEngine || undefined}
-          onChange={setBuildEngine}
-          options={buildEngines.map((t) => ({
-            label: t.tape_label || t.tape_name,
-            value: t.id,
-          }))}
-        />
-        <span style={{ fontSize: 12, color: "rgba(0,0,0,.45)" }}>
-          选择后本文档构建 Wiki 走该编排，留空跟随知识库默认
-        </span>
-      </div>
       <div style={{ display: "flex", gap: 16, minHeight: 380 }}>
         {/* 左侧文件列表（对齐 files-panel） */}
         <div
@@ -287,20 +290,25 @@ export default function UploadConfirmDialog({
               </div>
             )}
           </div>
-          <label style={{ marginTop: 8 }}>
-            <Button block icon={<PlusOutlined />} size="small">
-              继续添加
-            </Button>
-            <input
-              type="file"
-              multiple
-              style={{ display: "none" }}
-              onChange={(e) => {
-                if (e.target.files) addFiles(Array.from(e.target.files));
-                e.target.value = "";
-              }}
-            />
-          </label>
+          <Button
+            block
+            icon={<PlusOutlined />}
+            size="small"
+            style={{ marginTop: 8 }}
+            onClick={() => addInputRef.current?.click()}
+          >
+            继续添加
+          </Button>
+          <input
+            ref={addInputRef}
+            type="file"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => {
+              if (e.target.files) addFiles(Array.from(e.target.files));
+              e.target.value = "";
+            }}
+          />
         </div>
 
         {/* 右侧配置（对齐 main-panel：overview / section） */}
@@ -360,7 +368,7 @@ export default function UploadConfirmDialog({
                   ‹ 返回概览
                 </Button>
                 <Text style={{ fontSize: 15, fontWeight: 600 }}>
-                  {activeSection === "chunking" ? "切片配置" : "解析引擎"}
+                  {activeSection === "chunking" ? "切片配置" : activeSection === "parser" ? "解析引擎" : "构建配置"}
                 </Text>
               </div>
 
@@ -465,6 +473,40 @@ export default function UploadConfirmDialog({
                       提示：不可用的引擎已置灰（如 MinerU endpoint 未配置）
                     </Text>
                   </div>
+                </div>
+              )}
+
+              {activeSection === "build" && (
+                <div style={{ overflow: "auto" }}>
+                  <Form.Item
+                    label="Wiki 构建服务"
+                    tooltip="选择后本文档构建 Wiki 走该编排（服务编排中已发布的编排）；留空跟随知识库默认"
+                    extra={buildEngine ? undefined : defaultBuildTapeId ? "当前跟随知识库默认编排" : "当前跟随知识库默认（未设置）"}
+                  >
+                    <Select
+                      style={{ width: "100%" }}
+                      allowClear
+                      placeholder="跟随知识库默认"
+                      value={buildEngine || undefined}
+                      onChange={setBuildEngine}
+                      options={buildEngines.map((t) => ({ label: t.tape_label || t.tape_name, value: t.id }))}
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    label="摘要生成服务"
+                    tooltip="文档解析成功后自动生成摘要页；留空跟随知识库默认摘要策略"
+                    extra={summaryStrategy ? undefined : "当前跟随知识库默认摘要策略"}
+                  >
+                    <Select
+                      style={{ width: "100%" }}
+                      allowClear
+                      placeholder="跟随知识库默认"
+                      value={summaryStrategy || undefined}
+                      onChange={setSummaryStrategy}
+                      options={SUMMARY_STRATEGY_OPTIONS}
+                    />
+                  </Form.Item>
+                  <Text type="secondary" style={{ fontSize: 12 }}>仅对本次上传的文件生效，不修改知识库默认配置</Text>
                 </div>
               )}
             </>

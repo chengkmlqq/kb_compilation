@@ -396,8 +396,18 @@ def _enqueue_summary_task(
             logger.warning("summary trigger skipped: kb/doc not found kb=%s doc=%s", kb_id, document_id)
             return False
         tape_ids = _summary_tape_ids()
+        # 文件级摘要策略覆盖（上传确认弹窗「构建配置 → 摘要生成服务」，
+        # 存 kb_document.process_config.summary_strategy）；未设置时回退 KB 级。
+        doc_strategy: str | None = None
+        if doc.process_config:
+            try:
+                parsed_pc = json.loads(doc.process_config)
+                if isinstance(parsed_pc, dict) and parsed_pc.get("summary_strategy"):
+                    doc_strategy = str(parsed_pc["summary_strategy"]).strip()
+            except (TypeError, json.JSONDecodeError):
+                doc_strategy = None
         resolved = _resolve_summary_tape(
-            kb.summary_strategy or "auto",
+            doc_strategy or kb.summary_strategy or "auto",
             doc.chunk_count or 0,
             bool((doc.summary or "").strip()),
             tape_ids,
