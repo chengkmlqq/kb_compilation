@@ -58,15 +58,6 @@
   --ring: oklch(0.705 0.015 286.067);
 }
 
-/* preflight 关闭后为 elements 补最小排版基线（只作用于新版问答页作用域） */
-.cn-app *,
-.cn-app *::before,
-.cn-app *::after {
-  border-width: 0;
-  border-style: solid;
-  border-color: var(--border);
-}
-
 :root {
   --color-modo-6: #3261ce;
   --color-gray-1: #f9fbfd;

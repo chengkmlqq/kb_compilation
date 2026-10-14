@@ -1,37 +1,5 @@
-/* 新版智能问答页（assistant-ui 官方形态）壳层样式 —— 仅页面容器/工具栏/引用弹窗，
-   消息与输入区样式全部由 assistant-ui elements + Tailwind 官方主题承担 */
-
+/* 新版智能问答页（assistant-ui 官方形态）：零平台 UI，仅页面容器高度链 */
 .cn-app {
-  padding: 12px 16px 0;
-  gap: 10px;
-}
-
-/* -------- 顶部工具栏（antd 保留，业务参数区） -------- */
-.cn-toolbar {
-  padding-bottom: 10px;
-}
-
-.cn-toolbar-label {
-  font-weight: 600;
-  color: var(--color-modo-10, #1f1f1f);
-}
-
-.cn-kb-select {
-  min-width: 200px;
-}
-
-.cn-model-select {
-  min-width: 170px;
-}
-
-/* -------- 引用原文弹窗 -------- */
-.cn-ref-content {
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 60vh;
-  overflow-y: auto;
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.8;
-  color: var(--ant-colorText, #1f1f1f);
+  height: 100%;
+  min-height: 0;
 }
