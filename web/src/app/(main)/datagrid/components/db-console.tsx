@@ -80,6 +80,9 @@ export default function DbConsole({ exportShow = true }: DbConsoleProps) {
           key: t.id,
           label: t.label,
           closable: true,
+          // pane 高度链（对齐 data-synth 上游）：Tabs content 不自动撑满，
+          // pane 必须显式 height:100% 才让 TableViewer 的 flex 链成立
+          style: { height: "100%", minHeight: 0, overflow: "hidden" },
           children: <TableViewer tabData={t} />,
         };
       }
@@ -88,6 +91,7 @@ export default function DbConsole({ exportShow = true }: DbConsoleProps) {
         key: t.id,
         label: t.label,
         closable: false,
+        style: { height: "100%", minHeight: 0, overflow: "hidden" },
         children: (
           <div style={{ display: "flex", height: "100%", minHeight: 0, width: "100%", background: "#fff" }}>
             <div
@@ -148,6 +152,12 @@ export default function DbConsole({ exportShow = true }: DbConsoleProps) {
         items={innerItems}
         className="datagrid-console-inner-tabs"
         style={{ height: "100%" }}
+        // 高度链（对齐 data-synth 上游）：Tabs content 需 flex:1 撑满，否则 pane 高度 0 → Handsontable 不渲染
+        styles={{
+          header: { flexShrink: 0 },
+          body: { height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" },
+          content: { flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" },
+        }}
       />
     );
   };
@@ -156,6 +166,7 @@ export default function DbConsole({ exportShow = true }: DbConsoleProps) {
     key: tab.id,
     label: tab.label,
     closable: true,
+    style: { height: "100%", minHeight: 0, overflow: "hidden" },
     children: renderInner(tab),
   }));
 
@@ -175,6 +186,11 @@ export default function DbConsole({ exportShow = true }: DbConsoleProps) {
         items={outerItems}
         className="datagrid-console-tabs"
         style={{ height: "100%" }}
+        styles={{
+          header: { flexShrink: 0 },
+          body: { height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" },
+          content: { flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" },
+        }}
       />
     </div>
   );
