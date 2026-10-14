@@ -1252,10 +1252,11 @@ export default function ChatPage() {
             display: "flex",
             flexDirection: "column",
             padding: 0,
+            background: "#f5f7fa",
           },
         }}
       >
-        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${token.colorSplit}`, display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${token.colorSplit}`, display: "flex", alignItems: "center", gap: 12, flexShrink: 0, background: "#fff" }}>
           <Text strong>智能问答（RAG）</Text>
           {streaming && (
             <Button size="small" danger icon={<StopOutlined />} onClick={stopGenerating}>
@@ -1677,8 +1678,7 @@ export default function ChatPage() {
               void send();
             }
           }}
-          variant="borderless"
-          style={{ padding: "4px 0", background: "transparent", resize: "none", overflow: "auto" }}
+          style={{ padding: "8px 18px", background: "#fff", borderRadius: 24, resize: "none", overflow: "auto" }}
         />
         {/* 控制栏：左 智能体选择 + 工具按钮 / 右 模型选择 + 发送·停止（对齐 WeKnora Input-field 布局） */}
         <div

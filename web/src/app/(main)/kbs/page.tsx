@@ -465,14 +465,14 @@ export default function KbsPage() {
                       className="kb-list-card"
                       size="small"
                       hoverable
-                      style={{ height: "100%" }}
+                      style={{ height: 150, overflow: "hidden" }}
                       onClick={() => openKbSection(kb, "docs")}
                       title={
                         <Space>
                           <span
                             style={{
                               fontSize: 20,
-                              color: isFaq ? "#52c41a" : "#1677ff",
+                              color: isFaq ? "#52c41a" : "#3261ce",
                             }}
                           >
                             {isFaq ? <MessageOutlined /> : <FileTextOutlined />}
@@ -517,7 +517,7 @@ export default function KbsPage() {
                       <Typography.Paragraph
                         type="secondary"
                         ellipsis={{ rows: 2 }}
-                        style={{ minHeight: 44, marginBottom: 8 }}
+                        style={{ minHeight: 40, marginBottom: 8, fontSize: 12, color: "#4d5e7d" }}
                       >
                         {kb.description || "（无描述）"}
                       </Typography.Paragraph>

@@ -72,9 +72,9 @@
   --kb-c-text-placeholder: rgba(0, 0, 0, 0.3);
   --kb-c-surface: #ffffff;
   --kb-c-surface-2: #fafafa;
-  --kb-c-user-bubble: #f3f3f3;
-  --kb-c-border: #dcdcdc;
-  --kb-c-link: #1677ff;
+  --kb-c-user-bubble: #ffffff;
+  --kb-c-border: #e3e9ef;
+  --kb-c-link: #3261ce;
   --kb-c-citation-bg: rgba(0, 0, 0, 0.04);
   --kb-c-citation-bg-hover: rgba(0, 0, 0, 0.07);
   --kb-c-citation-ring: rgba(0, 0, 0, 0.1);
@@ -1191,7 +1191,7 @@ html[data-theme="dark"] body {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
   padding: 10px 14px 48px 14px;
   overflow-y: auto;
   min-height: 0;
@@ -1201,39 +1201,42 @@ html[data-theme="dark"] body {
 .kb-chat-msg {
   max-width: 100%;
   box-sizing: border-box;
-  border-radius: 4px;
+  border-radius: 12px;
   color: var(--kb-c-text);
-  font-size: 16px;
-  line-height: 1.625;
+  font-size: 14px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
-/* AI 消息：全宽、无气泡背景（对齐 .bot_msg max-width:100% / margin-right:auto） */
+/* AI 消息：白底气泡（对齐 DSB AppChat .assistant-content：白底 + 圆角 + 边框） */
 .kb-chat-msg--bot {
   margin-right: auto;
-  background: transparent;
-  padding: 2px 0;
+  background: var(--kb-c-surface, #ffffff);
+  border: 1px solid var(--kb-c-border, #e3e9ef);
+  border-radius: 12px;
+  padding: 10px 14px;
+  max-width: min(92%, 900px);
 }
 
-/* 用户消息：右对齐、76% 宽、secondarycontainer 底（对齐 .user_msg） */
+/* 用户消息：右对齐、76% 宽、白底（对齐 DSB AppChat .user-content：白底大圆角） */
 .kb-chat-msg--user {
   max-width: min(76%, 820px);
   display: flex;
-  padding: 8px 12px;
+  padding: 8px 14px;
   flex-direction: column;
   justify-content: center;
   align-items: flex-start;
-  border-radius: 8px;
+  border-radius: 12px;
   background: var(--kb-c-user-bubble);
   margin-left: auto;
-  font-size: 16px;
+  font-size: 14px;
 }
 
 /* ── 消息正文 markdown（对齐 chat-markdown.less：16px / 1.625） ── */
 .kb-chat-md {
-  font-size: 16px;
+  font-size: 14px;
   color: var(--kb-c-text);
-  line-height: 1.625;
+  line-height: 1.5;
 }
 
 .kb-chat-md-p {
@@ -1642,6 +1645,7 @@ html[data-theme="dark"] body {
 .kb-list-card.ant-card,
 .agent-card.ant-card {
   border: 1px solid var(--color-gray-3, #e3e9ef) !important;
+  border-radius: 6px !important;
   box-shadow: 0 1px 3px rgba(36, 46, 67, 0.08) !important;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
@@ -1649,7 +1653,7 @@ html[data-theme="dark"] body {
 .kb-list-card.ant-card:hover,
 .agent-card.ant-card:hover {
   border-color: #bfcddd !important;
-  box-shadow: 0 6px 16px rgba(36, 46, 67, 0.14) !important;
+  box-shadow: 0 4px 10px rgba(36, 46, 67, 0.1) !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════
