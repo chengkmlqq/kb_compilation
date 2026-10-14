@@ -19,12 +19,15 @@ import {
 } from "@assistant-ui/react";
 import { App } from "antd";
 import { Thread } from "@/components/assistant-ui/elements/thread.aui";
-import { apiListKbs, KbItem, QaStreamEvent } from "@/lib/api";
+import { ModelSelectorContext } from "@/components/assistant-ui/elements/model-selector";
+import { apiListKbs, apiListModels, KbItem, ModelItem, QaStreamEvent } from "@/lib/api";
 import "./chat-next.css";
 
 export default function ChatNextPage() {
   const { message: toast } = App.useApp();
   const [kbId, setKbId] = useState<string>();
+  const [models, setModels] = useState<ModelItem[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState("");
   const [messages, setMessages] = useState<readonly ThreadMessageLike[]>([]);
   const [streaming, setStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -33,7 +36,7 @@ export default function ChatNextPage() {
     messagesRef.current = messages;
   }, [messages]);
 
-  // 知识库固定取第一个（无参数入口）
+  // 知识库固定取第一个（无参数入口）+ 聊天模型列表（composer 官方形态模型下拉）
   useEffect(() => {
     (async () => {
       const res = await apiListKbs(1, 100);
@@ -41,6 +44,10 @@ export default function ChatNextPage() {
         const items = res.data?.items || [];
         if (items.length > 0) setKbId((prev) => prev || items[0].id);
       }
+    })();
+    (async () => {
+      const res = await apiListModels({ type: "chat" });
+      if (res.success) setModels(res.data?.items || []);
     })();
   }, []);
 
@@ -94,7 +101,7 @@ export default function ChatNextPage() {
             kb_id: kbId,
             question,
             history,
-            // 不传 model_id = 后端默认模型
+            model_id: selectedModelId || null, // 空 = 后端默认模型
           }),
           signal: ctrl.signal,
         });
@@ -149,7 +156,7 @@ export default function ChatNextPage() {
         abortRef.current = null;
       }
     },
-    [kbId, toast],
+    [kbId, selectedModelId, toast],
   );
 
   const runtime = useExternalStoreRuntime({
@@ -166,7 +173,11 @@ export default function ChatNextPage() {
   return (
     <div className="cn-app">
       <AssistantRuntimeProvider runtime={runtime}>
-        <Thread />
+        <ModelSelectorContext.Provider
+          value={{ models, value: selectedModelId, onChange: setSelectedModelId }}
+        >
+          <Thread />
+        </ModelSelectorContext.Provider>
       </AssistantRuntimeProvider>
     </div>
   );
