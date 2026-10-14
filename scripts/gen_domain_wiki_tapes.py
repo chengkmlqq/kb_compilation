@@ -139,6 +139,54 @@ def llm_group(sentences, depth=0):
 """
 
 
+LINK_CLEANUP = """
+# ── 断链清理（2026-10-14）：引用不存在页面的 [[slug|label]] 降级为纯文本 label ──
+_slugs = set()
+_page_no = 1
+while True:
+    _r = wr.list_wiki_pages(kb_id=wr.KB, page=_page_no, page_size=200)
+    _ps = (_r or {}).get('pages') or []
+    if not _ps:
+        break
+    for _p in _ps:
+        if _p.get('slug'):
+            _slugs.add(_p['slug'])
+    if len(_ps) < 200:
+        break
+    _page_no += 1
+_fixed = 0
+_page_no = 1
+while True:
+    _r = wr.list_wiki_pages(kb_id=wr.KB, page=_page_no, page_size=200)
+    _ps = (_r or {}).get('pages') or []
+    if not _ps:
+        break
+    for _p in _ps:
+        _c = _p.get('content') or ''
+        def _rep(_m):
+            global _fixed
+            _t = _m.group(1).strip()
+            _lab = _m.group(2) or _t
+            if _t not in _slugs:
+                _fixed += 1
+                return _lab
+            return _m.group(0)
+        _nc = re.sub(r'\\[\\[([^\\]|]+)(?:\\|([^\\]]*))?\\]\\]', _rep, _c)
+        if _nc != _c:
+            try:
+                wr.update_page(slug=_p['slug'], kb_id=wr.KB, title=_p.get('title', '') or '',
+                               content=_nc, folder_id=_p.get('folder_id') or '',
+                               page_type=_p.get('page_type') or '', status=_p.get('status') or 'published',
+                               source_refs=_p.get('source_refs') or [])
+            except Exception as _e:
+                print(f"[n16b] 更新 {_p.get('slug')} 失败: {str(_e)[:80]}")
+    if len(_ps) < 200:
+        break
+    _page_no += 1
+print(f"[n16b] 断链清理: 降级 {_fixed} 处链接")
+"""
+
+
 def _req(method: str, path: str, payload=None, timeout: int = 90):
     data = json.dumps(payload).encode() if payload is not None else None
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -187,6 +235,12 @@ def transform_code(label: str, code: str) -> str:
         # LLM 归组加长度韧性：超限对半切递归（原实现 5 次重试全败即步骤失败）+ schema 角色
         pat = re.compile(r"def llm_group\(sentences\):.*?\nsents = split_sentences\(full_text\)", re.DOTALL)
         code = pat.sub(LS_LLM_GROUP + "\nsents = split_sentences(full_text)", code)
+        return code
+    if label == "合并+链接重建":
+        # 断链清理：rebuild_links 前把引用不存在页面的 wikilink 降级为纯文本
+        anchor = "try:\n    r = wr.rebuild_links(kb_id=wr.KB)"
+        if anchor in code:
+            code = code.replace(anchor, LINK_CLEANUP + "\n" + anchor)
         return code
     if label in ("实体+规则联合抽取", "规则补抽兜底", "规则实体页建页", "业务实体页建页"):
         # 注入 schema 加载 + 替换常量映射
@@ -256,7 +310,8 @@ def build_tape(draft: dict, domain: str) -> dict:
             cfg["assignments"] = json.dumps(new_assigns, ensure_ascii=False)
         elif inst == "script" and label in ("建法规目录树", "摘要生成+建页", "长句抽取",
                                             "实体+规则联合抽取",
-                                            "规则补抽兜底", "规则实体页建页", "业务实体页建页"):
+                                            "规则补抽兜底", "规则实体页建页", "业务实体页建页",
+                                            "合并+链接重建"):
             cfg["code"] = transform_code(label, cfg.get("code", ""))
         elif label == "关键词LLM过滤":
             cfg = {"queue": "build", "code": TERM_FILTER_SCRIPT}

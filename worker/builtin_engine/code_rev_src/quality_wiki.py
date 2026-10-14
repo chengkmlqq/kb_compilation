@@ -78,8 +78,9 @@ def run(kb_id: str) -> dict:
     for p in placeholder:
         issues.append({"dim": "wiki", "slug": str(p[2]), "page_type": str(p[3]),
                        "issue_type": "llm_placeholder", "detail": "LLM 解读占位未填充"})
-    # 5) 证据链缺失（无出处章节标记的页面）
-    no_source = [p for p in pages if "出处" not in (p[4] or "")[:200]]
+    # 5) 证据链缺失（无出处/来源制度/原文关联标记的页面；实体/规则页用「来源制度」「原文关联」，表页用「出处」）
+    _SOURCE_MARKS = ("出处", "来源制度", "原文关联", "来源")
+    no_source = [p for p in pages if not any(m in (p[4] or "")[:200] for m in _SOURCE_MARKS)]
     for p in no_source:
         issues.append({"dim": "wiki", "slug": str(p[2]), "page_type": str(p[3]),
                        "issue_type": "missing_source", "detail": "页面无出处/原文引用标记"})
