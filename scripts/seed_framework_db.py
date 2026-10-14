@@ -308,6 +308,13 @@ ORCH_STEP_DEFINES: list[tuple[str, str, str, str, str, list[dict], int]] = [
       {"name": "page_type", "label": "页面类型", "type": "input", "required": False, "placeholder": "summary"},
       {"name": "output_var", "label": "输出变量名", "type": "input", "required": False,
        "placeholder": "page_slug（默认）"}], 11),
+    ("kb_write_doc_summary", "写文档摘要", "知识构建", "FileTextOutlined",
+     "把编排产出的最终摘要写入 kb_document.summary / summary_status（直连 LLM 时代摘要的存储位置）",
+     [{"name": "document_id", "label": "文档ID", "type": "input", "required": True, "placeholder": "{{document_id}}"},
+      {"name": "summary_var", "label": "摘要来源变量", "type": "input", "required": False,
+       "placeholder": "final_summary（默认）"},
+      {"name": "status", "label": "写入状态", "type": "input", "required": False, "placeholder": "READY"},
+      {"name": "skip_empty", "label": "摘要为空时跳过(不失败)", "type": "boolean", "required": False}], 11),
     ("wiki_rebuild_links", "重建Wiki互链", "知识构建", "LinkOutlined",
      "重建一个知识库全部 wiki 页之间的互链（无输入输出，纯动作）",
      [{"name": "kb_id", "label": "知识库ID", "type": "input", "required": True, "placeholder": "{{kb_id}}"}], 12),
@@ -1079,23 +1086,30 @@ SUMMARY_STUFF_TAPE: dict = {
         },
         {
             "id": "n4", "type": "custom",
-            "data": {"label": "落页准备", "stepInst": "script",
+            "data": {"label": "摘要整理", "stepInst": "script",
                      "config": {"code": (
-                         "import hashlib\n"
+                         "import re as _re\n"
                          "s = str(bindings.get('summary_text') or '').strip()\n"
-                         "doc_id = str(bindings.get('document_id') or '')\n"
-                         "bindings['final_summary'] = s\n"
-                         "bindings['page_title'] = '文档摘要（Stuff 全文直塞）' if s else ''\n"
-                         "bindings['page_slug'] = 'doc-' + hashlib.md5(doc_id.encode()).hexdigest()[:10] + '-stuff'\n"
-                         "bindings['page_content'] = ('# 文档摘要（Stuff 全文直塞）\\n\\n' + s) if s else ''\n"
+                         "META = _re.compile(\n"
+                         "    r'(需要|要求|我们|计数|草稿|数一下|大概|大约|内心|确保|复述|无?需|'\n"
+                         "    r'先一[句.]|再分点|只输出|注意|检查|控制|符合|输出.{0,8}(摘要|正文)|'\n"
+                         "    r'字数|字符|chars|chinese|we |need|bullets?|theme)', _re.I)\n"
+                         "lines = []\n"
+                         "for _ln in s.split('\\\\n'):\n"
+                         "    t = _ln.strip().lstrip('。').strip()\n"
+                         "    if not t:\n"
+                         "        continue\n"
+                         "    if META.search(t):\n"
+                         "        continue\n"
+                         "    lines.append(t)\n"
+                         "bindings['final_summary'] = '\\\\n'.join(lines).strip()\n"
                      )}},
         },
         {
             "id": "n5", "type": "custom",
-            "data": {"label": "写摘要页", "stepInst": "wiki_upsert_page",
-                     "config": {"kb_id": "{{kb_id}}", "title": "{{page_title}}",
-                                "content": "{{page_content}}", "slug": "{{page_slug}}",
-                                "page_type": "summary", "skip_empty": True}},
+            "data": {"label": "写文档摘要", "stepInst": "kb_write_doc_summary",
+                     "config": {"document_id": "{{document_id}}", "summary_var": "final_summary",
+                                "skip_empty": True}},
         },
     ],
     "edges": [
@@ -1191,28 +1205,33 @@ SUMMARY_MAPREDUCE_TAPE: dict = {
         },
         {
             "id": "n8", "type": "custom",
-            "data": {"label": "落页准备", "stepInst": "script",
+            "data": {"label": "摘要整理", "stepInst": "script",
                      "config": {"code": (
-                         "import hashlib\n"
+                         "import re as _re\n"
                          "if bindings.get('merge_ready'):\n"
-                         "    doc_id = str(bindings.get('document_id') or '')\n"
                          "    s = str(bindings.get('merged_summary') or '').strip()\n"
-                         "    bindings['final_summary'] = s\n"
-                         "    bindings['page_title'] = '文档摘要（Map-Reduce 分块合并）' if s else ''\n"
-                         "    bindings['page_slug'] = 'doc-' + hashlib.md5(doc_id.encode()).hexdigest()[:10] + '-mapreduce'\n"
-                         "    bindings['page_content'] = ('# 文档摘要（Map-Reduce 分块合并）\\n\\n' + s) if s else ''\n"
+                         "    META = _re.compile(\n"
+                         "        r'(需要|要求|我们|计数|草稿|数一下|大概|大约|内心|确保|复述|无?需|'\n"
+                         "        r'先一[句.]|再分点|只输出|注意|检查|控制|符合|输出.{0,8}(摘要|正文)|'\n"
+                         "        r'字数|字符|chars|chinese|we |need|bullets?|theme)', _re.I)\n"
+                         "    lines = []\n"
+                         "    for _ln in s.split('\\\\n'):\n"
+                         "        t = _ln.strip().lstrip('。').strip()\n"
+                         "        if not t:\n"
+                         "            continue\n"
+                         "        if META.search(t):\n"
+                         "            continue\n"
+                         "        lines.append(t)\n"
+                         "    bindings['final_summary'] = '\\\\n'.join(lines).strip()\n"
                          "else:\n"
-                         "    bindings['page_title'] = ''\n"
-                         "    bindings['page_slug'] = ''\n"
-                         "    bindings['page_content'] = ''\n"
+                         "    bindings['final_summary'] = ''\n"
                      )}},
         },
         {
             "id": "n9", "type": "custom",
-            "data": {"label": "写摘要页", "stepInst": "wiki_upsert_page",
-                     "config": {"kb_id": "{{kb_id}}", "title": "{{page_title}}",
-                                "content": "{{page_content}}", "slug": "{{page_slug}}",
-                                "page_type": "summary", "skip_empty": True}},
+            "data": {"label": "写文档摘要", "stepInst": "kb_write_doc_summary",
+                     "config": {"document_id": "{{document_id}}", "summary_var": "final_summary",
+                                "skip_empty": True}},
         },
     ],
     "edges": [
@@ -1293,30 +1312,35 @@ SUMMARY_REFINE_TAPE: dict = {
         },
         {
             "id": "n6", "type": "custom",
-            "data": {"label": "回写+落页准备", "stepInst": "script",
+            "data": {"label": "回写+摘要整理", "stepInst": "script",
                      "config": {"code": (
-                         "import hashlib\n"
+                         "import re as _re\n"
                          "s = str(bindings.get('new_summary') or '').strip()\n"
+                         "META = _re.compile(\n"
+                         "    r'(需要|要求|我们|计数|草稿|数一下|大概|大约|内心|确保|复述|无?需|'\n"
+                         "    r'先一[句.]|再分点|只输出|注意|检查|控制|符合|输出.{0,8}(摘要|正文)|'\n"
+                         "    r'字数|字符|chars|chinese|we |need|bullets?|theme)', _re.I)\n"
+                         "lines = []\n"
+                         "for _ln in s.split('\\\\n'):\n"
+                         "    t = _ln.strip().lstrip('。').strip()\n"
+                         "    if not t:\n"
+                         "        continue\n"
+                         "    if META.search(t):\n"
+                         "        continue\n"
+                         "    lines.append(t)\n"
+                         "s = '\\\\n'.join(lines).strip()\n"
                          "bindings['running_summary'] = s\n"
-                         "if bindings.get('is_last') and s:\n"
-                         "    doc_id = str(bindings.get('document_id') or '')\n"
+                         "if bindings.get('is_last'):\n"
                          "    bindings['final_summary'] = s\n"
-                         "    bindings['page_title'] = '文档摘要（Refine 增量修订）'\n"
-                         "    bindings['page_slug'] = 'doc-' + hashlib.md5(doc_id.encode()).hexdigest()[:10] + '-refine'\n"
-                         "    bindings['page_content'] = '# 文档摘要（Refine 增量修订）\\n\\n' + s\n"
                          "else:\n"
-                         "    bindings['final_summary'] = s\n"
-                         "    bindings['page_title'] = ''\n"
-                         "    bindings['page_slug'] = ''\n"
-                         "    bindings['page_content'] = ''\n"
+                         "    bindings['final_summary'] = ''\n"
                      )}},
         },
         {
             "id": "n7", "type": "custom",
-            "data": {"label": "写摘要页", "stepInst": "wiki_upsert_page",
-                     "config": {"kb_id": "{{kb_id}}", "title": "{{page_title}}",
-                                "content": "{{page_content}}", "slug": "{{page_slug}}",
-                                "page_type": "summary", "skip_empty": True}},
+            "data": {"label": "写文档摘要", "stepInst": "kb_write_doc_summary",
+                     "config": {"document_id": "{{document_id}}", "summary_var": "final_summary",
+                                "skip_empty": True}},
         },
     ],
     "edges": [
@@ -1461,17 +1485,17 @@ def _seed_summary_tapes(db) -> None:
     tapes = [
         ("摘要-Stuff（全文直塞）", "文档摘要（Stuff：全文一次直塞 LLM，适合中小文档）",
          "业界经典模式一：整篇文档拼接后一次性交给 LLM 生成摘要。适合切片总长不超 "
-         "上下文窗口的文档；可配 max_chars 控制输入上限。产物=wiki 摘要页 + bindings.final_summary。",
+         "上下文窗口的文档；可配 max_chars 控制输入上限。产物=写 kb_document.summary 字段。",
          SUMMARY_STUFF_TAPE),
         ("摘要-Map-Reduce（分块合并）", "文档摘要（Map-Reduce：分块子摘要再合并，适合大文档）",
          "业界经典模式二：按 batch_size 把切片分批，每批 LLM 生成子摘要，最后一批后把全部 "
          "子摘要合并出最终摘要。切片多的大文档用它，每批独立调用避免超上下文。"
-         "产物=wiki 摘要页 + bindings.final_summary。",
+         "产物=写 kb_document.summary 字段。",
          SUMMARY_MAPREDUCE_TAPE),
         ("摘要-Refine（增量修订）", "文档摘要（Refine：摘要随批次滚动更新，适合大文档）",
          "业界经典模式三：摘要草稿随每批新内容滚动修订（先基于第一批生成初始摘要，之后每批 "
          "带着已有摘要 + 新内容更新），每批只读一次，输出持续累积。"
-         "产物=wiki 摘要页 + bindings.final_summary。",
+         "产物=写 kb_document.summary 字段。",
          SUMMARY_REFINE_TAPE),
     ]
     from api.services.orchestration import save_tape_design

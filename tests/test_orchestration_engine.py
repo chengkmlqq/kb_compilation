@@ -43,9 +43,68 @@ def orch_db():
 
 
 def test_atom_map_registered() -> None:
-    for inst in ("kb_read_doc", "kb_read_table", "kb_llm_chat", "wiki_upsert_page", "wiki_rebuild_links",
+    for inst in ("kb_read_doc", "kb_read_table", "kb_llm_chat", "wiki_upsert_page",
+                 "kb_write_doc_summary", "wiki_rebuild_links",
                  "wiki_ensure_folder", "long_sentence_extract", "keyword_extract"):
         assert inst in ATOM_MAP, f"{inst} 未注册到 ATOM_MAP"
+
+
+def test_kb_write_doc_summary_writes_document(orch_db, monkeypatch) -> None:
+    """kb_write_doc_summary：把 final_summary 写入 kb_document.summary/summary_status。"""
+    import api.db
+    from api.models.knowledge import KbDocument
+    from api.services.orchestration_engine import KbWriteDocSummaryStep
+
+    api.db.get_sessionmaker = lambda: __import__("sqlalchemy").orm.sessionmaker(bind=orch_db.bind, expire_on_commit=False)
+    orch_db.add(KbDocument(id="doc1", kb_id="kb1", file_name="测试.docx", parse_state="READY"))
+    orch_db.commit()
+
+    ctx = TapeRuntimeContext({})
+    ctx.bindings["final_summary"] = "这是一段干净的中文摘要。"
+    step = KbWriteDocSummaryStep(
+        "n5", "写文档摘要", "kb_write_doc_summary",
+        {"document_id": "{{document_id}}", "summary_var": "final_summary"},
+    )
+    ctx.bindings["document_id"] = "doc1"
+    resp = step.handle(ctx)
+    assert resp.success
+    doc = orch_db.query(KbDocument).filter(KbDocument.id == "doc1").first()
+    assert doc.summary == "这是一段干净的中文摘要。"
+    assert doc.summary_status == "READY"
+    assert doc.summary_error is None
+
+
+def test_kb_write_doc_summary_skip_empty(orch_db, monkeypatch) -> None:
+    """skip_empty：final_summary 为空时跳过（success + skipped）不写库。"""
+    import api.db
+    from api.services.orchestration_engine import KbWriteDocSummaryStep
+
+    api.db.get_sessionmaker = lambda: __import__("sqlalchemy").orm.sessionmaker(bind=orch_db.bind, expire_on_commit=False)
+    ctx = TapeRuntimeContext({})
+    ctx.bindings["final_summary"] = ""
+    step = KbWriteDocSummaryStep(
+        "n5", "写文档摘要", "kb_write_doc_summary",
+        {"document_id": "doc1", "summary_var": "final_summary", "skip_empty": True},
+    )
+    resp = step.handle(ctx)
+    assert resp.success
+    assert resp.body.get("skipped") is True
+
+
+def test_kb_write_doc_summary_missing_doc_fails(orch_db, monkeypatch) -> None:
+    """文档不存在时失败。"""
+    import api.db
+    from api.services.orchestration_engine import KbWriteDocSummaryStep
+
+    api.db.get_sessionmaker = lambda: __import__("sqlalchemy").orm.sessionmaker(bind=orch_db.bind, expire_on_commit=False)
+    ctx = TapeRuntimeContext({})
+    ctx.bindings["final_summary"] = "摘要"
+    step = KbWriteDocSummaryStep(
+        "n5", "写文档摘要", "kb_write_doc_summary",
+        {"document_id": "doc-none", "summary_var": "final_summary"},
+    )
+    resp = step.handle(ctx)
+    assert not resp.success
 
 
 def test_kb_read_doc_writes_bindings(orch_db, monkeypatch) -> None:
@@ -288,9 +347,13 @@ def test_summary_tapes_structure() -> None:
         for e in edges:
             assert e["source"] in by_id and e["target"] in by_id, f"{name}: 边引用不存在节点 {e}"
         assert all(n["data"]["stepInst"] == "kb_read_doc" for n in nodes[:1]), f"{name}: 首节点应为 kb_read_doc"
-        assert any(n["data"]["stepInst"] == "wiki_upsert_page" for n in nodes), f"{name}: 缺写页节点"
-        upsert = next(n for n in nodes if n["data"]["stepInst"] == "wiki_upsert_page")
-        assert upsert["data"]["config"].get("skip_empty") is True, f"{name}: 写页需 skip_empty"
+        # 2026-10-14：摘要不再写 wiki 摘要页，改为写 kb_document.summary 字段
+        # （直连 LLM 时代摘要的存储位置）——最后一个节点应为 kb_write_doc_summary。
+        assert any(n["data"]["stepInst"] == "kb_write_doc_summary" for n in nodes), f"{name}: 缺写文档摘要节点"
+        writer = next(n for n in nodes if n["data"]["stepInst"] == "kb_write_doc_summary")
+        assert writer["data"]["config"].get("skip_empty") is True, f"{name}: 写摘要需 skip_empty"
+        assert writer["data"]["config"].get("summary_var") == "final_summary", f"{name}: 摘要来源变量应为 final_summary"
+        assert not any(n["data"]["stepInst"] == "wiki_upsert_page" for n in nodes), f"{name}: 不应再写 wiki 摘要页"
         assert "kb_id" in tape["exec_params"] and "document_id" in tape["exec_params"]
 
 

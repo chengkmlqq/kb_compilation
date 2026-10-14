@@ -2,7 +2,18 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-14（移除直连 LLM 文档摘要链路，摘要统一走编排）
+最后更新：2026-10-14（三个摘要编排产物从 wiki 页改为写 kb_document.summary 字段）
+
+## 17. 当前状态（2026-10-14 摘要编排落点改造：wiki 页 → kb_document.summary）
+
+- **背景**：be65902 移除直连 LLM 摘要链路后，摘要统一由编排生成，但编排产物是 wiki 摘要页（不写 kb_document.summary 字段，直连 LLM 时代的存储位置）。用户要求：三个摘要编排（Stuff ca5f228c / Map-Reduce b5954467 / Refine 103e45f4，线上 effective）的摘要落点改回 kb_document.summary
+- **引擎**（api/services/orchestration_engine.py）：新增基础原子 `kb_write_doc_summary`（KbWriteDocSummaryStep）：读 bindings[summary_var]（默认 final_summary）→ UPDATE kb_document.summary/summary_status=READY/summary_error=NULL；skip_empty 空摘要跳过（loop 非末轮兜底）；注册进 ATOM_MAP + step_define 种子（设计器可选「写文档摘要」组件）
+- **模板**（scripts/seed_framework_db.py 三套 SUMMARY_*_TAPE）：最后 wiki_upsert_page → kb_write_doc_summary；前驱 script 去掉 page_title/page_slug/page_content/hashlib（不再写 wiki），只留 final_summary（保留 2026-10-13 思考特征词清洗 + Refine 的 running_summary 回写）；模板描述「产物=wiki 摘要页」→「写 kb_document.summary 字段」
+- **线上同步**（新增 scripts/apply_summary_write_doc_summary.py，幂等可重放，docker cp 进 kb-api-server 跑）：三个 tape 的 kb_tape_step（最后节点 step_inst 改 + script code 更新）+ tape.nodes + tape_template.nodes（按 label 匹配，模板 name 与 tape_name 不一致的坑已实测处理）三处同步；已执行（step 结构验证：三 tape 最后节点均为 kb_write_doc_summary，config 含 document_id/summary_var/skip_empty）
+- **容器热修**：orchestration_engine.py docker cp 到 5 个业务容器（api-server + 4 celery worker）+ restart（镜像代码不含新原子，不热修线上执行会报「未知组件指令」）；api health UP；grep 确认 5 容器均有 kb_write_doc_summary
+- **测试**：test_orchestration_engine.py +3（写字段/空摘要跳过/文档不存在失败）+ 结构测试改断言（写摘要节点替代写页节点）；18 passed；全量 585 passed / 3 failed（3 红仍为 §15 既有基线，无新增回归）
+- **部署注意**：引擎/模板改动已提交，CI 重建后 pull 固化；apply 脚本改动线上库数据，若用户在服务编排页「保存设计/发布」覆盖回旧配置，重跑 apply 脚本即可恢复
+- **遗留**：存量 wiki 摘要页（doc-1737d45155-* 等）未清理，删文档时因 source_refs=[] 会残留孤儿页（已备案 §16）
 
 ## 16. 当前状态（2026-10-14 移除直连 LLM 文档摘要链路）
 

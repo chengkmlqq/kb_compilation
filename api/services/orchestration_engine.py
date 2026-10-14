@@ -551,6 +551,52 @@ class WikiUpsertPageStep(BaseStep):
         return StepResponse.success({f"set:{output_var}": slug, "slug": slug, "created": created})
 
 
+class KbWriteDocSummaryStep(BaseStep):
+    """'kb_write_doc_summary' 把摘要写入 kb_document.summary（2026-10-14 基础原子）。
+
+    直连 LLM 摘要链路移除（be65902）后，文档摘要统一由摘要编排生成；本原子
+    承接「写字段」职责（替代原本写 wiki 摘要页的 wiki_upsert_page），把编排
+    产出的最终摘要写入 kb_document.summary / summary_status=READY /
+    summary_error=NULL（直连 LLM 时代摘要的存储位置）。config:
+      - document_id: 文档 ID（支持 {{ }} 模板）
+      - summary_var: 摘要文本来源变量名（默认 final_summary）
+      - status: 写成的 summary_status（默认 READY）
+      - skip_empty: summary 为空时跳过（成功记账）而不失败——loop 非末轮等
+        场景下游每轮都会执行本节点，靠它只让有内容的轮次真正写库
+    """
+
+    def handle(self, context: TapeRuntimeContext) -> StepResponse:
+        from api.db import get_sessionmaker
+        from api.models.knowledge import KbDocument
+
+        document_id = str(context.render(self.config.get("document_id") or "")).strip()
+        summary_var = str(self.config.get("summary_var") or "final_summary")
+        summary = str(context.bindings.get(summary_var) or "").strip()
+        status = str(self.config.get("status") or "READY").strip() or "READY"
+        skip_empty = bool(self.config.get("skip_empty"))
+        if not document_id:
+            return StepResponse.fail("kb_write_doc_summary 缺 document_id")
+        if not summary and skip_empty:
+            return StepResponse.success({"skipped": True, "reason": "summary 为空（skip_empty）"})
+        if not summary:
+            return StepResponse.fail("kb_write_doc_summary 缺 summary 文本")
+
+        db = get_sessionmaker()()
+        try:
+            doc = db.query(KbDocument).filter(KbDocument.id == document_id).first()
+            if not doc:
+                return StepResponse.fail(f"文档不存在: {document_id}")
+            doc.summary = summary
+            doc.summary_status = status
+            doc.summary_error = None
+            db.commit()
+        finally:
+            db.close()
+        return StepResponse.success(
+            {"document_id": document_id, "summary_length": len(summary), "status": status}
+        )
+
+
 class WikiRebuildLinksStep(BaseStep):
     """'wiki_rebuild_links' 重建互链（2026-10-12 基础原子）。
 
@@ -861,6 +907,7 @@ ATOM_MAP: Dict[str, Callable[[str, str, str, Optional[dict]], BaseStep]] = {
     "kb_read_table": KbReadTableStep,
     "kb_llm_chat": KbLlmChatStep,
     "wiki_upsert_page": WikiUpsertPageStep,
+    "kb_write_doc_summary": KbWriteDocSummaryStep,
     "wiki_rebuild_links": WikiRebuildLinksStep,
     "wiki_ensure_folder": WikiEnsureFolderStep,
 }
