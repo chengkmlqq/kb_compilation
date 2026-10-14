@@ -73,7 +73,6 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "mcps", menu_name: "mcps", menu_label: "MCP 管理", route: "/mcps", parent_id: "system", menu_icon: "ApiOutlined", sort_num: 8, state: "1" },
   { menu_id: "skills", menu_name: "skills", menu_label: "技能管理", route: "/skills", parent_id: "system", menu_icon: "ToolOutlined", sort_num: 9, state: "1" },
   { menu_id: "ont_schemas", menu_name: "ont_schemas", menu_label: "本体Schema", route: "/ontology-schemas", parent_id: "system", menu_icon: "ApartmentOutlined", sort_num: 10, state: "1" },
-  { menu_id: "sys_engines", menu_name: "sys_engines", menu_label: "引擎与存储", route: "/system/engines", parent_id: "system", menu_icon: "CloudServerOutlined", sort_num: 13, state: "1" },
   { menu_id: "sys_dims", menu_name: "sys_dims", menu_label: "参数管理", route: "/system/dims", parent_id: "system", menu_icon: "DatabaseOutlined", sort_num: 14, state: "1" },
   { menu_id: "sys_metadata_collection", menu_name: "sys_metadata_collection", menu_label: "元数据采集", route: "/system/metadata-collection", parent_id: "system", menu_icon: "DatabaseOutlined", sort_num: 15, state: "1" },
 ];

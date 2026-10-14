@@ -3021,68 +3021,6 @@ export function apiSaveRetrievalConfig(
 }
 
 
-// ---------------------------------------------------------------------------
-// 系统 → 引擎与存储（b2 对齐 WeKnora：引擎/存储类型元数据 + parser 开关 + 系统信息）
-// ---------------------------------------------------------------------------
-
-export interface VectorStoreTypeItem {
-  code: string;
-  label: string;
-  description: string;
-  available: boolean;
-}
-
-export interface StorageTypeItem {
-  code: string;
-  label: string;
-  description: string;
-  available: boolean;
-}
-
-export interface EngineInfoItem {
-  name: string;
-  display_name: string;
-  description: string;
-  file_types: string[];
-  available: boolean;
-  reason?: string;
-  endpoint?: string;
-  enabled?: boolean;
-}
-
-export interface SystemInfoItem {
-  version: string;
-  vector_store_type: string;
-  minio_enabled: boolean;
-  engines_total: number;
-  engines_available: number;
-  server_time: string;
-}
-
-export function apiVectorStoreTypes() {
-  return request<VectorStoreTypeItem[]>("/api/v1/system/vector-store-types");
-}
-
-export function apiStorageTypes() {
-  return request<StorageTypeItem[]>("/api/v1/system/storage-types");
-}
-
-export function apiParserEngines() {
-  return request<EngineInfoItem[]>("/api/v1/parsers/engines");
-}
-
-export function apiSetParserEngineEnabled(name: string, enabled: boolean) {
-  return request<{ name: string; enabled: boolean }>(
-    `/api/v1/parsers/engines/${encodeURIComponent(name)}/enabled`,
-    { method: "PUT", body: JSON.stringify({ enabled }) },
-  );
-}
-
-export function apiSystemInfo() {
-  return request<SystemInfoItem>("/api/v1/system/info");
-}
-
-
 // ---- 文档全流程处理时间线（对齐 WeKnora knowledge-processing-timeline） ----
 
 export interface ProcessingStage {

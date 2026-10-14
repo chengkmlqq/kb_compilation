@@ -77,6 +77,8 @@ SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 #   - 智能问答排到知识库前；数据源管理/联网搜索移入配置管理；元数据采集移入运维监控
 # 2026-10-12 调整（方案H）：编排管理/编排模板 从顶级移入「调试工具」目录
 #   （与编排组件相邻，编排域聚合在调试工具下）
+# 2026-10-14 调整（方案I）：移除「引擎与存储」页面（/system/engines）及其菜单项
+#   （解析引擎开关/存储类型/向量库类型/系统信息 页面下架；后端 /api/v1/system/* 接口保留）
 # 结构：Header 顶级 = 知识库管理/文件管理/切片核对/智能问答/智能体配置/联网搜索/
 #         数据源/数据查询/运维监控(目录)/配置管理(目录)/系统管理。
 #   - route 留空 = 纯目录分组（只展开不跳转）
@@ -116,9 +118,8 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("sys_roles", "sys_roles", "角色管理", "/system/roles", "system", "SafetyOutlined", 2),
     ("sys_teams", "sys_teams", "团队管理", "/system/teams", "system", "PartitionOutlined", 3),
     ("sys_menus", "sys_menus", "菜单管理", "/system/menus", "system", "MenuOutlined", 4),
-    # ---- 调试工具（顶级目录：引擎与存储/本体Schema/编排管理/编排模板/编排组件/文件管理/数据查询） ----
+    # ---- 调试工具（顶级目录：本体Schema/编排管理/编排模板/编排组件/文件管理/数据查询） ----
     ("grp_debug", "grp_debug", "调试工具", None, None, "BugOutlined", 7),
-    ("sys_engines", "sys_engines", "引擎与存储", "/system/engines", "grp_debug", "CloudServerOutlined", 1),
     (
         "ont_schemas",
         "ont_schemas",
