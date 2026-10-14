@@ -8,7 +8,7 @@
  *
  * kb 后端契约：POST /api/v1/datagrid/execute {dsName, sql} → {success, data:[{success,resultType,columns,rows,rowcount,msg,truncated}]}
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { App, Button, Select, Space } from "antd";
 import {
   CaretRightOutlined,
@@ -18,6 +18,7 @@ import {
 } from "@ant-design/icons";
 import dynamic from "next/dynamic";
 import type { ReactCodeMirrorRef } from "@uiw/react-codemirror";
+import type { Extension } from "@codemirror/state";
 import { apiDatagridExecute, DatagridExecuteResult } from "@/lib/api";
 import { useDataGridStore, type SchemaTab } from "../store/use-datagrid-store";
 
@@ -57,15 +58,26 @@ export default function DbCode({ tab }: DbCodeProps) {
   const [sql, setSql] = useState(tab.runSql || "");
   const [limit, setLimit] = useState(tab.limit || 1000);
   const [executing, setExecuting] = useState(false);
+  const [sqlExts, setSqlExts] = useState<Extension[]>([]);
 
   useEffect(() => {
     setSql(tab.runSql || "");
   }, [tab.runSql, tab.id]);
 
-  const sqlExtensions = useMemo(
-    () => [import("@codemirror/lang-sql").then((m) => m.sql())] as unknown as ReactCodeMirrorRef["view"],
-    [],
-  );
+  // SQL 语言包动态加载（对齐 CodeViewer：动态 import → await → setState，不把 Promise 塞进 extensions）
+  useEffect(() => {
+    let alive = true;
+    import("@codemirror/lang-sql")
+      .then((m) => {
+        if (alive) setSqlExts([m.sql()]);
+      })
+      .catch(() => {
+        if (alive) setSqlExts([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const run = async () => {
     const view = cmRef.current?.view;
@@ -205,7 +217,7 @@ export default function DbCode({ tab }: DbCodeProps) {
           value={sql}
           height="100%"
           style={{ height: "100%", fontSize: 13 }}
-          extensions={[import("@codemirror/lang-sql").then((m) => m.sql())] as never}
+          extensions={sqlExts}
           onChange={(v) => {
             setSql(v);
             updateDbToolTab(tab.id, { runSql: v });
