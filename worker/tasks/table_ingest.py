@@ -7,8 +7,7 @@
   2. 生成结构化 markdown（列定义来自元数据采集免重复连库 + 样例数据表 + 行记录）
   3. 切片：元数据 chunk（表注释+列定义，≈2~3 块）+ 行级 chunk（每行 1 块）
   4. 向量化：与文件同 embedding 链路（embed_chunks + replace_document_chunks）
-  5. LLM 摘要：复用 generate_document_summary（按 seq 拼正文 → KB 配置的摘要模型）
-  6. wiki 构建：只建「表主页」（page_type=table，含列定义/数据量/样例/摘要）
+  5. wiki 构建：只建「表主页」（page_type=table，含列定义/数据量/样例/表用途说明）
 
 连接层复用 datagrid._find_entry/_connect（空 user/team = 系统级不过滤授权；
 indexing 管道的表清单/kb_document 已由上传侧写入）。TASK_CLASS = KbTableIngestTask，
@@ -311,15 +310,7 @@ def process_table_ingest(job_id: str, task_params: dict) -> dict:
         update_document_state(db, document_id, "READY", chunk_count=written)
         db.commit()
 
-        # 4. LLM 摘要（KB 配置摘要模型；失败不阻塞文档 READY）
-        try:
-            from api.services.kb_admin import generate_document_summary
-            summary_res = generate_document_summary(db, doc.kb_id, document_id)
-            logger.info("table summary ok doc=%s: %s", document_id, summary_res.get("summary_status"))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("table summary skipped doc=%s: %s", document_id, exc)
-
-        # 5. wiki 构建：优先走构建引擎编排（文档级覆盖 > KB 默认，未绑定时回落内置表主页构建）
+        # 4. wiki 构建：优先走构建引擎编排（文档级覆盖 > KB 默认，未绑定时回落内置表主页构建）
         #    编排链与文件上传一致：kb_tape_run(env=prod) + KbOrchestrationRunTask。
         _build_engine_triggered = False
         try:

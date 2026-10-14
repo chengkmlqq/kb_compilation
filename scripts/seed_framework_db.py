@@ -79,6 +79,8 @@ SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 #   （与编排组件相邻，编排域聚合在调试工具下）
 # 2026-10-14 调整（方案I）：移除「引擎与存储」页面（/system/engines）及其菜单项
 #   （解析引擎开关/存储类型/向量库类型/系统信息 页面下架；后端 /api/v1/system/* 接口保留）
+# 2026-10-14 调整（方案J）：新增「新版问答」页面（/chat-next，assistant-ui 试验页，
+#   与现有「智能问答」/chat 并存；顶级 sort_num 顺延）
 # 结构：Header 顶级 = 知识库管理/文件管理/切片核对/智能问答/智能体配置/联网搜索/
 #         数据源/数据查询/运维监控(目录)/配置管理(目录)/系统管理。
 #   - route 留空 = 纯目录分组（只展开不跳转）
@@ -86,10 +88,11 @@ SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     # ---- 顶级页面 ----
     ("chat", "chat", "智能问答", "/chat", None, "CommentOutlined", 1),
-    ("kbs", "kbs", "知识库", "/kbs", None, "AppstoreOutlined", 2),
-    ("agents", "agents", "智能体", "/agents", None, "RobotOutlined", 3),
+    ("chat_next", "chat_next", "新版问答", "/chat-next", None, "MessageOutlined", 2),
+    ("kbs", "kbs", "知识库", "/kbs", None, "AppstoreOutlined", 3),
+    ("agents", "agents", "智能体", "/agents", None, "RobotOutlined", 4),
     # ---- 运维监控（顶级目录：任务监控/任务管理/主机监控/操作日志/切片核对/元数据采集） ----
-    ("grp_ops", "grp_ops", "运维监控", None, None, "FundOutlined", 4),
+    ("grp_ops", "grp_ops", "运维监控", None, None, "FundOutlined", 5),
     ("jobs", "jobs", "任务监控", "/jobs", "grp_ops", "DashboardOutlined", 1),
     ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_ops", "ScheduleOutlined", 2),
     ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_ops", "CloudServerOutlined", 3),
@@ -105,7 +108,7 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
         6,
     ),
     # ---- 配置管理（顶级目录：数据源管理/模型/MCP/技能/参数/联网搜索） ----
-    ("grp_config", "grp_config", "配置管理", None, None, "ToolOutlined", 5),
+    ("grp_config", "grp_config", "配置管理", None, None, "ToolOutlined", 6),
     ("datasources", "datasources", "数据源管理", "/datasources", "grp_config", "DatabaseOutlined", 1),
     ("models", "models", "模型配置", "/models", "grp_config", "CloudServerOutlined", 2),
     ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "grp_config", "ApiOutlined", 3),
@@ -113,13 +116,13 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("sys_dims", "sys_dims", "参数管理", "/system/dims", "grp_config", "DatabaseOutlined", 5),
     ("d83aee0d1d8a4fce8a6bd121b6efc5fa", "websearch", "联网搜索", "/websearch", "grp_config", "SearchOutlined", 6),
     # ---- 系统管理（分组兼页面，顶级：点击自身跳 /system → 重定向到 /system/users） ----
-    ("system", "system", "系统管理", "/system", None, "SettingOutlined", 6),
+    ("system", "system", "系统管理", "/system", None, "SettingOutlined", 7),
     ("sys_users", "sys_users", "用户管理", "/system/users", "system", "TeamOutlined", 1),
     ("sys_roles", "sys_roles", "角色管理", "/system/roles", "system", "SafetyOutlined", 2),
     ("sys_teams", "sys_teams", "团队管理", "/system/teams", "system", "PartitionOutlined", 3),
     ("sys_menus", "sys_menus", "菜单管理", "/system/menus", "system", "MenuOutlined", 4),
     # ---- 调试工具（顶级目录：本体Schema/编排管理/编排模板/编排组件/文件管理/数据查询） ----
-    ("grp_debug", "grp_debug", "调试工具", None, None, "BugOutlined", 7),
+    ("grp_debug", "grp_debug", "调试工具", None, None, "BugOutlined", 8),
     (
         "ont_schemas",
         "ont_schemas",
@@ -1008,7 +1011,8 @@ def _seed_table_wiki_tape(db) -> None:
 # 业界大文档摘要三种经典模式，全部用细粒度基础原子组装：
 #   A. Stuff（全文直塞）：kb_read_doc 读全部切片 → script 拼全文 prompt →
 #      kb_llm_chat 一次生成 → script 解析 → wiki_upsert_page 写摘要页。
-#      适合中小文档；与线上 kb_admin.generate_document_summary 同思路。
+#      适合中小文档（直连 LLM 报表摘要 generate_document_summary 已移除，
+#      2026-10-14 起文档摘要统一走这些编排）。
 #   B. Map-Reduce（分块再合并）：kb_read_doc → script 分批 → loop：
 #      每批 {script 拼子摘要 prompt → kb_llm_chat 子摘要 → script 累积}，
 #      最后一批时 script 拼合并 prompt → kb_llm_chat 合并（skip_empty 兜底，

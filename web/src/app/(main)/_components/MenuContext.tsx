@@ -49,8 +49,10 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "chunk_verify", menu_name: "chunk_verify", menu_label: "切片核对", route: "/chunk-verify", parent_id: "grp_knowledge", menu_icon: "SafetyOutlined", sort_num: 3, state: "1" },
   { menu_id: "grp_ai", menu_name: "grp_ai", menu_label: "智能应用", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 2, state: "1" },
   { menu_id: "chat", menu_name: "chat", menu_label: "智能问答", route: "/chat", parent_id: "grp_ai", menu_icon: "CommentOutlined", sort_num: 1, state: "1" },
-  { menu_id: "agents", menu_name: "agents", menu_label: "智能体配置", route: "/agents", parent_id: "grp_ai", menu_icon: "RobotOutlined", sort_num: 2, state: "1" },
-  { menu_id: "websearch", menu_name: "websearch", menu_label: "联网搜索", route: "/websearch", parent_id: "grp_ai", menu_icon: "SearchOutlined", sort_num: 3, state: "1" },
+  // 2026-10-14 方案J：新版问答（assistant-ui 试验页，与 /chat 并存；对齐种子 KB_MENUS）
+  { menu_id: "chat_next", menu_name: "chat_next", menu_label: "新版问答", route: "/chat-next", parent_id: "grp_ai", menu_icon: "MessageOutlined", sort_num: 2, state: "1" },
+  { menu_id: "agents", menu_name: "agents", menu_label: "智能体配置", route: "/agents", parent_id: "grp_ai", menu_icon: "RobotOutlined", sort_num: 3, state: "1" },
+  { menu_id: "websearch", menu_name: "websearch", menu_label: "联网搜索", route: "/websearch", parent_id: "grp_ai", menu_icon: "SearchOutlined", sort_num: 4, state: "1" },
   { menu_id: "grp_data", menu_name: "grp_data", menu_label: "数据与任务", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 3, state: "1" },
   { menu_id: "datasources", menu_name: "datasources", menu_label: "数据源", route: "/datasources", parent_id: "grp_data", menu_icon: "DatabaseOutlined", sort_num: 1, state: "1" },
   { menu_id: "jobs", menu_name: "jobs", menu_label: "任务监控", route: "/jobs", parent_id: "grp_data", menu_icon: "DashboardOutlined", sort_num: 2, state: "1" },

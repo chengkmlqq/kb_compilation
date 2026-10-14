@@ -2,7 +2,22 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-14（全量 pytest 既有红修复：chat_sessions 漏改调用 + 模型白名单漂移）
+最后更新：2026-10-14（移除直连 LLM 文档摘要链路，摘要统一走编排）
+
+## 16. 当前状态（2026-10-14 移除直连 LLM 文档摘要链路）
+
+- **背景**：查「测试知识库」中『湖北政企短彩业务本体 v1.0.docx』摘要来源时确认两套并行链路：① 前端自动摘要（KbDocsPane useEffect）→ POST /{kb_id}/documents/{document_id}/summary → kb_admin.generate_document_summary 直连 ChatClient（用 KB summary_model_id，未配 thinking=disabled → 思考草稿混入，实测该 doc 的 kb_document.summary 713 字符以「150~250 字」复述+思考过程开头）；② 上传链摘要编排（doc_process._enqueue_summary_task → SUMMARY_RUN_* Job → kb_tape_run，产物是 wiki 摘要页，不写 kb_document.summary）。用户确认该 doc 的编排 run（03:24:26 Map-Reduce / 03:28:22 Refine 均 success，wiki 页 doc-1737d45155-* 时间戳与 run 完成秒级吻合）与数据库态（summary 字段直连 LLM 特征）后决定：**删直连 LLM 链路，摘要只允许走编排**
+- **改动（后端 2 文件 + 前端 2 文件 + 注释 3 处）**：
+  1. `api/services/kb_admin.py`：删 generate_document_summary 函数 + SUMMARY_SYSTEM_PROMPT / SUMMARY_CONTENT_LIMIT 常量
+  2. `api/routers/kbs.py`：删 POST /{kb_id}/documents/{document_id}/summary 端点 + import
+  3. `worker/tasks/table_ingest.py`：删表摄取第 4 步（generate_document_summary 复用调用），步骤注释 4/5 → 4；docstring 同步。保留 _generate_table_usage（表用途说明，属 wiki 构建非文档摘要，与 KB summary_model_id 无关——注意它仍直连 ChatClient 但产出是 wiki 页段落，不在本次删除范围）
+  4. `web/src/lib/api.ts`：删 apiGenerateDocSummary
+  5. `web/src/components/kb/KbDocsPane.tsx`：删自动摘要 useEffect（autoSummaryRunning/autoSummarySeen/autoTick）+ import
+  6. 注释：kb_admin.py 删除处留说明、api/models/knowledge.py summary 字段注释更新、seed_framework_db.py 摘要编排注释不再引用已删函数
+- **保留不动**：kb_document.summary/summary_status/summary_error 列（存量数据展示，DocDetailDrawer/KbDocsPane 表格摘要列仍渲染历史值）；kb_datasource.summary_strategy（off/auto/stuff/mapreduce/refine）与 SUMMARY_TAPE_* 参数（编排路由需要）；summary_model_id 列（KB 配置 UI 仍可设，编排 bindings 注入仍在 orchestration_engine.py:689）
+- **验证**：py_compile 4 文件 OK；pytest 全量 575 passed / 3 failed（3 红为既有基线 test_agent_skills_scope/test_files/test_storage，见 §15，无新增回归）；web tsc --noEmit exit 0
+- **部署**：api/worker 改动 → CI 重建 kb-api-server/kb-worker/kb-agent-worker；前端源码改动 → 重建 kb-web。容器内热修可用 docker cp + restart，正式走 CI
+- **遗留（未做，另行确认）**：测试知识库 kb_document.summary 存量脏值（思考草稿混入）未清洗；该 doc 两个编排摘要 wiki 页 source_refs=[]（删文档会残留孤儿页，契约要求 {document_id}| 前缀）
 
 ## 15. 当前状态（2026-10-14 全量 pytest 既有红修复：11 failed → 3 failed）
 
@@ -381,6 +396,18 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下；type-
 - Open API 鉴权层（当前 auth 只登录，open/* 数据源路由未加 X-API-Key 校验）
 - 上传文件校验（扩展名白名单 / 病毒扫描 / 去重）
 - 菜单管理增强：菜单 icon 下拉选择（当前手填组件名）、菜单 ext-conf 可视化编辑（当前仅基本字段 + JSON）
+
+### 8.4 assistant-ui 试验问答页（2026-10-14 新增，与现有问答页并存）
+- 新页面 `/wiki/chat-next`（`web/src/app/(main)/chat-next/`，page.tsx + chat-next.css），依赖 `@assistant-ui/react ^0.15.28`（React 19 兼容）
+- 形态：`useExternalStoreRuntime` 接现有后端 `POST /api/v1/qa/stream`（自定义 SSE：stream_meta/context/thinking/delta/stage/done/error），**无会话模式**（前端组 history 传参，不建 ChatSession 不留库）
+- assistant-ui 0.15 无高层 Thread/Composer 组件（README 里的是 CLI 模板产物），用 primitives 拼装：ThreadPrimitive.Viewport/Messages + MessagePrimitive.Parts(components: Text/Reasoning/data) + ComposerPrimitive.Input/Send/Cancel（disabled 时组件自动不渲染）
+- 引用渲染：refs 经 data part（`{type:"data", name:"kb_refs"}`）与 text part 的 providerMetadata.kb_refs.items 双通道给到渲染层；正文 `<kb doc=.../>` 胶囊复用 MarkdownViewer + CitationRef（lint 层面 CitationRef 无 meta 字段，读取时 as ChatRefItem）
+- 已验证：tsc --noEmit ✓、next build ✓（/chat-next 路由注册）、后端 SSE 冒烟 ✓（真实 kb 提问，delta/context(stage)/done 全链路）；未验证：浏览器交互（本机浏览器工具 GLIBC 不可用）——线上需重建 web 镜像后登录打开
+- 菜单三处同步（2026-10-14 方案J）：① 种子 KB_MENUS 新增 `chat_next`（新版问答 /chat-next，顶级 sort_num=2，kbs/agents/grp_ops/grp_config/system/grp_debug 顶级 +1 顺延）② 线上 modo_menu + modo_role_menu_rela 按 menu_id 精准 INSERT（勿 --reset-menus）③ 前端兜底 FALLBACK_MENUS 在 grp_ai 下加 chat_next（agents/websearch 顺延）——**兜底与种子结构本就漂移**（兜底 grp_ai 分组式、种子顶级页面式），各自保持内部一致即可
+- 坑位：
+  - 本地起 next start 验证须带 basePath：`/wiki/chat-next`；API 走 nginx 80（docker kb-api-server 未映射主机端口）
+  - web/node_modules 存在 root 所有的 `@codemirror.bak` 残留 → npm install reify EACCES；已改名 `_rescued_codemirror_bak` 避让（不能 rm，root 所有；需 sudo 清理）
+  - 3100 端口被旧的 next-server 占用（跑旧 build，/chat-next 404）；本地验证用 `next start -p 3211`
 
 ## 9. 开工检查单（新会话）
 
