@@ -3678,3 +3678,72 @@ export function apiGetTableSample(kbId: string, docId: string, limit = 50) {
     `/api/v1/kbs/${kbId}/documents/${docId}/sample?limit=${limit}`,
   );
 }
+
+/* ── 质量评估（2026-10-14 v1）────────────────────────────────── */
+
+export interface QualityScores {
+  chunk?: number | null;
+  wiki?: number | null;
+  graph?: number | null;
+}
+
+export interface QualityAttribution {
+  dim?: string;
+  cause?: string;
+  suggestion?: string;
+}
+
+export interface QualityRunItem {
+  id: string;
+  kb_id: string;
+  kb_name?: string;
+  scope: string;
+  doc_ids?: string[];
+  status: string;
+  scores: QualityScores;
+  issues_count: number;
+  attribution?: QualityAttribution[];
+  summary?: string;
+  error?: string;
+  created_by?: string;
+  created_at?: string | null;
+}
+
+export interface QualityIssue {
+  dim?: string;
+  slug?: string;
+  page_type?: string;
+  doc_id?: string;
+  issue_type?: string;
+  detail?: string;
+}
+
+export interface QualityRunDetail extends QualityRunItem {
+  reports?: Record<string, { metrics?: Record<string, unknown>; issues?: QualityIssue[] }>;
+}
+
+export function apiListQualityRuns(params: {
+  kb_id?: string;
+  status?: string;
+  page?: number;
+  page_size?: number;
+}) {
+  const sp = new URLSearchParams({
+    page: String(params.page ?? 1),
+    page_size: String(params.page_size ?? 20),
+  });
+  if (params.kb_id) sp.set("kb_id", params.kb_id);
+  if (params.status) sp.set("status", params.status);
+  return request<PageList<QualityRunItem>>(`/api/v1/quality/runs?${sp.toString()}`);
+}
+
+export function apiGetQualityRun(qualityId: string) {
+  return request<QualityRunDetail>(`/api/v1/quality/runs/${encodeURIComponent(qualityId)}`);
+}
+
+export function apiLaunchQualityRun(payload: { kb_id: string; doc_ids?: string[]; scope?: string }) {
+  return request<{ run_id: string; quality_id: string; scope: string; status: string }>(
+    "/api/v1/quality/runs",
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}

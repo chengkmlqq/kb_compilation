@@ -63,6 +63,7 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "orch_tapes", menu_name: "orch_tapes", menu_label: "编排管理", route: "/orchestrations", parent_id: "grp_debug", menu_icon: "ApartmentOutlined", sort_num: 1, state: "1" },
   { menu_id: "orch_templates", menu_name: "orch_templates", menu_label: "编排模板", route: "/tape-templates", parent_id: "grp_debug", menu_icon: "AppstoreOutlined", sort_num: 2, state: "1" },
   { menu_id: "orch_defines", menu_name: "orch_defines", menu_label: "编排组件", route: "/orchestrations/steps", parent_id: "grp_debug", menu_icon: "BlockOutlined", sort_num: 3, state: "1" },
+  { menu_id: "quality", menu_name: "quality", menu_label: "质量评估", route: "/quality", parent_id: "grp_debug", menu_icon: "CheckCircleOutlined", sort_num: 4, state: "1" },
   { menu_id: "sys_users", menu_name: "sys_users", menu_label: "用户管理", route: "/system/users", parent_id: "system", menu_icon: "TeamOutlined", sort_num: 1, state: "1" },
   { menu_id: "sys_roles", menu_name: "sys_roles", menu_label: "角色管理", route: "/system/roles", parent_id: "system", menu_icon: "SafetyOutlined", sort_num: 2, state: "1" },
   { menu_id: "sys_teams", menu_name: "sys_teams", menu_label: "团队管理", route: "/system/teams", parent_id: "system", menu_icon: "PartitionOutlined", sort_num: 3, state: "1" },
