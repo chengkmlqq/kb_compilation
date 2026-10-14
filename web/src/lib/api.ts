@@ -1039,6 +1039,49 @@ export function apiKbGraphSearch(kbId: string, q: string, limit = 100) {
   });
 }
 
+// ---- 问答反馈统计（点赞/点踩，采集用户使用情况） ----
+
+export interface FeedbackStatsData {
+  total_feedback: number;
+  like_count: number;
+  dislike_count: number;
+  like_rate: number;
+  today_count: number;
+  week_count: number;
+  scoped: boolean;
+}
+
+export interface FeedbackItem {
+  id: string;
+  session_id: string;
+  session_title: string;
+  user_id: string;
+  feedback: string;
+  feedback_at: string | null;
+  question: string;
+  answer: string;
+}
+
+export function apiFeedbackStats() {
+  return request<FeedbackStatsData>("/api/v1/feedback/stats");
+}
+
+export function apiFeedbackList(
+  page: number,
+  pageSize: number,
+  feedbackType?: string,
+  keyword?: string
+) {
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("page_size", String(pageSize));
+  if (feedbackType) params.set("feedback_type", feedbackType);
+  if (keyword) params.set("keyword", keyword);
+  return request<{ items: FeedbackItem[]; total: number; page: number; page_size: number }>(
+    `/api/v1/feedback/list?${params.toString()}`
+  );
+}
+
 // ---- 数据查询（DataGrid，迁移 data-synth） ----
 
 export interface DatagridDsItem {
