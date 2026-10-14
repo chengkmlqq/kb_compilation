@@ -430,7 +430,9 @@ def get_kb_detail(
     )
     page_count = (
         db.execute(
-            select(func.count()).select_from(WikiPage).where(WikiPage.kb_id == kb.id)
+            select(func.count())
+            .select_from(WikiPage)
+            .where(WikiPage.kb_id == kb.id, WikiPage.status == "active")
         ).scalar()
         or 0
     )

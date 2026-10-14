@@ -128,7 +128,10 @@ def list_kbs(
         page_counts = dict(
             db.execute(
                 select(WikiPage.kb_id, func.count())
-                .where(WikiPage.kb_id.in_(kb_ids))
+                .where(
+                    WikiPage.kb_id.in_(kb_ids),
+                    WikiPage.status == "active",
+                )
                 .group_by(WikiPage.kb_id)
             ).all()
         )
