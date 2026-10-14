@@ -399,10 +399,11 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下；type-
 
 ### 8.4 assistant-ui 试验问答页（2026-10-14 新增，与现有问答页并存）
 - 新页面 `/wiki/chat-next`（`web/src/app/(main)/chat-next/`，page.tsx + chat-next.css），依赖 `@assistant-ui/react ^0.15.28`（React 19 兼容）
-- 形态：`useExternalStoreRuntime` 接现有后端 `POST /api/v1/qa/stream`（自定义 SSE：stream_meta/context/thinking/delta/stage/done/error），**无会话模式**（前端组 history 传参，不建 ChatSession 不留库）
-- assistant-ui 0.15 无高层 Thread/Composer 组件（README 里的是 CLI 模板产物），用 primitives 拼装：ThreadPrimitive.Viewport/Messages + MessagePrimitive.Parts(components: Text/Reasoning/data) + ComposerPrimitive.Input/Send/Cancel（disabled 时组件自动不渲染）
-- 引用渲染：refs 经 data part（`{type:"data", name:"kb_refs"}`）与 text part 的 providerMetadata.kb_refs.items 双通道给到渲染层；正文 `<kb doc=.../>` 胶囊复用 MarkdownViewer + CitationRef（lint 层面 CitationRef 无 meta 字段，读取时 as ChatRefItem）
-- 已验证：tsc --noEmit ✓、next build ✓（/chat-next 路由注册）、后端 SSE 冒烟 ✓（真实 kb 提问，delta/context(stage)/done 全链路）；未验证：浏览器交互（本机浏览器工具 GLIBC 不可用）——线上需重建 web 镜像后登录打开
+- 形态：`useExternalStoreRuntime` 接现有后端 `POST /api/v1/qa/stream`（自定义 SSE：stream_meta/context/thinking/delta/stage/done/error），**无会话模式**（前端组 history 传参，不建 ChatSession 不留库）——**后台接口对接 kb-compilation，页面交互/布局/视觉完全遵循 assistant-ui 官方 elements 体系**（2026-10-14 二次改造，替代首版 primitives+自绘 css）
+- 官方 elements 全套落地：`web/src/components/assistant-ui/elements/`（thread.aui/composer/reasoning.aui/tool-group.aui/attachment.aui/markdown-text 等 ~25 文件，从 GitHub main 拉取）+ `web/src/components/ui/`（button/skeleton/dialog/tooltip/avatar/textarea，Base UI 版）+ `web/src/lib/utils.ts`（cn）+ `web/src/hooks/`（use-copy-to-clipboard 等）+ Tailwind v4 分层导入（theme.css + utilities.css，**跳过 preflight**，@source 限定 assistant-ui 目录与 chat-next 页面，不影响现有 antd 页面）+ postcss.config.mjs
+- 依赖（bun）：@assistant-ui/react-markdown / @base-ui/react / class-variance-authority / clsx / tailwind-merge / lucide-react / tailwindcss@4 + @tailwindcss/postcss + postcss + tw-animate-css（dev）
+- **组件形态（2026-10-14 二次改造后）**：直接用官方 `Thread`（`elements/thread.aui.tsx`，含官方 composer/message/reasoning 折叠/工具组/追问/markdown，action bar 复制/反馈/重试/导出）；引用走 data part（`{type:"data", name:"kb_refs"}`）+ `makeAssistantDataUI` 注册官方渲染器（Thread 官方实现对 source part 返回 null，故引用不走 source part）；正文 `<kb doc=.../>` 标签被官方 markdown 静默丢弃（无 rehype-raw），引用完整呈现在消息下方参考资料区（点击弹 antd Modal 看 chunk 原文）
+- 已验证：tsc --noEmit ✓、next build ✓（/chat-next 路由注册）、后端 SSE 冒烟 ✓（真实 kb 提问，delta/context(stage)/done 全链路）、生成 CSS 确认含官方 utility（bg-background/text-muted-foreground 等）且无 preflight 混入；未验证：浏览器交互（本机浏览器工具 GLIBC 不可用）——线上需重建 web 镜像后登录打开
 - 菜单三处同步（2026-10-14 方案J）：① 种子 KB_MENUS 新增 `chat_next`（新版问答 /chat-next，顶级 sort_num=2，kbs/agents/grp_ops/grp_config/system/grp_debug 顶级 +1 顺延）② 线上 modo_menu + modo_role_menu_rela 按 menu_id 精准 INSERT（勿 --reset-menus）③ 前端兜底 FALLBACK_MENUS 在 grp_ai 下加 chat_next（agents/websearch 顺延）——**兜底与种子结构本就漂移**（兜底 grp_ai 分组式、种子顶级页面式），各自保持内部一致即可
 - 坑位：
   - 本地起 next start 验证须带 basePath：`/wiki/chat-next`；API 走 nginx 80（docker kb-api-server 未映射主机端口）
