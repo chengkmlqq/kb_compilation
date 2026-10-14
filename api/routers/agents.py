@@ -278,16 +278,28 @@ def agent_qa_stream(
         else:
             merged_executor = ws_executor or skill_executor
 
-        # allowed_tools 白名单（非空 = 仅注入白名单内已装配的工具；空 = 全部允许）
+        # allowed_tools 白名单：非空 = 仅注入白名单内已装配的工具；
+        # 空 = 默认只读工具（安全默认——写工具/wiki写需显式 allowed_tools 才注入）。
+        # web_search / run_skill_script 由各自 enabled 开关控制装配，白名单不裁剪。
         agent_cfg = config_from_dict(agent.config or {})
         tool_whitelist = {str(t).strip() for t in (agent_cfg.allowed_tools or []) if str(t).strip()}
+        DEFAULT_READONLY_TOOLS = {
+            "thinking", "todo_write", "knowledge_search", "kb_search", "grep_chunks",
+            "list_knowledge_chunks", "get_document_info", "database_query",
+            "query_knowledge_graph", "wiki_search", "wiki_read_page",
+            "wiki_read_source_doc", "wiki_read_issue", "data_schema", "data_analysis",
+        }
+        DYNAMIC_TOOLS = {"web_search", "run_skill_script"}
 
         def filter_by_whitelist(tools: list[dict]) -> list[dict]:
-            if not tool_whitelist:
-                return tools
+            # 显式白名单 = 严格裁剪（dynamic 工具也受白名单约束，勾选才生效）；
+            # 空 = 默认只读工具 + dynamic（web_search/run_skill_script 由各自开关控制）
+            allow = tool_whitelist if tool_whitelist else (
+                DEFAULT_READONLY_TOOLS | DYNAMIC_TOOLS
+            )
             return [
                 t for t in tools
-                if str((t.get("function") or {}).get("name") or "") in tool_whitelist
+                if str((t.get("function") or {}).get("name") or "") in allow
             ]
 
         answer_parts: list[str] = []
@@ -332,7 +344,10 @@ def agent_qa_stream(
                 except Exception:  # noqa: BLE001
                     pass
             # 对每个 KB 依次流式回答；extra_context/图片只在首个 KB 注入避免重复
-            for idx, kb in enumerate(kbs):
+            # 多 KB 时均摊工具迭代轮数，避免「6 库 × 每库 10 轮」工具循环爆炸（实测 120s+ 无 done）
+            kbs_effective = kbs or []
+            per_kb_iterations = max(1, int(agent_cfg.max_iterations or 10) // max(1, len(kbs_effective)))
+            for idx, kb in enumerate(kbs_effective):
                 last_kb_id = kb.id
                 extra = attachment_ctx if idx == 0 else ""
                 # 知识库工具（对齐 WeKnora 全套：RAG/图谱/Wiki 读写/数据分析；按 kb 绑定）
@@ -359,6 +374,10 @@ def agent_qa_stream(
                     name = str(tool_call.get("name") or "")
                     from api.services.agent_tools_full import EXECUTOR_NAMES
 
+                    # 动态工具（web_search / run_skill_script）执行器在 merged_executor，
+                    # 不能走 kb_executor（其 executors 仅含目录工具）
+                    if name in ("web_search", "run_skill_script") and merged_executor is not None:
+                        return merged_executor(tool_call)
                     if name in EXECUTOR_NAMES and kb_executor is not None:
                         return kb_executor(tool_call)
                     if merged_executor is not None:
@@ -381,7 +400,7 @@ def agent_qa_stream(
                     is_sys_admin=ctx_is_admin,
                     tools=per_kb_tools or None,
                     tool_executor=per_kb_executor,
-                    max_tool_iterations=skill_max_rounds,
+                    max_tool_iterations=per_kb_iterations,
                 ):
                     event["kb_id"] = kb.id
                     if event.get("type") == "delta":

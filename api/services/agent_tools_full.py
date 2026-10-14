@@ -48,6 +48,8 @@ TOOL_CATALOG: list[dict] = [
     {"name": "wiki_delete_page", "group": "Wiki 写", "description": "软删除 wiki 页面（按 slug）。", "capability": "wiki"},
     {"name": "data_schema", "group": "数据分析", "description": "列出知识库中的表格文件（CSV/XLSX）及其表结构/列/样例。", "capability": "vector,keyword"},
     {"name": "data_analysis", "group": "数据分析", "description": "对 CSV/Excel 文件执行 SQL 分析（DuckDB 内存表：所有 sheet 装载进 data 表，源 sheet 名在 __sheet_name 列，SQL 用 FROM data）。", "capability": "vector,keyword"},
+    {"name": "web_search", "group": "联网搜索", "description": "互联网搜索（需配置 web_search_enabled + 可用 provider；由开关控制装配）。", "capability": "web"},
+    {"name": "run_skill_script", "group": "技能", "description": "执行白名单技能脚本（需 skills_enabled + 技能白名单；由开关控制装配）。", "capability": "skill"},
 ]
 
 CATALOG_BY_NAME = {t["name"]: t for t in TOOL_CATALOG}

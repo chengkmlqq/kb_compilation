@@ -16,7 +16,7 @@ from typing import Iterator
 
 from fastapi import APIRouter, Cookie, Depends
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -44,6 +44,14 @@ class QARequest(BaseModel):
     top_k: int | None = None
     threshold: float | None = None
     embed_query: bool = True
+
+    @field_validator("question")
+    @classmethod
+    def _question_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("问题不能为空")
+        return v
     # 2026-10-06: 问答界面模型切换（指定 chat 模型 id；不传=用默认模型）
     model_id: str | None = None
     # 2026-10-12 对齐 WeKnora 输入区联网开关：请求级开启联网搜索（注入 web_search 工具）
