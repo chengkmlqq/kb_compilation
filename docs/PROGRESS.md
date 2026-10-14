@@ -2,7 +2,17 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-14（三个摘要编排产物从 wiki 页改为写 kb_document.summary 字段）
+最后更新：2026-10-14（任务监控页：被链头承接的编排 run 收进子任务，不再顶层平级）
+
+## 18. 当前状态（2026-10-14 任务监控页摘要任务层级修复）
+
+- **背景**：用户看任务监控页「文档处理 · 文档 e24d6c…」（DOC_ 链头）时发现「外边还有一个摘要任务」平级显示，觉得逻辑不对。排查数据确认：摘要触发 job（SUMMARY_RUN_448e16cb5c0d，KbOrchestrationRunTask）的 parent_id **本来就是 DOC_（已是子任务）**；问题是 kb_tape_run 被 list_parent_jobs 无条件渲染成顶层虚拟父任务行（_run_to_job_dict parent_id 硬编码 None）→ 同一个摘要执行在页面出现两条：链头子任务 + 顶层平级行
+- **修复（api/routers/jobs.py）**：
+  1. list_parent_jobs：查询 run 顶层行前，先收 parent_id 非空且 task_params.runId 指向该 run 的 KbOrchestrationRunTask job 集合（attached_run_ids），这些 run 不作为顶层行（已作为链头子任务展示），顶层只保留独立执行（手动跑编排等无承接 job 的 run）
+  2. list_job_children：链头的子任务是 KbOrchestrationRunTask 时，把对应 run 的 step_results / run_tape_name / run_id 附在子任务 dict 上——展开链头（DOC_）看到摘要任务行，信息列展示「摘要-Map-Reduce · 编排节点 2/N」进度
+- **前端**（parent-job-table.tsx / job-table.tsx）：TASK_CLASS_LABEL 补 `KbOrchestrationRunTask: "编排执行"`（此前 fallback 显示裸编码）；ChildTable jobCols「信息/错误」列支持 step_results 行渲染编排节点进度
+- **测试**：test_jobs_monitor.py 新增 test_parents_attached_run_not_top_level（被承接 run 不进顶层 + children 带 run 节点）；jobs 17 passed；全量 600 passed / 3 failed（3 红仍为 §15 既有基线，无新增回归）；tsc exit 0
+- **部署**：api/routers/jobs.py 改后需 docker cp 热修 kb-api-server + restart（或等 CI 重建）；前端源码改动需重建 kb-web
 
 ## 17. 当前状态（2026-10-14 摘要编排落点改造：wiki 页 → kb_document.summary）
 

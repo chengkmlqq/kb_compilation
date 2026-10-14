@@ -61,6 +61,7 @@ const TASK_CLASS_LABEL: Record<string, string> = {
   KbAgentGatewayTask: "智能体网关",
   KbTableIngestTask: "表摄取",
   KbMetadataCollectionTask: "元数据采集",
+  KbOrchestrationRunTask: "编排执行",
   OrchestrationRun: "编排执行",
 };
 
@@ -172,7 +173,33 @@ function ChildTable({ parent }: { parent: ParentJobItem }) {
     { title: "状态", dataIndex: "state", width: 110, render: (v) => renderStateTag(String(v || "")) },
     { title: "开始时间", dataIndex: "start_time", width: 175, render: (v) => fmtTime(String(v || "")) },
     { title: "耗时", dataIndex: "duration_ms", width: 100, render: (v) => fmtDur(v as number | null) },
-    { title: "信息", dataIndex: "error_message", ellipsis: true, render: (v) => v ? <Text type="danger">{String(v).slice(0, 80)}</Text> : <Text type="secondary">-</Text> },
+    {
+      title: "信息 / 错误",
+      dataIndex: "error_message",
+      ellipsis: true,
+      // 2026-10-14：编排放种子任务（KbOrchestrationRunTask）由 children 端点附带
+      // step_results/run_tape_name——信息列展示编排节点进度摘要，方便在链头下
+      // 直接看到摘要/构建编排的执行情况。
+      render: (v, row) => {
+        const steps = (row.step_results as Array<Record<string, unknown>> | undefined) || [];
+        const tapeName = (row.run_tape_name as string | undefined) || "";
+        if (steps.length > 0) {
+          const done = steps.filter((s) => String(s.status || "") === "success").length;
+          return (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {tapeName ? `${tapeName} · ` : ""}编排节点 {done}/{steps.length}
+            </Text>
+          );
+        }
+        return v ? (
+          <Text type={row.state === "FAILED" || row.state === "failed" ? "danger" : "secondary"} style={{ fontSize: 12 }}>
+            {String(v).length > 70 ? `${String(v).slice(0, 70)}…` : String(v)}
+          </Text>
+        ) : (
+          <Text type="secondary">-</Text>
+        );
+      },
+    },
   ];
 
   return (

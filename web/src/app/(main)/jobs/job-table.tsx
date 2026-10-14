@@ -73,6 +73,9 @@ const TASK_CLASS_LABEL: Record<string, string> = {
   KbGraphBuildTask: "图谱构建",
   KbOrphanRecoveryTask: "孤儿任务恢复",
   KbAgentGatewayTask: "智能体网关",
+  KbTableIngestTask: "表摄取",
+  KbMetadataCollectionTask: "元数据采集",
+  KbOrchestrationRunTask: "编排执行",
   OrchestrationRun: "编排执行",
 };
 

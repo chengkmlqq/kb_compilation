@@ -144,6 +144,28 @@ def list_parent_jobs(
         like = f"%{keyword}%"
         run_stmt = run_stmt.where(TapeRun.id.like(like) | TapeRun.tape_name.like(like))
     run_rows = db.execute(run_stmt).all()  # [(id, created_at), ...]
+
+    # 2026-10-14：被链头任务承接的编排 run 不作为顶层父任务行。
+    # 上传链/摘要触发（SUMMARY_RUN_*/ORCH_RUN_* job）会建一条 KbOrchestrationRunTask
+    # job 并把 parent_id 指向链头（如 DOC_xxx）——该 run 已作为链头任务的子任务
+    # 展示；若再按虚拟父任务渲染成顶层行，任务监控页就会出现「文档处理 + 摘要任务」
+    # 平级两条（用户报告「外边那个摘要任务」）。因此顶层列表排除这些 run：
+    # 存在 parent_id 非空且 task_params.runId 指向该 run 的 job 时，run 不进顶层。
+    attached_run_ids: set[str] = set()
+    if run_rows:
+        attached = db.execute(
+            select(Job.task_params, Job.parent_id)
+            .where(Job.parent_id.is_not(None), Job.task_params.like("%runId%"))
+        ).all()
+        for tp, _pid in attached:
+            try:
+                rid = str((json.loads(tp or "{}") or {}).get("runId") or "")
+                if rid:
+                    attached_run_ids.add(rid)
+            except (TypeError, json.JSONDecodeError):
+                continue
+    if attached_run_ids:
+        run_rows = [r for r in run_rows if r[0] not in attached_run_ids]
     run_total = len(run_rows)
 
     # ── 应用层合并排序：时间倒序（job.create_time / run.created_at），同刻按 id 倒序 ──
@@ -233,12 +255,30 @@ def list_job_children(
         .scalars()
         .all()
     )
+    # 2026-10-14：子任务是 KbOrchestrationRunTask（摘要/构建编排触发 job）时，
+    # 把 task_params.runId 对应的 kb_tape_run 的 step_results 一并附加——任务监控页
+    # 展开链头（如 DOC_xxx）能看到摘要任务内部的编排节点，而不只是一行 job。
+    items: list[dict] = []
+    for c in children:
+        d = _job_to_dict(c)
+        if c.task_class == "KbOrchestrationRunTask":
+            try:
+                rid = str((json.loads(c.task_params or "{}") or {}).get("runId") or "")
+                if rid:
+                    run = db.execute(select(TapeRun).where(TapeRun.id == rid)).scalars().first()
+                    if run:
+                        d["run_id"] = run.id
+                        d["step_results"] = run.step_results or []
+                        d["run_tape_name"] = run.tape_name
+            except (TypeError, json.JSONDecodeError):
+                pass
+        items.append(d)
     return {
         "success": True,
         "data": {
             "kind": "job",
-            "items": [_job_to_dict(c) for c in children],
-            "total": len(children),
+            "items": items,
+            "total": len(items),
         },
     }
 

@@ -674,6 +674,66 @@ def test_parent_child_jobs_view(monkeypatch) -> None:
         app.dependency_overrides.clear()
 
 
+def test_parents_attached_run_not_top_level(monkeypatch) -> None:
+    """2026-10-14：被链头 job 承接的编排 run 不作为顶层父任务行。
+
+    上传链/摘要触发（SUMMARY_RUN_*/ORCH_RUN_* job，parent_id 指向链头 DOC_）
+    的 run 已作为链头子任务展示——parents 顶层不应再出现平级重复行
+    （用户报告「文档处理 + 外边那个摘要任务」两条）。children 端点则把
+    run 的 step_results 附在编排放种子任务上。
+    """
+    db = _make_session()
+    db.query(Job).delete()
+    db.commit()
+
+    # 链头（文档解析）+ 摘要编排触发 job（挂链头下，task_params.runId 指向 run）
+    db.add(Job(id="DOC_doc1", task_id="doc1", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"kbId": "kb1", "documentId": "doc1"}),
+               trigger_type="API", state="SUCCESS"))
+    db.add(Job(id="SUMMARY_RUN_abc", task_id="SUMMARY_RUN_abc", task_class="KbOrchestrationRunTask",
+               queue_name="orch", task_params=json.dumps({"runId": "run_summary", "env": "prod"}),
+               trigger_type="API", state="SUCCESS", parent_id="DOC_doc1"))
+    # 独立手动执行的 run（无承接 job）——应保持顶层
+    db.add(Job(id="DOC_doc2", task_id="doc2", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"kbId": "kb2", "documentId": "doc2"}),
+               trigger_type="API", state="SUCCESS"))
+    db.commit()
+
+    from api.models.orchestration import TapeRun
+
+    db.add(TapeRun(id="run_summary", tape_id="tape1", tape_name="摘要-Map-Reduce（分块合并）",
+                   status="success", inputs={"kb_id": "kb1", "document_id": "doc1"}, step_results=[
+                       {"step_id": "n1", "step_inst": "kb_read_doc", "status": "success"},
+                       {"step_id": "n2", "step_inst": "kb_llm_chat", "status": "success"},
+                   ]))
+    db.commit()
+
+    app.dependency_overrides[get_db] = lambda: db
+    client = _jobs_client(db, monkeypatch)
+    try:
+        r = client.get("/api/v1/jobs/parents")
+        assert r.status_code == 200
+        items = r.json()["data"]["items"]
+        by_id = {it["id"]: it for it in items}
+        # 被承接的 run 不在顶层；链头 DOC_doc1 存在
+        assert "run_summary" not in by_id, f"被链头承接的 run 不应出现在顶层: {list(by_id)}"
+        assert "DOC_doc1" in by_id
+        assert "DOC_doc2" in by_id
+
+        # children：链头下能看到编排放种子任务，且带 run 节点信息
+        r = client.get("/api/v1/jobs/DOC_doc1/children")
+        assert r.status_code == 200
+        d = r.json()["data"]
+        assert d["kind"] == "job" and d["total"] == 1
+        child = d["items"][0]
+        assert child["id"] == "SUMMARY_RUN_abc"
+        assert child["run_id"] == "run_summary"
+        assert child["run_tape_name"] == "摘要-Map-Reduce（分块合并）"
+        assert len(child["step_results"]) == 2
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_parents_run_state_filter_mapping_and_mixed_paging(monkeypatch) -> None:
     """编排 run 与任务监控枚举对齐（2026-10-13）：
 
