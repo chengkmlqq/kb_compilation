@@ -130,16 +130,30 @@ def _tape_payload_to_model(db: Session, obj: Tape, payload: dict) -> None:
 
 
 def list_tapes(db, page=1, page_size=20, keyword="", status="", category=""):
+    """编排列表（category 支持两级聚合：一级分类 = 该分类及其二级子分类下的编排）。"""
     q = db.query(Tape)
     if keyword:
         q = q.filter(Tape.tape_name.like(f"%{keyword}%") | Tape.tape_label.like(f"%{keyword}%"))
     if status:
         q = q.filter(Tape.status == status)
     if category:
-        q = q.filter(Tape.category == category)
+        names = _category_with_children(db, category)
+        q = q.filter(Tape.category.in_(names))
     total = q.count()
     items = q.order_by(Tape.updated_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return {"total": total, "items": [serialize_tape(t) for t in items]}
+
+
+def _category_with_children(db, category: str) -> list[str]:
+    """取分类名 + 其二级子分类名（两级树聚合过滤用）。"""
+    names = [category]
+    rows = (
+        db.query(TapeCategory.category)
+        .filter(TapeCategory.parent_id == category, TapeCategory.state == "1")
+        .all()
+    )
+    names += [r[0] for r in rows]
+    return names
 
 
 def ensure_tape_category(
@@ -235,6 +249,23 @@ def _list_categories(db, model, cat_type: str, default_name: str):
         if st == "effective":
             b["effective"] += 1
 
+    # 两级树聚合：一级未命名分类的计数 = 自身 + 其下二级分类计数
+    by_name: dict[str, dict] = {}
+    for c in cats:
+        by_name[c.category] = {
+            "category": c.category,
+            "label": c.label or c.category,
+            "descr": c.descr or "",
+            "parent_id": c.parent_id,  # 0021 两级树
+            "total": counts.get(c.category, {"total": 0})["total"],
+            "effective": counts.get(c.category, {"effective": 0})["effective"],
+        }
+    for c in cats:
+        if c.parent_id and c.parent_id in by_name:
+            p = by_name[c.parent_id]
+            p["total"] += by_name[c.category]["total"]
+            p["effective"] += by_name[c.category]["effective"]
+
     if not cats:
         # 兼容回退：分类表为空（迁移未跑）时按业务表现有分类聚合
         return [{"category": c, **v} for c, v in sorted(counts.items())]
@@ -244,21 +275,11 @@ def _list_categories(db, model, cat_type: str, default_name: str):
     for c in cats:
         name = c.category
         seen.add(name)
-        cnt = counts.get(name, {"total": 0, "effective": 0})
-        out.append(
-            {
-                "category": name,
-                "label": c.label or name,
-                "descr": c.descr or "",
-                "total": cnt["total"],
-                "effective": cnt["effective"],
-            }
-        )
-    # 数据里出现了分类表中没有的分类（手工写库/历史数据）→ 兜底补进结果，
-    # 保证左树与实际数据一致（不写表，避免隐式副作用）
+        out.append(by_name[name])
+    # 数据里出现了分类表中没有的分类（手工写库/历史数据）→ 兜底补进结果
     for name, cnt in sorted(counts.items()):
         if name not in seen:
-            out.append({"category": name, "label": name, **cnt})
+            out.append({"category": name, "label": name, "descr": "", "parent_id": None, **cnt})
     return out
 
 

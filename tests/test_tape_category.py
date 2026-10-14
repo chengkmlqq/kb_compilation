@@ -154,3 +154,45 @@ def test_list_categories_returns_descr(db) -> None:
     db.commit()
     cats = {c["category"]: c for c in svc.list_tape_categories(db)}
     assert cats["摘要"]["descr"] == "摘要类编排"
+
+
+def test_two_level_tree_counts_rollup(db) -> None:
+    """两级树：一级分类计数 = 自身 + 其二级子分类（0021）。"""
+    db.add(om.TapeCategory(id="c1", category="通用办公", cat_type="tape", sort_num=0, state="1"))
+    db.add(om.TapeCategory(id="c2", category="工作报告", parent_id="通用办公", cat_type="tape", sort_num=1, state="1"))
+    db.add(om.TapeCategory(id="c3", category="会议纪要", parent_id="通用办公", cat_type="tape", sort_num=2, state="1"))
+    db.add(om.Tape(id="t1", tape_name="a", category="工作报告", status="effective"))
+    db.add(om.Tape(id="t2", tape_name="b", category="会议纪要", status="draft"))
+    db.commit()
+    cats = {c["category"]: c for c in svc.list_tape_categories(db)}
+    assert cats["通用办公"]["total"] == 2  # 一级聚合两个子级
+    assert cats["通用办公"]["effective"] == 1
+    assert cats["工作报告"]["total"] == 1  # 二级只看自身
+    assert cats["工作报告"]["parent_id"] == "通用办公"
+
+
+def test_list_categories_returns_parent_id(db) -> None:
+    db.add(om.TapeCategory(id="c1", category="一级", cat_type="tape", sort_num=0, state="1"))
+    db.add(om.TapeCategory(id="c2", category="二级", parent_id="一级", cat_type="tape", sort_num=1, state="1"))
+    db.commit()
+    cats = {c["category"]: c for c in svc.list_tape_categories(db)}
+    assert cats["一级"]["parent_id"] is None
+    assert cats["二级"]["parent_id"] == "一级"
+
+
+def test_list_tapes_filters_by_top_category_including_children(db) -> None:
+    """点击一级分类过滤 = 该分类 + 其二级子分类下的编排（0021 聚合过滤）。"""
+    db.add(om.TapeCategory(id="c1", category="通用办公", cat_type="tape", sort_num=0, state="1"))
+    db.add(om.TapeCategory(id="c2", category="工作报告", parent_id="通用办公", cat_type="tape", sort_num=1, state="1"))
+    db.add(om.TapeCategory(id="c3", category="财务会计", cat_type="tape", sort_num=2, state="1"))
+    db.add(om.Tape(id="t1", tape_name="挂在子级", category="工作报告", status="draft"))
+    db.add(om.Tape(id="t2", tape_name="挂在顶级", category="通用办公", status="draft"))
+    db.add(om.Tape(id="t3", tape_name="另一个领域", category="财务会计", status="draft"))
+    db.commit()
+    r = svc.list_tapes(db, category="通用办公")
+    assert r["total"] == 2  # 顶级 + 子级
+    names = sorted(t["tape_name"] for t in r["items"])
+    assert names == ["挂在子级", "挂在顶级"]
+    # 点二级分类只过滤自身
+    r2 = svc.list_tapes(db, category="工作报告")
+    assert r2["total"] == 1

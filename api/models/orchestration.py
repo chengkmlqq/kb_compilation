@@ -36,6 +36,9 @@ class TapeCategory(Base):
     category: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     label: Mapped[str | None] = mapped_column(String(128))
     descr: Mapped[str | None] = mapped_column(String(500))  # 分类描述（0020）
+    # 父分类（0021 两级树）：一级分类为 NULL；二级存父分类的 category 名
+    # （与 Tape.category 的引用口径一致，便于按名聚合过滤）
+    parent_id: Mapped[str | None] = mapped_column(String(64), index=True)
     cat_type: Mapped[str] = mapped_column(String(16), default="both")  # tape | template | both
     sort_num: Mapped[int] = mapped_column(Integer, default=0)
     state: Mapped[str] = mapped_column(String(16), default="1")  # 1=启用 0=停用

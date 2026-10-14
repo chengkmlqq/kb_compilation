@@ -3346,6 +3346,8 @@ export interface TapeCategory {
   label?: string;
   /** 2026-10-14 分类描述（0020 迁移新增列） */
   descr?: string;
+  /** 2026-10-14 父分类（0021 两级树；空 = 一级分类） */
+  parent_id?: string | null;
   total: number;
   effective: number;
 }

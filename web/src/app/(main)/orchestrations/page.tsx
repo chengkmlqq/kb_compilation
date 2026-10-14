@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, PauseCircleOutlined, FileAddOutlined, AppstoreOutlined, FolderOutlined } from "@ant-design/icons";
+import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, PauseCircleOutlined, FileAddOutlined, AppstoreOutlined, FileTextOutlined, FolderOutlined } from "@ant-design/icons";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
 import { ModoSelect } from "@/components/biz/modo-select";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
@@ -71,6 +71,8 @@ export default function OrchestrationsPage() {
   // 左侧分类树（2026-10-13：编排管理页左右结构，参照编排模板页）
   const [selectedCategory, setSelectedCategory] = useState("");
   const [categories, setCategories] = useState<TapeCategory[]>([]);
+  // 2026-10-14 两级树：一级分类展开集合（默认收起，点一级即展开并过滤）
+  const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<TapeItem | null>(null);
@@ -244,12 +246,35 @@ export default function OrchestrationsPage() {
     setApplied({ keyword: "", status: undefined, category: undefined });
   };
 
-  /** 左树点击分类：仅重置分类维度，保留关键词/状态筛选 */
+  /** 左树点击分类：仅重置分类维度，保留关键词/状态筛选；点一级分类同时展开其子级 */
   const selectCategory = (cat: string) => {
     setSelectedCategory(cat);
     setPage(1);
     setApplied((prev) => ({ ...prev, category: cat || undefined }));
+    if (cat) {
+      setExpandedCats((prev) => {
+        const next = new Set(prev);
+        next.add(cat);
+        return next;
+      });
+    }
   };
+
+  // 2026-10-14 两级树：按 parent_id 分组（一级 = 无父级，二级挂在父级下）
+  const topCategories = useMemo(
+    () => categories.filter((c) => !c.parent_id),
+    [categories],
+  );
+  const childByParent = useMemo(() => {
+    const m = new Map<string, TapeCategory[]>();
+    for (const c of categories) {
+      if (!c.parent_id) continue;
+      const arr = m.get(c.parent_id) || [];
+      arr.push(c);
+      m.set(c.parent_id, arr);
+    }
+    return m;
+  }, [categories]);
 
   const openCreate = () => {
     setEditing(null);
@@ -475,19 +500,57 @@ export default function OrchestrationsPage() {
             <span className="kb-tpl-cat-name">全部编排</span>
             <span className="kb-tpl-cat-count">{allTotal}</span>
           </div>
-          {categories.map((c) => (
-            <div
-              key={c.category}
-              className={`kb-tpl-cat-item${selectedCategory === c.category ? " active" : ""}`}
-              onClick={() => selectCategory(c.category)}
-            >
-              <FolderOutlined style={{ fontSize: 14 }} />
-              <span className="kb-tpl-cat-name">{c.label || c.category}</span>
-              <Tooltip title={`启用 ${c.effective} 个`}>
-                <span className="kb-tpl-cat-count">{c.total}</span>
-              </Tooltip>
-            </div>
-          ))}
+          {topCategories.map((c) => {
+            const kids = childByParent.get(c.category) || [];
+            const expanded = expandedCats.has(c.category);
+            return (
+              <div key={c.category}>
+                <div
+                  className={`kb-tpl-cat-item${selectedCategory === c.category ? " active" : ""}`}
+                  onClick={() => selectCategory(c.category)}
+                  style={{ cursor: "pointer" }}
+                >
+                  {kids.length > 0 ? (
+                    <span
+                      className="kb-tpl-cat-caret"
+                      style={{ width: 14, display: "inline-flex", justifyContent: "center", fontSize: 10, color: "#999", marginRight: 2 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedCats((prev) => {
+                          const next = new Set(prev);
+                          if (expanded) next.delete(c.category);
+                          else next.add(c.category);
+                          return next;
+                        });
+                      }}
+                    >
+                      {expanded ? "▾" : "▸"}
+                    </span>
+                  ) : null}
+                  <FolderOutlined style={{ fontSize: 14 }} />
+                  <span className="kb-tpl-cat-name">{c.label || c.category}</span>
+                  <Tooltip title={`启用 ${c.effective} 个`}>
+                    <span className="kb-tpl-cat-count">{c.total}</span>
+                  </Tooltip>
+                </div>
+                {expanded &&
+                  kids.map((kid) => (
+                    <div
+                      key={kid.category}
+                      className={`kb-tpl-cat-item kb-tpl-cat-item--child${selectedCategory === kid.category ? " active" : ""}`}
+                      onClick={() => selectCategory(kid.category)}
+                      style={{ paddingLeft: 34, cursor: "pointer" }}
+                    >
+                      <FileTextOutlined style={{ fontSize: 12 }} />
+                      <span className="kb-tpl-cat-name">{kid.label || kid.category}</span>
+                      <Tooltip title={`启用 ${kid.effective} 个`}>
+                        <span className="kb-tpl-cat-count">{kid.total}</span>
+                      </Tooltip>
+                    </div>
+                  ))}
+              </div>
+            );
+          })}
         </div>
       </aside>
 
