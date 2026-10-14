@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import logging
 import uuid
 
@@ -485,7 +486,8 @@ def follow_up_suggestions(
         return []
     prompt = (
         "根据以下 AI 回答内容，生成 3 个用户可能会追问的问题，每行一个，不要编号，"
-        "直接输出问题。回答内容：\n" + last_answer[:500]
+        "直接输出问题。严禁输出任务指令、说明或「回答内容」原文。回答内容：\n"
+        + last_answer[:500]
     )
     ctx = model_ctx or {}
     text = _llm_chat(
@@ -497,7 +499,21 @@ def follow_up_suggestions(
         is_sys_admin=ctx.get("is_admin", False),
     )
     lines = [l.strip(" -·•") for l in text.splitlines() if l.strip()]
-    return lines[:count]
+    # 防 prompt 泄漏：剔除指令特征行；混合行（prompt+真问题拼接）按「用户可能追问」切分取真问题
+    _NOISE = ("我们需要", "我们被要求", "要求：", "每行一个", "不要编号", "直接输出",
+              "回答内容", "基于这个简短的回答", "输出问题", "可能会追问的问题", "可能追问的问题", "生成 3 个")
+    clean: list[str] = []
+    for l in lines:
+        if any(n in l for n in _NOISE):
+            if "用户可能追问" in l:
+                tail = l.split("用户可能追问", 1)[1].lstrip("：: ")
+                for part in re.split(r"[？?。；;\n]", tail):
+                    part = part.strip().strip("，, ")
+                    if part and len(part) > 1:
+                        clean.append(part if part.endswith("？") else part + "？")
+            continue
+        clean.append(l)
+    return clean[:count]
 
 
 # ---------------------------------------------------------------------------
