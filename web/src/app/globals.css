@@ -1187,8 +1187,7 @@ html[data-theme="dark"] body {
 
 /* ── 消息列表容器（对齐 chat/index.vue .chat 消息区） ── */
 .kb-chat-msgs {
-  max-width: 960px;
-  margin: 0 auto;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 16px;

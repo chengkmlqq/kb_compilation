@@ -1131,6 +1131,7 @@ export default function ChatPage() {
         padding: 8,
         minHeight: 0,
         overflow: "hidden",
+        background: "#fff",
       }}
     >
       {/* 左：会话列表（2026-10-12 embeddedMode 时隐藏，问答区满宽沉浸式） */}
@@ -1143,6 +1144,8 @@ export default function ChatPage() {
           flexDirection: "column",
           overflow: "hidden",
           minHeight: 0,
+          background: "#f9fbfd",
+          borderRight: "1px solid #e3e9ef",
         }}
         styles={{
           body: {
@@ -1152,6 +1155,7 @@ export default function ChatPage() {
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
+            background: "#f9fbfd",
           },
         }}
         title={

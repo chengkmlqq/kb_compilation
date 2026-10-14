@@ -402,20 +402,16 @@ export default function KbsPage() {
 
   // 列表区（首个选项卡内容）：筛选 + 卡片视图 + 钉底分页 + 新建抽屉/配置弹窗
   const listPane = (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      <Card
-        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{
-          body: {
-            flex: 1,
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            padding: "12px 16px 0",
-          },
-        }}
-      >
+    <div
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        padding: "12px 16px 0",
+      }}
+    >
         {/* 筛选表单（对齐用户管理页：查询/重置 显式触发） */}
         <Form
           form={searchForm}
@@ -680,7 +676,6 @@ export default function KbsPage() {
             if (changed) void load();
           }}
         />
-      </Card>
     </div>
   );
 
@@ -689,7 +684,8 @@ export default function KbsPage() {
     <div
       className="kbs-page"
       style={{
-        padding: 8,
+        padding: 0,
+        background: "#fff",
         height: "calc(100vh - var(--app-header-h, 45px))",
         display: "flex",
         flexDirection: "column",
