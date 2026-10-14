@@ -48,7 +48,6 @@ from api.services.kb_admin import (
     doc_folders,
     doc_move_documents,
     doc_update_folder,
-    generate_document_summary,
     get_kb,
     get_wiki_page,
     json_search,
@@ -1835,22 +1834,6 @@ def get_table_sample(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"取数失败: {exc}") from exc
     return {"success": True, "data": {"columns": columns, "rows": rows, "total": len(rows)}}
-
-
-@router.post("/{kb_id}/documents/{document_id}/summary")
-def generate_doc_summary(
-    kb_id: str,
-    document_id: str,
-    caller: dict = Depends(_require_kb_caller),
-    db: Session = Depends(get_db),
-) -> dict:
-    """为文档生成 AI 摘要（用知识库配置的大语言模型 summary_model_id，对齐 WeKnora）。"""
-    _kb_manage(kb_id, caller, db)
-    try:
-        data = generate_document_summary(db, kb_id, document_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"success": True, "data": data}
 
 
 # ── MCP 对齐补充（2026-10-11）：WeKnora admin-kb 工具所需端点 ──

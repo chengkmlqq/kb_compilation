@@ -2,7 +2,22 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-14（全量 pytest 既有红修复：chat_sessions 漏改调用 + 模型白名单漂移）
+最后更新：2026-10-14（移除直连 LLM 文档摘要链路，摘要统一走编排）
+
+## 16. 当前状态（2026-10-14 移除直连 LLM 文档摘要链路）
+
+- **背景**：查「测试知识库」中『湖北政企短彩业务本体 v1.0.docx』摘要来源时确认两套并行链路：① 前端自动摘要（KbDocsPane useEffect）→ POST /{kb_id}/documents/{document_id}/summary → kb_admin.generate_document_summary 直连 ChatClient（用 KB summary_model_id，未配 thinking=disabled → 思考草稿混入，实测该 doc 的 kb_document.summary 713 字符以「150~250 字」复述+思考过程开头）；② 上传链摘要编排（doc_process._enqueue_summary_task → SUMMARY_RUN_* Job → kb_tape_run，产物是 wiki 摘要页，不写 kb_document.summary）。用户确认该 doc 的编排 run（03:24:26 Map-Reduce / 03:28:22 Refine 均 success，wiki 页 doc-1737d45155-* 时间戳与 run 完成秒级吻合）与数据库态（summary 字段直连 LLM 特征）后决定：**删直连 LLM 链路，摘要只允许走编排**
+- **改动（后端 2 文件 + 前端 2 文件 + 注释 3 处）**：
+  1. `api/services/kb_admin.py`：删 generate_document_summary 函数 + SUMMARY_SYSTEM_PROMPT / SUMMARY_CONTENT_LIMIT 常量
+  2. `api/routers/kbs.py`：删 POST /{kb_id}/documents/{document_id}/summary 端点 + import
+  3. `worker/tasks/table_ingest.py`：删表摄取第 4 步（generate_document_summary 复用调用），步骤注释 4/5 → 4；docstring 同步。保留 _generate_table_usage（表用途说明，属 wiki 构建非文档摘要，与 KB summary_model_id 无关——注意它仍直连 ChatClient 但产出是 wiki 页段落，不在本次删除范围）
+  4. `web/src/lib/api.ts`：删 apiGenerateDocSummary
+  5. `web/src/components/kb/KbDocsPane.tsx`：删自动摘要 useEffect（autoSummaryRunning/autoSummarySeen/autoTick）+ import
+  6. 注释：kb_admin.py 删除处留说明、api/models/knowledge.py summary 字段注释更新、seed_framework_db.py 摘要编排注释不再引用已删函数
+- **保留不动**：kb_document.summary/summary_status/summary_error 列（存量数据展示，DocDetailDrawer/KbDocsPane 表格摘要列仍渲染历史值）；kb_datasource.summary_strategy（off/auto/stuff/mapreduce/refine）与 SUMMARY_TAPE_* 参数（编排路由需要）；summary_model_id 列（KB 配置 UI 仍可设，编排 bindings 注入仍在 orchestration_engine.py:689）
+- **验证**：py_compile 4 文件 OK；pytest 全量 575 passed / 3 failed（3 红为既有基线 test_agent_skills_scope/test_files/test_storage，见 §15，无新增回归）；web tsc --noEmit exit 0
+- **部署**：api/worker 改动 → CI 重建 kb-api-server/kb-worker/kb-agent-worker；前端源码改动 → 重建 kb-web。容器内热修可用 docker cp + restart，正式走 CI
+- **遗留（未做，另行确认）**：测试知识库 kb_document.summary 存量脏值（思考草稿混入）未清洗；该 doc 两个编排摘要 wiki 页 source_refs=[]（删文档会残留孤儿页，契约要求 {document_id}| 前缀）
 
 ## 15. 当前状态（2026-10-14 全量 pytest 既有红修复：11 failed → 3 failed）
 

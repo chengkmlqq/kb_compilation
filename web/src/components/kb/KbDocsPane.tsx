@@ -55,7 +55,6 @@ import {
   apiDeleteDocFolder,
   apiDeleteDocument,
   apiDownloadDocument,
-  apiGenerateDocSummary,
   apiGetKb,
   apiListBuildEngines,
   apiListDocFolders,
@@ -280,43 +279,8 @@ export default function KbDocsPane({ kbId }: KbDocsPaneProps) {
     return () => clearInterval(timer);
   }, [hasInFlight, paneActive, load]);
 
-  // 自动生成 AI 摘要（对齐 WeKnora）：KB 配了 LLM 时，解析完成的文档逐个自动补摘要。
-  const autoSummaryRunning = useRef(false);
-  const autoSummarySeen = useRef<Set<string>>(new Set());
-  const [autoTick, setAutoTick] = useState(0);
-
-  useEffect(() => {
-    if (!paneActive) return;
-    if (!kb?.summary_model_id) return;
-    if (autoSummaryRunning.current) return;
-    const target = docs.find(
-      (d) => d.parse_state === "READY" && !d.summary_status && !autoSummarySeen.current.has(d.id),
-    );
-    if (!target) return;
-    autoSummarySeen.current.add(target.id);
-    autoSummaryRunning.current = true;
-    apiGenerateDocSummary(kbId, target.id)
-      .then((res) => {
-        if (res.success && res.data) {
-          const updated = {
-            ...target,
-            summary: res.data?.summary ?? null,
-            summary_status: res.data?.summary_status ?? "READY",
-            summary_error: null,
-          };
-          setDocs((prev) => prev.map((d) => (d.id === target.id ? updated : d)));
-          // 抽屉正打开该文档时同步刷新展示（原 onSummaryUpdated 职责，按钮移除后由自动摘要接管）
-          setDetailDoc((prev) => (prev && prev.id === target.id ? updated : prev));
-        }
-      })
-      .catch(() => {
-        // 后端已置 summary_status=FAILED；不再自动重试（手动可重试）
-      })
-      .finally(() => {
-        autoSummaryRunning.current = false;
-        setAutoTick((t) => t + 1);
-      });
-  }, [docs, kbId, kb?.summary_model_id, autoTick, paneActive]);
+  // 注：文档摘要统一由摘要编排（Stuff/Map-Reduce/Refine）生成 wiki 摘要页，
+  // 不再走直连 LLM（generate_document_summary 已移除，2026-10-14）。
 
   const onDeleteDoc = (doc: DocItem) => {
     // 2026-10-12: 单文档删除此前无确认动作，直接调 API（不可恢复：级联清分块+向量）。

@@ -133,7 +133,8 @@ class KbDocument(Base):
     # 上传时文件级处理配置（对齐 WeKnora process_config：JSON 字符串，含
     # chunking 切片配置 / parser_engine_rules 等，覆盖 KB 级默认；空=用 KB 配置）
     process_config: Mapped[str | None] = mapped_column(Text)
-    # LLM 生成的文档摘要（对齐 WeKnora：知识库配置 summary_model_id 后上传文档自动/手动生成）
+    # 文档摘要（历史值；2026-10-14 起不再由直连 LLM 写入，统一由摘要编排
+    # Stuff/Map-Reduce/Refine 生成 wiki 摘要页，本字段保留存量数据）
     summary: Mapped[str | None] = mapped_column(Text)
     # ""（未生成）/READY/FAILED
     summary_status: Mapped[str] = mapped_column(String(16), default="")

@@ -413,13 +413,6 @@ export function apiReparseDocument(kbId: string, docId: string) {
   return request(`/api/v1/kbs/${kbId}/documents/${docId}/reparse`, { method: "POST" });
 }
 
-export function apiGenerateDocSummary(kbId: string, docId: string) {
-  return request<{ document_id: string; summary: string; summary_status: string }>(
-    `/api/v1/kbs/${kbId}/documents/${docId}/summary`,
-    { method: "POST" }
-  );
-}
-
 export async function apiDownloadDocument(kbId: string, docId: string, fileName: string) {
   const res = await fetch(`/api/v1/kbs/${kbId}/documents/${docId}/download`);
   if (!res.ok) throw new Error(`下载失败 (${res.status})`);
