@@ -130,7 +130,7 @@ export default function DbTool() {
             ),
             closable: true,
             children: tab.type === "table" ? <TableStructure tab={tab} /> : <DbCode tab={tab} />,
-            style: { minHeight: 0, overflow: "hidden" },
+            style: { height: "100%", minHeight: 0, overflow: "hidden" },
           };
         })}
       />

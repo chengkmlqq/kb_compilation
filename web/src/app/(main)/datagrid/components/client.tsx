@@ -234,14 +234,18 @@ export default function DataGridClient() {
           margin: 0 !important;
           flex-shrink: 0;
         }
-        .datagrid-shell .ant-tabs-content-holder {
+        /* antd v6（@rc-component/tabs 15+）DOM 链：body-holder → body → tabpane(.ant-tabs-content)。
+           旧 v5 选择器（.ant-tabs-content-holder /.ant-tabs-tabpane）在 v6 中已不存在 → 全部失效，
+           pane 高度塌为内容高（SQL 编辑器不占满）。补齐 body 高度链即可让 pane 内 flex:1 生效。 */
+        .datagrid-shell .ant-tabs-body-holder {
           flex: auto;
           min-height: 0;
-          height: auto;
-          background: transparent !important;
         }
-        .datagrid-shell .ant-tabs-content,
-        .datagrid-shell .ant-tabs-tabpane {
+        .datagrid-shell .ant-tabs-body {
+          height: 100%;
+          min-height: 0;
+        }
+        .datagrid-shell .ant-tabs-content {
           height: 100%;
           min-height: 0;
           overflow: hidden;

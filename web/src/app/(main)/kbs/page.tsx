@@ -25,7 +25,6 @@ import {
   FileTextOutlined,
   MessageOutlined,
   MoreOutlined,
-  PictureOutlined,
   PlusOutlined,
   SlidersOutlined,
 } from "@ant-design/icons";
@@ -460,7 +459,6 @@ export default function KbsPage() {
               {visibleKbs.map((kb) => {
                 const isFaq = kb.type === "faq";
                 const graphOn = Boolean(kb.indexing_strategy?.graph_enabled);
-                const vlmOn = kb.vlm_config && Object.keys(kb.vlm_config).length > 0;
                 return (
                   <Col key={kb.id} xs={24} sm={12} lg={8} xl={6}>
                     <Card
@@ -534,11 +532,6 @@ export default function KbsPage() {
                         {graphOn && (
                           <Tag icon={<ApartmentOutlined />} color="purple">
                             图谱
-                          </Tag>
-                        )}
-                        {vlmOn && (
-                          <Tag icon={<PictureOutlined />} color="orange">
-                            多模态
                           </Tag>
                         )}
                         {isFaq && <Tag color="cyan">FAQ</Tag>}
