@@ -6,8 +6,17 @@ import json
 import uuid
 from datetime import datetime
 
+from sqlalchemy.orm import Session
+
 from api.config import get_settings
-from api.models.orchestration import Tape, TapeRun, TapeStep, TapeTemplate, StepDefine
+from api.models.orchestration import (
+    Tape,
+    TapeCategory,
+    TapeRun,
+    TapeStep,
+    TapeTemplate,
+    StepDefine,
+)
 from api.services.orchestration_engine import (
     ATOM_MAP,
     OrchestrationEngine,
@@ -99,7 +108,7 @@ def import_tape_draft(db, tape_id: str, content: str) -> dict:
     return {"imported_step_count": len(nodes), "overwrite": True}
 
 
-def _tape_payload_to_model(obj: Tape, payload: dict) -> None:
+def _tape_payload_to_model(db: Session, obj: Tape, payload: dict) -> None:
     """把可更新字段写入模型。tape_name 走 _clean_name（截断防超列长）。
 
     2026-10-09 修复：原先直接 setattr(payload[field])，超长 tape_name/
@@ -116,7 +125,7 @@ def _tape_payload_to_model(obj: Tape, payload: dict) -> None:
     if "tape_type" in payload:
         obj.tape_type = str(payload["tape_type"] or "general") or "general"
     if "category" in payload:
-        cat = str(payload["category"] or "").strip() or "通用"
+        cat = ensure_tape_category(db, payload.get("category") or "通用", cat_type="tape")
         obj.category = cat[:64]
 
 
@@ -133,21 +142,107 @@ def list_tapes(db, page=1, page_size=20, keyword="", status="", category=""):
     return {"total": total, "items": [serialize_tape(t) for t in items]}
 
 
-def list_tape_categories(db):
-    """编排分类列表（含每类计数，供左侧分类树与分类下拉展示）。
+def ensure_tape_category(db: Session, category: str | None, cat_type: str = "both", user_id: str = "") -> str:
+    """确保分类存在于 kb_tape_category（幂等 upsert，返回清洗后的分类名）。
 
-    2026-10-13：编排管理页左右结构（左分类树 + 右编排列表），分类聚合自
-    kb_tape.category（与 TapeTemplate 分类同模式）。
+    创建/编辑编排（template）时若输入了分类表里没有的分类，自动补录，
+    保证左侧目录树能看到新分类（否则只在数据表里存在、左树不显示）。
+    已有分类：若归属不同（tape vs template），并集为 both。
     """
-    rows = db.query(Tape.category, Tape.status).all()
-    buckets: dict[str, dict] = {}
+    name = (category or "").strip()[:64]
+    if not name:
+        name = "通用"
+    row = db.query(TapeCategory).filter(TapeCategory.category == name).first()
+    if row is None:
+        max_sort = (
+            db.query(TapeCategory).order_by(TapeCategory.sort_num.desc()).first()
+        )
+        next_sort = (max_sort.sort_num + 1) if max_sort else 0
+        db.add(
+            TapeCategory(
+                id=uuid.uuid4().hex,
+                category=name,
+                label=name,
+                cat_type=cat_type,
+                sort_num=next_sort,
+                state="1",
+                create_user=user_id or None,
+            )
+        )
+        try:
+            db.commit()
+        except Exception:  # noqa: BLE001 — 分类补录失败不阻断主体操作
+            db.rollback()
+    elif row.cat_type not in (cat_type, "both"):
+        row.cat_type = "both"
+        try:
+            db.commit()
+        except Exception:  # noqa: BLE001
+            db.rollback()
+    return name
+
+
+def list_tape_categories(db):
+    """编排分类列表（2026-10-14 独立表存储）：分类定义读 kb_tape_category
+    （按 sort_num 排序），计数（total/effective）仍从 kb_tape 动态聚合。
+
+    兼容：分类表为空（迁移未跑）时回退为按 kb_tape.category 聚合。
+    """
+    return _list_categories(db, model=Tape, cat_type="tape", default_name="通用")
+
+
+def list_template_categories(db):
+    """模板分类列表（2026-10-14 独立表存储），同 list_tape_categories 口径。"""
+    return _list_categories(db, model=TapeTemplate, cat_type="template", default_name="未分类")
+
+
+def _list_categories(db, model, cat_type: str, default_name: str):
+    from sqlalchemy import select
+
+    cats = (
+        db.execute(
+            select(TapeCategory)
+            .where(TapeCategory.state == "1", TapeCategory.cat_type.in_((cat_type, "both")))
+            .order_by(TapeCategory.sort_num.asc(), TapeCategory.created_at.asc())
+        )
+        .scalars()
+        .all()
+    )
+
+    # 计数：{category: {total, effective}}
+    counts: dict[str, dict] = {}
+    rows = db.execute(select(model.category, model.status)).all()
     for cat, st in rows:
-        cat = (cat or "通用").strip() or "通用"
-        b = buckets.setdefault(cat, {"category": cat, "total": 0, "effective": 0})
+        name = (cat or default_name).strip() or default_name
+        b = counts.setdefault(name, {"total": 0, "effective": 0})
         b["total"] += 1
         if st == "effective":
             b["effective"] += 1
-    return list(buckets.values())
+
+    if not cats:
+        # 兼容回退：分类表为空（迁移未跑）时按业务表现有分类聚合
+        return [{"category": c, **v} for c, v in sorted(counts.items())]
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for c in cats:
+        name = c.category
+        seen.add(name)
+        cnt = counts.get(name, {"total": 0, "effective": 0})
+        out.append(
+            {
+                "category": name,
+                "label": c.label or name,
+                "total": cnt["total"],
+                "effective": cnt["effective"],
+            }
+        )
+    # 数据里出现了分类表中没有的分类（手工写库/历史数据）→ 兜底补进结果，
+    # 保证左树与实际数据一致（不写表，避免隐式副作用）
+    for name, cnt in sorted(counts.items()):
+        if name not in seen:
+            out.append({"category": name, "label": name, **cnt})
+    return out
 
 
 def serialize_tape(t: Tape, with_design: bool = False) -> dict:
@@ -179,13 +274,16 @@ def get_tape(db, tape_id: str) -> Tape:
 
 def create_tape(db, payload: dict, user_id: str = "") -> Tape:
     name = _clean_name(payload.get("tape_name"), required=True)
+    category = ensure_tape_category(
+        db, payload.get("category") or "通用", cat_type="tape", user_id=user_id
+    )
     t = Tape(
         id=uuid.uuid4().hex[:64],
         tape_name=name,
         tape_label=str(payload.get("tape_label") or name)[:128] or None,
         tape_descr=str(payload.get("tape_descr") or "").strip()[:2000] or None,
         tape_type=str(payload.get("tape_type") or "general") or "general",
-        category=str(payload.get("category") or "通用").strip()[:64] or "通用",
+        category=category,
         status="draft",
         nodes=payload.get("nodes") or [],
         edges=payload.get("edges") or [],
@@ -200,7 +298,7 @@ def create_tape(db, payload: dict, user_id: str = "") -> Tape:
 
 def update_tape(db, tape_id: str, payload: dict) -> Tape:
     t = get_tape(db, tape_id)
-    _tape_payload_to_model(t, payload)  # 内含 tape_name 清洗/截断
+    _tape_payload_to_model(db, t, payload)  # 内含 tape_name 清洗/截断
     if "nodes" in payload:
         if payload["nodes"] is not None and not isinstance(payload["nodes"], list):
             raise ValueError("nodes 必须是数组")
@@ -489,22 +587,6 @@ def list_tape_templates(db, page=1, page_size=20, keyword="", category="", statu
     return {"total": total, "items": [serialize_tape_template(t) for t in items]}
 
 
-def list_template_categories(db):
-    """分类列表（含每类启用模板计数，供分类下拉与分类管理展示）。"""
-    rows = (
-        db.query(TapeTemplate.category, TapeTemplate.status)
-        .all()
-    )
-    buckets: dict[str, dict] = {}
-    for cat, st in rows:
-        cat = (cat or "未分类").strip() or "未分类"
-        b = buckets.setdefault(cat, {"category": cat, "total": 0, "effective": 0})
-        b["total"] += 1
-        if st == "effective":
-            b["effective"] += 1
-    return list(buckets.values())
-
-
 def serialize_tape_template(t: TapeTemplate, with_design: bool = False) -> dict:
     out = {
         "id": t.id,
@@ -535,7 +617,7 @@ def get_tape_template(db, template_id: str) -> TapeTemplate:
     return t
 
 
-def _template_payload_to_model(obj: TapeTemplate, payload: dict) -> None:
+def _template_payload_to_model(db: Session, obj: TapeTemplate, payload: dict) -> None:
     if "name" in payload:
         obj.name = _clean_template_name(payload["name"], required=True)
     if "label" in payload:
@@ -543,7 +625,8 @@ def _template_payload_to_model(obj: TapeTemplate, payload: dict) -> None:
     if "descr" in payload:
         obj.descr = str(payload["descr"] or "").strip()[:2000] or None
     if "category" in payload:
-        obj.category = (str(payload["category"] or "").strip() or "未分类")[:64]
+        cat = ensure_tape_category(db, payload.get("category") or "未分类", cat_type="template")
+        obj.category = cat[:64]
     if "status" in payload:
         obj.status = str(payload["status"] or "effective") or "effective"
     if "nodes" in payload:
@@ -570,7 +653,9 @@ def create_tape_template(db, payload: dict, user_id: str = "") -> TapeTemplate:
         name=name,
         label=str(payload.get("label") or name)[:128],
         descr=str(payload.get("descr") or "").strip()[:2000] or None,
-        category=(str(payload.get("category") or "").strip() or "未分类")[:64],
+        category=ensure_tape_category(
+            db, payload.get("category") or "未分类", cat_type="template", user_id=user_id
+        ),
         status=str(payload.get("status") or "effective") or "effective",
         nodes=payload.get("nodes") or [],
         edges=payload.get("edges") or [],
@@ -595,7 +680,7 @@ def update_tape_template(db, template_id: str, payload: dict) -> TapeTemplate:
         if dup:
             raise ValueError(f"模板名已存在: {new_name}")
         t.name = new_name
-    _template_payload_to_model(t, payload)
+    _template_payload_to_model(db, t, payload)
     db.commit()
     db.refresh(t)
     return t
@@ -697,7 +782,12 @@ def apply_tape_template(db, template_id: str, payload: dict | None = None, user_
         tape_label=str(payload.get("tape_label") or tpl.label or tape_name)[:128],
         tape_descr=str(payload.get("tape_descr") or tpl.descr or "").strip()[:2000] or None,
         tape_type=str(payload.get("tape_type") or "general") or "general",
-        category=str(payload.get("category") or tpl.category or "通用").strip()[:64] or "通用",
+        category=ensure_tape_category(
+            db,
+            payload.get("category") or tpl.category or "通用",
+            cat_type="tape",
+            user_id=user_id,
+        ),
         status="draft",
         nodes=nodes,
         edges=edges,

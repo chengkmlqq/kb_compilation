@@ -482,7 +482,7 @@ export default function OrchestrationsPage() {
               onClick={() => selectCategory(c.category)}
             >
               <FolderOutlined style={{ fontSize: 14 }} />
-              <span className="kb-tpl-cat-name">{c.category}</span>
+              <span className="kb-tpl-cat-name">{c.label || c.category}</span>
               <Tooltip title={`启用 ${c.effective} 个`}>
                 <span className="kb-tpl-cat-count">{c.total}</span>
               </Tooltip>

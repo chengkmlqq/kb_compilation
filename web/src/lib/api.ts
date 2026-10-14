@@ -3342,6 +3342,8 @@ export function apiListTapes(page = 1, pageSize = 20, keyword = "", status = "",
 
 export interface TapeCategory {
   category: string;
+  /** 2026-10-14 独立表存储后后端返回（缺省回落为 category） */
+  label?: string;
   total: number;
   effective: number;
 }
@@ -3455,6 +3457,8 @@ export interface TapeTemplateDetail extends TapeTemplateItem {
 
 export interface TapeTemplateCategory {
   category: string;
+  /** 2026-10-14 独立表存储后后端返回（缺省回落为 category） */
+  label?: string;
   total: number;
   effective: number;
 }

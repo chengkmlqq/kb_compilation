@@ -21,6 +21,27 @@ from sqlalchemy.orm import Mapped, mapped_column
 from api.db import Base
 
 
+class TapeCategory(Base):
+    """编排分类（2026-10-14 独立表存储，取代从 kb_tape/kb_tape_template
+    的 category 字段实时聚合左侧目录树）。
+
+    cat_type 区分归属：tape（编排管理）/ template（编排模板）/ both（通用）。
+    排序 sort_num 决定左侧目录树顺序；计数（total/effective）仍由
+    list_tape_categories / list_template_categories 动态聚合计算。
+    """
+
+    __tablename__ = "kb_tape_category"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    category: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    label: Mapped[str | None] = mapped_column(String(128))
+    cat_type: Mapped[str] = mapped_column(String(16), default="both")  # tape | template | both
+    sort_num: Mapped[int] = mapped_column(Integer, default=0)
+    state: Mapped[str] = mapped_column(String(16), default="1")  # 1=启用 0=停用
+    create_user: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class StepDefine(Base):
     """编排组件（步骤）定义。"""
 

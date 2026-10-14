@@ -107,12 +107,14 @@ WEBSEARCH_TABLES = {
 # Orchestration domain (kb_tape / kb_tape_run / kb_tape_step / kb_step_define)
 # — migrated from data-synth algorithm/tapes onto the framework store.
 # kb_tape_template（编排模板）随 55c7c00 引入，2026-10-12 补白名单。
+# kb_tape_category（编排分类独立表）随 0019 迁移引入，2026-10-14 补白名单。
 ORCHESTRATION_TABLES = {
     "kb_tape",
     "kb_tape_run",
     "kb_tape_step",
     "kb_step_define",
     "kb_tape_template",
+    "kb_tape_category",
 }
 
 # Metadata-collection tables (kb_metadata_table / kb_metadata_column) — framework store.
