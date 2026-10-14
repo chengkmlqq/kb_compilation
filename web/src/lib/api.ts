@@ -437,8 +437,17 @@ export function apiDeleteDocument(kbId: string, docId: string) {
   return request(`/api/v1/kbs/${kbId}/documents/${docId}`, { method: "DELETE" });
 }
 
-export function apiReparseDocument(kbId: string, docId: string) {
-  return request(`/api/v1/kbs/${kbId}/documents/${docId}/reparse`, { method: "POST" });
+export function apiReparseDocument(
+  kbId: string,
+  docId: string,
+  body?: { process_config?: string; build_tape_id?: string },
+) {
+  return request(`/api/v1/kbs/${kbId}/documents/${docId}/reparse`, {
+    method: "POST",
+    ...(body && (body.process_config || body.build_tape_id)
+      ? { body: JSON.stringify(body) }
+      : {}),
+  });
 }
 
 export async function apiDownloadDocument(kbId: string, docId: string, fileName: string) {

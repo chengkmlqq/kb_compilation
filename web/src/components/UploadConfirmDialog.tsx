@@ -50,8 +50,8 @@ interface Props {
   onConfirm: (result: UploadConfirmResult) => void;
 }
 
-const SEPARATOR_PRESETS = ["\n## ", "\n\n", "\n", "\n---", "\n### ", "。", "；"];
-const LANG_OPTIONS = [
+export const SEPARATOR_PRESETS = ["\n## ", "\n\n", "\n", "\n---", "\n### ", "。", "；"];
+export const LANG_OPTIONS = [
   { value: "chinese", label: "中文" },
   { value: "english", label: "English" },
   { value: "japanese", label: "日本語" },
@@ -61,13 +61,13 @@ const LANG_OPTIONS = [
   { value: "german", label: "Deutsch" },
   { value: "spanish", label: "Español" },
 ];
-const FILE_TYPE_OPTIONS = [
+export const FILE_TYPE_OPTIONS = [
   "pdf", "docx", "doc", "pptx", "xlsx", "xls", "csv", "md", "markdown", "txt",
   "epub", "html", "htm", "json", "xml", "yaml", "yml", "py", "js", "ts", "java",
 ].map((v) => ({ value: v, label: v }));
 
 /** 摘要生成策略（对齐 KBConfigModal 文档摘要策略，文件级覆盖 KB 默认） */
-const SUMMARY_STRATEGY_OPTIONS = [
+export const SUMMARY_STRATEGY_OPTIONS = [
   { value: "auto", label: "自动（按文档规模选择）" },
   { value: "stuff", label: "小文档全文直塞（Stuff）" },
   { value: "mapreduce", label: "大文档分块合并（Map-Reduce）" },
@@ -75,7 +75,7 @@ const SUMMARY_STRATEGY_OPTIONS = [
   { value: "off", label: "关（不生成摘要）" },
 ];
 
-const DEFAULT_CHUNKING = {
+export const DEFAULT_CHUNKING = {
   chunk_size: 800,
   chunk_overlap: 80,
   separators: ["\n## ", "\n\n", "\n"],

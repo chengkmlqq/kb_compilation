@@ -1587,8 +1587,15 @@ def preview_document(
 
 
 class ReparseRequest(BaseModel):
-    """重新解析可携带文件级处理配置（对齐 WeKnora 重解析换配置）。"""
+    """重新解析可携带文件级处理配置（对齐 WeKnora 重解析换配置）。
+
+    process_config: JSON 字符串（chunking/parser_engine_rules/summary_strategy），
+    传入则更新 kb_document.process_config。
+    build_tape_id: 文档级构建引擎（重选覆盖 KB 默认；传空串 = 清除，改走 KB 默认）。
+    """
+
     process_config: str | None = None
+    build_tape_id: str | None = None
 
 
 @router.post("/{kb_id}/documents/{document_id}/reparse")
@@ -1624,6 +1631,18 @@ def reparse_document(
                 doc.process_config = json.dumps(parsed_pc, ensure_ascii=False)
         except (TypeError, json.JSONDecodeError):
             logger.warning("reparse %s: invalid process_config ignored", document_id)
+
+    # 可选：更新文档级构建引擎（None = 未传保持原值；空串 = 清除改走 KB 默认）
+    if body and body.build_tape_id is not None:
+        new_tape = str(body.build_tape_id or "").strip() or None
+        if new_tape:
+            from api.services.kb_admin import _validate_build_tape_ref
+
+            try:
+                _validate_build_tape_ref(db, new_tape)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        doc.build_tape_id = new_tape
 
     db.execute(delete(DocChunk).where(DocChunk.document_id == document_id))
     doc.parse_state = "PENDING"

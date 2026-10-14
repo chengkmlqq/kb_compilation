@@ -50,6 +50,7 @@ import ModoPagination from "@/components/biz/modo-pagination";
 import UploadConfirmDialog, { UploadProcessConfig } from "@/components/UploadConfirmDialog";
 import SelectTableDialog from "@/components/SelectTableDialog";
 import DocBuildProcessDrawer from "@/components/DocBuildProcessDrawer";
+import ReparseConfigDialog from "@/components/ReparseConfigDialog";
 import {
   apiCreateDocFolder,
   apiDeleteDocFolder,
@@ -136,6 +137,8 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
   // 添加表弹窗（表→wiki：从数据源选维度表绑定到知识库）
   const [selectTableOpen, setSelectTableOpen] = useState(false);
   const [buildDoc, setBuildDoc] = useState<DocItem | null>(null);
+  // 重新解析配置弹窗（2026-10-14：重解析前可选处理配置，对齐 WeKnora 重解析换配置）
+  const [reparseDoc, setReparseDoc] = useState<DocItem | null>(null);
 
   // 加载知识库详情（含 WeKnora 对齐配置：索引开关/技能绑定/模型绑定等）
   const loadKb = useCallback(async () => {
@@ -340,10 +343,23 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
     }
   };
 
-  const onReparseDoc = async (doc: DocItem) => {
-    const res = await apiReparseDocument(kbId, doc.id);
+  const onReparseDoc = (doc: DocItem) => {
+    // 2026-10-14：改为先弹处理配置表单（切片/解析引擎/构建配置），确认后带配置重解析
+    setReparseDoc(doc);
+  };
+
+  const handleReparseConfirm = async (result: { processConfig: Record<string, unknown> | null; buildTapeId?: string }) => {
+    const doc = reparseDoc;
+    if (!doc) return;
+    setReparseDoc(null);
+    const body: { process_config?: string; build_tape_id?: string } = {};
+    if (result.processConfig && Object.keys(result.processConfig).length > 0) {
+      body.process_config = JSON.stringify(result.processConfig);
+    }
+    if (result.buildTapeId) body.build_tape_id = result.buildTapeId;
+    const res = await apiReparseDocument(kbId, doc.id, body);
     if (res.success) {
-      message.success("已重新入队解析");
+      message.success("已重新入队解析（按所选配置）");
       void load();
     } else {
       message.error(res.message || "重新解析失败");
@@ -925,6 +941,16 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
             startDocUpload(f, undefined, docFolderId, processConfig, buildEngine);
           }
         }}
+      />
+
+      {/* 重新解析配置弹窗（2026-10-14：重解析前可选处理配置，对齐 WeKnora 重解析换配置） */}
+      <ReparseConfigDialog
+        open={!!reparseDoc}
+        doc={reparseDoc}
+        buildEngines={buildEngines}
+        defaultBuildTapeId={kb?.build_tape_id || ""}
+        onCancel={() => setReparseDoc(null)}
+        onConfirm={(r) => void handleReparseConfirm(r)}
       />
 
       {/* 添加表弹窗（表→wiki：选数据源维度表绑定） */}
