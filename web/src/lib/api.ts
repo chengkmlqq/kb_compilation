@@ -3344,6 +3344,8 @@ export interface TapeCategory {
   category: string;
   /** 2026-10-14 独立表存储后后端返回（缺省回落为 category） */
   label?: string;
+  /** 2026-10-14 分类描述（0020 迁移新增列） */
+  descr?: string;
   total: number;
   effective: number;
 }
@@ -3459,6 +3461,8 @@ export interface TapeTemplateCategory {
   category: string;
   /** 2026-10-14 独立表存储后后端返回（缺省回落为 category） */
   label?: string;
+  /** 2026-10-14 分类描述（0020 迁移新增列） */
+  descr?: string;
   total: number;
   effective: number;
 }

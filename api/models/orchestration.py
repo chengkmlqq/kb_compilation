@@ -35,6 +35,7 @@ class TapeCategory(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     category: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     label: Mapped[str | None] = mapped_column(String(128))
+    descr: Mapped[str | None] = mapped_column(String(500))  # 分类描述（0020）
     cat_type: Mapped[str] = mapped_column(String(16), default="both")  # tape | template | both
     sort_num: Mapped[int] = mapped_column(Integer, default=0)
     state: Mapped[str] = mapped_column(String(16), default="1")  # 1=启用 0=停用

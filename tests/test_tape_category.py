@@ -125,3 +125,32 @@ def test_apply_tape_template_registers_category(db) -> None:
     tpl = svc.create_tape_template(db, {"name": "tpl", "category": "应用类"}, user_id="u1")
     tape = svc.apply_tape_template(db, tpl.id, {"tape_name": "from_tpl"}, user_id="u1")
     assert tape.category == "应用类"
+
+
+def test_ensure_tape_category_stores_descr(db) -> None:
+    svc.ensure_tape_category(db, "带描述", cat_type="tape", descr="用于数据清洗类编排")
+    row = db.query(om.TapeCategory).filter(om.TapeCategory.category == "带描述").first()
+    assert row is not None
+    assert row.descr == "用于数据清洗类编排"
+
+
+def test_ensure_tape_category_updates_descr(db) -> None:
+    svc.ensure_tape_category(db, "可更新", cat_type="tape")
+    svc.ensure_tape_category(db, "可更新", cat_type="tape", descr="新描述")
+    row = db.query(om.TapeCategory).filter(om.TapeCategory.category == "可更新").first()
+    assert row.descr == "新描述"
+    # 空白 descr 不覆盖已有描述
+    svc.ensure_tape_category(db, "可更新", cat_type="tape", descr="   ")
+    row2 = db.query(om.TapeCategory).filter(om.TapeCategory.category == "可更新").first()
+    assert row2.descr == "新描述"
+
+
+def test_list_categories_returns_descr(db) -> None:
+    db.add(
+        om.TapeCategory(
+            id="c1", category="摘要", label="摘要", descr="摘要类编排", cat_type="tape", sort_num=0, state="1"
+        )
+    )
+    db.commit()
+    cats = {c["category"]: c for c in svc.list_tape_categories(db)}
+    assert cats["摘要"]["descr"] == "摘要类编排"

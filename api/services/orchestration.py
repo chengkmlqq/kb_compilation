@@ -142,16 +142,24 @@ def list_tapes(db, page=1, page_size=20, keyword="", status="", category=""):
     return {"total": total, "items": [serialize_tape(t) for t in items]}
 
 
-def ensure_tape_category(db: Session, category: str | None, cat_type: str = "both", user_id: str = "") -> str:
+def ensure_tape_category(
+    db: Session,
+    category: str | None,
+    cat_type: str = "both",
+    user_id: str = "",
+    descr: str | None = None,
+) -> str:
     """确保分类存在于 kb_tape_category（幂等 upsert，返回清洗后的分类名）。
 
     创建/编辑编排（template）时若输入了分类表里没有的分类，自动补录，
     保证左侧目录树能看到新分类（否则只在数据表里存在、左树不显示）。
-    已有分类：若归属不同（tape vs template），并集为 both。
+    已有分类：若归属不同（tape vs template），并集为 both；descr 非空时
+    补充/更新描述（分类管理场景）。
     """
     name = (category or "").strip()[:64]
     if not name:
         name = "通用"
+    descr_clean = (descr or "").strip()[:500] or None
     row = db.query(TapeCategory).filter(TapeCategory.category == name).first()
     if row is None:
         max_sort = (
@@ -163,6 +171,7 @@ def ensure_tape_category(db: Session, category: str | None, cat_type: str = "bot
                 id=uuid.uuid4().hex,
                 category=name,
                 label=name,
+                descr=descr_clean,
                 cat_type=cat_type,
                 sort_num=next_sort,
                 state="1",
@@ -173,12 +182,19 @@ def ensure_tape_category(db: Session, category: str | None, cat_type: str = "bot
             db.commit()
         except Exception:  # noqa: BLE001 — 分类补录失败不阻断主体操作
             db.rollback()
-    elif row.cat_type not in (cat_type, "both"):
-        row.cat_type = "both"
-        try:
-            db.commit()
-        except Exception:  # noqa: BLE001
-            db.rollback()
+    else:
+        changed = False
+        if row.cat_type not in (cat_type, "both"):
+            row.cat_type = "both"
+            changed = True
+        if descr_clean and row.descr != descr_clean:
+            row.descr = descr_clean
+            changed = True
+        if changed:
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
     return name
 
 
@@ -233,6 +249,7 @@ def _list_categories(db, model, cat_type: str, default_name: str):
             {
                 "category": name,
                 "label": c.label or name,
+                "descr": c.descr or "",
                 "total": cnt["total"],
                 "effective": cnt["effective"],
             }
