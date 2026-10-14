@@ -166,7 +166,8 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
     #   - 未绑定时：wiki_enabled=true 且 custom_wiki_generation=false →
     #     enqueue KbAgentGatewayTask 用 KB 绑定的 wiki_config.skill（回退
     #     WIKI_SKILL_NAME）跑 build_wiki.py
-    #   - graph_enabled=true → enqueue KbGraphBuildTask 抽 Neo4j 实体/关系
+    #   - 2026-10-14: 不再自动触发 KbGraphBuildTask（图谱构建改由文档 wiki
+    #     处理编排自行承接，避免上传即全库切片 LLM 抽取 + 网关 429 限流）
     # 开关与技能绑定从 kb_datasource 读（_kb_pipeline_flags），读取失败回退历史默认。
     # 成功标志：ingest_document 返回 parse_state == "READY"（无 success 键）。
     if result.get("parse_state") == "READY" and kb_id:
@@ -205,14 +206,8 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
         else:
             result["wiki_skill_triggered"] = False
             result["wiki_skipped"] = "wiki_enabled=false 或 custom_wiki_generation=true"
-        if flags["graph"]:
-            try:
-                result["graph_build_triggered"] = _enqueue_graph_build_task(
-                    kb_id, document_id, parent_job_id=job_id  # 2026-10-12 父子
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("failed to trigger graph build task: %s", exc)
-                result["graph_build_triggered"] = False
+        # 2026-10-14: 移除上传链自动触发 KbGraphBuildTask（图谱构建改由文档 wiki
+        # 处理编排自行承接，避免上传即全库切片 LLM 抽取 + 网关 429 限流）。
     return result
 
 
@@ -648,55 +643,6 @@ def _enqueue_wiki_skill_task(
         )
     except Exception as exc:  # noqa: BLE001 — broker 不可达时返回 False，不抛
         logger.warning("failed to enqueue wiki skill task: %s", exc)
-        return False
-    return True
-
-
-def _enqueue_graph_build_task(kb_id: str, document_id: str, parent_job_id: str | None = None) -> bool:
-    """enqueue KbGraphBuildTask（Neo4j 知识图谱抽取）。
-
-    遵循与 wiki 相同的顺序契约：先 commit Job 行、再投 broker。
-    """
-    from worker.celery_app import celery_app
-
-    task_params = json.dumps(
-        {"kbId": kb_id, "documentId": document_id, "language": "中文", "env": "prod"},  # 2026-10-12 上传链走生产库
-        ensure_ascii=False,
-    )
-    job_id = f"GRAPH_BUILD_{uuid.uuid4().hex[:12]}"
-    from api.db import get_sessionmaker
-    from api.models.framework import Job
-
-    db = get_sessionmaker()()
-    try:
-        db.add(
-            Job(
-                id=job_id,
-                task_id=job_id,
-                task_class="KbGraphBuildTask",
-                queue_name="graph",
-                task_params=task_params,
-                trigger_type="API",
-                state="PENDING",
-                parent_id=parent_job_id,  # 2026-10-12 父子：挂链头解析任务
-            )
-        )
-        db.commit()
-    except Exception:  # noqa: BLE001
-        db.rollback()
-        return False
-    finally:
-        db.close()
-
-    try:
-        celery_app.send_task(
-            "worker.tasks.scheduler.execute_modo_job",
-            args=[job_id],
-            task_id=job_id,
-            queue="graph",
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("failed to enqueue graph build task: %s", exc)
         return False
     return True
 

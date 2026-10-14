@@ -166,8 +166,9 @@ def test_handle_process_document_no_chain_on_failure(chain_env, monkeypatch) -> 
     db.close()
 
 
-def test_handle_process_document_graph_triggered_when_enabled(chain_env, monkeypatch) -> None:
-    """graph_enabled=true → 额外 enqueue KbGraphBuildTask。"""
+def test_handle_process_document_graph_no_longer_auto_triggered(chain_env, monkeypatch) -> None:
+    """2026-10-14 改造：graph_enabled=true 也不再自动触发 KbGraphBuildTask
+    （图谱构建改由文档 wiki 处理编排自行承接；避免上传即全库切片 LLM 抽取）。"""
     Session, sent = chain_env
     # 种子 KB：graph 开、wiki 关
     from api.models.knowledge import KbDatasource
@@ -188,12 +189,13 @@ def test_handle_process_document_graph_triggered_when_enabled(chain_env, monkeyp
         lambda doc_id, content, parser_engine=None: {"success": True, "parse_state": "READY", "document_id": doc_id},
     )
     result = dp._handle_process_document("job-1", json.dumps({"documentId": "doc-1", "kbId": "kb-1"}))
-    assert result["graph_build_triggered"] is True
+    # 2026-10-14 起不再自动触发图谱构建
+    assert result.get("graph_build_triggered") is None
     # wiki 关闭 → 不触发 wiki
     assert result["wiki_skill_triggered"] is False
     db = Session()
     classes = {j.task_class for j in db.execute(select(Job)).scalars().all()}
-    assert "KbGraphBuildTask" in classes
+    assert "KbGraphBuildTask" not in classes
     assert "KbAgentWikiBuildTask" not in classes
     db.close()
 
