@@ -17,6 +17,7 @@ import {
   FileUnknownOutlined,
   FileWordOutlined,
   MoreOutlined,
+  ProfileOutlined,
   RedoOutlined,
   TableOutlined,
 } from "@ant-design/icons";
@@ -152,6 +153,15 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
         onClick: ({ domEvent }: { domEvent: { stopPropagation: () => void } }) => {
           domEvent.stopPropagation();
           onDownload(d);
+        },
+      },
+      {
+        key: "trace",
+        icon: <ProfileOutlined />,
+        label: "构建过程",
+        onClick: ({ domEvent }: { domEvent: { stopPropagation: () => void } }) => {
+          domEvent.stopPropagation();
+          onTrace(d);
         },
       },
       {

@@ -34,6 +34,7 @@ import {
   FolderAddOutlined,
   FolderOutlined,
   PlusOutlined,
+  ProfileOutlined,
   RedoOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -868,11 +869,14 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                 },
                 {
                   title: "操作",
-                  // 三个「图标+文字」链接按钮（下载/重解析/删除）约需 190px，150px 会被
-                  // 全局 td overflow:hidden 从右裁掉，故留足宽度。
-                  width: 210,
+                  // 四个「图标+文字」链接按钮（构建过程/下载/重解析/删除）约需 280px，
+                  // 210px 会被全局 td overflow:hidden 从右裁掉，故留足宽度。
+                  width: 290,
                   render: (_: unknown, doc: DocItem) => (
                     <Space size={4}>
+                      <Button type="link" size="small" icon={<ProfileOutlined />} onClick={(e) => { e.stopPropagation(); onViewTrace(doc); }}>
+                        构建过程
+                      </Button>
                       <Button type="link" size="small" icon={<DownloadOutlined />} onClick={(e) => { e.stopPropagation(); void onDownloadDoc(doc); }}>
                         下载
                       </Button>
