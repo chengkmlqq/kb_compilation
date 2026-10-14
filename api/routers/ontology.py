@@ -27,7 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.db import get_db
-from api.models.ontology import KbOntologySchema, OntologySchema
+from api.models.ontology import DocTypeConfig, KbOntologySchema, OntologySchema
 from api.services.identity import decode_identity_cookie
 from api.services.models import is_admin
 
@@ -74,6 +74,11 @@ class CategoryPayload(BaseModel):
     cat_label: str | None = None
     prompt_hint: str | None = None
     neo4j_edge: str | None = None
+    # ── schema 级 LLM 配置（0022；同 schema 各分类行同值）──
+    expert_role: str | None = None
+    extract_rules: str | None = None
+    summary_config: str | None = None
+    term_filter_config: str | None = None
     state: str = "1"
 
 
@@ -89,6 +94,10 @@ def _row_dict(r: OntologySchema) -> dict[str, Any]:
         "cat_label": r.cat_label,
         "prompt_hint": r.prompt_hint,
         "neo4j_edge": r.neo4j_edge,
+        "expert_role": r.expert_role,
+        "extract_rules": r.extract_rules,
+        "summary_config": r.summary_config,
+        "term_filter_config": r.term_filter_config,
         "state": r.state,
         "sort": r.sort,
         "created_at": str(r.created_at) if r.created_at else None,
@@ -116,6 +125,11 @@ def list_schemas(
             "schema_name": r.schema_name,
             "schema_label": r.schema_label,
             "schema_desc": r.schema_desc,
+            # schema 级配置取本 schema 首行（各行同值）
+            "expert_role": r.expert_role,
+            "extract_rules": r.extract_rules,
+            "summary_config": r.summary_config,
+            "term_filter_config": r.term_filter_config,
             "business": [],
             "rule": [],
             "total": 0,
@@ -153,6 +167,10 @@ def create_category(
         cat_label=payload.cat_label or f"{payload.cat_no}-{payload.cat_name}",
         prompt_hint=payload.prompt_hint,
         neo4j_edge=payload.neo4j_edge,
+        expert_role=payload.expert_role,
+        extract_rules=payload.extract_rules,
+        summary_config=payload.summary_config,
+        term_filter_config=payload.term_filter_config,
         state=payload.state,
         sort=payload.cat_no,
     )
@@ -160,6 +178,29 @@ def create_category(
     db.commit()
     db.refresh(row)
     return {"success": True, "data": {"item": _row_dict(row)}}
+
+
+@router.put("/ontology-schemas/{schema_name}/llm-config")
+def update_schema_llm_config(
+    schema_name: str,
+    payload: dict[str, Any],
+    caller: Caller = Depends(_require_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """更新整套 schema 的 LLM 配置（4 列同 schema 所有行同步）。"""
+    _require_admin(caller)
+    rows = db.execute(select(OntologySchema).where(
+        OntologySchema.schema_name == schema_name,
+        OntologySchema.state == "1",
+    )).scalars().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="schema 不存在")
+    for f in ("expert_role", "extract_rules", "summary_config", "term_filter_config"):
+        if f in payload and payload[f] is not None:
+            for r in rows:
+                setattr(r, f, payload[f])
+    db.commit()
+    return {"success": True, "data": {"schema_name": schema_name, "updated": len(rows)}}
 
 
 @router.put("/ontology-schemas/{schema_id}")
@@ -174,7 +215,9 @@ def update_category(
     if not row or row.state != "1":
         raise HTTPException(status_code=404, detail="分类不存在")
     for f in ("schema_name", "schema_label", "schema_desc", "dimension", "cat_no",
-              "cat_name", "cat_label", "prompt_hint", "neo4j_edge", "state"):
+              "cat_name", "cat_label", "prompt_hint", "neo4j_edge",
+              "expert_role", "extract_rules", "summary_config", "term_filter_config",
+              "state"):
         v = getattr(payload, f)
         if v is not None:
             setattr(row, f, v)
@@ -213,6 +256,10 @@ class ImportPayload(BaseModel):
     schema_name: str
     schema_label: str = ""
     schema_desc: str | None = None
+    expert_role: str | None = None
+    extract_rules: str | None = None
+    summary_config: str | None = None
+    term_filter_config: str | None = None
     mode: str = "skip"  # skip=跳过已存在条目; overwrite=覆盖更新
     items: list[dict[str, Any]] = []
 
@@ -237,6 +284,10 @@ def export_schema(
             "schema_name": schema_name,
             "schema_label": head.schema_label,
             "schema_desc": head.schema_desc,
+            "expert_role": head.expert_role,
+            "extract_rules": head.extract_rules,
+            "summary_config": head.summary_config,
+            "term_filter_config": head.term_filter_config,
             "exported_at": datetime.now().isoformat(timespec="seconds"),
             "items": [
                 {
@@ -292,6 +343,15 @@ def import_schema(
             row.state = it.get("state") or "1"
             row.schema_label = payload.schema_label or row.schema_label
             row.schema_desc = payload.schema_desc if payload.schema_desc is not None else row.schema_desc
+            # schema 级配置（overwrite 时同步到所有行）
+            if payload.expert_role is not None:
+                row.expert_role = payload.expert_role
+            if payload.extract_rules is not None:
+                row.extract_rules = payload.extract_rules
+            if payload.summary_config is not None:
+                row.summary_config = payload.summary_config
+            if payload.term_filter_config is not None:
+                row.term_filter_config = payload.term_filter_config
             updated += 1
         else:
             db.add(OntologySchema(
@@ -305,6 +365,10 @@ def import_schema(
                 cat_label=it.get("cat_label") or f"{cat_no}-{cat_name}",
                 prompt_hint=it.get("prompt_hint"),
                 neo4j_edge=it.get("neo4j_edge"),
+                expert_role=payload.expert_role,
+                extract_rules=payload.extract_rules,
+                summary_config=payload.summary_config,
+                term_filter_config=payload.term_filter_config,
                 state=it.get("state") or "1",
                 sort=cat_no,
             ))
@@ -353,6 +417,10 @@ def copy_schema(
             cat_label=r.cat_label,
             prompt_hint=r.prompt_hint,
             neo4j_edge=r.neo4j_edge,
+            expert_role=r.expert_role,
+            extract_rules=r.extract_rules,
+            summary_config=r.summary_config,
+            term_filter_config=r.term_filter_config,
             state="1",
             sort=r.sort,
         ))
@@ -379,6 +447,10 @@ def get_kb_schema(
         "schema_name": bind.schema_name,
         "schema_label": rows[0].schema_label if rows else bind.schema_name,
         "schema_desc": rows[0].schema_desc if rows else None,
+        "expert_role": rows[0].expert_role if rows else None,
+        "extract_rules": rows[0].extract_rules if rows else None,
+        "summary_config": rows[0].summary_config if rows else None,
+        "term_filter_config": rows[0].term_filter_config if rows else None,
         "business": [_row_dict(r) for r in rows if r.dimension == "business"],
         "rule": [_row_dict(r) for r in rows if r.dimension == "rule"],
         "total": len(rows),
@@ -415,3 +487,54 @@ def bind_kb_schema(
         db.add(KbOntologySchema(kb_id=kb_id, schema_name=payload.schema_name))
     db.commit()
     return {"success": True, "data": {"kb_id": kb_id, "schema_name": payload.schema_name}}
+
+
+# ---------------- 文档类型构建模式（G5，0022） ----------------
+
+@router.get("/doc-type-configs")
+def list_doc_type_configs(
+    caller: Caller = Depends(_require_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """文档类型 → 构建模式配置（全量，与 kb_tape_category 二级类型对齐）。"""
+    rows = db.execute(
+        select(DocTypeConfig).where(DocTypeConfig.state == "1").order_by(DocTypeConfig.doc_type)
+    ).scalars().all()
+    items = [{
+        "doc_type": r.doc_type,
+        "build_mode": r.build_mode,
+        "config": r.config,
+        "state": r.state,
+        "sort": r.sort,
+    } for r in rows]
+    return {"success": True, "data": {"items": items, "total": len(items)}}
+
+
+class DocTypePayload(BaseModel):
+    build_mode: str = "full"  # full | notice | table
+    config: str | None = None
+    state: str = "1"
+
+
+@router.put("/doc-type-configs/{doc_type}")
+def update_doc_type_config(
+    doc_type: str,
+    payload: DocTypePayload,
+    caller: Caller = Depends(_require_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """更新单个文档类型的构建模式。"""
+    _require_admin(caller)
+    if payload.build_mode not in ("full", "notice", "table"):
+        raise HTTPException(status_code=400, detail="build_mode 须为 full|notice|table")
+    row = db.get(DocTypeConfig, doc_type)
+    if not row:
+        row = DocTypeConfig(doc_type=doc_type, build_mode=payload.build_mode,
+                            config=payload.config, state=payload.state)
+        db.add(row)
+    else:
+        row.build_mode = payload.build_mode
+        row.config = payload.config if payload.config is not None else row.config
+        row.state = payload.state
+    db.commit()
+    return {"success": True, "data": {"doc_type": doc_type, "build_mode": row.build_mode}}

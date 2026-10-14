@@ -1810,6 +1810,10 @@ export interface OntologyCategory {
   cat_label: string;
   prompt_hint: string | null;
   neo4j_edge: string | null;
+  expert_role: string | null;
+  extract_rules: string | null;
+  summary_config: string | null;
+  term_filter_config: string | null;
   state: string;
   sort: number;
   created_at: string | null;
@@ -1819,6 +1823,10 @@ export interface OntologySchemaGroup {
   schema_name: string;
   schema_label: string;
   schema_desc: string | null;
+  expert_role: string | null;
+  extract_rules: string | null;
+  summary_config: string | null;
+  term_filter_config: string | null;
   business: OntologyCategory[];
   rule: OntologyCategory[];
   total: number;
@@ -1840,7 +1848,19 @@ export interface OntologyCategoryPayload {
   cat_label?: string;
   prompt_hint?: string | null;
   neo4j_edge?: string | null;
+  expert_role?: string | null;
+  extract_rules?: string | null;
+  summary_config?: string | null;
+  term_filter_config?: string | null;
   state?: string;
+}
+
+export interface DocTypeConfig {
+  doc_type: string;
+  build_mode: "full" | "notice" | "table";
+  config: string | null;
+  state: string;
+  sort: number;
 }
 
 export function apiListOntologySchemas(schemaName?: string, dimension?: string) {
@@ -1849,6 +1869,31 @@ export function apiListOntologySchemas(schemaName?: string, dimension?: string) 
   if (dimension) q.set("dimension", dimension);
   const qs = q.toString();
   return request<{ schemas: OntologySchemaGroup[] }>(`/api/v1/ontology-schemas${qs ? `?${qs}` : ""}`);
+}
+
+/** 更新整套 schema 的 LLM 配置（expert_role/extract_rules/summary_config/term_filter_config，同 schema 所有行同步）。 */
+export function apiUpdateOntologySchemaLlmConfig(
+  schemaName: string,
+  payload: { expert_role?: string | null; extract_rules?: string | null; summary_config?: string | null; term_filter_config?: string | null },
+) {
+  return request<{ schema_name: string; updated: number }>(`/api/v1/ontology-schemas/${encodeURIComponent(schemaName)}/llm-config`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function apiListDocTypeConfigs() {
+  return request<{ items: DocTypeConfig[]; total: number }>("/api/v1/doc-type-configs");
+}
+
+export function apiUpdateDocTypeConfig(
+  docType: string,
+  payload: { build_mode: "full" | "notice" | "table"; config?: string | null; state?: string },
+) {
+  return request<{ doc_type: string; build_mode: string }>(
+    `/api/v1/doc-type-configs/${encodeURIComponent(docType)}`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
 }
 
 export function apiCreateOntologyCategory(payload: OntologyCategoryPayload) {

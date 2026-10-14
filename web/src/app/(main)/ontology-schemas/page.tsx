@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Descriptions,
+  Drawer,
   Form,
   Input,
   Modal,
@@ -13,6 +14,7 @@ import {
   Select,
   Space,
   Spin,
+  Table,
   Tabs,
   Tag,
 } from "antd";
@@ -24,6 +26,7 @@ import {
   EditOutlined,
   PlusOutlined,
   ReloadOutlined,
+  TagOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
 import ModoTable from "@/components/biz/modo-table";
@@ -37,9 +40,13 @@ import {
   apiDeleteOntologyCategory,
   apiExportOntologySchema,
   apiImportOntologySchema,
+  apiListDocTypeConfigs,
   apiListKbs,
   apiListOntologySchemas,
+  apiUpdateDocTypeConfig,
   apiUpdateOntologyCategory,
+  apiUpdateOntologySchemaLlmConfig,
+  DocTypeConfig,
   OntologyCategory,
   OntologyCategoryPayload,
   OntologySchemaExport,
@@ -72,6 +79,20 @@ export default function OntologySchemasPage() {
   const [bindForm] = Form.useForm();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  // LLM 配置抽屉（schema 级 4 列）
+  const [llmOpen, setLlmOpen] = useState(false);
+  const [llmSaving, setLlmSaving] = useState(false);
+  const [llmDraft, setLlmDraft] = useState({
+    expert_role: "",
+    extract_rules: "",
+    summary_config: "",
+    term_filter_config: "",
+  });
+  // 文档类型构建模式抽屉（G5）
+  const [dtOpen, setDtOpen] = useState(false);
+  const [dtItems, setDtItems] = useState<DocTypeConfig[]>([]);
+  const [dtLoading, setDtLoading] = useState(false);
+  const [dtSavingType, setDtSavingType] = useState<string | null>(null);
 
   // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
   // 首个 tab「本体 Schema」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
@@ -259,6 +280,64 @@ export default function OntologySchemasPage() {
       bindForm.resetFields();
     } catch (e) {
       message.error((e as Error).message);
+    }
+  };
+
+  // ---- LLM 配置（schema 级 4 列）----
+  const openLlm = () => {
+    setLlmDraft({
+      expert_role: current?.expert_role ?? "",
+      extract_rules: current?.extract_rules ?? "",
+      summary_config: current?.summary_config ?? "",
+      term_filter_config: current?.term_filter_config ?? "",
+    });
+    setLlmOpen(true);
+  };
+
+  const saveLlm = async () => {
+    if (!current) return;
+    setLlmSaving(true);
+    try {
+      const res = await apiUpdateOntologySchemaLlmConfig(current.schema_name, {
+        expert_role: llmDraft.expert_role || null,
+        extract_rules: llmDraft.extract_rules || null,
+        summary_config: llmDraft.summary_config || null,
+        term_filter_config: llmDraft.term_filter_config || null,
+      });
+      message.success(`LLM 配置已保存（${res.data?.updated} 行同步）`);
+      setLlmOpen(false);
+      void load();
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setLlmSaving(false);
+    }
+  };
+
+  // ---- 文档类型构建模式（G5）----
+  const openDt = async () => {
+    setDtOpen(true);
+    setDtLoading(true);
+    try {
+      const res = await apiListDocTypeConfigs();
+      setDtItems(res.data?.items ?? []);
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setDtLoading(false);
+    }
+  };
+
+  const saveDt = async (row: DocTypeConfig, buildMode: DocTypeConfig["build_mode"]) => {
+    setDtSavingType(row.doc_type);
+    try {
+      await apiUpdateDocTypeConfig(row.doc_type, { build_mode: buildMode, state: row.state });
+      message.success(`《${row.doc_type}》已设为 ${buildMode}`);
+      setDtItems((prev) => prev.map((i) => (i.doc_type === row.doc_type ? { ...i, build_mode: buildMode } : i)));
+    } catch (e) {
+      message.error((e as Error).message);
+    } finally {
+      setDtSavingType(null);
     }
   };
 
@@ -450,6 +529,97 @@ export default function OntologySchemasPage() {
           </Form.Item>
         </Form>
       </Modal>
+      {/* LLM 配置（schema 级 4 列） */}
+      <Drawer
+        title={`LLM 配置 — ${current?.schema_name ?? ""}`}
+        open={llmOpen}
+        onClose={() => setLlmOpen(false)}
+        width={680}
+        extra={
+          <Space>
+            <Button onClick={() => setLlmOpen(false)}>取消</Button>
+            <Button type="primary" loading={llmSaving} onClick={() => void saveLlm()}>
+              保存
+            </Button>
+          </Space>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>领域专家角色（G1）</div>
+            <Input.TextArea
+              rows={2}
+              value={llmDraft.expert_role}
+              onChange={(e) => setLlmDraft((d) => ({ ...d, expert_role: e.target.value }))}
+              placeholder="如：你是市场监管法规解析专家，只输出JSON，不要任何思考过程。"
+            />
+          </div>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>抽取总则（G2）</div>
+            <Input.TextArea
+              rows={6}
+              value={llmDraft.extract_rules}
+              onChange={(e) => setLlmDraft((d) => ({ ...d, extract_rules: e.target.value }))}
+              placeholder="硬约束 + JSON 输出格式示例（constraint 逐字等于 entities、name/evidence 逐字原文、禁止纯日期/指示定语…）"
+            />
+          </div>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>摘要卡片配置（G3，JSON）</div>
+            <Input.TextArea
+              rows={6}
+              value={llmDraft.summary_config}
+              onChange={(e) => setLlmDraft((d) => ({ ...d, summary_config: e.target.value }))}
+              placeholder='{"expert_role": "...", "card_fields": ["字段1", "字段2"], "template": "..."}'
+            />
+          </div>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>术语筛选配置（G4，JSON）</div>
+            <Input.TextArea
+              rows={6}
+              value={llmDraft.term_filter_config}
+              onChange={(e) => setLlmDraft((d) => ({ ...d, term_filter_config: e.target.value }))}
+              placeholder='{"expert_role": "...", "keep_standards": "...", "reject_standards": "...", "doc_word_types": ["管理办法", "实施细则"]}'
+            />
+          </div>
+        </div>
+      </Drawer>
+      {/* 文档类型构建模式（G5） */}
+      <Drawer
+        title={`文档类型构建模式（${dtItems.length} 个类型）`}
+        open={dtOpen}
+        onClose={() => setDtOpen(false)}
+        width={620}
+      >
+        <Table<DocTypeConfig>
+          size="small"
+          rowKey="doc_type"
+          loading={dtLoading}
+          dataSource={dtItems}
+          pagination={{ pageSize: 50, showSizeChanger: false, size: "small" }}
+          columns={[
+            { title: "文档类型", dataIndex: "doc_type", width: 260 },
+            {
+              title: "构建模式",
+              dataIndex: "build_mode",
+              width: 180,
+              render: (m: DocTypeConfig["build_mode"], row) => (
+                <Select
+                  size="small"
+                  value={m}
+                  loading={dtSavingType === row.doc_type}
+                  onChange={(v) => void saveDt(row, v)}
+                  options={[
+                    { label: "full 完整链路", value: "full" },
+                    { label: "notice 通知类", value: "notice" },
+                    { label: "table 表格类", value: "table" },
+                  ]}
+                  style={{ width: 150 }}
+                />
+              ),
+            },
+          ]}
+        />
+      </Drawer>
       </Card>
     </div>
   );
@@ -491,6 +661,12 @@ export default function OntologySchemasPage() {
           />
           <Button icon={<ApiOutlined />} onClick={() => { void loadKbs(); bindForm.setFieldsValue({ schema_name: current?.schema_name }); setBindOpen(true); }}>
             绑定知识库
+          </Button>
+          <Button icon={<EditOutlined />} onClick={openLlm} disabled={!current}>
+            LLM 配置
+          </Button>
+          <Button icon={<TagOutlined />} onClick={() => void openDt()}>
+            文档类型模式
           </Button>
           <Button icon={<CopyOutlined />} onClick={() => { copyForm.setFieldsValue({ source_schema: current?.schema_name }); setCopyOpen(true); }}>
             复制为新的领域

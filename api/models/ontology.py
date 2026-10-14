@@ -37,6 +37,11 @@ class OntologySchema(Base):
     cat_label: Mapped[str] = mapped_column(String(96), nullable=False, default="")  # 目录名（"9-处罚规则"）
     prompt_hint: Mapped[str | None] = mapped_column(Text, nullable=True)  # LLM 提示词段（识别要点）
     neo4j_edge: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 规则维度的 Neo4j 边类型
+    # ── schema 级 LLM 配置（2026-10-14，0022 迁移；同 schema 所有行同值）──
+    expert_role: Mapped[str | None] = mapped_column(String(256), nullable=True)  # G1 领域专家角色
+    extract_rules: Mapped[str | None] = mapped_column(Text, nullable=True)  # G2 抽取总则（硬约束+JSON格式）
+    summary_config: Mapped[str | None] = mapped_column(Text, nullable=True)  # G3 摘要卡片配置（JSON）
+    term_filter_config: Mapped[str | None] = mapped_column(Text, nullable=True)  # G4 术语筛选配置（JSON）
     state: Mapped[str] = mapped_column(String(1), nullable=False, default="1")
     sort: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -49,6 +54,27 @@ class KbOntologySchema(Base):
 
     kb_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     schema_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class DocTypeConfig(Base):
+    """文档类型 → wiki 构建模式（G5，0022 迁移）。
+
+    对应 kb_tape_category 二级分类（210 个文档类型）；build_mode 决定
+    编排骨架的构建行为分支：full=完整链路 / notice=通知类摘要特化 /
+    table=表格类切句。config JSON 可扩展每类型私有参数（如表格列前缀）。
+    """
+
+    __tablename__ = "kb_doc_type_config"
+
+    doc_type: Mapped[str] = mapped_column(String(64), primary_key=True)
+    build_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="full")
+    config: Mapped[str | None] = mapped_column(Text, nullable=True)
+    state: Mapped[str] = mapped_column(String(1), nullable=False, default="1")
+    sort: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
