@@ -101,6 +101,44 @@ print(f"[n09] 术语过滤完成: 判定 {len(decisions)} 条")
 """
 
 
+LS_LLM_GROUP = """
+from orch_schema import load_schema
+_sc = load_schema(_kb, bindings.get('domain', ''))
+_ROLE = (_sc.get('expert_role') or '').replace('，只输出JSON，不要任何思考过程。', '').replace('只输出JSON，不要任何思考过程。', '') or f"你是{_sc.get('schema_name') or '领域'}知识单元提取专家"
+
+def llm_group(sentences, depth=0):
+    numbered = chr(10).join(f"[{i + 1}] {s}" for i, s in enumerate(sentences))
+    sysp = (f"{_ROLE}。把句子清单归组为知识单元，输出 JSON 数组："
+            '[{"title":"单元标题(≤15字概括)","sentence_ids":[编号列表],"summary":"一段汇总描述(50-100字)"}]。'
+            "编号必须来自输入清单；同一句子只能属于一个单元；跳过章节标题/目录/页码/无实义碎片。只输出JSON。")
+    items = None
+    try:
+        raw = wr.llm_call([{"role": "system", "content": sysp},
+                           {"role": "user", "content": numbered}],
+                          max_tokens=8000, temperature=0.2)
+        import json as _j
+        raw = wr.ensure_full_json(raw)
+        parsed = _j.loads(raw)
+        if isinstance(parsed, dict):
+            for k in ('result', 'sentences', 'units', 'data'):
+                if isinstance(parsed.get(k), list):
+                    parsed = parsed[k]
+                    break
+        if isinstance(parsed, list) and parsed:
+            items = parsed
+    except Exception as e:
+        print(f"  llm_group 失败({len(sentences)}句, depth={depth}): {str(e)[:100]}")
+    if items is not None:
+        return items
+    # 超限/解析失败 → 对半切递归（skill 同款，收敛到 25 句）
+    if len(sentences) <= 25 or depth >= 4:
+        return []
+    mid = len(sentences) // 2
+    return llm_group(sentences[:mid], depth + 1) + llm_group(sentences[mid:], depth + 1)
+
+"""
+
+
 def _req(method: str, path: str, payload=None, timeout: int = 90):
     data = json.dumps(payload).encode() if payload is not None else None
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -145,6 +183,11 @@ def transform_code(label: str, code: str) -> str:
         return code
     if label == "关键词LLM过滤":
         return TERM_FILTER_SCRIPT  # 整个节点换成 script 实现
+    if label == "长句抽取":
+        # LLM 归组加长度韧性：超限对半切递归（原实现 5 次重试全败即步骤失败）+ schema 角色
+        pat = re.compile(r"def llm_group\(sentences\):.*?\nsents = split_sentences\(full_text\)", re.DOTALL)
+        code = pat.sub(LS_LLM_GROUP + "\nsents = split_sentences(full_text)", code)
+        return code
     if label in ("实体+规则联合抽取", "规则补抽兜底", "规则实体页建页", "业务实体页建页"):
         # 注入 schema 加载 + 替换常量映射
         if label in ("实体+规则联合抽取", "规则补抽兜底"):
@@ -211,7 +254,8 @@ def build_tape(draft: dict, domain: str) -> dict:
             new_assigns.append({"variable": "domain", "expression": f"bindings.get('domain', '{domain}')"})
             new_assigns.append({"variable": "doc_type", "expression": "bindings.get('doc_type', '')"})
             cfg["assignments"] = json.dumps(new_assigns, ensure_ascii=False)
-        elif inst == "script" and label in ("建法规目录树", "摘要生成+建页", "实体+规则联合抽取",
+        elif inst == "script" and label in ("建法规目录树", "摘要生成+建页", "长句抽取",
+                                            "实体+规则联合抽取",
                                             "规则补抽兜底", "规则实体页建页", "业务实体页建页"):
             cfg["code"] = transform_code(label, cfg.get("code", ""))
         elif label == "关键词LLM过滤":
