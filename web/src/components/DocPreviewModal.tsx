@@ -695,48 +695,31 @@ export default function DocPreviewModal({ kbId, doc, onClose, embedded }: Props)
           border: "1px solid #f0f0f0",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "6px 10px",
-            background: "#fafafa",
-            borderBottom: "1px solid #f0f0f0",
-          }}
-        >
-          <span style={{ fontSize: 13, color: "rgba(0,0,0,.65)", fontWeight: 500 }}>{doc?.file_name || ""}</span>
-          <Space style={{ flex: 1 }} />
-          <Space>
-            {kind === "html" && text ? (
-              <Tooltip title="查看/源码切换">
-                <Button
-                  size="small"
-                  icon={<CodeOutlined />}
-                  onClick={() => setHtmlMode(htmlMode === "render" ? "source" : "render")}
-                >
-                  {htmlMode === "render" ? "查看源码" : "渲染预览"}
-                </Button>
-              </Tooltip>
-            ) : null}
-            {(kind === "docx" || kind === "excel" || kind === "pptx") && !error && (
-              <Tooltip title="渲染完成">
-                <span style={{ fontSize: 12, color: "#52c41a", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  <CheckCircleOutlined /> 已渲染
-                </span>
-              </Tooltip>
-            )}
-            <Button
-              size="small"
-              icon={<DownloadOutlined />}
-              onClick={() => {
-                if (doc) void import("@/lib/api").then((m) => m.apiDownloadDocument(kbId, doc.id, doc.file_name).catch((e) => message.error(e.message)));
-              }}
-            >
-              下载
-            </Button>
-          </Space>
-        </div>
+        {/* 工具栏：仅保留「查看/源码」切换；文档名、已渲染状态、下载入口由详情面板头部承担，
+            无内容时整行不渲染（避免出现空条）。 */}
+        {kind === "html" && text ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              gap: 8,
+              padding: "6px 10px",
+              background: "#fafafa",
+              borderBottom: "1px solid #f0f0f0",
+            }}
+          >
+            <Tooltip title="查看/源码切换">
+              <Button
+                size="small"
+                icon={<CodeOutlined />}
+                onClick={() => setHtmlMode(htmlMode === "render" ? "source" : "render")}
+              >
+                {htmlMode === "render" ? "查看源码" : "渲染预览"}
+              </Button>
+            </Tooltip>
+          </div>
+        ) : null}
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", background: "#fff" }}>{renderBody()}</div>
       </div>
     );

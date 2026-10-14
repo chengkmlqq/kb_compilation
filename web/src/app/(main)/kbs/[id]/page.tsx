@@ -154,7 +154,6 @@ export default function KbDetailPage() {
                 kbId={kbId}
                 doc={d}
                 onDocReparsed={() => setRefreshTick((v) => v + 1)}
-                onDocRemoved={removeDoc}
               />
             ),
           })),

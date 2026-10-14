@@ -738,7 +738,6 @@ export default function KbsPage() {
                 kbId={t.kbId}
                 doc={t.doc}
                 onDocReparsed={() => reparseDoc(t.kbId)}
-                onDocRemoved={(docId) => removeDoc(t.kbId, docId)}
               />
             ),
           })),

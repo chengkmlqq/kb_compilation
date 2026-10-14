@@ -5,17 +5,16 @@
  * 由原「文档详情抽屉」DocDetailDrawer 改造而来：不再用 Drawer，改为承载在
  * 动态选项卡页签内的内容面板（2026-10-14）。
  *
- *  - 头部：文件图标 + 文件名 + 下载 / 重新解析 / 删除
+ *  - 头部：文件图标 + 文件名 + 下载 / 重新解析
  *  - 内容顺序：基本信息（Descriptions）→ AI 摘要 → 视图切换 → 预览/合并/分块
- *  - 三视图：预览（可预览类型 / 表源实时样例）、合并（按 seq 拼接全文）、分块
+ *  - 三视图：预览（可预览类型 / 表源实时样例）、合并（按 seq 拼接全文）、分块（卡片网格）
  *  - 默认视图：音频 → 合并；表源 / 可预览 → 预览；其他 → 合并
  *  - 音频播放器固定显示在内容区顶部（任何视图都可见）
  */
 import { useEffect, useState } from "react";
-import { App, Button, Descriptions, Empty, List, Pagination, Space, Spin, Table, Tag, Typography } from "antd";
-import { DeleteOutlined, DownloadOutlined, RedoOutlined, RobotOutlined } from "@ant-design/icons";
+import { App, Button, Card, Descriptions, Empty, List, Pagination, Space, Spin, Table, Tag, Typography } from "antd";
+import { DownloadOutlined, RedoOutlined, RobotOutlined } from "@ant-design/icons";
 import {
-  apiDeleteDocument,
   apiDownloadDocument,
   apiGetDocumentChunks,
   apiGetTableSample,
@@ -31,16 +30,14 @@ interface Props {
   doc: DocItem;
   /** 重新解析成功后回调（父级刷新文档列表） */
   onDocReparsed?: (doc: DocItem) => void;
-  /** 删除成功后回调（父级关闭该页签并刷新列表） */
-  onDocRemoved?: (docId: string) => void;
 }
 
 type ViewMode = "preview" | "merged" | "chunks";
 
 const AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "flac", "ogg", "aac", "opus"]);
 
-export default function DocDetailPanel({ kbId, doc, onDocReparsed, onDocRemoved }: Props) {
-  const { message, modal } = App.useApp();
+export default function DocDetailPanel({ kbId, doc, onDocReparsed }: Props) {
+  const { message } = App.useApp();
   const [chunks, setChunks] = useState<DocChunkItem[]>([]);
   const [chunkTotal, setChunkTotal] = useState(0);
   const [chunkPage, setChunkPage] = useState(1);
@@ -121,24 +118,6 @@ export default function DocDetailPanel({ kbId, doc, onDocReparsed, onDocRemoved 
     }
   };
 
-  const onDelete = () => {
-    modal.confirm({
-      title: `删除文档「${doc.file_name}」？`,
-      content: "删除后不可恢复（关联分块与向量一并清理）。",
-      okText: "删除",
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        const res = await apiDeleteDocument(kbId, doc.id);
-        if (res.success) {
-          message.success("文档已删除");
-          onDocRemoved?.(doc.id);
-        } else {
-          message.error(res.message || "删除失败");
-        }
-      },
-    });
-  };
-
   const summaryReady = doc.summary_status === "READY" && doc.summary;
   const summaryFailed = doc.summary_status === "FAILED";
 
@@ -178,9 +157,6 @@ export default function DocDetailPanel({ kbId, doc, onDocReparsed, onDocRemoved 
             </Button>
             <Button size="small" icon={<RedoOutlined />} onClick={() => void onReparse()}>
               重新解析
-            </Button>
-            <Button size="small" danger icon={<DeleteOutlined />} onClick={onDelete}>
-              删除
             </Button>
           </Space>
         </div>
@@ -304,28 +280,30 @@ export default function DocDetailPanel({ kbId, doc, onDocReparsed, onDocRemoved 
             ) : (
               <>
                 <List
-                  size="small"
+                  grid={{ gutter: 12, xs: 1, sm: 1, md: 2, lg: 2, xl: 3, xxl: 3 }}
                   dataSource={chunks}
                   renderItem={(c) => (
-                    <List.Item>
-                      <div style={{ width: "100%" }}>
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          #{c.seq}
-                        </Typography.Text>
+                    <List.Item style={{ marginBottom: 12 }}>
+                      <Card
+                        size="small"
+                        style={{ height: "100%", borderColor: "#eff4f9" }}
+                        styles={{ body: { padding: "8px 12px" } }}
+                        title={<span style={{ fontSize: 12, fontWeight: 500, color: "#8a96a8" }}>#{c.seq}</span>}
+                      >
                         <div
                           className="kb-markdown"
                           style={{
-                            maxHeight: 110,
+                            maxHeight: 132,
                             overflowY: "auto",
-                            marginTop: 4,
                             fontSize: 13,
+                            lineHeight: 1.7,
                             whiteSpace: "pre-wrap",
                             wordBreak: "break-word",
                           }}
                         >
                           {c.content}
                         </div>
-                      </div>
+                      </Card>
                     </List.Item>
                   )}
                 />
@@ -338,7 +316,7 @@ export default function DocDetailPanel({ kbId, doc, onDocReparsed, onDocRemoved 
                     setChunkPage(p);
                     void loadChunks(doc.id, p);
                   }}
-                  style={{ marginTop: 8, textAlign: "center" }}
+                  style={{ marginTop: 12, textAlign: "center" }}
                 />
               </>
             )}
