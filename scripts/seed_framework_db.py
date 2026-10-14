@@ -1024,7 +1024,6 @@ def _seed_table_wiki_tape(db) -> None:
 
 
 # ── 文档摘要三模式编排（2026-10-12）────────────────────────────
-# 业界大文档摘要三种经典模式，全部用细粒度基础原子组装：
 #   A. Stuff（全文直塞）：kb_read_doc 读全部切片 → script 拼全文 prompt →
 #      kb_llm_chat 一次生成 → script 解析 → wiki_upsert_page 写摘要页。
 #      适合中小文档（直连 LLM 报表摘要 generate_document_summary 已移除，
@@ -1050,6 +1049,7 @@ SUMMARY_PROMPT_TPL = (
     "你是专业的文档摘要助手。请阅读用户提供的文档内容，生成一段简洁、准确的中文摘要："
     "先一句话概括文档主题，再用分点列出核心要点与关键结论。"
     "控制在 150~250 字，只输出摘要正文，不要输出多余解释。"
+    "不要输出任何标题（不要以『# 文档摘要』或『《文档名》文档摘要』等开头），直接输出摘要正文。"
 )
 
 SUMMARY_STUFF_TAPE: dict = {
@@ -1094,7 +1094,8 @@ SUMMARY_STUFF_TAPE: dict = {
                          "META = _re.compile(\n"
                          "    r'(需要|要求|我们|计数|草稿|数一下|大概|大约|内心|确保|复述|无?需|'\n"
                          "    r'先一[句.]|再分点|只输出|注意|检查|控制|符合|输出.{0,8}(摘要|正文)|'\n"
-                         "    r'字数|字符|chars|chinese|we |need|bullets?|theme)', _re.I)\n"
+                         "    r'字数|字符|chars|chinese|we |need|bullets?|theme|'\n"
+                         "    r'^#{1,6}\\s|《[^》]{1,80}》\\s*文档摘要)', _re.I)\n"
                          "lines = []\n"
                          "for _ln in s.split('\\\\n'):\n"
                          "    t = _ln.strip().lstrip('。').strip()\n"
@@ -1192,7 +1193,9 @@ SUMMARY_MAPREDUCE_TAPE: dict = {
                          "    body = '\\n\\n'.join('[子摘要 %d] %s' % (i + 1, t) for i, t in enumerate(subs))\n"
                          "    bindings['reduce_prompt'] = (\n"
                          "        '以下是对同一文档各分段的子摘要，请合并为一份完整连贯的中文文档摘要'\n"
-                         "        '（150~250 字，先一句话概括主题，再分点列出核心要点，只输出摘要正文）：\\n\\n' + body)\n"
+                         "        '（150~250 字，先一句话概括主题，再分点列出核心要点，'\n"
+                         "        '不要输出任何标题（不要以# 文档摘要或《文档名》文档摘要开头），'\n"
+                         "        '只输出摘要正文）：\\n\\n' + body)\n"
                          "    bindings['merge_ready'] = True\n"
                          "else:\n"
                          "    bindings['reduce_prompt'] = ''\n"
@@ -1216,7 +1219,8 @@ SUMMARY_MAPREDUCE_TAPE: dict = {
                          "    META = _re.compile(\n"
                          "        r'(需要|要求|我们|计数|草稿|数一下|大概|大约|内心|确保|复述|无?需|'\n"
                          "        r'先一[句.]|再分点|只输出|注意|检查|控制|符合|输出.{0,8}(摘要|正文)|'\n"
-                         "        r'字数|字符|chars|chinese|we |need|bullets?|theme)', _re.I)\n"
+                         "        r'字数|字符|chars|chinese|we |need|bullets?|theme|'\n"
+                         "        r'^#{1,6}\\s|《[^》]{1,80}》\\s*文档摘要)', _re.I)\n"
                          "    lines = []\n"
                          "    for _ln in s.split('\\\\n'):\n"
                          "        t = _ln.strip().lstrip('。').strip()\n"
@@ -1300,11 +1304,14 @@ SUMMARY_REFINE_TAPE: dict = {
                          "        '已有摘要：\\n' + prev +\n"
                          "        '\\n\\n新内容（第 %d/%d 片段）：\\n' % (idx + 1, total) + cur +\n"
                          "        '\\n\\n请基于「已有摘要 + 新内容」输出更新后的完整文档摘要'\n"
-                         "        '（150~250 字，保留已有要点并融入新要点，只输出摘要正文）：')\n"
+                         "        '（150~250 字，保留已有要点并融入新要点，'\n"
+                         "        '不要输出任何标题（不要以# 文档摘要或《文档名》文档摘要开头），'\n"
+                         "        '只输出摘要正文）：')\n"
                          "else:\n"
                          "    bindings['refine_prompt'] = (\n"
                          "        '根据以下文档内容生成中文摘要（150~250 字，先一句话概括主题，'\n"
-                         "        '再分点列出核心要点，只输出摘要正文）：\\n\\n' + cur)\n"
+                         "        '再分点列出核心要点，不要输出任何标题'\n"
+                         "        '（不要以# 文档摘要或《文档名》文档摘要开头），只输出摘要正文）：\\n\\n' + cur)\n"
                      )}},
         },
         {
@@ -1323,7 +1330,8 @@ SUMMARY_REFINE_TAPE: dict = {
                          "META = _re.compile(\n"
                          "    r'(需要|要求|我们|计数|草稿|数一下|大概|大约|内心|确保|复述|无?需|'\n"
                          "    r'先一[句.]|再分点|只输出|注意|检查|控制|符合|输出.{0,8}(摘要|正文)|'\n"
-                         "    r'字数|字符|chars|chinese|we |need|bullets?|theme)', _re.I)\n"
+                         "    r'字数|字符|chars|chinese|we |need|bullets?|theme|'\n"
+                         "    r'^#{1,6}\\s|《[^》]{1,80}》\\s*文档摘要)', _re.I)\n"
                          "lines = []\n"
                          "for _ln in s.split('\\\\n'):\n"
                          "    t = _ln.strip().lstrip('。').strip()\n"
