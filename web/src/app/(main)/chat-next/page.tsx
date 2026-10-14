@@ -5,10 +5,12 @@
  *
  * 页面交互/布局/视觉完全遵循 assistant-ui 官方 elements 体系，零平台 UI：
  * - Thread/composer/message/reasoning 折叠/markdown/action bar 全官方
- * - 无顶部工具栏、无引用弹窗、无参考资料区（2026-10-14 去除全部平台适配）
- * - 知识库固定取第一个、模型用默认（无页面参数入口）
+ * - 开放官方组件：空态推荐问题 + 回答后推荐追问（ThreadSuggestions /
+ *   FollowupSuggestions，接后端 follow-up）、消息编辑（Pencil →
+ *   EditComposer，本地改写重发）、错误官方形态（MessagePrimitive.Error
+ *   红卡片，替代 toast 移除）；模型下拉（官方形态）透传 model_id
+ * - 知识库固定取第一个；无会话模式：前端组 history 传参，不建会话不留库
  * 仅后台接口对接 kb-compilation：POST /api/v1/qa/stream 自定义 SSE。
- * 无会话模式：前端组 history 传参，不建 ChatSession 不留库。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -16,12 +18,27 @@ import {
   useExternalStoreRuntime,
   type AppendMessage,
   type ThreadMessageLike,
+  type ThreadSuggestion,
 } from "@assistant-ui/react";
 import { App } from "antd";
 import { Thread } from "@/components/assistant-ui/elements/thread.aui";
 import { ModelSelectorContext } from "@/components/assistant-ui/elements/model-selector";
-import { apiListKbs, apiListModels, KbItem, ModelItem, QaStreamEvent } from "@/lib/api";
+import {
+  apiFollowUp,
+  apiListKbs,
+  apiListModels,
+  KbItem,
+  ModelItem,
+  QaStreamEvent,
+} from "@/lib/api";
 import "./chat-next.css";
+
+/** 空态推荐问题（官方 ThreadSuggestions 数据源；知识库固定第一个，用通用引导语） */
+const INITIAL_SUGGESTIONS: ThreadSuggestion[] = [
+  { title: "这个知识库主要包含哪些内容？", prompt: "这个知识库主要包含哪些内容？" },
+  { title: "知识库里有哪些关键概念或实体？", prompt: "知识库里有哪些关键概念或实体？" },
+  { title: "有没有相关制度或规范？", prompt: "有没有相关制度或规范？" },
+];
 
 export default function ChatNextPage() {
   const { message: toast } = App.useApp();
@@ -30,13 +47,14 @@ export default function ChatNextPage() {
   const [selectedModelId, setSelectedModelId] = useState("");
   const [messages, setMessages] = useState<readonly ThreadMessageLike[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [suggestions, setSuggestions] = useState<ThreadSuggestion[]>(INITIAL_SUGGESTIONS);
   const abortRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<readonly ThreadMessageLike[]>([]);
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
 
-  // 知识库固定取第一个（无参数入口）+ 聊天模型列表（composer 官方形态模型下拉）
+  // 知识库固定取第一个 + 聊天模型列表（composer 官方形态模型下拉）
   useEffect(() => {
     (async () => {
       const res = await apiListKbs(1, 100);
@@ -51,18 +69,13 @@ export default function ChatNextPage() {
     })();
   }, []);
 
-  /** 发送一条新消息：追加用户消息 + 占位助手消息 → POST SSE → 增量写回 */
-  const onNew = useCallback(
-    async (message: AppendMessage) => {
+  /** 流式问答核心：发送 question（调用方已维护消息列表），SSE 增量写回 aiId */
+  const runQuestion = useCallback(
+    async (question: string, aiId: string) => {
       if (!kbId) {
         toast.error("知识库尚未就绪，请稍后重试");
         return;
       }
-      const textPart = message.content.find((p) => p.type === "text");
-      const question = ("text" in textPart! ? textPart.text : "").trim();
-      if (!question) return;
-
-      // 发送前快照历史（不含刚追加的消息）
       const history = messagesRef.current
         .filter((m) => {
           const parts = typeof m.content === "string" ? [] : m.content;
@@ -82,15 +95,7 @@ export default function ChatNextPage() {
           };
         });
 
-      const uid = `local-user-${Date.now()}`;
-      const aiId = `local-ai-${Date.now()}`;
-      setMessages((prev) => [
-        ...prev,
-        { id: uid, role: "user", content: [{ type: "text", text: question }] },
-        { id: aiId, role: "assistant", content: [] },
-      ]);
       setStreaming(true);
-
       const ctrl = new AbortController();
       abortRef.current = ctrl;
       try {
@@ -143,13 +148,35 @@ export default function ChatNextPage() {
           }
           if (finished) break;
         }
+        // 回答完成 → 推荐追问（后端 follow-up，session 可选）
+        if (text.trim()) {
+          void apiFollowUp("", text.trim(), 3).then((res) => {
+            if (res.success && res.data?.questions?.length) {
+              setSuggestions(
+                res.data.questions.map((q) => ({ title: q, prompt: q })),
+              );
+            }
+          });
+        }
       } catch (e) {
         if ((e as Error).name === "AbortError") {
           toast.info("已停止生成");
         } else {
-          toast.error((e as Error).message || "生成失败");
-          // 出错时移除占位助手消息，避免半截残影留在对话里
-          setMessages((prev) => prev.filter((m) => m.id !== aiId));
+          // 官方错误形态：保留消息 + MessagePrimitive.Error 红卡片（替代 toast 移除）
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === aiId
+                ? {
+                    ...m,
+                    status: {
+                      type: "incomplete",
+                      reason: "error",
+                      error: { message: (e as Error).message || "生成失败" },
+                    },
+                  }
+                : m,
+            ),
+          );
         }
       } finally {
         setStreaming(false);
@@ -159,11 +186,51 @@ export default function ChatNextPage() {
     [kbId, selectedModelId, toast],
   );
 
+  /** 新消息：追加 user + assistant 占位 → 流式问答 */
+  const onNew = useCallback(
+    async (message: AppendMessage) => {
+      const textPart = message.content.find((p) => p.type === "text");
+      const question = ("text" in textPart! ? textPart.text : "").trim();
+      if (!question) return;
+      const aiId = `local-ai-${Date.now()}`;
+      setMessages((prev) => [
+        ...prev,
+        { id: `local-user-${Date.now()}`, role: "user", content: [{ type: "text", text: question }] },
+        { id: aiId, role: "assistant", content: [] },
+      ]);
+      await runQuestion(question, aiId);
+    },
+    [runQuestion],
+  );
+
+  /** 编辑消息（Pencil → EditComposer）：替换原文 + 截断后续 + 用新文本重新生成 */
+  const onEdit = useCallback(
+    async (message: AppendMessage) => {
+      const textPart = message.content.find((p) => p.type === "text");
+      const question = ("text" in textPart! ? textPart.text : "").trim();
+      if (!question || !message.sourceId) return;
+      const aiId = `local-ai-${Date.now()}`;
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === message.sourceId);
+        if (idx < 0) return prev;
+        const updated = {
+          ...prev[idx],
+          content: [{ type: "text" as const, text: question }],
+        };
+        return [...prev.slice(0, idx), updated, { id: aiId, role: "assistant", content: [] }];
+      });
+      await runQuestion(question, aiId);
+    },
+    [runQuestion],
+  );
+
   const runtime = useExternalStoreRuntime({
     messages,
     isRunning: streaming,
     setMessages,
+    suggestions,
     onNew,
+    onEdit,
     onCancel: async () => {
       abortRef.current?.abort();
     },

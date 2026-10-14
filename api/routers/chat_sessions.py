@@ -105,7 +105,7 @@ class RecommendRequest(BaseModel):
 
 
 class FollowUpRequest(BaseModel):
-    session_id: str
+    session_id: str | None = None
     last_answer: str = ""
     count: int = 3
 
