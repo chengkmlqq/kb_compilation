@@ -249,7 +249,14 @@ export function DatasourceEditTab({
     setTesting(true);
     try {
       const values = await form.validateFields();
-      const payload = buildPayload(values) as Record<string, unknown>;
+      // 编辑已有数据源且未重填口令：走 mode 1（dsId，后端用已存配置 + 解密口令测试）。
+      // 否则（新建 / 编辑时改了口令或连接参数）走 mode 2 携带当前表单参数。
+      const authValue = values.dsAuth;
+      const useSaved =
+        isEditMode && tab.dsId && (authValue === undefined || authValue === null || authValue === "");
+      const payload: Record<string, unknown> = useSaved
+        ? { dsId: tab.dsId }
+        : (buildPayload(values) as Record<string, unknown>);
       const res = await apiTestDatasource(payload);
       const ok = res.success && (res.data as { success?: boolean } | undefined)?.success;
       if (ok) message.success("连接成功");
