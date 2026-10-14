@@ -382,6 +382,17 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下；type-
 - 上传文件校验（扩展名白名单 / 病毒扫描 / 去重）
 - 菜单管理增强：菜单 icon 下拉选择（当前手填组件名）、菜单 ext-conf 可视化编辑（当前仅基本字段 + JSON）
 
+### 8.4 assistant-ui 试验问答页（2026-10-14 新增，与现有问答页并存）
+- 新页面 `/wiki/chat-next`（`web/src/app/(main)/chat-next/`，page.tsx + chat-next.css），依赖 `@assistant-ui/react ^0.15.28`（React 19 兼容）
+- 形态：`useExternalStoreRuntime` 接现有后端 `POST /api/v1/qa/stream`（自定义 SSE：stream_meta/context/thinking/delta/stage/done/error），**无会话模式**（前端组 history 传参，不建 ChatSession 不留库）
+- assistant-ui 0.15 无高层 Thread/Composer 组件（README 里的是 CLI 模板产物），用 primitives 拼装：ThreadPrimitive.Viewport/Messages + MessagePrimitive.Parts(components: Text/Reasoning/data) + ComposerPrimitive.Input/Send/Cancel（disabled 时组件自动不渲染）
+- 引用渲染：refs 经 data part（`{type:"data", name:"kb_refs"}`）与 text part 的 providerMetadata.kb_refs.items 双通道给到渲染层；正文 `<kb doc=.../>` 胶囊复用 MarkdownViewer + CitationRef（lint 层面 CitationRef 无 meta 字段，读取时 as ChatRefItem）
+- 已验证：tsc --noEmit ✓、next build ✓（/chat-next 路由注册）、后端 SSE 冒烟 ✓（真实 kb 提问，delta/context(stage)/done 全链路）；未验证：浏览器交互（本机浏览器工具 GLIBC 不可用）——线上需重建 web 镜像后登录打开
+- 坑位：
+  - 本地起 next start 验证须带 basePath：`/wiki/chat-next`；API 走 nginx 80（docker kb-api-server 未映射主机端口）
+  - web/node_modules 存在 root 所有的 `@codemirror.bak` 残留 → npm install reify EACCES；已改名 `_rescued_codemirror_bak` 避让（不能 rm，root 所有；需 sudo 清理）
+  - 3100 端口被旧的 next-server 占用（跑旧 build，/chat-next 404）；本地验证用 `next start -p 3211`
+
 ## 9. 开工检查单（新会话）
 
 1. `cd /home/jenkins/chengkai/kb_compilation && .venv/bin/python -m pytest tests/ -q` → 应 127 passed
