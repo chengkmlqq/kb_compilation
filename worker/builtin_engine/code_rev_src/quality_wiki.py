@@ -46,19 +46,19 @@ def run(kb_id: str) -> dict:
                                  "suggestion": "检查构建编排 run 状态 / 重跑构建"}]}
 
     by_id = {str(p[0]): p for p in pages}
-    slug_by_id = {str(p[0]): str(p[2]) for p in pages}
+    slug_by_id = {str(p[0]): str(p[1]) for p in pages}  # p[1]=slug（p[2] 是 title——2026-10-14 曾误用 p[2] 致全量断链误报）
     linked_ids = {str(l[0]) for l in links} | {str(l[1]) for l in links}
 
     issues: list[dict] = []
     # 1) 空内容页
     empty = [p for p in pages if not (p[4] or "").strip()]
     for p in empty:
-        issues.append({"dim": "wiki", "slug": str(p[2]), "page_type": str(p[3]),
+        issues.append({"dim": "wiki", "slug": str(p[1]), "page_type": str(p[3]),
                        "issue_type": "empty_content", "detail": "页面内容为空"})
     # 2) 孤立页（无入链无出链）
     orphans = [p for p in pages if str(p[0]) not in linked_ids]
     for p in orphans:
-        issues.append({"dim": "wiki", "slug": str(p[2]), "page_type": str(p[3]),
+        issues.append({"dim": "wiki", "slug": str(p[1]), "page_type": str(p[3]),
                        "issue_type": "orphan", "detail": "无任何双向链接"})
     # 3) 断链：content 中 [[slug]] 目标不存在
     broken = 0
@@ -76,18 +76,18 @@ def run(kb_id: str) -> dict:
     # 4) 占位残留
     placeholder = [p for p in pages if PLACEHOLDER in (p[4] or "")]
     for p in placeholder:
-        issues.append({"dim": "wiki", "slug": str(p[2]), "page_type": str(p[3]),
+        issues.append({"dim": "wiki", "slug": str(p[1]), "page_type": str(p[3]),
                        "issue_type": "llm_placeholder", "detail": "LLM 解读占位未填充"})
     # 5) 证据链缺失（无出处/来源制度/原文关联标记的页面；实体/规则页用「来源制度」「原文关联」，表页用「出处」）
     _SOURCE_MARKS = ("出处", "来源制度", "原文关联", "来源")
     no_source = [p for p in pages if not any(m in (p[4] or "")[:200] for m in _SOURCE_MARKS)]
     for p in no_source:
-        issues.append({"dim": "wiki", "slug": str(p[2]), "page_type": str(p[3]),
+        issues.append({"dim": "wiki", "slug": str(p[1]), "page_type": str(p[3]),
                        "issue_type": "missing_source", "detail": "页面无出处/原文引用标记"})
     # 6) 未挂目录（folder_id 空）
     no_folder = [p for p in pages if not (p[5] or p[6] or "")]
     for p in no_folder:
-        issues.append({"dim": "wiki", "slug": str(p[2]), "page_type": str(p[3]),
+        issues.append({"dim": "wiki", "slug": str(p[1]), "page_type": str(p[3]),
                        "issue_type": "no_folder", "detail": "页面未挂载任何目录"})
 
     n = len(pages)
