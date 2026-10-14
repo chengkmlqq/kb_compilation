@@ -2087,7 +2087,6 @@ html[data-theme="dark"] .kb-citation-web:hover {
   overflow: auto;
 }
 
-D
 /* ── 编排模板：左分类树 + 右列表（2026-10-13，参考 wiki 两栏结构） ── */
 .kb-tpl-root {
   display: flex;

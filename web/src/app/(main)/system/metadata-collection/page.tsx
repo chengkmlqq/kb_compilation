@@ -12,17 +12,17 @@
  *  - 级联删除数据源元数据
  *
  * 后端契约见 api/routers/metadata.py（/api/v1/metadata/*）。
+ *
+ * 布局（2026-10-14）：对齐整体 UI —— 外层定高不滚动 + ModoTabs（首 tab「元数据采集」= 页面标题 + 列表）
+ * + Card 内「筛选固定 / 表格吃满剩余高度」；抽屉/弹窗统一 ModoDrawer / ModoModal。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   App,
   Button,
   Card,
-  Drawer,
   Form,
   Input,
-  Modal,
-  Popconfirm,
   Radio,
   Select,
   Space,
@@ -30,21 +30,20 @@ import {
   Table,
   Tag,
   Tooltip,
+  Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
-  DeleteOutlined,
   DownloadOutlined,
-  EyeOutlined,
-  FileSearchOutlined,
   ReloadOutlined,
-  SyncOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
-import { ModoPage } from "@/components/biz/modo-page";
-import { ModoTable } from "@/components/biz/modo-table";
-import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
+import { ModoDrawer } from "@/components/biz/modo-drawer";
+import { ModoModal } from "@/components/biz/modo-modal";
+import { ModoPagination } from "@/components/biz/modo-pagination";
+import { ModoTabs } from "@/components/biz/modo-tabs";
+import { ModoTable } from "@/components/biz/modo-table";
 import {
   apiDeleteMetadataByDatasource,
   apiDownloadMetadataTemplate,
@@ -61,6 +60,8 @@ import {
   MetadataTableItem,
 } from "@/lib/api";
 
+const { Text } = Typography;
+
 type StatusType = "UNCOLLECTED" | "COLLECTED" | "COLLECTING" | "FAILED";
 
 const STATUS_META: Record<StatusType, { color: string; label: string }> = {
@@ -75,6 +76,7 @@ export default function MetadataCollectionPage() {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<MetadataDatasourceItem[]>([]);
   const [filter, setFilter] = useState<{ name?: string; dsType?: string }>({});
+  const [filterForm] = Form.useForm<{ name?: string; dsType?: string }>();
   const [dsTypeOptions, setDsTypeOptions] = useState<{ label: string; value: string }[]>([]);
   const [fullCollectionEnabled, setFullCollectionEnabled] = useState(true);
 
@@ -145,6 +147,11 @@ export default function MetadataCollectionPage() {
         (!t || i.dsTypeGroup === t),
     );
   }, [items, filter]);
+
+  const doReset = () => {
+    filterForm.resetFields();
+    setFilter({});
+  };
 
   const onCollect = async () => {
     if (!collectTarget) return;
@@ -329,51 +336,85 @@ export default function MetadataCollectionPage() {
     },
   ];
 
+  // 列表区（首个选项卡内容）：筛选固定 + 表格吃满剩余高度
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <Card
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 0 0",
+          },
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 16px 12px", flexShrink: 0 }}>
+          <Form
+            form={filterForm}
+            layout="inline"
+            onFinish={(v: { name?: string; dsType?: string }) => setFilter(v)}
+            style={{ flex: 1 }}
+          >
+            <Form.Item name="name" label="数据源">
+              <Input placeholder="数据源名称" allowClear style={{ width: 200 }} />
+            </Form.Item>
+            <Form.Item name="dsType" label="类型">
+              <Select placeholder="全部类型" allowClear style={{ width: 160 }} options={dsTypeOptions} />
+            </Form.Item>
+            <Form.Item>
+              <Space>
+                <Button type="primary" htmlType="submit">
+                  查询
+                </Button>
+                <Button onClick={doReset}>重置</Button>
+              </Space>
+            </Form.Item>
+          </Form>
+          <Text type="secondary">共 {filtered.length} 个数据源</Text>
+        </div>
+
+        <ModoTable<MetadataDatasourceItem>
+          rowKey="id"
+          columns={columnsDef}
+          dataSource={filtered}
+          loading={loading}
+        />
+      </Card>
+    </div>
+  );
+
   return (
-    <ModoPage>
-      <div className="kb-flex-col" style={{ height: "100%", gap: 8 }}>
-        <Form
-          layout="inline"
-          onFinish={(v: { name?: string; dsType?: string }) => setFilter(v)}
-          style={{ gap: 8, marginBottom: 8 }}
-        >
-          <Form.Item name="name" noStyle>
-            <Input placeholder="数据源名称" allowClear style={{ width: 200 }} />
-          </Form.Item>
-          <Form.Item name="dsType" noStyle>
-            <Select
-              placeholder="类型"
-              allowClear
-              style={{ width: 150 }}
-              options={dsTypeOptions}
-            />
-          </Form.Item>
-          <Button type="primary" htmlType="submit" icon={<FileSearchOutlined />}>
-            查询
-          </Button>
+    // 2026-10-14: 对齐整体 UI —— 外层定高不滚动，ModoTabs 首 tab「元数据采集」= 页面标题 + 列表。
+    <div
+      className="metadata-collection-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - var(--app-header-h, 45px))",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey="home"
+        tabBarExtraContent={
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
             刷新
           </Button>
-        </Form>
-
-        <Card
-          size="small"
-          title={`可采集数据源 (${filtered.length})`}
-          style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
-          styles={{ body: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } }}
-        >
-          <ModoTable<MetadataDatasourceItem>
-            rowKey="id"
-            columns={columnsDef}
-            dataSource={filtered}
-            loading={loading}
-          />
-        </Card>
-      </div>
+        }
+        items={[{ key: "home", label: "元数据采集", children: listPane }]}
+      />
 
       {/* 采集确认弹窗 */}
-      <Modal
-        title={collectTarget ? `元数据采集 · ${collectTarget.label || collectTarget.name}` : ""}
+      <ModoModal
+        title={collectTarget ? `元数据采集 · ${collectTarget.label || collectTarget.name}` : "元数据采集"}
         open={!!collectTarget}
         onCancel={() => setCollectTarget(null)}
         onOk={onCollect}
@@ -409,14 +450,15 @@ export default function MetadataCollectionPage() {
             </div>
           </Space>
         )}
-      </Modal>
+      </ModoModal>
 
       {/* 采集记录抽屉 */}
-      <Drawer
+      <ModoDrawer
         title={`采集记录 · ${runsDs?.label || runsDs?.name || ""}`}
         open={runsOpen}
-        onClose={() => setRunsOpen(false)}
+        onCancel={() => setRunsOpen(false)}
         width={680}
+        showFooter={false}
       >
         <Table<MetadataCollectionRun>
           rowKey="job_id"
@@ -463,14 +505,15 @@ export default function MetadataCollectionPage() {
             onChange={(p) => runsDs && void loadRunsPage(p, runsDs.id)}
           />
         </div>
-      </Drawer>
+      </ModoDrawer>
 
       {/* 元数据查看器 */}
-      <Drawer
+      <ModoDrawer
         title={`元数据查看 · ${viewerDs?.label || viewerDs?.name || ""}`}
         open={viewerOpen}
-        onClose={() => setViewerOpen(false)}
+        onCancel={() => setViewerOpen(false)}
         width={900}
+        showFooter={false}
       >
         <Space style={{ marginBottom: 12 }} wrap>
           <Input
@@ -527,9 +570,10 @@ export default function MetadataCollectionPage() {
               key: "actions",
               width: 100,
               render: (_v, r) => (
-                <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => void openColumns(r)}>
-                  字段
-                </Button>
+                <ModoActionGroup
+                  maxCount={1}
+                  actions={[{ key: "columns", label: "字段", onClick: () => void openColumns(r) }]}
+                />
               ),
             },
           ]}
@@ -542,14 +586,15 @@ export default function MetadataCollectionPage() {
             onChange={(p) => viewerDs && void loadTables(p, tableKeyword, viewerDs.id)}
           />
         </div>
-      </Drawer>
+      </ModoDrawer>
 
       {/* 字段详情抽屉 */}
-      <Drawer
+      <ModoDrawer
         title={`字段 · ${columnsFor?.tableName || ""}`}
         open={columnsOpen}
-        onClose={() => setColumnsOpen(false)}
+        onCancel={() => setColumnsOpen(false)}
         width={820}
+        showFooter={false}
       >
         <Table<MetadataColumnItem>
           rowKey="id"
@@ -583,7 +628,7 @@ export default function MetadataCollectionPage() {
             { title: "注释", dataIndex: "columnComment", key: "columnComment", ellipsis: true },
           ]}
         />
-      </Drawer>
-    </ModoPage>
+      </ModoDrawer>
+    </div>
   );
 }

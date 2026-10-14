@@ -7,29 +7,26 @@
  * 1. 发起评估（单文档 / 批量 / 整库）：调 /api/v1/quality/runs（执行「质量评估-QA」编排）
  * 2. 任务列表：kb_quality_run 分页（状态 / 三维度得分 / 问题数 / 时间），顶部按知识库+状态过滤
  * 3. 详情抽屉：三维度（切片/wiki/图数据）健康分 + 问题清单 + 规则归因建议
+ *
+ * 布局（2026-10-14）：对齐整体 UI —— 外层定高不滚动 + ModoTabs（首 tab「质量评估」= 页面标题 + 列表）
+ * + Card 内「筛选固定 / 表格吃满剩余高度 / 分页钉底」；抽屉/弹窗统一 ModoDrawer/ModoModal。
  */
 import { useCallback, useEffect, useState } from "react";
-import {
-  App,
-  Button,
-  Drawer,
-  Form,
-  Modal,
-  Select,
-  Space,
-  Table,
-  Tag,
-  Typography,
-} from "antd";
+import { App, Button, Card, Empty, Form, Select, Space, Tag, Typography } from "antd";
 import {
   ApiOutlined,
   DatabaseOutlined,
   FileTextOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
-  SearchOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
+import { ModoActionGroup } from "@/components/biz/modo-action-group";
+import { ModoDrawer } from "@/components/biz/modo-drawer";
+import { ModoModal } from "@/components/biz/modo-modal";
+import { ModoPagination } from "@/components/biz/modo-pagination";
+import { ModoTabs } from "@/components/biz/modo-tabs";
+import { ModoTable } from "@/components/biz/modo-table";
 import {
   apiGetQualityRun,
   apiLaunchQualityRun,
@@ -41,7 +38,6 @@ import {
   QualityRunDetail,
   QualityRunItem,
 } from "@/lib/api";
-import ModoPagination from "@/components/biz/modo-pagination";
 
 const { Text } = Typography;
 
@@ -104,8 +100,9 @@ export default function QualityPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
-  const [kbFilter, setKbFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
+  // 筛选：applied 为「已提交」条件（驱动查询），表单值由 searchForm 托管
+  const [applied, setApplied] = useState<{ kb_id?: string; status?: string }>({});
+  const [searchForm] = Form.useForm<{ kb_id?: string; status?: string }>();
   const [kbs, setKbs] = useState<KbItem[]>([]);
   const [detail, setDetail] = useState<QualityRunDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -118,8 +115,8 @@ export default function QualityPage() {
     setLoading(true);
     try {
       const res = await apiListQualityRuns({
-        kb_id: kbFilter || undefined,
-        status: statusFilter || undefined,
+        kb_id: applied.kb_id || undefined,
+        status: applied.status || undefined,
         page,
         page_size: pageSize,
       });
@@ -131,7 +128,7 @@ export default function QualityPage() {
     } finally {
       setLoading(false);
     }
-  }, [kbFilter, statusFilter, page, pageSize, message]);
+  }, [applied, page, pageSize, message]);
 
   useEffect(() => {
     load();
@@ -142,6 +139,17 @@ export default function QualityPage() {
       .then((res) => setKbs(res.data?.items ?? []))
       .catch(() => setKbs([]));
   }, []);
+
+  const doSearch = (v: { kb_id?: string; status?: string }) => {
+    setPage(1);
+    setApplied({ kb_id: v.kb_id, status: v.status });
+  };
+
+  const doReset = () => {
+    searchForm.resetFields();
+    setPage(1);
+    setApplied({});
+  };
 
   const openDetail = async (id: string) => {
     setDetailOpen(true);
@@ -230,9 +238,10 @@ export default function QualityPage() {
       key: "op",
       width: 90,
       render: (_, r) => (
-        <Button type="link" size="small" onClick={() => openDetail(r.id)}>
-          详情
-        </Button>
+        <ModoActionGroup
+          maxCount={2}
+          actions={[{ key: "detail", label: "详情", onClick: () => void openDetail(r.id) }]}
+        />
       ),
     },
   ];
@@ -287,78 +296,117 @@ export default function QualityPage() {
     );
   };
 
-  return (
-    <div style={{ padding: "16px 20px" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 16,
+  // 列表区（首个选项卡内容）：筛选固定 + 表格吃满剩余高度 + 分页钉底
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <Card
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 0 0",
+          },
         }}
       >
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          质量评估
-        </Typography.Title>
-        <Space>
-          <Select
-            placeholder="知识库"
-            allowClear
-            showSearch
-            style={{ width: 180 }}
-            value={kbFilter || undefined}
-            onChange={(v) => {
-              setKbFilter(v ?? "");
-              setPage(1);
-            }}
-            options={kbs.map((k) => ({ label: k.name, value: k.id }))}
-            optionFilterProp="label"
-          />
-          <Select
-            placeholder="状态"
-            allowClear
-            style={{ width: 110 }}
-            value={statusFilter || undefined}
-            onChange={(v) => {
-              setStatusFilter(v ?? "");
-              setPage(1);
-            }}
-            options={Object.entries(STATUS_MAP).map(([k, v]) => ({
-              label: v.label,
-              value: k,
-            }))}
-          />
-          <Button icon={<ReloadOutlined />} onClick={load} />
-          <Button
-            type="primary"
-            icon={<PlayCircleOutlined />}
-            onClick={() => setLaunchOpen(true)}
-          >
-            发起评估
-          </Button>
-        </Space>
-      </div>
+        <Form
+          form={searchForm}
+          layout="inline"
+          onFinish={doSearch}
+          style={{ margin: "0 16px 12px", flexShrink: 0 }}
+        >
+          <Form.Item name="kb_id" label="知识库">
+            <Select
+              allowClear
+              showSearch
+              placeholder="全部知识库"
+              style={{ width: 200 }}
+              optionFilterProp="label"
+              options={kbs.map((k) => ({ label: k.name, value: k.id }))}
+            />
+          </Form.Item>
+          <Form.Item name="status" label="状态">
+            <Select
+              allowClear
+              placeholder="全部"
+              style={{ width: 130 }}
+              options={Object.entries(STATUS_MAP).map(([k, v]) => ({
+                label: v.label,
+                value: k,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button onClick={doReset}>重置</Button>
+            </Space>
+          </Form.Item>
+        </Form>
 
-      <Table<QualityRunItem>
-        rowKey="id"
-        columns={columns}
-        dataSource={items}
-        loading={loading}
-        size="small"
-        pagination={false}
-      />
-      <ModoPagination
-        current={page}
-        pageSize={pageSize}
-        total={total}
-        onChange={(p, ps) => {
-          setPage(p);
-          setPageSize(ps);
-        }}
+        <ModoTable<QualityRunItem>
+          rowKey="id"
+          size="small"
+          columns={columns}
+          dataSource={items}
+          loading={loading}
+          locale={{ emptyText: <Empty description="暂无评估记录" /> }}
+        />
+        <ModoPagination
+          current={page}
+          pageSize={pageSize}
+          total={total}
+          showTotal={(t) => `共 ${t} 条`}
+          onChange={(p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          }}
+        />
+      </Card>
+    </div>
+  );
+
+  return (
+    // 2026-10-14: 对齐整体 UI —— 外层定高不滚动，ModoTabs 首 tab「质量评估」= 页面标题 + 列表。
+    <div
+      className="quality-page"
+      style={{
+        padding: 8,
+        height: "calc(100vh - var(--app-header-h, 45px))",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey="home"
+        tabBarExtraContent={
+          <Space>
+            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+              刷新
+            </Button>
+            <Button
+              type="primary"
+              icon={<PlayCircleOutlined />}
+              onClick={() => setLaunchOpen(true)}
+            >
+              发起评估
+            </Button>
+          </Space>
+        }
+        items={[{ key: "home", label: "质量评估", children: listPane }]}
       />
 
       {/* 发起评估弹窗 */}
-      <Modal
+      <ModoModal
         title="发起质量评估"
         open={launchOpen}
         onOk={doLaunch}
@@ -402,14 +450,15 @@ export default function QualityPage() {
             }
           </Form.Item>
         </Form>
-      </Modal>
+      </ModoModal>
 
       {/* 详情抽屉 */}
-      <Drawer
+      <ModoDrawer
         title="评估详情"
         width={720}
         open={detailOpen}
-        onClose={() => setDetailOpen(false)}
+        onCancel={() => setDetailOpen(false)}
+        showFooter={false}
         loading={detailLoading}
       >
         {detail && (
@@ -443,8 +492,8 @@ export default function QualityPage() {
                 <div
                   key={d}
                   style={{
-                    border: "1px solid #f0f0f0",
-                    borderRadius: 8,
+                    border: "1px solid #E3E9EF",
+                    borderRadius: 6,
                     padding: 12,
                   }}
                 >
@@ -495,7 +544,7 @@ export default function QualityPage() {
             ))}
           </div>
         )}
-      </Drawer>
+      </ModoDrawer>
     </div>
   );
 }

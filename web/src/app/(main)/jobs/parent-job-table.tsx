@@ -163,6 +163,7 @@ function ChildTable({ parent }: { parent: ParentJobItem }) {
   ];
 
   return (
+    // 2026-10-14: 子表宽度对齐所在单元格（x: "100%"），避免展开行内嵌套表格横向溢出。
     <div style={{ padding: "4px 8px", background: "#FAFBFC" }}>
       <Table<Record<string, unknown>>
         rowKey={(r) => String(r.step_id || r.id || "")}
@@ -171,7 +172,7 @@ function ChildTable({ parent }: { parent: ParentJobItem }) {
         dataSource={rows}
         columns={isOrch ? stepCols : jobCols}
         pagination={false}
-        scroll={{ x: 900 }}
+        scroll={{ x: "100%" }}
         locale={{ emptyText: "暂无子任务" }}
       />
     </div>
