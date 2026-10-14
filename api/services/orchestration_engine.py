@@ -356,7 +356,7 @@ class KbReadDocStep(BaseStep):
 
     def handle(self, context: TapeRuntimeContext) -> StepResponse:
         from api.db import get_sessionmaker
-        from api.models.knowledge import DocChunk
+        from api.models.knowledge import DocChunk, KbDatasource, KbDocument
 
         document_id = str(context.render(self.config.get("document_id") or "")).strip()
         if not document_id:
@@ -364,8 +364,17 @@ class KbReadDocStep(BaseStep):
         output_var = str(self.config.get("output_var") or "chunks")
         max_chunks = int(self.config.get("max_chunks") or 0)
 
+        # 2026-10-14：文档链路的编排使用知识库配置的摘要模型——读 KB 的
+        # summary_model_id 注入 bindings（下游 kb_llm_chat 配 model={{summary_model_id}}
+        # 即生效；KB 未配置/查询失败时为空串，LLM 节点回落系统默认，不阻断）。
+        summary_model_id = ""
         db = get_sessionmaker()()
         try:
+            doc = db.query(KbDocument).filter(KbDocument.id == document_id).first()
+            if doc and doc.kb_id:
+                kb = db.query(KbDatasource).filter(KbDatasource.id == doc.kb_id).first()
+                if kb:
+                    summary_model_id = getattr(kb, "summary_model_id", None) or ""
             q = (
                 db.query(DocChunk)
                 .filter(DocChunk.document_id == document_id)
@@ -378,12 +387,20 @@ class KbReadDocStep(BaseStep):
                 {"seq": c.seq, "content": c.content or ""}
                 for c in rows
             ]
+        except Exception:  # noqa: BLE001 — KB 模型读取失败不阻断切片读取
+            summary_model_id = ""
+            db.rollback()
+            rows = []
+            chunks = []
         finally:
             db.close()
         if not chunks:
             return StepResponse.fail(f"文档无切片: {document_id}")
         context.bindings[output_var] = chunks
-        return StepResponse.success({f"set:{output_var}": chunks, "count": len(chunks)})
+        context.bindings["summary_model_id"] = summary_model_id
+        return StepResponse.success(
+            {f"set:{output_var}": chunks, "count": len(chunks), "summary_model_id": summary_model_id}
+        )
 
 
 class KbLlmChatStep(BaseStep):
@@ -404,7 +421,14 @@ class KbLlmChatStep(BaseStep):
 
         prompt = str(context.render(self.config.get("prompt") or "")).strip()
         output_var = str(self.config.get("output_var") or "llm_out")
-        model = str(self.config.get("model") or "").strip() or None
+        # 2026-10-14：编排节点可配 model={{summary_model_id}} 引用知识库配置的
+        # 摘要模型（文档链路 KbReadDocStep 注入 bindings）。模板渲染失败会残留
+        # {{...}} 字面量（bindings 缺键时 _template_replace 原样返回）——此时
+        # 视为未指定模型回落系统默认，避免把字面量当模型 id 去查询。
+        model_raw = str(context.render(self.config.get("model") or "")).strip()
+        model = None
+        if model_raw and "{{" not in model_raw:
+            model = model_raw
         temperature = float(self.config.get("temperature") or 0.2)
         max_tokens = int(self.config.get("max_tokens") or 2048)
         json_mode = bool(self.config.get("json_mode"))

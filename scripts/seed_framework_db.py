@@ -1082,6 +1082,7 @@ SUMMARY_STUFF_TAPE: dict = {
             "id": "n3", "type": "custom",
             "data": {"label": "LLM生成摘要", "stepInst": "kb_llm_chat",
                      "config": {"prompt": "{{prompt}}", "output_var": "summary_text",
+                                "model": "{{summary_model_id}}",
                                 "temperature": "0.3", "max_tokens": "1024"}},
         },
         {
@@ -1175,6 +1176,7 @@ SUMMARY_MAPREDUCE_TAPE: dict = {
             "id": "n5", "type": "custom",
             "data": {"label": "LLM子摘要", "stepInst": "kb_llm_chat",
                      "config": {"prompt": "{{map_prompt}}", "output_var": "sub_summary",
+                                "model": "{{summary_model_id}}",
                                 "temperature": "0.3", "max_tokens": "512"}},
         },
         {
@@ -1201,6 +1203,7 @@ SUMMARY_MAPREDUCE_TAPE: dict = {
             "id": "n7", "type": "custom",
             "data": {"label": "LLM合并", "stepInst": "kb_llm_chat",
                      "config": {"prompt": "{{reduce_prompt}}", "output_var": "merged_summary",
+                                "model": "{{summary_model_id}}",
                                 "temperature": "0.3", "max_tokens": "1024", "skip_empty": True}},
         },
         {
@@ -1308,6 +1311,7 @@ SUMMARY_REFINE_TAPE: dict = {
             "id": "n5", "type": "custom",
             "data": {"label": "LLM更新摘要", "stepInst": "kb_llm_chat",
                      "config": {"prompt": "{{refine_prompt}}", "output_var": "new_summary",
+                                "model": "{{summary_model_id}}",
                                 "temperature": "0.3", "max_tokens": "1024"}},
         },
         {

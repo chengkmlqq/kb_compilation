@@ -119,6 +119,25 @@ def test_kb_read_doc_writes_bindings(orch_db, monkeypatch) -> None:
     assert chunks is not None and len(chunks) == 2
     assert chunks[0]["content"] == "第一块内容"
     assert "set:chunks" in resp.body
+    # 2026-10-14：文档链路注入 KB 摘要模型（fixture 无 KB 行 → 空串兜底，不失败）
+    assert ctx.bindings.get("summary_model_id") == ""
+
+
+def test_kb_read_doc_injects_kb_summary_model(orch_db, monkeypatch) -> None:
+    """kb_read_doc 读 KB 的 summary_model_id 注入 bindings（文档链路编排用 KB 模型）。"""
+    import api.db
+    from api.models.knowledge import KbDatasource, KbDocument
+
+    api.db.get_sessionmaker = lambda: __import__("sqlalchemy").orm.sessionmaker(bind=orch_db.bind, expire_on_commit=False)
+    orch_db.add(KbDatasource(id="kb1", name="测试库", summary_model_id="mdl_summary_x"))
+    orch_db.add(KbDocument(id="doc1", kb_id="kb1", file_name="测试.docx", parse_state="READY"))
+    orch_db.commit()
+
+    step = KbReadDocStep("n1", "读切片", "kb_read_doc", {"document_id": "doc1"})
+    ctx = TapeRuntimeContext({})
+    resp = step.handle(ctx)
+    assert resp.success
+    assert ctx.bindings.get("summary_model_id") == "mdl_summary_x"
 
 
 def test_kb_read_doc_missing_doc_fails(orch_db, monkeypatch) -> None:
@@ -354,6 +373,12 @@ def test_summary_tapes_structure() -> None:
         assert writer["data"]["config"].get("skip_empty") is True, f"{name}: 写摘要需 skip_empty"
         assert writer["data"]["config"].get("summary_var") == "final_summary", f"{name}: 摘要来源变量应为 final_summary"
         assert not any(n["data"]["stepInst"] == "wiki_upsert_page" for n in nodes), f"{name}: 不应再写 wiki 摘要页"
+        # 2026-10-14：LLM 节点绑定知识库配置的摘要模型（文档链路 KbReadDocStep
+        # 注入 bindings['summary_model_id']）。
+        for n in nodes:
+            if n["data"]["stepInst"] == "kb_llm_chat":
+                assert n["data"]["config"].get("model") == "{{summary_model_id}}", \
+                    f"{name}: LLM 节点应用 KB 摘要模型 model={{summary_model_id}}"
         assert "kb_id" in tape["exec_params"] and "document_id" in tape["exec_params"]
 
 
