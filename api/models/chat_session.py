@@ -58,7 +58,11 @@ class ChatAttachment(Base):
     # 解析后的 markdown 全文（docreader 产出）
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 图片原始字节（media_type=image 时）
-    file_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # 图片上限 MAX_ATTACHMENT_BYTES=20MB > MySQL BLOB 64KB → LONGBLOB
+    # （2026-10-15: 真实截图 >64KB 触 1406 Data too long → 500）
+    file_data: Mapped[bytes | None] = mapped_column(
+        LargeBinary(length=32 * 1024 * 1024), nullable=True
+    )
     created_at: Mapped[str] = mapped_column(String(32), default=_now_iso)
 
 

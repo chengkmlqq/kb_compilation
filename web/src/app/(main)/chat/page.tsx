@@ -69,7 +69,7 @@ import {
 } from "@/lib/api";
 import MarkdownViewer from "@/components/MarkdownViewer";
 import TypewriterText from "@/components/TypewriterText";
-import RagPipelineProgress, { RagStep } from "@/components/RagPipelineProgress";
+import { RagStep } from "@/components/RagPipelineProgress";
 import AgentToolCalls, { ToolCallEvent } from "@/components/AgentToolCalls";
 import { copyText } from "@/lib/clipboard";
 
@@ -1338,9 +1338,7 @@ export default function ChatPage() {
                 <div
                   className={`kb-chat-msg ${m.role === "user" ? "kb-chat-msg--user" : "kb-chat-msg--bot"}`}
                 >
-                    {m.role === "assistant" && m.steps && m.steps.length > 0 && (
-                      <RagPipelineProgress steps={m.steps} />
-                    )}
+                    {/* 2026-10-16 移除 RAG 步骤树展示（检索完成/命中N篇相关片段/回答完成） */}
                     {m.role === "assistant" && (
                       <AgentToolCalls events={m.toolEvents || []} />
                     )}
