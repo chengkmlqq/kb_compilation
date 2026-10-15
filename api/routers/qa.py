@@ -36,6 +36,19 @@ from api.services.identity import decode_identity_cookie
 router = APIRouter(prefix="/qa", tags=["qa"])
 
 
+# 2026-10-15 联网搜索按钮由参数表控制显隐：页面挂载时读取此端点决定是否渲染开关。
+# 走 /api/v1/qa 前缀（前端 /chat 菜单控制），普通问答用户可读；写入口在参数管理（dims）。
+@router.get("/config")
+def read_chat_config(db: Session = Depends(get_db)) -> dict:
+    from api.services.system_config import get_platform_config_value
+
+    raw = get_platform_config_value(db, "CHAT_WEB_SEARCH_ENABLED").strip().lower()
+    return {
+        "success": True,
+        "data": {"web_search_enabled": raw in ("1", "true", "yes", "on")},
+    }
+
+
 class QARequest(BaseModel):
     kb_id: str = ""
     question: str = ""

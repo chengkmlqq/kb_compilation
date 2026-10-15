@@ -366,6 +366,14 @@ PLATFORM_CONFIG_FIELDS: dict[str, tuple[str, str, str, list[str], str]] = {
         "直跑模式下单篇文档构建的整体超时，超时杀进程组并标记失败；"
         "长文档/大模型限流时需要放宽。取值 600-86400",
     ),
+    "CHAT_WEB_SEARCH_ENABLED": (
+        "智能问答联网搜索按钮",
+        "bool",
+        "1",
+        [],
+        "控制智能问答页面是否显示「联网搜索」开关按钮：1=显示，0=隐藏"
+        "（隐藏仅去掉入口，agent 模式自身的 web_search 工具不受影响）",
+    ),
 }
 
 
@@ -436,6 +444,13 @@ def validate_platform_value(code: str, value: str | None) -> str:
         if v not in options:
             raise ValueError(f"{label} 取值非法：{v}（可选 {options}）")
         return v
+    if vtype == "bool":
+        low = v.lower()
+        if low in ("1", "true", "yes", "on"):
+            return "1"
+        if low in ("0", "false", "no", "off"):
+            return "0"
+        raise ValueError(f"{label} 必须是 1/0")
     try:
         n = int(v)
     except ValueError:
@@ -483,6 +498,19 @@ def save_platform_config(db: Session, items: list[dict]) -> dict:
         saved.append(code)
     db.commit()
     return {"saved": saved, "count": len(saved)}
+
+
+def get_platform_config_value(db: Session, code: str) -> str:
+    """读取单个平台运行参数（DB > env > 默认值），供页面公开端点使用。"""
+    spec = PLATFORM_CONFIG_FIELDS.get(code)
+    value = _dim_map(db, [code], group=PLATFORM_CONFIG_GROUP).get(code, "")
+    if value:
+        return value
+    if spec:
+        env_name = PLATFORM_ENV_NAMES.get(code, "")
+        raw = str(getattr(get_settings(), env_name, "") or "").strip() if env_name else ""
+        return raw if raw else spec[2]
+    return ""
 
 
 # ---------------------------------------------------------------------------
