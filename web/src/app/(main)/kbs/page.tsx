@@ -6,11 +6,11 @@ import {
   Button,
   Card,
   Col,
-  Drawer,
   Dropdown,
   Empty,
   Form,
   Input,
+  Modal,
   Row,
   Select,
   Space,
@@ -53,7 +53,7 @@ import KbGraphPane from "@/components/kb/KbGraphPane";
 import WikiGraphView from "@/components/WikiGraphView";
 import DocDetailPanel from "@/components/DocDetailPanel";
 
-// 新建抽屉分区导航（对齐智能体编辑器 AgentEditorModal 与配置弹窗 KBConfigModal）
+// 新建知识库弹窗分区导航（对齐智能体编辑器 AgentEditorModal 与配置弹窗 KBConfigModal）
 const CREATE_SECTIONS = [
   { key: "wiki", label: "Wiki 构建", icon: <BookOutlined /> },
   { key: "retrieval", label: "检索配置", icon: <SearchOutlined /> },
@@ -328,6 +328,7 @@ export default function KbsPage() {
 
   const openCreate = () => {
     form.resetFields();
+    setCreateSection("wiki"); // 对齐智能体编辑器：每次打开回到首个分区
     setCreateOpen(true);
   };
 
@@ -400,7 +401,7 @@ export default function KbsPage() {
     setSearch("");
   };
 
-  // 列表区（首个选项卡内容）：筛选 + 卡片视图 + 钉底分页 + 新建抽屉/配置弹窗
+  // 列表区（首个选项卡内容）：筛选 + 卡片视图 + 钉底分页 + 新建弹窗/配置弹窗
   const listPane = (
     <div
       style={{
@@ -552,31 +553,34 @@ export default function KbsPage() {
           />
         </div>
 
-        <Drawer
+        {/* 新建知识库弹窗（对齐智能体编辑器 AgentEditorModal：Modal + 左侧分区导航 + 底部确定/取消） */}
+        <Modal
           title="新建知识库"
           open={createOpen}
-          onClose={() => setCreateOpen(false)}
+          onOk={() => void onCreate()}
+          onCancel={() => setCreateOpen(false)}
+          okText="创建"
+          cancelText="取消"
           width={860}
-          extra={
-            <Space>
-              <Button onClick={() => setCreateOpen(false)}>取消</Button>
-              <Button type="primary" onClick={() => void onCreate()}>
-                创建
-              </Button>
-            </Space>
-          }
+          destroyOnClose
         >
           <Form form={form} layout="vertical" preserve={false}>
-            <Form.Item
-              name="name"
-              label="知识库名称"
-              rules={[{ required: true, message: "请输入知识库名称" }]}
-            >
-              <Input placeholder="如：监管制度知识库" />
-            </Form.Item>
-            <Form.Item name="label" label="标签（可选）">
-              <Input placeholder="如：制度 / 技术" />
-            </Form.Item>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item
+                  name="name"
+                  label="知识库名称"
+                  rules={[{ required: true, message: "请输入知识库名称" }]}
+                >
+                  <Input placeholder="如：监管制度知识库" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="label" label="标签（可选）">
+                  <Input placeholder="如：制度 / 技术" />
+                </Form.Item>
+              </Col>
+            </Row>
             <Form.Item name="description" label="描述（可选）">
               <Input.TextArea rows={2} placeholder="知识库用途说明" />
             </Form.Item>
@@ -734,7 +738,7 @@ export default function KbsPage() {
               </div>
             </div>
           </Form>
-        </Drawer>
+        </Modal>
 
         <KBConfigModal
           kb={configKb}
