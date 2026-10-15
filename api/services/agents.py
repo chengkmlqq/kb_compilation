@@ -102,9 +102,6 @@ class AgentConfig:
     supported_file_types: list[str] = field(default_factory=list)
     chat_parser_engine_rules: list[dict] = field(default_factory=list)
     data_analysis_enabled: bool = False
-    faq_priority_enabled: bool = True
-    faq_direct_answer_threshold: float = 0.9
-    faq_score_boost: float = 1.2
     question_suggestions: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -165,9 +162,6 @@ class AgentConfig:
             "supported_file_types": list(self.supported_file_types),
             "chat_parser_engine_rules": list(self.chat_parser_engine_rules),
             "data_analysis_enabled": self.data_analysis_enabled,
-            "faq_priority_enabled": self.faq_priority_enabled,
-            "faq_direct_answer_threshold": self.faq_direct_answer_threshold,
-            "faq_score_boost": self.faq_score_boost,
             "question_suggestions": dict(self.question_suggestions),
         }
 
@@ -237,9 +231,6 @@ def config_from_dict(data: dict | None) -> AgentConfig:
         supported_file_types=list(data.get("supported_file_types") or []),
         chat_parser_engine_rules=list(data.get("chat_parser_engine_rules") or []),
         data_analysis_enabled=_as_bool(data.get("data_analysis_enabled")),
-        faq_priority_enabled=bool(data.get("faq_priority_enabled", True)),
-        faq_direct_answer_threshold=float(data.get("faq_direct_answer_threshold") or 0.9),
-        faq_score_boost=float(data.get("faq_score_boost") or 1.2),
         question_suggestions=dict(data.get("question_suggestions") or {}),
     )
 

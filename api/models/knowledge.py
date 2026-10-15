@@ -70,7 +70,7 @@ class KbDatasource(Base):
 
     # ── WeKnora 对齐配置（2026-10）────────────────────────────────────────
     # 字段与 WeKnora internal/types/knowledgebase.go 的 KnowledgeBase 结构一一对应。
-    type: Mapped[str] = mapped_column(String(32), default="document")  # document / faq
+    type: Mapped[str] = mapped_column(String(32), default="document")  # document（问答对型已下线）
     # 自定义 Wiki 生成：开启后不自动构建，需手动触发（WeKnora custom_wiki_generation）
     custom_wiki_generation: Mapped[bool] = mapped_column(Boolean, default=False)
     # KB 级模型绑定（WeKnora embedding_model_id / summary_model_id）
@@ -82,7 +82,7 @@ class KbDatasource(Base):
     image_processing_config: Mapped[dict] = mapped_column(JSON, default=dict)
     # 知识图谱抽取配置（WeKnora extract_config / GraphSettings）
     extract_config: Mapped[dict] = mapped_column(JSON, default=dict)
-    # FAQ 知识库配置（type=faq 时生效）
+    # FAQ 知识库配置（type=faq 时生效；2026-10-15 问答对模式下线，列保留兼容存量）
     faq_config: Mapped[dict] = mapped_column(JSON, default=dict)
     # 文档型 KB 的问题生成配置
     question_generation_config: Mapped[dict] = mapped_column(JSON, default=dict)

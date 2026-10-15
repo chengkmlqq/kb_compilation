@@ -160,11 +160,6 @@ export interface IndexingStrategy {
   [k: string]: unknown;
 }
 
-export interface FaqConfig {
-  index_mode?: string;
-  [k: string]: unknown;
-}
-
 export interface QuestionGenerationConfig {
   enabled?: boolean;
   question_count?: number;
@@ -183,8 +178,7 @@ export interface KbItem {
   doc_count?: number;
   page_count?: number;
   created_at?: string | null;
-  type?: "document" | "faq" | string;
-  faq_config?: FaqConfig;
+  type?: "document";
   question_generation_config?: QuestionGenerationConfig;
   custom_wiki_generation?: boolean;
   build_tape_id?: string | null;
@@ -214,7 +208,7 @@ export interface PageList<T> {
 }
 
 export interface KbUpdatePayload {
-  type?: "document" | "faq";
+  type?: "document";
   indexing_strategy?: IndexingStrategy;
   custom_wiki_generation?: boolean;
   embedding_model_id?: string | null;
@@ -248,7 +242,7 @@ export interface KbCreatePayload {
   description?: string;
   scope?: string;
   team_name?: string;
-  type?: "document" | "faq" | string;
+  type?: "document";
   indexing_strategy?: IndexingStrategy;
   custom_wiki_generation?: boolean;
   embedding_model_id?: string | null;
@@ -3116,6 +3110,15 @@ export function apiSavePlatformConfig(
     method: "PUT",
     body: JSON.stringify({ items }),
   });
+}
+
+// 2026-10-15 智能问答页挂载时读取：联网搜索按钮是否显示（参数表 PLATFORM_CONFIG.CHAT_WEB_SEARCH_ENABLED）
+export interface ChatConfigData {
+  web_search_enabled: boolean;
+}
+
+export function apiChatConfig(): Promise<ApiEnvelope<ChatConfigData>> {
+  return request<ChatConfigData>("/api/v1/qa/config");
 }
 
 // ---- 全局检索参数（系统管理 → 检索参数，modo_dim=RETRIEVAL_CONFIG，对齐 WeKnora RetrievalSettings） ----

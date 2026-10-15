@@ -7,7 +7,6 @@ import {
   Drawer,
   Form,
   InputNumber,
-  Radio,
   Row,
   Select,
   Slider,
@@ -115,7 +114,7 @@ interface Props {
   onClose: (changed?: boolean) => void;
 }
 
-/** 知识库配置弹窗（WeKnora 对齐）：类型/索引开关/模型绑定/图谱/FAQ + 切片配置与解析引擎规则。 */
+/** 知识库配置弹窗（WeKnora 对齐）：索引开关/模型绑定/图谱/问题生成 + 切片配置与解析引擎规则。 */
 export default function KBConfigModal({ kb, open, onClose }: Props) {
   const { message } = App.useApp();
   const [form] = Form.useForm();
@@ -127,7 +126,6 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
   const [saving, setSaving] = useState(false);
   const [section, setSection] = useState("parse");
   const customWiki = Form.useWatch("custom_wiki_generation", form) ?? false;
-  const kbType = Form.useWatch("type", form) ?? "document";
   const enableParentChild = Form.useWatch("enable_parent_child", form);
   const strategy = Form.useWatch("strategy", form);
 
@@ -151,7 +149,6 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
     if (!open || !kb) return;
     const strat = kb.indexing_strategy || {};
     form.setFieldsValue({
-      type: kb.type || "document",
       vector_enabled: !!strat.vector_enabled,
       keyword_enabled: !!strat.keyword_enabled,
       wiki_enabled: !!strat.wiki_enabled,
@@ -163,7 +160,6 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
       summary_model_id: kb.wiki_config?.synthesis_model_id || kb.summary_model_id || undefined,
       summary_strategy: kb.summary_strategy || "auto",
       graph_extract: !!kb.extract_config?.enabled,
-      faq_index_mode: kb.faq_config?.index_mode || "question_answer",
       question_generation: !!kb.question_generation_config?.enabled,
       question_count: kb.question_generation_config?.question_count || 3,
     });
@@ -224,7 +220,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
     const v = await form.validateFields().catch(() => null);
     if (!v) return;
     const payload: KbUpdatePayload = {
-      type: v.type,
+      type: "document",
       indexing_strategy: {
         vector_enabled: !!v.vector_enabled,
         keyword_enabled: !!v.keyword_enabled,
@@ -241,7 +237,6 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
           extraction_granularity: v.extraction_granularity || "standard",
         },
         extract_config: { enabled: !!v.graph_extract },
-        faq_config: { index_mode: v.faq_index_mode || "question_answer" },
         question_generation_config: {
           enabled: !!v.question_generation,
           question_count: v.question_count || 3,
@@ -329,24 +324,6 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
             <div style={{ flex: 1, overflowY: "auto", maxHeight: 560 }}>
               {section === "parse" && (
                 <>
-                  <Form.Item name="type" label="知识库类型">
-                    <Radio.Group optionType="button" buttonStyle="solid">
-                      <Radio.Button value="document">文档型</Radio.Button>
-                      <Radio.Button value="faq">问答对型</Radio.Button>
-                    </Radio.Group>
-                  </Form.Item>
-
-                  {kbType === "faq" && (
-                    <Form.Item name="faq_index_mode" label="FAQ 索引模式">
-                      <Select
-                        options={[
-                          { label: "问题与答案一起索引", value: "question_answer" },
-                          { label: "仅索引问题", value: "question_only" },
-                        ]}
-                      />
-                    </Form.Item>
-                  )}
-
                   <Spin spinning={chunkLoading}>
                     <Row gutter={16}>
                       <Col span={16}>
@@ -523,22 +500,18 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                     <Select allowClear placeholder="留空 = 系统默认" options={modelOptions("chat")} />
                   </Form.Item>
 
-                  {kbType === "document" && (
-                    <>
-                      <Form.Item name="graph_enabled" label="知识图谱" valuePropName="checked" extra="启用图谱构建流水线（实体/关系抽取）">
-                        <Switch />
-                      </Form.Item>
-                      <Form.Item name="graph_extract" label="知识图谱抽取" valuePropName="checked">
-                        <Switch />
-                      </Form.Item>
-                      <Form.Item name="question_generation" label="问题生成" valuePropName="checked">
-                        <Switch />
-                      </Form.Item>
-                      <Form.Item name="question_count" label="每文档问题数">
-                        <InputNumber min={0} max={20} style={{ width: 120 }} />
-                      </Form.Item>
-                    </>
-                  )}
+                  <Form.Item name="graph_enabled" label="知识图谱" valuePropName="checked" extra="启用图谱构建流水线（实体/关系抽取）">
+                    <Switch />
+                  </Form.Item>
+                  <Form.Item name="graph_extract" label="知识图谱抽取" valuePropName="checked">
+                    <Switch />
+                  </Form.Item>
+                  <Form.Item name="question_generation" label="问题生成" valuePropName="checked">
+                    <Switch />
+                  </Form.Item>
+                  <Form.Item name="question_count" label="每文档问题数">
+                    <InputNumber min={0} max={20} style={{ width: 120 }} />
+                  </Form.Item>
                 </>
               )}
 

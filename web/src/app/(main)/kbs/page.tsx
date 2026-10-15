@@ -24,7 +24,6 @@ import {
   BookOutlined,
   DeleteOutlined,
   FileTextOutlined,
-  MessageOutlined,
   MoreOutlined,
   PlusOutlined,
   SearchOutlined,
@@ -455,7 +454,6 @@ export default function KbsPage() {
           ) : (
             <Row gutter={[16, 16]}>
               {visibleKbs.map((kb) => {
-                const isFaq = kb.type === "faq";
                 const graphOn = Boolean(kb.indexing_strategy?.graph_enabled);
                 return (
                   <Col key={kb.id} xs={24} sm={12} lg={8} xl={6}>
@@ -470,10 +468,10 @@ export default function KbsPage() {
                           <span
                             style={{
                               fontSize: 20,
-                              color: isFaq ? "#52c41a" : "#3261ce",
+                              color: "#3261ce",
                             }}
                           >
-                            {isFaq ? <MessageOutlined /> : <FileTextOutlined />}
+                            <FileTextOutlined />
                           </span>
                           <Typography.Text strong ellipsis style={{ maxWidth: 140 }}>
                             {kb.name}
@@ -532,7 +530,6 @@ export default function KbsPage() {
                             图谱
                           </Tag>
                         )}
-                        {isFaq && <Tag color="cyan">FAQ</Tag>}
                       </Space>
                     </Card>
                   </Col>

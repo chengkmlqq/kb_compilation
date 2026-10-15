@@ -33,8 +33,7 @@ DEFAULT_INDEXING_STRATEGY: dict[str, bool] = {
 }
 
 KB_TYPE_DOCUMENT = "document"
-KB_TYPE_FAQ = "faq"
-KB_TYPES = (KB_TYPE_DOCUMENT, KB_TYPE_FAQ)
+KB_TYPES = (KB_TYPE_DOCUMENT,)
 
 # WeKnora WikiExtractionGranularity（focused / standard / exhaustive）
 WIKI_GRANULARITIES = ("focused", "standard", "exhaustive")
@@ -92,16 +91,6 @@ def normalize_extract_config(raw: dict | None) -> dict:
     src.setdefault("text", "")
     src.setdefault("tags", [])
     src.setdefault("custom_instructions", "")
-    return src
-
-
-def normalize_faq_config(raw: dict | None) -> dict:
-    """FAQ 索引模式规范化（WeKnora faq_config）。"""
-    src = dict(raw or {})
-    im = str(src.get("index_mode") or "").strip()
-    src["index_mode"] = im if im in ("question_only", "question_answer") else "question_answer"
-    qm = str(src.get("question_index_mode") or "").strip()
-    src["question_index_mode"] = qm if qm in ("combined", "separate") else "combined"
     return src
 
 

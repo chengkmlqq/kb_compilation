@@ -169,7 +169,6 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
       skills_enabled: c.skills_enabled ?? false,
       skills_selection_mode: c.skills_selection_mode ?? "none",
       selected_skills: c.selected_skills ?? [],
-      faq_priority_enabled: c.faq_priority_enabled ?? true,
       question_suggestions: c.question_suggestions ?? { starters: { enabled: true, items: [] } },
     });
     setSection("prompts");
@@ -236,7 +235,6 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
       skills_enabled: v.skills_enabled,
       skills_selection_mode: v.skills_selection_mode,
       selected_skills: v.selected_skills ?? [],
-      faq_priority_enabled: v.faq_priority_enabled,
       question_suggestions: v.question_suggestions ?? {},
     };
     const res = await onSubmit({ name: v.name, description: v.description, config });

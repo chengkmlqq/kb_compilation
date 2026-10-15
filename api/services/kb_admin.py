@@ -41,7 +41,6 @@ from api.services.kb_config import (
     KB_TYPES,
     normalize_asr_config,
     normalize_extract_config,
-    normalize_faq_config,
     normalize_indexing_strategy,
     normalize_question_generation_config,
     normalize_storage_provider_config,
@@ -208,7 +207,7 @@ def create_kb(
 
     scope: personal(owner_user_id) / team(team_name) / system(admin).
     indexing_strategy 归一为 WeKnora 四路开关（缺失键用 WeKnora 默认）。
-    configs 为其余 JSON 配置（wiki_config/extract_config/faq_config 等）。
+    configs 为其余 JSON 配置（wiki_config/extract_config/question_generation_config 等）。
     build_tape_id: 构建引擎 = 服务编排中已发布的编排程序（kb_tape.id），
     文档解析成功后自动按该编排构建 wiki。
     """
@@ -251,7 +250,6 @@ def create_kb(
         indexing_strategy=normalize_indexing_strategy(indexing_strategy),
         wiki_config=normalize_wiki_config(cfg.get("wiki_config")),
         extract_config=normalize_extract_config(cfg.get("extract_config")),
-        faq_config=normalize_faq_config(cfg.get("faq_config")),
         question_generation_config=normalize_question_generation_config(
             cfg.get("question_generation_config")
         ),
@@ -383,7 +381,6 @@ def update_kb(
     normalizers = {
         "wiki_config": normalize_wiki_config,
         "extract_config": normalize_extract_config,
-        "faq_config": normalize_faq_config,
         "question_generation_config": normalize_question_generation_config,
         "vlm_config": normalize_vlm_config,
         "asr_config": normalize_asr_config,
@@ -531,7 +528,6 @@ def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0) -> dict:
         "summary_model_id": getattr(kb, "summary_model_id", None) or "",
         "wiki_config": getattr(kb, "wiki_config", None) or {},
         "extract_config": getattr(kb, "extract_config", None) or {},
-        "faq_config": getattr(kb, "faq_config", None) or {},
         "question_generation_config": getattr(kb, "question_generation_config", None) or {},
         "vlm_config": getattr(kb, "vlm_config", None) or {},
         "asr_config": getattr(kb, "asr_config", None) or {},

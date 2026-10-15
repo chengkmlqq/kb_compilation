@@ -103,13 +103,13 @@ class KBCreateRequest(BaseModel):
     scope: str = "system"
     team_name: str | None = None
     # ── WeKnora 对齐配置 ──
-    type: str = "document"  # document / faq
+    type: str = "document"  # document（问答对型已下线）
     custom_wiki_generation: bool = False
     embedding_model_id: str | None = None
     summary_model_id: str | None = None
     storage_backend_id: str | None = None
     vector_store_id: str | None = None
-    configs: dict | None = None  # wiki/extract/faq/vlm/asr/storage 等 JSON 配置
+    configs: dict | None = None  # wiki/extract/vlm/asr/storage 等 JSON 配置
     ontology_schema_name: str | None = None  # 绑定本体 Schema（抽取分类结构，多领域）
     build_tape_id: str | None = None  # 构建引擎 = 服务编排中已发布的编排程序（kb_tape.id）
     summary_strategy: str | None = None  # 上传摘要策略: off/auto/stuff/mapreduce/refine（默认 auto）
