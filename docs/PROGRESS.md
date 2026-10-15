@@ -2,7 +2,18 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-14（任务监控页：被链头承接的编排 run 收进子任务，不再顶层平级）
+最后更新：2026-10-15（编排分类按 cates.md 固化为多级种子并补充描述）
+
+## 19. 当前状态（2026-10-15 编排分类多级化 + 补充描述）
+
+- **背景**：用户问编排管理左树是否支持多级展示。实测：代码仅两级（迁移 0021 parent_id 设计，`_category_with_children`/计数 rollup/前端渲染三层均两级）；线上 kb_tape_category 库表只有 20 条一级（parent_id 全 NULL、descr 空、无二级）。按 cates.md（仓库根，20 企业领域 + 各领域文档类型 + 典型文档列）改造
+- **代码改动**（commit 62c4eac）：
+  1. `scripts/seed_tape_categories.py` 重写为内嵌 cates.md 全量数据——一级 20 领域（descr=领域用途说明）+ 二级 211 文档类型（descr 取典型文档列，如 工作报告→日报、周报、月报、季度报告、年度总结）；幂等扩为「缺 parent_id 补挂 + descr 空白补填（不覆盖已有）」；医疗健康补齐 7 类（cates.md 含「医院运营」，旧清单漏）；跨领域重名 3 个（经营指标/知识产权/风险管理）只挂首个领域
+  2. `web/src/app/(main)/orchestrations/page.tsx`：左树一级/二级行悬浮 Tooltip 显示 descr
+  3. 新增 `cates.md` 入库（分类清单数据源）
+- **库内数据（已应用）**：docker cp 进 kb-api-server 执行 → 新建 211 / 修正 20（20 个存量领域补 descr）；验证：20 一级 + 211 二级（二级全部挂在 20 领域下）、descr 231/231 全填
+- **验证**：tests/test_tape_category.py 19 passed；web tsc --noEmit exit 0
+- **部署**：前端 Tooltip 改动需 CI 重建 kb-web + pull（数据层改动即时生效，左树已见两级展开）；脚本改动走 CI 固化
 
 ## 18. 当前状态（2026-10-14 任务监控页摘要任务层级修复）
 
