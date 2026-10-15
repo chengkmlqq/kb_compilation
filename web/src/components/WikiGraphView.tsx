@@ -281,19 +281,25 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
   const stateRef = useRef<{
     nodes: Map<string, Pt>;
     hover: string;
+    selected: string;
     dragged: boolean;
     viewX: number;
     viewY: number;
     scale: number;
     raf: number;
+    flyRaf: number;
+    render: (() => void) | null;
   }>({
     nodes: new Map(),
     hover: "",
+    selected: "",
     dragged: false,
     viewX: 0,
     viewY: 0,
     scale: 1,
     raf: 0,
+    flyRaf: 0,
+    render: null,
   });
 
   const load = useCallback(
@@ -375,6 +381,53 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     setMode("ego");
     setDetailOpen(false);
     setSelected(null);
+    const st = stateRef.current;
+    st.selected = "";
+    if (st.flyRaf) {
+      cancelAnimationFrame(st.flyRaf);
+      st.flyRaf = 0;
+    }
+  }, []);
+
+  // 聚焦节点：平滑飞行（flyTo，对齐 WeKnora 400ms cubic ease-out）把节点
+  // 平移到剩余可视区中心（右侧详情抽屉宽 480 占位），当前缩放过小时同步放大，
+  // 让点击的节点「聚焦放大」。同时记录选中态驱动边/节点高亮与选中环。
+  const focusNode = useCallback((slug: string) => {
+    const st = stateRef.current;
+    const canvas = canvasRef.current;
+    const p = st.nodes.get(slug);
+    if (!canvas || !p) return;
+    const W = canvas.clientWidth || 800;
+    const H = canvas.clientHeight || 600;
+    st.selected = slug;
+    st.render?.();
+    // 用户已接管视图：布点期的自动适应屏幕停止干预，避免覆盖本动画
+    viewUserControlledRef.current = true;
+    const startX = st.viewX;
+    const startY = st.viewY;
+    const startS = st.scale;
+    const targetScale = Math.max(startS, 0.9);
+    const DRAWER_W = 480;
+    const targetViewX = (W - DRAWER_W) / 2 - p.x * targetScale;
+    const targetViewY = H / 2 - p.y * targetScale;
+    if (Math.abs(startX - targetViewX) < 0.5 && Math.abs(startY - targetViewY) < 0.5 && Math.abs(startS - targetScale) < 0.01) {
+      return;
+    }
+    if (st.flyRaf) cancelAnimationFrame(st.flyRaf);
+    const DURATION = 400;
+    const t0 = performance.now();
+    const step = (t: number) => {
+      let k = (t - t0) / DURATION;
+      if (k >= 1) k = 1;
+      const ease = 1 - Math.pow(1 - k, 3);
+      st.viewX = startX + (targetViewX - startX) * ease;
+      st.viewY = startY + (targetViewY - startY) * ease;
+      st.scale = startS + (targetScale - startS) * ease;
+      st.render?.();
+      if (k < 1) st.flyRaf = requestAnimationFrame(step);
+      else st.flyRaf = 0;
+    };
+    st.flyRaf = requestAnimationFrame(step);
   }, []);
 
   const goWikiPage = useCallback(
@@ -744,12 +797,27 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
 
       const drawArrow = arrowsVisible && st.scale > 0.55;
 
+      // 焦点高亮（对齐 WeKnora applyHighlight）：hover 或选中节点后，
+      // 相关边变焦点节点类型色并加亮，无关边淡出；节点邻居保持全亮，其余 dim。
+      const focusSlug = st.hover || st.selected || "";
+      const focusNeighbors = focusSlug ? adj.get(focusSlug) : null;
+      const typeOf = (slug: string) => nodeList.find((n) => n.slug === slug)?.page_type || "";
+      // 默认边色：比 WeKnora #c0c4cc 更深的中灰 + 更高透明度，白底上清晰可辨
+      const EDGE_COLOR = "#9aa3ad";
+
       // edges（先画，节点覆盖其上）
       for (const e of data.edges) {
         const a = st.nodes.get(e.source);
         const b = st.nodes.get(e.target);
         if (!a || !b) continue;
-        const hovered = !!st.hover && (e.source === st.hover || e.target === st.hover);
+        const relHover = !!st.hover && (e.source === st.hover || e.target === st.hover);
+        const relSelected = !!st.selected && (e.source === st.selected || e.target === st.selected);
+        const isActive = relHover || relSelected;
+        let edgeColor = EDGE_COLOR;
+        if (isActive) {
+          const hlSlug = relHover ? st.hover : st.selected;
+          edgeColor = PAGE_TYPE_COLORS[typeOf(hlSlug)] || "#0052d9";
+        }
         // 终点缩到目标节点边缘（半径 + 箭头余量），避免箭头与节点重叠
         const rA = radiusOf.get(e.source) || 14;
         const rB = radiusOf.get(e.target) || 14;
@@ -762,14 +830,14 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         const y2 = b.y - uy * (rB + 6);
         const x1 = a.x + ux * (rA + 2);
         const y1 = a.y + uy * (rA + 2);
-        ctx.globalAlpha = hovered ? 0.95 : 0.5;
-        ctx.strokeStyle = hovered ? "#1677ff" : "#d9d9d9";
-        ctx.lineWidth = hovered ? 2.5 : 1.2;
+        ctx.globalAlpha = isActive ? 0.95 : focusSlug ? 0.12 : 0.72;
+        ctx.strokeStyle = edgeColor;
+        ctx.lineWidth = isActive ? 2.2 : 1.3;
         ctx.beginPath();
         ctx.moveTo(x1, y1);
         ctx.lineTo(x2, y2);
         ctx.stroke();
-        if (drawArrow) drawArrowHead(x2, y2, ux, uy, hovered ? "#1677ff" : "#bfbfbf");
+        if (drawArrow) drawArrowHead(x2, y2, ux, uy, edgeColor);
       }
 
       // nodes
@@ -782,19 +850,31 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         const p = st.nodes.get(n.slug);
         if (!p) continue;
         const isHover = st.hover === n.slug;
-        const radius = radiusOf.get(n.slug) || 14;
-        ctx.globalAlpha = isHover ? 0.95 : 0.85;
+        const isSelected = st.selected === n.slug;
+        const isFocus = isHover || isSelected;
+        const isNeighbor = focusSlug ? (focusNeighbors?.includes(n.slug) ?? false) : false;
+        const baseRadius = radiusOf.get(n.slug) || 14;
+        const radius = isFocus ? baseRadius + 3 : baseRadius;
+        ctx.globalAlpha = focusSlug ? (isFocus || isNeighbor ? 1 : 0.22) : 0.85;
+        // 选中环（对齐 WeKnora activeRing：外圈同类型色描边）
+        if (isSelected) {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, radius + 4, 0, Math.PI * 2);
+          ctx.strokeStyle = PAGE_TYPE_COLORS[n.page_type] || "#0052d9";
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+        }
         ctx.beginPath();
         ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = PAGE_TYPE_COLORS[n.page_type] || "#999";
         ctx.fill();
         ctx.lineWidth = 1.5;
-        ctx.strokeStyle = isHover ? "#333" : "#fff";
+        ctx.strokeStyle = isFocus ? "#333" : "#fff";
         ctx.stroke();
         if (showLabel) {
           ctx.globalAlpha = 1;
-          ctx.fillStyle = isHover ? "#1677ff" : "#555";
-          ctx.font = `${isHover ? "bold " : ""}12px sans-serif`;
+          ctx.fillStyle = isFocus ? "#1677ff" : "#555";
+          ctx.font = `${isFocus ? "bold " : ""}12px sans-serif`;
           const title = n.title.length > 10 ? n.title.slice(0, 10) + "…" : n.title;
           ctx.fillText(title, p.x, p.y + radius + 14);
         }
@@ -904,8 +984,12 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     let clickTimer: number | null = null;
 
     const onMouseDown = (ev: MouseEvent) => {
-      // 用户开始操作视图（拖节点/平移）→ 停止自动适应屏幕
+      // 用户开始操作视图（拖节点/平移）→ 停止自动适应屏幕，并中断聚焦飞行动画
       viewUserControlledRef.current = true;
+      if (st.flyRaf) {
+        cancelAnimationFrame(st.flyRaf);
+        st.flyRaf = 0;
+      }
       const hit = hitNode(ev.clientX, ev.clientY);
       if (hit) {
         const p = st.nodes.get(hit);
@@ -980,15 +1064,32 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         return;
       }
       const hit = hitNode(ev.clientX, ev.clientY);
-      if (!hit) return;
+      if (!hit) {
+        // 点击空白：取消选中高亮并关闭详情（对齐 WeKnora 点击画布清除选择）
+        if (st.selected || detailOpen) {
+          st.selected = "";
+          st.render?.();
+          setDetailOpen(false);
+          setSelected(null);
+        }
+        return;
+      }
       if (clickTimer) clearTimeout(clickTimer);
-      clickTimer = window.setTimeout(() => void selectNode(hit), 220);
+      clickTimer = window.setTimeout(() => {
+        // 先聚焦（同步动效），再拉详情（异步）
+        focusNode(hit);
+        void selectNode(hit);
+      }, 220);
     };
 
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault();
-      // 用户缩放 → 停止自动适应屏幕
+      // 用户缩放 → 停止自动适应屏幕，并中断聚焦飞行动画
       viewUserControlledRef.current = true;
+      if (st.flyRaf) {
+        cancelAnimationFrame(st.flyRaf);
+        st.flyRaf = 0;
+      }
       const rect = canvas.getBoundingClientRect();
       const mx = ev.clientX - rect.left;
       const my = ev.clientY - rect.top;
@@ -1045,6 +1146,7 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
       render();
       simulate();
     };
+    st.render = render;
     start();
 
     // 可见性守卫：观察 canvas 是否在视口内（隐藏页签 display:none → 不交叉）。
@@ -1070,6 +1172,9 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     return () => {
       if (st.raf) cancelAnimationFrame(st.raf);
       st.raf = 0;
+      if (st.flyRaf) cancelAnimationFrame(st.flyRaf);
+      st.flyRaf = 0;
+      st.render = null;
       if (clickTimer) clearTimeout(clickTimer);
       io?.disconnect();
       ro?.disconnect();
@@ -1081,7 +1186,7 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
       canvas.removeEventListener("wheel", onWheel);
       canvas.removeEventListener("dblclick", onDblClick);
     };
-  }, [data, kbId, arrowsVisible, selectNode, focusEgo, fitToView]);
+  }, [data, kbId, arrowsVisible, selectNode, focusEgo, focusNode, fitToView]);
 
   const helpContent = (
     <div style={{ fontSize: 12, lineHeight: "20px", maxWidth: 260 }}>

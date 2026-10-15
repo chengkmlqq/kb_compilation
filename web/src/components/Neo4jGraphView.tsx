@@ -91,19 +91,25 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
   const stateRef = useRef<{
     nodes: Map<string, Pt>;
     hover: string;
+    selected: string;
     viewX: number;
     viewY: number;
     scale: number;
     dragging: string | null;
     raf: number;
+    flyRaf: number;
+    render: (() => void) | null;
   }>({
     nodes: new Map(),
     hover: "",
+    selected: "",
     viewX: 0,
     viewY: 0,
     scale: 1,
     dragging: null,
     raf: 0,
+    flyRaf: 0,
+    render: null,
   });
 
   const load = useCallback(
@@ -169,6 +175,12 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
 
   const focusEgo = (name: string) => {
     setDetailOpen(false);
+    const st = stateRef.current;
+    st.selected = "";
+    if (st.flyRaf) {
+      cancelAnimationFrame(st.flyRaf);
+      st.flyRaf = 0;
+    }
     void load(name);
   };
 
@@ -297,11 +309,24 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
       }
       rootG.setAttribute("transform", `translate(${st.viewX},${st.viewY}) scale(${st.scale})`);
 
+      // 焦点高亮（对齐 WikiGraphView / WeKnora）：hover 或选中实体后，
+      // 相关边加亮、无关边淡出；邻居节点全亮，其余 dim。
+      const focusSlug = st.hover || st.selected || "";
+      const focusNeighbors = focusSlug ? new Set<string>() : null;
+      if (focusNeighbors) {
+        for (const e of edgeList) {
+          if (e.source === focusSlug) focusNeighbors.add(e.target);
+          if (e.target === focusSlug) focusNeighbors.add(e.source);
+        }
+      }
+      // 默认边色：比原 #d9d9d9 更深的中灰 + 更高透明度，白底上清晰可辨
+      const EDGE_COLOR = "#9aa3ad";
+
       // edges（DOM 复用：只创建一次，更新属性；hover 边高亮）
       const activeEdges = edgeRenderList();
       const hoveredSet = new Set<string>();
       for (const e of activeEdges) {
-        if (st.hover && (e.source === st.hover || e.target === st.hover)) {
+        if (focusSlug && (e.source === focusSlug || e.target === focusSlug)) {
           hoveredSet.add(`${e.source}|${e.target}`);
         }
       }
@@ -321,9 +346,9 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
         line.setAttribute("y1", String(a.y));
         line.setAttribute("x2", String(b.x));
         line.setAttribute("y2", String(b.y));
-        line.setAttribute("stroke", hovered ? "#1677ff" : "#d9d9d9");
-        line.setAttribute("stroke-width", hovered ? "2.5" : "1.2");
-        line.setAttribute("opacity", hovered ? "0.95" : "0.55");
+        line.setAttribute("stroke", hovered ? "#1677ff" : EDGE_COLOR);
+        line.setAttribute("stroke-width", hovered ? "2.2" : "1.3");
+        line.setAttribute("opacity", hovered ? "0.95" : focusSlug ? "0.12" : "0.72");
         if (hovered && e.type) {
           const mx = (a.x + b.x) / 2;
           const my = (a.y + b.y) / 2 - 4;
@@ -351,6 +376,9 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
         const p = st.nodes.get(n.name);
         if (!p) continue;
         const isHover = st.hover === n.name;
+        const isSelected = st.selected === n.name;
+        const isFocus = isHover || isSelected;
+        const isNeighbor = focusSlug ? (focusNeighbors?.has(n.name) ?? false) : false;
         const radius = 12 + Math.min(10, n.degree || 0) * 1.1;
         let group = nodeElCache.get(n.name);
         if (!group) {
@@ -373,6 +401,14 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
             ev.stopPropagation();
             focusEgo(n.name);
           });
+          // 选中环（对齐 WikiGraphView activeRing：外圈同类型色描边，仅选中时显示）
+          const ring = document.createElementNS(ns, "circle");
+          ring.setAttribute("r", String(radius + 4));
+          ring.setAttribute("fill", "none");
+          ring.setAttribute("stroke", entityColor(n.entity_type));
+          ring.setAttribute("stroke-width", "2");
+          ring.setAttribute("opacity", "0");
+          group.appendChild(ring);
           const circle = document.createElementNS(ns, "circle");
           circle.setAttribute("r", String(radius));
           circle.setAttribute("fill", entityColor(n.entity_type));
@@ -389,12 +425,17 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
           nodeElCache.set(n.name, group);
         }
         group.setAttribute("transform", `translate(${p.x},${p.y})`);
-        const circle = group.childNodes[0] as SVGCircleElement;
-        circle.setAttribute("opacity", isHover ? "0.95" : "0.85");
-        circle.setAttribute("stroke", isHover ? "#333" : "#fff");
-        const label = group.childNodes[1] as SVGTextElement;
-        label.setAttribute("fill", isHover ? "#1677ff" : "#555");
-        label.setAttribute("font-weight", isHover ? "bold" : "normal");
+        const ring = group.childNodes[0] as SVGCircleElement;
+        ring.setAttribute("opacity", isSelected ? "1" : "0");
+        ring.setAttribute("r", String(radius + 4));
+        const circle = group.childNodes[1] as SVGCircleElement;
+        circle.setAttribute("opacity", focusSlug ? (isFocus || isNeighbor ? "1" : "0.22") : "0.85");
+        circle.setAttribute("stroke", isFocus ? "#333" : "#fff");
+        circle.setAttribute("stroke-width", isFocus ? "2.5" : "1.5");
+        circle.setAttribute("r", String(isFocus ? radius + 3 : radius));
+        const label = group.childNodes[2] as SVGTextElement;
+        label.setAttribute("fill", isFocus ? "#1677ff" : "#555");
+        label.setAttribute("font-weight", isFocus ? "bold" : "normal");
         label.textContent = n.name.length > 10 ? n.name.slice(0, 10) + "…" : n.name;
       }
     };
@@ -404,6 +445,11 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
     let downPos: { x: number; y: number } | null = null;
     let panning = false;
     svg.addEventListener("mousedown", (ev) => {
+      // 用户操作视图 → 中断聚焦飞行动画
+      if (st.flyRaf) {
+        cancelAnimationFrame(st.flyRaf);
+        st.flyRaf = 0;
+      }
       downPos = { x: ev.clientX, y: ev.clientY };
       panning = true;
     });
@@ -423,10 +469,18 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
     });
     svg.addEventListener("wheel", (ev) => {
       ev.preventDefault();
+      if (st.flyRaf) {
+        cancelAnimationFrame(st.flyRaf);
+        st.flyRaf = 0;
+      }
       const delta = ev.deltaY > 0 ? 0.9 : 1.1;
       st.scale = Math.max(0.3, Math.min(3, st.scale * delta));
     });
     svg.addEventListener("dblclick", () => {
+      if (st.flyRaf) {
+        cancelAnimationFrame(st.flyRaf);
+        st.flyRaf = 0;
+      }
       st.viewX = 0;
       st.viewY = 0;
       st.scale = 1;
@@ -437,11 +491,15 @@ export default function Neo4jGraphView({ kbId, focusName }: Props) {
       render();
       simulate();
     };
+    st.render = render;
     start();
 
     return () => {
       if (st.raf) cancelAnimationFrame(st.raf);
       st.raf = 0;
+      if (st.flyRaf) cancelAnimationFrame(st.flyRaf);
+      st.flyRaf = 0;
+      st.render = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, filterTypes, center]);
