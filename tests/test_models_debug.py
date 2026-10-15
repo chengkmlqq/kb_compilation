@@ -192,6 +192,7 @@ def test_debug_vllm_requires_image_and_passes_data_url(client, monkeypatch):
 class FakeEmbeddingClient:
     def __init__(self, cfg):
         self.cfg = cfg
+        FakeEmbeddingClient.last_cfg = cfg
 
     def embed_query(self, text):
         return [0.1] * 768
@@ -356,3 +357,104 @@ def test_debug_requires_login():
     c = TestClient(app)
     r = c.post("/api/v1/models/whatever/debug", data={"input": "hi"})
     assert r.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# 覆盖参数（编辑未保存：页面表单值优先于已保存配置）
+# ---------------------------------------------------------------------------
+
+
+def test_debug_override_form_values_win_over_saved(client, monkeypatch):
+    """编辑模型改了配置未保存就点测试：base_url/model/api_key/custom_headers
+    按表单值探测，旧 base_url 与旧密钥不生效、不泄露。"""
+    db = next(iter(app.dependency_overrides.values()))()
+    monkeypatch.setattr("api.services.chat.ChatClient", FakeChatClient)
+    r = client.post(
+        f"/api/v1/models/{_model_id(db, 'm-chat')}/debug",
+        data={
+            "input": "ping",
+            "model_type": "chat",
+            "base_url": "https://new.example.com/v1",
+            "api_key": "sk-new-key",
+            "model": "new-model",
+            "interface_type": "openai",
+            "custom_headers": json.dumps({"X-Test": "v"}),
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["ok"] is True
+    cfg = FakeChatClient.last_cfg
+    assert cfg.base_url == "https://new.example.com/v1"
+    assert cfg.model == "new-model"
+    assert cfg.api_key == "sk-new-key"
+    assert cfg.custom_headers == {"X-Test": "v"}
+    assert cfg.interface_type == "openai"
+    assert data["request"]["model_name"] == "new-model"
+    assert data["request"]["override"]["model"] == "new-model"
+    assert data["request"]["override"]["secret_overridden"] is True
+    # 旧配置不再出现在响应预览里
+    assert "sk-test123" not in json.dumps(data)
+    assert "hunter2" not in json.dumps(data)
+
+
+def test_debug_override_api_key_blank_falls_back_to_saved(client, monkeypatch):
+    """编辑未保存：api_key 留空 = 回退已保存密钥（表单里没有明文）。"""
+    db = next(iter(app.dependency_overrides.values()))()
+    monkeypatch.setattr("api.services.chat.ChatClient", FakeChatClient)
+    r = client.post(
+        f"/api/v1/models/{_model_id(db, 'm-chat')}/debug",
+        data={
+            "input": "ping",
+            "base_url": "https://new.example.com/v1",
+            "model": "new-model",
+        },
+    )
+    assert r.status_code == 200
+    cfg = FakeChatClient.last_cfg
+    # 端点/模型名用表单值，密钥回退已保存（解密后为明文 sk-test123）
+    assert cfg.base_url == "https://new.example.com/v1"
+    assert cfg.model == "new-model"
+    assert cfg.api_key == "sk-test123"
+
+
+def test_debug_override_type_switches_probe_branch(client, monkeypatch):
+    """编辑时把 chat 改成 embedding 未保存：按新类型走 embedding 探测，
+    dimension/interface_type 也按表单值。"""
+    db = next(iter(app.dependency_overrides.values()))()
+    monkeypatch.setattr("api.services.embedding.EmbeddingClient", FakeEmbeddingClient)
+    r = client.post(
+        f"/api/v1/models/{_model_id(db, 'm-chat')}/debug",
+        data={
+            "input": "ping",
+            "model_type": "embedding",
+            "base_url": "https://new.example.com/v1",
+            "model": "new-embed",
+            "interface_type": "oip",
+            "dimension": "1024",
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["ok"] is True
+    cfg = FakeEmbeddingClient.last_cfg
+    assert cfg.dim == 1024
+    assert cfg.interface_type == "oip"
+    assert cfg.model == "new-embed"
+    assert data["observations"]["dimension"] == 768  # FakeEmbeddingClient 固定 768 维
+
+
+def test_debug_override_invalid_custom_headers_400(client):
+    db = next(iter(app.dependency_overrides.values()))()
+    r = client.post(
+        f"/api/v1/models/{_model_id(db, 'm-chat')}/debug",
+        data={"input": "ping", "custom_headers": "not-json"},
+    )
+    assert r.status_code == 400
+    assert "custom_headers" in r.json()["detail"]
+
+    r = client.post(
+        f"/api/v1/models/{_model_id(db, 'm-chat')}/debug",
+        data={"input": "ping", "custom_headers": json.dumps([1, 2])},
+    )
+    assert r.status_code == 400

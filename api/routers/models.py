@@ -479,6 +479,14 @@ def debug_model(
     options: str = Form(""),
     documents: str = Form(""),
     file: UploadFile | None = File(None),
+    # 页面覆盖配置（编辑未保存时按表单值探测）：传了用页面的，留空回退已保存配置
+    model_type: str = Form(""),
+    base_url: str = Form(""),
+    api_key: str = Form(""),
+    model: str = Form(""),
+    interface_type: str = Form(""),
+    custom_headers: str = Form(""),
+    dimension: int | None = Form(None),
     caller: Caller = Depends(_require_caller),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -488,6 +496,10 @@ def debug_model(
     embedding returns the vector dimension, rerank really reranks query vs
     documents, asr transcribes an uploaded audio file. Response carries
     ok/elapsed_ms/request preview (secrets redacted)/raw_response/observations.
+
+    覆盖参数：编辑模型时用户可能改配置未保存就点「测试连接」，此时
+    base_url/api_key/model/model_type/interface_type/custom_headers/dimension
+    传了就用表单值探测，留空回退数据库已保存配置（api_key 留空=保持已存密钥）。
     """
     started = time.monotonic()
     m = get_model(db, model_id)
@@ -524,27 +536,53 @@ def debug_model(
 
     from api.services.models import decrypt_secret
 
-    base_url = (m.base_url or "").rstrip("/")
+    # 页面覆盖优先，留空回退已保存配置
+    mtype = model_type.strip() or (m.type or "chat")
+    base_url = (base_url.strip() or m.base_url or "").rstrip("/")
     if not base_url:
         raise HTTPException(status_code=400, detail="模型未配置端点地址")
-    api_key = decrypt_secret(m.api_key)
-    use_model = m.name
+    api_key = api_key.strip() or decrypt_secret(m.api_key)
+    use_model = model.strip() or m.name
+    itype = interface_type.strip() or m.interface_type or "openai"
+    chdrs: dict | None = None
+    if custom_headers.strip():
+        try:
+            parsed = json.loads(custom_headers)
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"custom_headers 不是合法 JSON: {e}") from e
+        if not isinstance(parsed, dict) or parsed is None:
+            raise HTTPException(status_code=400, detail="custom_headers 必须是 JSON 对象")
+        chdrs = parsed
+    else:
+        chdrs = m.custom_headers or None
+    dim_value = dimension if dimension else m.dimension
+
+    overridden = {
+        "model_type": model_type.strip() or None,
+        "base_url": base_url,
+        "secret_overridden": bool(api_key.strip()),
+        "model": model.strip() or None,
+        "interface_type": interface_type.strip() or None,
+        "custom_headers": custom_headers.strip() or None,
+        "dimension": dimension,
+    }
 
     request_preview: dict[str, Any] = {
         "model_id": m.id,
-        "model_name": m.name,
-        "model_type": m.type,
+        "model_name": use_model,
+        "model_type": mtype,
         "provider": m.provider or "",
         "input": input,
         "options": opts,
+        "override": overridden,
     }
     if docs:
         request_preview["documents"] = docs
     if file_name:
         request_preview["file"] = {"name": file_name, "size": len(file_bytes)}
-    if m.custom_headers:
+    if chdrs:
         # 只列键名，不泄露值（对齐 WeKnora custom_header_names）
-        request_preview["custom_header_names"] = sorted(m.custom_headers.keys())
+        request_preview["custom_header_names"] = sorted(chdrs.keys())
     observations: dict[str, Any] = {}
 
     def finish(ok: bool, raw: Any, err: str | None = None) -> dict:
@@ -559,7 +597,7 @@ def debug_model(
             data["error"] = err
         return {"success": True, "data": data}
 
-    if m.type == "embedding":
+    if mtype == "embedding":
         if not input.strip():
             raise HTTPException(status_code=400, detail="请输入要向量化的文本")
         from api.services.embedding import EmbeddingConfig, EmbeddingClient
@@ -569,8 +607,9 @@ def debug_model(
                 base_url=base_url,
                 api_key=api_key or "",
                 model=use_model,
-                dim=m.dimension or 1024,
-                custom_headers=m.custom_headers or None,
+                dim=dim_value or 1024,
+                custom_headers=chdrs,
+                interface_type=itype,
             )
         )
         try:
@@ -582,7 +621,7 @@ def debug_model(
         observations["dimension"] = len(vec)
         return finish(True, vec)
 
-    if m.type == "rerank":
+    if mtype == "rerank":
         # rerank: real POST /rerank (Jina/Cohere/阿里 compatible) with the
         # caller's query + documents; returns the ranked result list.
         if not input.strip() or not docs:
@@ -592,8 +631,8 @@ def debug_model(
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        if m.custom_headers:
-            headers.update(m.custom_headers)
+        if chdrs:
+            headers.update(chdrs)
         body = {"model": use_model, "query": input.strip(), "documents": docs}
         # base_url 可能填到端点粒度（如 https://api.siliconflow.cn/v1/rerank），
         # 也可能只填到版本根（如 https://api.siliconflow.cn/v1）——统一归一化，
@@ -613,7 +652,7 @@ def debug_model(
         except Exception as e:  # noqa: BLE001
             return finish(False, None, str(e))
 
-    if m.type == "asr":
+    if mtype == "asr":
         # asr: real transcription of the uploaded audio file.
         if not file_bytes:
             raise HTTPException(status_code=400, detail="请上传音频文件")
@@ -624,7 +663,7 @@ def debug_model(
                 base_url=base_url,
                 api_key=api_key or "",
                 model=use_model,
-                custom_headers=m.custom_headers or None,
+                custom_headers=chdrs,
             )
         )
         try:
@@ -642,7 +681,7 @@ def debug_model(
     system_prompt = (opts.get("system_prompt") or "").strip()
     if system_prompt:
         messages.append(ChatMessage(role="system", content=system_prompt))
-    if m.type == "vllm":
+    if mtype == "vllm":
         if not file_bytes:
             raise HTTPException(status_code=400, detail="请上传图片文件")
         import base64
@@ -659,7 +698,8 @@ def debug_model(
             base_url=base_url,
             api_key=api_key or "",
             model=use_model,
-            custom_headers=m.custom_headers or None,
+            custom_headers=chdrs,
+            interface_type=itype,
         )
     )
     thinking_val = opts.get("thinking")

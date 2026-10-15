@@ -624,9 +624,9 @@ function ModelEditorModal({
     setTestResult(null);
     try {
       if (editing && item?.id) {
-        // 编辑模式：api_key 留空 = 保持已保存密钥不变，表单里没有明文，
-        // 直接拿空 key 去测必然 401 —— 改走 /models/{id}/debug 用服务端
-        // 解密后的已保存密钥做真实探测。
+        // 编辑模式：优先用页面表单值探测（用户可能改了配置未保存就点测试），
+        // api_key 留空 = 保持已保存密钥不变（表单里无明文），由后端回退已存密钥；
+        // 其余字段（端点/模型名/类型/协议/自定义请求头/维度）非空即覆盖已保存配置。
         // 注意用表单值 v.type 而非已保存 item.type：改类型未保存前测试要按新类型探测
         if (v.type === "vllm" || v.type === "asr") {
           message.info("该类型需在「调试」抽屉中上传文件测试，此处仅校验连通性可先保存后到调试里验证");
@@ -635,6 +635,25 @@ function ModelEditorModal({
         }
         const debugPayload: ModelDebugPayload = { input: "ping" };
         if (v.type === "rerank") debugPayload.documents = ["ping"];
+        debugPayload.model_type = v.type;
+        debugPayload.base_url = v.base_url;
+        if (v.api_key) debugPayload.api_key = v.api_key;
+        debugPayload.model = v.name;
+        debugPayload.interface_type = v.interface_type || "openai";
+        if (v.custom_headers && String(v.custom_headers).trim()) {
+          try {
+            const parsed = JSON.parse(String(v.custom_headers));
+            if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+              message.error("自定义请求头必须是 JSON 对象，如 {\"X-Api-Key\":\"xxx\"}");
+              return;
+            }
+          } catch {
+            message.error("自定义请求头不是合法 JSON，如 {\"X-Api-Key\":\"xxx\"}");
+            return;
+          }
+          debugPayload.custom_headers = String(v.custom_headers).trim();
+        }
+        if (v.type === "embedding" && v.dimension) debugPayload.dimension = v.dimension;
         const t = await apiDebugModel(item.id, debugPayload);
         setTestResult(t.data ?? { error: "无返回" });
         if (t.data?.ok) message.success("连通正常");

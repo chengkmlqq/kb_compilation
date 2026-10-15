@@ -1707,6 +1707,14 @@ export interface ModelDebugPayload {
   documents?: string[];
   options?: ModelDebugOptions;
   file?: File;
+  // 页面覆盖配置（编辑未保存时按表单值探测）：传了用页面的，留空回退已保存配置
+  model_type?: ModelType;
+  base_url?: string;
+  api_key?: string;
+  model?: string;
+  interface_type?: string;
+  custom_headers?: string; // JSON 字符串
+  dimension?: number;
 }
 
 export function apiListModels(params?: { type?: string; scope?: string }) {
@@ -1953,6 +1961,19 @@ export function apiDebugModel(id: string, payload: ModelDebugPayload) {
   if (payload.documents?.length) fd.append("documents", JSON.stringify(payload.documents));
   if (payload.options) fd.append("options", JSON.stringify(payload.options));
   if (payload.file) fd.append("file", payload.file);
+  // 覆盖配置字段（非空才 append；api_key 留空=后端回退已保存密钥）
+  const overrideFields: Array<[string, string | number | undefined]> = [
+    ["model_type", payload.model_type],
+    ["base_url", payload.base_url],
+    ["api_key", payload.api_key],
+    ["model", payload.model],
+    ["interface_type", payload.interface_type],
+    ["custom_headers", payload.custom_headers],
+    ["dimension", payload.dimension],
+  ];
+  for (const [k, v] of overrideFields) {
+    if (v !== undefined && v !== "") fd.append(k, String(v));
+  }
   return request<ModelDebugResult>(`/api/v1/models/${id}/debug`, {
     method: "POST",
     body: fd,
