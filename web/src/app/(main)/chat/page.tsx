@@ -27,7 +27,6 @@ import {
   CopyOutlined,
   DatabaseOutlined,
   DeleteOutlined,
-  CloseOutlined,
   DownOutlined,
   EditOutlined,
   FileTextOutlined,
@@ -49,7 +48,6 @@ import {
   apiChatConfig,
   apiDeleteAttachment,
   apiDeleteSession,
-  apiFollowUp,
   apiGenerateTitle,
   apiListAgents,
   apiListAttachments,
@@ -80,9 +78,6 @@ const { Text } = Typography;
 
 interface UiMessage extends ChatMessageItem {
   streaming?: boolean;
-  followUps?: string[];
-  followUpLoading?: boolean;
-  followUpsDismissed?: boolean;
   error?: boolean;
     steps?: RagStep[];
     toolEvents?: ToolCallEvent[];
@@ -787,7 +782,7 @@ export default function ChatPage() {
         }
       }
 
-      // 完成：标记 streaming 结束，触发追问建议 + 标题
+      // 完成：标记 streaming 结束，触发标题
       finalizeRunningSteps(placeholder.id); // 兜底：HTTP 关闭但漏收 done 时同样复位步骤树
       setMsgs((prev) =>
         prev.map((m) =>
@@ -807,42 +802,16 @@ export default function ChatPage() {
       // 后台生成标题（成功会话）
       if (sessionId) {
         void apiGenerateTitle(sessionId).then(() => loadSessions());
-        if (full) {
-          void apiFollowUp(sessionId, full).then((res) => {
-            if (res.success) {
-              setMsgs((prev) =>
-                prev.map((m) =>
-                  m.id === placeholder.id ? { ...m, followUps: res.data?.questions || [] } : m,
-                ),
-              );
-            }
-          });
-        }
       }
     } catch (e) {
       if ((e as Error).name === "AbortError") {
         // 用户主动停止：保留已生成部分
         finalizeRunningSteps(placeholder.id); // 停止后步骤树不再转 loading
-        const finalContent = (() => {
-          let c = "";
-          setMsgs((prev) => {
-            const target = prev.find((m) => m.id === placeholder.id);
-            c = target?.content || "";
-            return prev.map((m) => (m.id === placeholder.id ? { ...m, streaming: false } : m));
-          });
-          return c;
-        })();
+        setMsgs((prev) =>
+          prev.map((m) => (m.id === placeholder.id ? { ...m, streaming: false } : m)),
+        );
         // 2026-10-12 停止后同样保存输入态快照（下次打开恢复）
         if (sessionId) void apiUpdateSession(sessionId, { last_request_state: snapshotInputState() });
-        void apiFollowUp(sessionId!, finalContent).then((res) => {
-          if (res.success) {
-            setMsgs((prev) =>
-              prev.map((m) =>
-                m.id === placeholder.id ? { ...m, followUps: res.data?.questions || [] } : m,
-              ),
-            );
-          }
-        });
       } else {
         // 失败：保留用户消息，助手消息标记 error（提供「重试」入口）
         toast.error("对话请求失败，请重试");
@@ -861,11 +830,6 @@ export default function ChatPage() {
 
   const stopGenerating = () => {
     abortRef.current?.abort();
-  };
-
-  // 触发追问
-  const askFollowUp = (q: string) => {
-    void send(q);
   };
 
   // 重新生成：重发该回答前一条用户消息
@@ -1516,39 +1480,7 @@ export default function ChatPage() {
                   </div>
                 )}
                 {/* 2026-10-15：消息末尾不再展示来源文档面板（ReferencePanel），仅保留正文引用角标（点击开右侧抽屉） */}
-                {/* 追问建议（对齐 WeKnora FollowUpSuggestions：标题行 + 列表 + 关闭） */}
-                {m.role === "assistant" && !m.streaming && m.followUps && m.followUps.length > 0 && (
-                  <div className="kb-followups" style={{ marginTop: 8 }}>
-                    <div className="kb-followups__header">
-                      <span className="kb-followups__title">推荐追问</span>
-                      <div className="kb-followups__actions">
-                        {!m.followUpsDismissed && (
-                          <button
-                            type="button"
-                            className="kb-followups__close"
-                            aria-label="关闭"
-                            onClick={() =>
-                              setMsgs((prev) =>
-                                prev.map((x) => (x.id === m.id ? { ...x, followUpsDismissed: true } : x)),
-                              )
-                            }
-                          >
-                            <CloseOutlined />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    {!m.followUpsDismissed && (
-                      <div className="kb-followups__list">
-                        {m.followUps.map((q, i) => (
-                          <button key={i} type="button" className="kb-followups__item" onClick={() => askFollowUp(q)}>
-                            {q}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* 2026-10-16：回复下方「推荐追问」建议块已移除（用户要求） */}
                 {idx === msgs.length - 1 && m.role === "assistant" && m.streaming && (
                   <div style={{ marginTop: 4 }}>
                     <Spin size="small" />
