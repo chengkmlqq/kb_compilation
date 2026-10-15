@@ -54,7 +54,8 @@ NEW_LINE = "META = _re.compile(r'%s', _re.I)" % NEW_META
 def _patch_code(code: str) -> tuple[str, bool]:
     if not code or "META = _re.compile" not in code:
         return code, False
-    patched, n = META_LINE.subn(NEW_LINE, code)
+    # 函数式替换：替换模板字符串会把 \s 等当转义解析（bad escape），函数不解析
+    patched, n = META_LINE.subn(lambda _m: NEW_LINE, code)
     return patched, n > 0 and patched != code
 
 
@@ -74,6 +75,31 @@ def _patch_nodes(nodes: list | None) -> int:
     return changed
 
 
+def _sync_nodes_from_steps(nodes: list | None, steps_map: dict) -> int:
+    """以 kb_tape_step（执行真源）反向同步画布/模板节点：config/stepInst/label。
+
+    背景（2026-10-15 实测）：三个摘要编排的 tape.nodes / tape_template.nodes 长期
+    与 kb_tape_step 脱节（nodes 里 n8 还是「写 wiki 摘要页」远古版：含 hashlib/
+    page_*、无 META 清洗）。用户在服务编排页点「保存设计」会用画布 nodes 覆盖式
+    重建 kb_tape_step（save_tape_design 删子表重建）→ 执行层修复被冲掉。此处把
+    step 层当前状态回写画布与模板，使保存不再回退。
+    """
+    changed = 0
+    for n in nodes or []:
+        sid = str(n.get("id") or "")
+        if sid not in steps_map:
+            continue
+        inst, label, cfg = steps_map[sid]
+        d = dict(n.get("data") or {})
+        if d.get("config") != cfg or d.get("stepInst") != inst or d.get("label") != label:
+            d["config"] = dict(cfg)
+            d["stepInst"] = inst
+            d["label"] = label
+            n["data"] = d
+            changed += 1
+    return changed
+
+
 def main() -> None:
     s = get_sessionmaker()()
     try:
@@ -84,7 +110,9 @@ def main() -> None:
                 select(TapeStep).where(TapeStep.tape_id == tape_id)
             ).scalars().all()
             step_changed = 0
+            steps_map: dict[str, tuple] = {}
             for st in steps:
+                sid = st.id.rsplit("::", 1)[-1]
                 cfg = dict(st.step_config or {})
                 code = cfg.get("code")
                 if isinstance(code, str):
@@ -93,6 +121,7 @@ def main() -> None:
                         cfg["code"] = new_code
                         st.step_config = cfg
                         step_changed += 1
+                steps_map[sid] = (st.step_inst or "", st.step_label or "", cfg)
             print(f"  kb_tape_step: {step_changed} 个步骤的 code 已更新")
 
             # 2. kb_tape.nodes（画布）
@@ -101,7 +130,8 @@ def main() -> None:
                 print("  ! kb_tape 不存在，跳过 nodes 同步")
                 continue
             n1 = _patch_nodes(tape.nodes)
-            print(f"  kb_tape.nodes: {n1} 个节点已更新")
+            n1s = _sync_nodes_from_steps(tape.nodes, steps_map)
+            print(f"  kb_tape.nodes: {n1} 个节点 META 已更新, {n1s} 个节点已对齐 step")
 
             # 3. kb_tape_template.nodes（模板）
             # 模板与 tape 的关联：模板 name 是 label 格式（如「文档摘要（Map-Reduce：…）」），
@@ -114,9 +144,10 @@ def main() -> None:
                 ).scalars().all()
                 for tmpl in tmpls:
                     n2 = _patch_nodes(tmpl.nodes)
-                    if n2:
-                        tpl_n += n2
-                        print(f"  模板[{tmpl.id[:8]} {tmpl.name[:30]}]: {n2} 个节点已更新")
+                    n2s = _sync_nodes_from_steps(tmpl.nodes, steps_map)
+                    if n2 or n2s:
+                        tpl_n += n2 + n2s
+                        print(f"  模板[{tmpl.id[:8]} {tmpl.name[:30]}]: META {n2} + 对齐step {n2s}")
             else:
                 print("  ! tape_label 为空，模板节点未匹配（请手动核对）")
             print(f"  kb_tape_template.nodes: 共 {tpl_n} 个节点已更新")
