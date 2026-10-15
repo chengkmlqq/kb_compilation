@@ -7,7 +7,8 @@
   的「典型文档」列（如 工作报告 → 日报、周报、月报、季度报告、年度总结）。
 幂等：已存在的分类跳过创建；已存在但缺 parent_id 的补挂父级；
 descr 只在为空时补填（空白不覆盖已有描述）。
-保留既有「通用」「摘要」分类（不删不重置）。
+保留既有「通用」「摘要」分类（不删不重置）；缺失时按下方固定定义创建
+（通用=tape 分类 sort_num 1、摘要=template 分类 sort_num 2，排在领域之前）。
 跨领域重名文档类型（经营指标/知识产权/风险管理）只挂首个领域。
 
 用法：docker exec kb-api-server /srv/kb/.venv/bin/python /srv/kb/scripts/seed_tape_categories.py
@@ -24,6 +25,12 @@ from api.models.orchestration import TapeCategory
 
 # 领域用途说明（一级 descr）
 DOMAIN_DESCR: dict[str, str] = {'通用办公与综合管理': '涵盖工作报告、工作计划、会议纪要、公文函件等日常办公文档，支撑企业综合行政与通用办公场景。', '制度与企业治理': '涵盖管理制度、管理规定、操作规程、内控与合规等文档，支撑企业制度体系与治理机制建设。', '采购与供应链': '覆盖采购制度、流程、需求、方案、文件、评审、履约与供应链管理等采购全链路文档。', '财务与会计': '涵盖财务制度、会计政策、财务报表、预算、资金、税务、成本等财务与会计类文档。', '人力资源与组织管理': '涵盖人事制度、组织架构、招聘、培训、绩效、薪酬、劳动关系等人力资源管理文档。', '法务与合同管理': '涵盖合同协议、法律法规、法律意见、争议纠纷与知识产权等法务与合同类文档。', '销售与市场营销': '涵盖销售制度、计划、客户、商机、报价、投标与营销推广等销售市场类文档。', '客户服务与运营': '涵盖客服制度、操作手册、服务工单、投诉建议、服务流程与运营报告等客户服务文档。', '产品管理': '涵盖产品需求、规划、设计、规格、评审、版本管理与用户研究等产品管理文档。', '技术研发与软件工程': '涵盖技术规范、架构设计、API 文档、数据模型、测试、部署运维与技术方案等研发文档。', 'IT 运维与信息安全': '涵盖运维制度、系统资产、变更、事件、监控、安全制度、权限与应急预案等 IT 运维文档。', '项目管理': '涵盖项目立项、计划、需求、进度、风险、质量、验收与复盘等项目全周期文档。', '生产制造与质量管理': '涵盖生产制度、工艺文件、生产计划、设备、质量标准、检验与安全生产等制造质量文档。', '工程建设与设计': '涵盖工程规范、设计文件、图纸、施工组织、质量验收、安全管理与竣工交付等工程文档。', '物流与仓储': '涵盖物流仓储制度、出入库、库存、运输、合同、成本与供应保障等物流仓储文档。', '战略与经营管理': '涵盖战略规划、经营计划、经营分析、绩效考核、投资管理与决策材料等经营管理文档。', '研究与知识创新': '涵盖研究报告、论文文献、专利成果、实验记录、创新项目与技术标准等知识创新文档。', '培训与教育': '涵盖培训教材、课程设计、操作教程、考核资料与知识手册等培训教育文档。', '行业监管与公共政策': '涵盖法规政策、行业标准、监管要求、申报材料与资质认证等行业监管文档。', '医疗健康': '涵盖医疗制度、临床指南、操作规范、医学研究与药品资料等医疗健康文档。'}
+
+# (category, label, descr, cat_type, sort_num)——固定一级分类（排在领域之前）
+FIXED_CATEGORIES: list[tuple[str, str, str, str, int]] = [
+    ("通用", "通用", "未归类到具体企业领域的通用编排。", "tape", 1),
+    ("摘要", "摘要", "文档摘要类编排（Stuff/Map-Reduce/Refine 等模板）。", "template", 2),
+]
 
 # (领域, [(文档类型, 典型文档), ...])——文档类型 descr 取 cates.md 典型文档列
 CATEGORY_TREE: list[tuple[str, list[tuple[str, str]]]] = [
@@ -54,6 +61,33 @@ def main() -> None:
     db = get_sessionmaker()()
     created = updated = 0
     try:
+        # 固定分类（通用/摘要）：缺失时创建，已存在仅补 descr/合并 cat_type
+        for category, label, descr, cat_type, sort_num in FIXED_CATEGORIES:
+            row = db.execute(
+                select(TapeCategory).where(TapeCategory.category == category)
+            ).scalars().first()
+            if row is None:
+                db.add(
+                    TapeCategory(
+                        id=uuid.uuid4().hex,
+                        category=category,
+                        label=label,
+                        descr=descr,
+                        cat_type=cat_type,
+                        sort_num=sort_num,
+                        state="1",
+                    )
+                )
+                created += 1
+            else:
+                if row.cat_type not in (cat_type, "both"):
+                    row.cat_type = "both"  # 类型不一致合并，避免树里看不到
+                    updated += 1
+                if not row.descr and descr:
+                    row.descr = descr  # 空白不覆盖，仅补填
+                    updated += 1
+        db.commit()
+
         # 一级领域
         for i, (domain, _rows) in enumerate(CATEGORY_TREE):
             row = db.execute(
