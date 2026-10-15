@@ -72,7 +72,7 @@ export const SUMMARY_STRATEGY_OPTIONS = [
   { value: "auto", label: "自动（按文档规模选择）" },
   { value: "stuff", label: "小文档全文直塞（Stuff）" },
   { value: "mapreduce", label: "大文档分块合并（Map-Reduce）" },
-  { value: "refine", label: "增量修订（Refine，需已有摘要）" },
+  { value: "refine", label: "增量修订（Refine：有存量摘要时滚动融合，无存量摘要时首轮直接生成）" },
   { value: "off", label: "关（不生成摘要）" },
 ];
 
