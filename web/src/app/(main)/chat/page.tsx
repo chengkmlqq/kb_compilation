@@ -1466,8 +1466,18 @@ export default function ChatPage() {
                     )}
                   </div>
                 )}
-                {/* 答案工具栏：复制 + 喜欢/不喜欢反馈（2026-10-13） */}                {m.role === "assistant" && !m.streaming && m.content && (
+                {/* 答案工具栏：重新生成 + 复制 + 喜欢/不喜欢反馈，全部图标（2026-10-15） */}
+                {m.role === "assistant" && !m.streaming && m.content && (
                   <div style={{ marginTop: 6, display: "flex", gap: 4, alignItems: "center" }}>
+                    {!m.error && (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<ReloadOutlined />}
+                        style={{ fontSize: 12, padding: "0 4px", height: "auto", color: token.colorTextTertiary }}
+                        onClick={() => regenerate(msgs, idx)}
+                      />
+                    )}
                     <Button
                       type="text"
                       size="small"
@@ -1480,9 +1490,7 @@ export default function ChatPage() {
                         if (ok) toast.success("已复制回答");
                         else toast.error("复制失败，请检查浏览器剪贴板权限");
                       }}
-                    >
-                      复制
-                    </Button>
+                    />
                     <Button
                       type="text"
                       size="small"
@@ -1494,9 +1502,7 @@ export default function ChatPage() {
                         color: m.feedback === "like" ? token.colorPrimary : token.colorTextTertiary,
                       }}
                       onClick={() => void toggleFeedback(m, "like")}
-                    >
-                      喜欢
-                    </Button>
+                    />
                     <Button
                       type="text"
                       size="small"
@@ -1508,9 +1514,7 @@ export default function ChatPage() {
                         color: m.feedback === "dislike" ? token.colorError : token.colorTextTertiary,
                       }}
                       onClick={() => void toggleFeedback(m, "dislike")}
-                    >
-                      不喜欢
-                    </Button>
+                    />
                   </div>
                 )}
                 {/* 引用（对齐 WeKnora docInfo：按文档分组折叠面板 + chunk hover 预览 + 跳转文档） */}
@@ -1521,19 +1525,6 @@ export default function ChatPage() {
                       setRefDrawer({ open: true, refs: m.refs || [], answer: m.content, activeChunk: r.chunk_id })
                     }
                   />
-                )}
-                {/* 重新生成（对齐 WeKnora 回答操作） */}
-                {m.role === "assistant" && !m.streaming && !m.error && m.content && (
-                  <div style={{ marginTop: 6 }}>
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ padding: 0, height: "auto", fontSize: 12 }}
-                      onClick={() => regenerate(msgs, idx)}
-                    >
-                      重新生成
-                    </Button>
-                  </div>
                 )}
                 {/* 追问建议（对齐 WeKnora FollowUpSuggestions：标题行 + 列表 + 关闭） */}
                 {m.role === "assistant" && !m.streaming && m.followUps && m.followUps.length > 0 && (
