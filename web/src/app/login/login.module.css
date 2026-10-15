@@ -1,0 +1,160 @@
+/* 2026-10-16 登录页对齐 data_supply_base（MODO 标准登录页）视觉：
+   全屏背景图 + 左上角 logo + 居中卡片（左插画 / 右表单）。
+   主色 #3261CE 与 antd-theme-token.tsx 的 colorPrimary 一致。 */
+
+.modoAppLogin {
+  width: 100%;
+  height: 100vh;
+  background-color: rgba(45, 132, 251, 0.05);
+  position: relative;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+}
+
+.bg {
+  position: absolute;
+  width: 100%;
+  height: auto;
+  z-index: 0;
+  top: 0;
+  left: 0;
+}
+
+.logo {
+  position: absolute;
+  top: 60px;
+  left: 70px;
+  height: 32px;
+  z-index: 1;
+}
+
+.loginAll {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 816px;
+  height: 450px;
+  background-color: #fff;
+  border-radius: 6px;
+  box-shadow: 0 1px 30px 0 rgb(117 145 175 / 18%);
+  display: flex;
+  z-index: 2;
+}
+
+.loginImg {
+  width: 408px;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+.loginImg img {
+  width: 100%;
+  height: 100%;
+  vertical-align: middle;
+  object-fit: cover;
+}
+
+.loginDialog {
+  width: 408px;
+  height: 100%;
+  position: relative;
+  padding: 56px 70px 65px 70px;
+  box-sizing: border-box;
+}
+
+.loginInfo {
+  position: relative;
+  width: 100%;
+}
+
+.loginHello {
+  font-size: 16px;
+  font-weight: bold;
+  color: #1d2129;
+  line-height: 1;
+}
+
+.loginTitle {
+  width: 100%;
+  line-height: 1;
+  margin-top: 8px;
+  display: flex;
+  align-items: baseline;
+}
+
+.loginWelcome {
+  color: #1d2129;
+  line-height: 1;
+}
+
+.loginTitleLabel {
+  font-size: 24px;
+  font-weight: 600;
+  color: #3261ce;
+  display: inline-block;
+  position: relative;
+  margin-left: 8px;
+  line-height: 1;
+}
+
+.loginForm {
+  margin-top: 50px;
+}
+
+/* 输入框改为下划线样式（对齐 data_supply_base 登录表单） */
+.loginForm :global(.ant-form-item-label > label) {
+  font-size: 16px;
+  color: #1d2129;
+  height: 28px;
+  line-height: 28px;
+}
+
+.loginForm :global(.ant-input),
+.loginForm :global(.ant-input-affix-wrapper) {
+  border: none !important;
+  background-color: transparent !important;
+  border-bottom: 1px solid #dadfe6 !important;
+  padding: 8px 0px !important;
+  border-radius: 0px !important;
+  box-shadow: none !important;
+}
+
+.loginForm :global(.ant-input-affix-wrapper .ant-input) {
+  border: none !important;
+  border-bottom: none !important;
+  padding: 0 !important;
+  background-color: transparent !important;
+}
+
+.loginForm :global(.ant-input:focus),
+.loginForm :global(.ant-input-focused),
+.loginForm :global(.ant-input-affix-wrapper:focus),
+.loginForm :global(.ant-input-affix-wrapper-focused) {
+  border-bottom-color: #3261ce !important;
+}
+
+/* Chrome 自动填充底色会盖住背景，这里用超长延迟禁用 */
+.loginForm :global(input:-webkit-autofill),
+.loginForm :global(input:-webkit-autofill:hover),
+.loginForm :global(input:-webkit-autofill:focus),
+.loginForm :global(input:-webkit-autofill:active) {
+  -webkit-transition-delay: 99999s;
+  transition-delay: 99999s;
+}
+
+.loginForm :global(.ant-btn-primary) {
+  width: 100%;
+  border-radius: 21px;
+  height: 35px;
+  line-height: 1;
+  font-size: 14px;
+  background-color: #3261ce;
+}
+
+.itemRemember {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}

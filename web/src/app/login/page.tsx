@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Alert, Button, Card, Checkbox, Form, Input, Typography, message } from "antd";
+import { Alert, App, Button, Checkbox, Form, Input, Typography } from "antd";
 import { useRouter } from "next/navigation";
 import { apiAuthMode, apiLogin, AuthModeConfig } from "@/lib/api";
+import styles from "./login.module.css";
 
 interface LoginValues {
   userId: string;
@@ -11,7 +12,14 @@ interface LoginValues {
   remember?: boolean;
 }
 
+// 应用部署在 /wiki 前缀下（next.config basePath=/wiki），静态资源需带前缀
+const ASSET_BASE = "/wiki";
+const loginBg = `${ASSET_BASE}/login/app-login-bg.png`;
+const loginBanner = `${ASSET_BASE}/login/app-login-banner.png`;
+const loginLogo = `${ASSET_BASE}/login/modo-logo.png`;
+
 export default function LoginPage() {
+  const { message } = App.useApp();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm<LoginValues>();
@@ -87,56 +95,65 @@ export default function LoginPage() {
   };
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "rgba(45, 132, 251, 0.05)",
-        position: "relative",
-      }}
-    >
-      <Card
-        style={{
-          width: 400,
-          borderRadius: 6,
-          boxShadow: "0 1px 30px 0 rgb(117 145 175 / 18%)",
-        }}
-      >
-        <Typography.Title level={3} style={{ textAlign: "center", marginTop: 0 }}>
-          领域知识构建
-        </Typography.Title>
-        <Typography.Paragraph type="secondary" style={{ textAlign: "center" }}>
-          文档解析 · 向量检索 · Wiki 生成 · 智能问答
-        </Typography.Paragraph>
-        {authMode?.ssoEnabled && (
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginBottom: 16 }}
-            message="系统已启用统一认证（SSO），如无法登录请联系管理员"
-          />
-        )}
-        <Form<LoginValues> form={form} layout="vertical" onFinish={onFinish} size="large">
-          <Form.Item label="账号名称" name="userId" rules={[{ required: true, message: "请输入账号" }]}>
-            <Input placeholder="请输入账号" autoComplete="username" />
-          </Form.Item>
-          <Form.Item label="登录密码" name="pwd" rules={[{ required: true, message: "请输入密码" }]}>
-            <Input.Password placeholder="请输入密码" autoComplete="current-password" />
-          </Form.Item>
-          <Form.Item style={{ marginBottom: 12 }}>
-            <Form.Item name="remember" valuePropName="checked" noStyle>
-              <Checkbox>记住密码</Checkbox>
-            </Form.Item>
-          </Form.Item>
-          <Form.Item style={{ marginBottom: 0 }}>
-            <Button type="primary" htmlType="submit" block loading={loading}>
-              登录
-            </Button>
-          </Form.Item>
-        </Form>
-      </Card>
+    <div className={styles.modoAppLogin}>
+      <img className={styles.logo} src={loginLogo} alt="logo" />
+      <img className={styles.bg} src={loginBg} alt="bg" />
+
+      <div className={styles.loginAll}>
+        <div className={styles.loginImg}>
+          <img src={loginBanner} alt="" />
+        </div>
+
+        <div className={styles.loginDialog}>
+          <div className={styles.loginInfo}>
+            <div className={styles.loginHello}>Hello!</div>
+            <div className={styles.loginTitle}>
+              <span className={styles.loginWelcome}>欢迎登录</span>
+              <span className={styles.loginTitleLabel}>领域知识构建</span>
+            </div>
+            {authMode?.ssoEnabled && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginTop: 16 }}
+                message="系统已启用统一认证（SSO），如无法登录请联系管理员"
+              />
+            )}
+            <Form<LoginValues>
+              form={form}
+              className={styles.loginForm}
+              onFinish={onFinish}
+              layout="vertical"
+              size="large"
+            >
+              <Form.Item
+                label="账号名称"
+                name="userId"
+                rules={[{ required: true, message: "请输入账号", min: 3, max: 192 }]}
+              >
+                <Input placeholder="请输入账号" autoComplete="username" />
+              </Form.Item>
+              <Form.Item
+                label="登录密码"
+                name="pwd"
+                rules={[{ required: true, message: "请输入密码", min: 3, max: 192 }]}
+              >
+                <Input.Password placeholder="请输入密码" autoComplete="current-password" />
+              </Form.Item>
+              <div className={styles.itemRemember}>
+                <Form.Item name="remember" valuePropName="checked" noStyle>
+                  <Checkbox>记住密码</Checkbox>
+                </Form.Item>
+              </div>
+              <Form.Item style={{ marginBottom: 0 }}>
+                <Button type="primary" htmlType="submit" block loading={loading}>
+                  登录
+                </Button>
+              </Form.Item>
+            </Form>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
