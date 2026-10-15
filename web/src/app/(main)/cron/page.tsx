@@ -36,6 +36,26 @@ import {
   CronTaskSavePayload,
 } from "@/lib/api";
 
+/** 任务类中文说明（下拉展示用；未收录的类回退显示类名本身） */
+const TASK_CLASS_LABELS: Record<string, string> = {
+  KbLogCleanupTask: "日志清理（清理过期操作日志/任务记录）",
+  KbMetadataCollectionTask: "元数据采集",
+  KbChunkVerifyTask: "切片校验",
+  KbDocumentProcessTask: "文档解析",
+  KbDocumentEmbedTask: "文档向量化",
+  KbWikiBuildTask: "Wiki 构建（图谱路径）",
+  KbSkillWikiBuildTask: "Wiki 构建（内化引擎）",
+  KbGraphBuildTask: "图谱构建",
+  KbTableIngestTask: "表格导入",
+  KbAgentGatewayTask: "Agent 网关提交（回退路径）",
+  KbAgentWikiBuildTask: "Agent 内联 Wiki 构建（主路径）",
+  KbSkillDirectBuildTask: "技能直连构建",
+  KbOrchestrationRunTask: "编排运行",
+  KbOrchestrationNodeTask: "编排节点执行",
+  KbOrphanRecoveryTask: "孤儿任务恢复（系统自跑）",
+};
+const taskClassLabel = (tc?: string) => (tc && TASK_CLASS_LABELS[tc]) || tc || "";
+
 /** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
 type CronTab = { key: string; title: string; children: ReactNode };
 
@@ -218,6 +238,7 @@ export default function CronPage() {
       dataIndex: "taskClass",
       width: 190,
       ellipsis: true,
+      render: (text) => taskClassLabel(text),
     },
     {
       title: "执行队列",
@@ -404,7 +425,7 @@ export default function CronPage() {
               optionFilterProp="label"
               options={registeredTasks.map((t) => ({
                 value: t.taskClass,
-                label: t.taskClass,
+                label: taskClassLabel(t.taskClass),
               }))}
             />
           </Form.Item>
@@ -443,7 +464,7 @@ export default function CronPage() {
                 color: "#4D5E7D",
               }}
             >
-              任务说明：{selectedTaskClass}
+              任务说明：{taskClassLabel(selectedTaskClass)}
             </div>
           )}
         </Form>
