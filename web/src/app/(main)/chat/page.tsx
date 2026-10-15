@@ -1357,7 +1357,10 @@ export default function ChatPage() {
               )}
             </div>
           ) : (
-                      <div className="kb-chat-msgs">
+                      <div
+            className="kb-chat-msgs"
+            style={{ maxWidth: CONTENT_MAX_WIDTH, marginLeft: "auto", marginRight: "auto" }}
+          >
                       {msgs.map((m, idx) => (
               <div key={m.id}>
                 {/* 对齐 WeKnora：AI 全宽无气泡（.bot_msg max-width:100%），用户 76% 圆角气泡（.user_msg） */}
