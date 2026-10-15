@@ -922,6 +922,54 @@ def document_processing_timeline(kb_id: str, document_id: str, db: Session = Dep
         except Exception:  # noqa: BLE001
             continue
 
+    # ---- 编排构建兜底（2026-10-16）：绑定构建引擎（build_tape_id）时 wiki 由
+    #      编排承接，无 WIKI_SKILL 任务；回退查 ORCH_RUN_* job → kb_tape_run 反查
+    #      inputs.document_id（与 _attach_wiki_build_status 同源模式）。----
+    if not wiki_job_id:
+        from api.models.orchestration import TapeRun
+
+        orch_jobs = db.execute(
+            select(Job.id, Job.task_params, Job.state, Job.duration_ms, Job.error_message)
+            .where(Job.id.like("ORCH_RUN%"))
+            .order_by(Job.create_time.desc())
+            .limit(2000)
+        ).all()
+        run_ids: list[str] = []
+        for jid, tp, _st, _dur, _err in orch_jobs:
+            try:
+                rid = str(json.loads(tp or "{}").get("runId") or "").strip()
+            except Exception:  # noqa: BLE001
+                rid = ""
+            if rid:
+                run_ids.append(rid)
+        run_rows: dict[str, tuple] = {}
+        if run_ids:
+            for run in db.execute(
+                select(TapeRun.id, TapeRun.status, TapeRun.inputs, TapeRun.error).where(
+                    TapeRun.id.in_(run_ids)
+                )
+            ).all():
+                run_rows[str(run.id)] = (run.status, run.inputs or {}, run.error)
+        for jid, tp, _st, dur, err in orch_jobs:
+            try:
+                rid = str(json.loads(tp or "{}").get("runId") or "").strip()
+            except Exception:  # noqa: BLE001
+                rid = ""
+            if rid not in run_rows:
+                continue
+            run_status, run_inputs, run_error = run_rows[rid]
+            if str(run_inputs.get("kb_id") or "") != kb_id:
+                continue
+            kid = str(run_inputs.get("document_id") or run_inputs.get("doc_id") or "")
+            if kid != document_id:
+                continue
+            # run.status 库值小写（queued/running/success/failed/cancelled）→
+            # 转大写对齐前端 timeline 契约（与 WIKI job 的 Job.state 大写一致）。
+            wiki_state, wiki_job_id, wiki_dur, wiki_err = (
+                str(run_status).upper(), str(jid), dur, (run_error or err),
+            )
+            break
+
     # ---- 向量化进度（PG kb_embedding vs doc_chunk 数，两步查跨库关联） ----
     embed_cnt = 0
     try:

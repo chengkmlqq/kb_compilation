@@ -43,6 +43,7 @@ import {
 } from "@ant-design/icons";
 import DocCardView, {
   STATE_LABEL,
+  docStageTags,
   fileTypeIcon,
 } from "@/components/DocCardView";
 import ModoTable from "@/components/biz/modo-table";
@@ -69,14 +70,6 @@ import {
   KbItem,
 } from "@/lib/api";
 import { emitUploadTask, makeUploadTaskId, setFileDropTarget } from "@/lib/upload-bus";
-
-const PARSE_STATE_COLOR: Record<string, string> = {
-  PENDING: "default",
-  PARSING: "processing",
-  EMBEDDING: "processing",
-  READY: "success",
-  FAILED: "error",
-};
 
 export interface KbDocsPaneProps {
   kbId: string;
@@ -856,9 +849,14 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                   render: (v: string, doc: DocItem) => (
                     <Space size={4}>
                       {["PENDING", "PARSING", "EMBEDDING"].includes(v) && <Spin size="small" />}
-                      <Tag color={PARSE_STATE_COLOR[v] || "default"}>{STATE_LABEL[v] || v}</Tag>
-                      {v === "FAILED" && (
-                        <a onClick={() => onViewTrace(doc)}>查看原因</a>
+                      {/* 方案A：三段阶段标签（解析✓ + 摘要 + 构建），非 READY 退化为单解析标签 */}
+                      {v === "FAILED" ? (
+                        <>
+                          <Tag color="error">失败</Tag>
+                          <a onClick={() => onViewTrace(doc)}>查看原因</a>
+                        </>
+                      ) : (
+                        docStageTags(doc)
                       )}
                     </Space>
                   ),

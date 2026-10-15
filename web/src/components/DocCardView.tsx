@@ -3,7 +3,7 @@
  * 文档卡片视图（对齐 WeKnora 卡片网格）：文件图标 + 文件名 + 状态/信息 + 更多操作菜单。
  * 点击卡片/文件名 → 打开详情抽屉（onOpen）；处理中/失败状态可点 → 查看轨迹（onTrace）。
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Button, Card, Dropdown, Empty, Popover, Space, Spin, Tag, Typography } from "antd";
 import {
   DeleteOutlined,
@@ -38,6 +38,54 @@ export const STATE_LABEL: Record<string, string> = {
   READY: "已就绪",
   FAILED: "失败",
 };
+
+/** 摘要阶段标签（kb_document.summary_status："" 未生成 / READY / FAILED） */
+export const SUMMARY_STAGE_LABEL: Record<string, { text: string; color: string }> = {
+  READY: { text: "摘要完成", color: "success" },
+  FAILED: { text: "摘要失败", color: "error" },
+  "": { text: "摘要未生成", color: "default" },
+};
+
+/**
+ * wiki 构建阶段标签（doc.wiki_build.state：WIKI 任务 Job.state 大写，或
+ * 编排 ORCH_RUN run.status 转大写）。SUCCESS=完成 / FAILED|STOPPED|CANCELLED=失败 /
+ * PENDING|RUNNING|QUEUED=构建中 / 无 wiki_build=未生成（未配置构建引擎或未触发）。
+ */
+export const WIKI_STAGE_LABEL: Record<string, { text: string; color: string }> = {
+  SUCCESS: { text: "构建完成", color: "success" },
+  FAILED: { text: "构建失败", color: "error" },
+  STOPPED: { text: "构建失败", color: "error" },
+  CANCELLED: { text: "构建失败", color: "error" },
+  PENDING: { text: "构建中", color: "processing" },
+  RUNNING: { text: "构建中", color: "processing" },
+  QUEUED: { text: "构建中", color: "processing" },
+};
+
+/**
+ * 文档处理三段阶段标签（解析/摘要/构建，方案A 展示层聚合，2026-10-16）：
+ * parse_state=READY 时在「已就绪」主标签旁附加摘要与构建两个阶段小标签，
+ * 使用户一眼看到整条管线（解析+向量化 / 摘要 / wiki 构建）的完成度，
+ * 而不仅是解析就绪。parse_state 非 READY 时只返回解析主标签。
+ */
+export function docStageTags(d: DocItem): ReactNode {
+  if (d.parse_state !== "READY") {
+    return (
+      <Tag color={PARSE_STATE_COLOR[d.parse_state] || "default"}>
+        {STATE_LABEL[d.parse_state] || d.parse_state}
+      </Tag>
+    );
+  }
+  const sum = SUMMARY_STAGE_LABEL[d.summary_status || ""] || SUMMARY_STAGE_LABEL[""];
+  const wikiState = d.wiki_build?.state || "";
+  const wiki = WIKI_STAGE_LABEL[wikiState] || { text: "构建未生成", color: "default" };
+  return (
+    <Space size={4} wrap>
+      <Tag color={PARSE_STATE_COLOR.READY}>已就绪</Tag>
+      <Tag color={sum.color}>{sum.text}</Tag>
+      <Tag color={wiki.color}>{wiki.text}</Tag>
+    </Space>
+  );
+}
 
 const IN_FLIGHT = new Set(["PENDING", "PARSING", "EMBEDDING"]);
 
@@ -139,7 +187,9 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
         </Space>
       );
     }
-    return <Tag color={PARSE_STATE_COLOR[d.parse_state] || "default"}>{STATE_LABEL[d.parse_state] || d.parse_state}</Tag>;
+    // READY（或未知态）：方案A 三段阶段标签（解析✓ + 摘要 + 构建），
+    // 展示整条管线完成度而非仅「已就绪」。
+    return docStageTags(d);
   };
 
   const menuOf = (d: DocItem) => ({
