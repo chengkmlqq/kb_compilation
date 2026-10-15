@@ -204,24 +204,44 @@ def cron_queues(
 def cron_registered_tasks(
     _user_id: str = Depends(_require_user_id),
 ) -> dict:
-    """已注册任务类（Flower /api/workers 的 registered 字段，供任务名下拉）。"""
+    """已注册任务类（TASK_CLASS_REGISTRY 的业务类名，供「任务类」下拉选择）。
+
+    2026-10-15 修复（实测）：原实现读 Flower /api/workers 的 registered 字段，
+    返回的是 celery 任务名（如 worker.tasks.scheduler.scan_cron_tasks、
+    worker.tasks.orch_runner.execute_run），而 scheduler.execute_modo_job
+    是按 TASK_CLASS_REGISTRY 的 key（业务类名，如 KbLogCleanupTask、
+    KbDocumentProcessTask）分派 handler —— 两个集合零交集：
+    页面下拉选的任何任务类保存后，触发时必 FAILED "no handler registered"。
+    改为直接返回注册表里的业务类名（真正可执行的 15 个）。
+    """
     tasks: list[dict] = []
     try:
-        from api.routers.workers import _call_flower
+        # 与 celery worker 启动一致:import celery_app 触发各任务模块
+        # register_task_handlers() 填充 TASK_CLASS_REGISTRY(含 agent_worker,
+        # 它在 include 列表但不在 celery_app 的 force-import 列表里,需显式导入)。
+        import worker.celery_app  # noqa: F401 — 注册 scheduler/doc/wiki 等 handler
+        import worker.tasks.agent_worker  # noqa: F401 — 注册 agent 内联构建 handler
+        from worker.tasks.scheduler import TASK_CLASS_REGISTRY
 
-        workers_map = _call_flower("/api/workers?refresh=false") or {}
-        if isinstance(workers_map, dict):
-            for raw in workers_map.values():
-                if not isinstance(raw, dict):
-                    continue
-                registered = raw.get("registered") or []
-                names = registered if isinstance(registered, list) else list(registered)
-                for entry in names:
-                    name = str(entry if isinstance(entry, str) else entry.get("name", "")).strip()
-                    if name and name not in {t["taskClass"] for t in tasks}:
-                        tasks.append({"taskClass": name, "name": name})
-    except Exception:  # noqa: BLE001 — Flower 不可达时返回空列表，不阻塞页面
-        tasks = []
+        for name in sorted(TASK_CLASS_REGISTRY.keys()):
+            tasks.append({"taskClass": name, "name": name})
+    except Exception:  # noqa: BLE001 — worker 代码不可达时回退 Flower，不阻塞页面
+        try:
+            from api.routers.workers import _call_flower
+
+            workers_map = _call_flower("/api/workers?refresh=false") or {}
+            if isinstance(workers_map, dict):
+                for raw in workers_map.values():
+                    if not isinstance(raw, dict):
+                        continue
+                    registered = raw.get("registered") or []
+                    names = registered if isinstance(registered, list) else list(registered)
+                    for entry in names:
+                        name = str(entry if isinstance(entry, str) else entry.get("name", "")).strip()
+                        if name and name not in {t["taskClass"] for t in tasks}:
+                            tasks.append({"taskClass": name, "name": name})
+        except Exception:  # noqa: BLE001 — Flower 不可达时返回空列表，不阻塞页面
+            tasks = []
     tasks.sort(key=lambda t: t["taskClass"])
     return {"success": True, "data": tasks}
 
