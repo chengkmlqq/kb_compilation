@@ -22,7 +22,6 @@ import {
   Upload,
 } from "antd";
 import {
-  AimOutlined,
   BulbOutlined,
   CopyOutlined,
   DatabaseOutlined,
@@ -1671,13 +1670,6 @@ export default function ChatPage() {
                   {o.label}
                 </Space>
               )}
-            />
-            <Button
-              type="text"
-              size="small"
-              icon={<AimOutlined />}
-              title="@提及知识库 / 智能体"
-              onClick={() => setAtOpen(true)}
             />
             {/* 2026-10-12 对齐 WeKnora Input-field：联网搜索开关（请求级生效）
                 （2026-10-15 显隐由参数表 CHAT_WEB_SEARCH_ENABLED 控制） */}
