@@ -2,14 +2,14 @@
 
 /**
  * 查询结果网格（对齐 ds datagrid/components/table-viewer.tsx）：
- *  - Handsontable 只读网格（复制表格/查看行数据/选择高亮/列宽拖动）
+ *  - Handsontable 只读网格（复制表格/选择高亮/列宽拖动）
  *  - 顶部 Pagination（50~1000 页大小可选）
  *
  * Handsontable 使用 non-commercial-and-evaluation license（与 ds 一致）。
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Pagination } from "antd";
-import { CopyOutlined, EyeOutlined } from "@ant-design/icons";
+import { CopyOutlined } from "@ant-design/icons";
 import { HotTable, type HotTableRef } from "@handsontable/react-wrapper";
 import { registerAllModules } from "handsontable/registry";
 import "handsontable/styles/handsontable.min.css";
@@ -26,13 +26,12 @@ function normalizeValue(v: unknown): string | number | null {
 }
 
 export default function TableViewer({ tabData }: { tabData: ResultTab }) {
-  const { message, modal } = App.useApp();
+  const { message } = App.useApp();
   const hotRef = useRef<HotTableRef | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [pageNum, setPageNum] = useState(tabData.filter.pageNum || 1);
   const [pageSize, setPageSize] = useState(tabData.filter.pageSize || 50);
   const [hotHeight, setHotHeight] = useState(0);
-  const [selection, setSelection] = useState<{ r: number; c: number } | null>(null);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -105,40 +104,9 @@ export default function TableViewer({ tabData }: { tabData: ResultTab }) {
     }
   };
 
-  const viewRow = () => {
-    if (selection === null) {
-      message.warning("请先选择一行数据");
-      return;
-    }
-    const row = paged[selection.r];
-    if (!row) return;
-    modal.info({
-      title: "行数据",
-      width: 720,
-      maskClosable: true,
-      content: (
-        <pre
-          style={{
-            maxHeight: "60vh",
-            overflow: "auto",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-all",
-            borderRadius: 4,
-            background: "#f5f5f5",
-            padding: 12,
-            fontSize: 12,
-            lineHeight: 1.7,
-          }}
-        >
-          {JSON.stringify(row, null, 2)}
-        </pre>
-      ),
-    });
-  };
-
   return (
     <div style={{ display: "flex", height: "100%", minHeight: 0, flexDirection: "column", overflow: "hidden", background: "#fff" }}>
-      {/* 工具条：分页 + 复制/查看行 */}
+      {/* 工具条：分页 + 复制 */}
       <div style={{ display: "flex", flexShrink: 0, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, borderBottom: "1px solid #e8eaed", background: "#fff", padding: "6px 12px" }}>
         <Pagination
           size="small"
@@ -163,9 +131,6 @@ export default function TableViewer({ tabData }: { tabData: ResultTab }) {
           >
             复制
           </Button>
-          <Button size="small" icon={<EyeOutlined />} onClick={viewRow} disabled={selection === null}>
-            查看行数据
-          </Button>
         </div>
       </div>
       {/* Handsontable 网格 */}
@@ -189,8 +154,6 @@ export default function TableViewer({ tabData }: { tabData: ResultTab }) {
             copyPaste
             className="ht-theme-main"
             fillHandle={false}
-            afterSelectionEnd={(row) => setSelection({ r: row, c: 0 })}
-            afterDeselect={() => setSelection(null)}
           />
         )}
       </div>

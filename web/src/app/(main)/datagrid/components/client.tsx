@@ -3,8 +3,7 @@
 /**
  * 数据查询工作台外壳（对齐 ds datagrid/components/client.tsx）：
  *  - 垂直 PanelGroup：上部工作区（默认 65%）+ 下部 console（35%，consoleShow 时显示）
- *  - 上部水平 PanelGroup：左树（20%，可拖拽，含 34px 图标竖条 + Database 标题）+ 工作台（80%）
- *  - 底部 28px 状态栏（用户：系统管理员 / DataGrid Workspace）
+ *  - 上部水平 PanelGroup：左树（20%，可拖拽，含 Database 标题）+ 工作台（80%）
  *
  * 配色：像素级对齐 ds 的 antd token（--color-bg-1=#fff / --color-fill-1=#fafafa /
  * --color-border-2=#e8eaed / --color-primary-6=#1677ff / text-1=rgba(0,0,0,.88) 等）。
@@ -16,7 +15,6 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { App } from "antd";
-import { DatabaseOutlined, SettingOutlined } from "@ant-design/icons";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import DbTree from "./db-tree";
 import DbTool from "./db-tool";
@@ -101,55 +99,9 @@ export default function DataGridClient() {
                   orientation="horizontal"
                   style={{ height: "100%", width: "100%", minWidth: 0 }}
                 >
-                  {/* 左：图标竖条 + Database 树 */}
+                  {/* 左：Database 树 */}
                   <Panel defaultSize={`${leftSize}%`} minSize="12%">
                     <div style={{ display: "flex", height: "100%", width: "100%", overflow: "hidden", background: "#fafafa" }}>
-                      <div
-                        style={{
-                          display: "flex",
-                          width: 34,
-                          flexShrink: 0,
-                          flexDirection: "column",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          borderRight: "1px solid #e8eaed",
-                          background: "#fafafa",
-                          paddingTop: 12,
-                          paddingBottom: 12,
-                        }}
-                      >
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-                          <div
-                            style={{
-                              display: "flex",
-                              height: 28,
-                              width: 28,
-                              alignItems: "center",
-                              justifyContent: "center",
-                              color: "#1677ff",
-                              fontSize: 14,
-                            }}
-                          >
-                            <DatabaseOutlined />
-                          </div>
-                          <span
-                            style={{
-                              userSelect: "none",
-                              fontSize: 13,
-                              fontWeight: 600,
-                              letterSpacing: "0.22em",
-                              color: "rgba(0,0,0,0.88)",
-                              writingMode: "vertical-rl",
-                              textOrientation: "mixed",
-                            }}
-                          >
-                            Database
-                          </span>
-                        </div>
-                        <button className="datagrid-icon-btn datagrid-icon-btn--muted" title="设置">
-                          <SettingOutlined style={{ fontSize: 14 }} />
-                        </button>
-                      </div>
                       <div style={{ display: "flex", height: "100%", minWidth: 0, flex: 1, flexDirection: "column", background: "#fff" }}>
                         <div
                           style={{
@@ -202,26 +154,6 @@ export default function DataGridClient() {
               </>
             )}
           </PanelGroup>
-        </div>
-
-        {/* 底部状态栏 */}
-        <div
-          style={{
-            display: "flex",
-            height: 28,
-            flexShrink: 0,
-            alignItems: "center",
-            justifyContent: "space-between",
-            borderTop: "1px solid #e8eaed",
-            background: "#fafafa",
-            paddingLeft: 16,
-            paddingRight: 16,
-            fontSize: 12,
-            color: "rgba(0,0,0,0.45)",
-          }}
-        >
-          <span>用户：系统管理员</span>
-          <span>DataGrid Workspace</span>
         </div>
       </div>
 
