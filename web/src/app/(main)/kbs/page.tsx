@@ -351,7 +351,8 @@ export default function KbsPage() {
       summary_model_id: values.summary_model_id || undefined,
       vector_store_id: values.vector_store_id || undefined,
       build_tape_id: values.build_engine || undefined,
-      summary_strategy: values.summary_strategy || "auto",
+      // 摘要策略固定 auto：系统按文档规模自动路由（小文档全文直塞 / 大文档分块合并），不再开放给用户选择
+      summary_strategy: "auto",
     };
     const res = await apiCreateKb(payload);
     if (res.success) {
@@ -661,22 +662,6 @@ export default function KbsPage() {
                         allowClear
                         placeholder={buildEngines.length ? "选择构建引擎" : "暂无已发布的编排，请先到服务编排发布"}
                         options={groupBuildEngineOptions(buildEngines)}
-                      />
-                    </Form.Item>
-                    <Form.Item
-                      name="summary_strategy"
-                      label="文档摘要策略"
-                      initialValue="auto"
-                      extra="上传文档解析成功后自动生成摘要页：自动＝按文档大小与是否已有摘要选择（小文档全文直塞，大文档分块合并，已有摘要增量修订）；也可固定使用某一种模式；关＝不生成"
-                    >
-                      <Select
-                        options={[
-                          { label: "自动（按文档规模选择）", value: "auto" },
-                          { label: "小文档全文直塞（Stuff）", value: "stuff" },
-                          { label: "大文档分块合并（Map-Reduce）", value: "mapreduce" },
-                          { label: "增量修订（Refine：有存量摘要时滚动融合，无存量摘要时首轮直接生成）", value: "refine" },
-                          { label: "关（不生成摘要）", value: "off" },
-                        ]}
                       />
                     </Form.Item>
                     <Form.Item
