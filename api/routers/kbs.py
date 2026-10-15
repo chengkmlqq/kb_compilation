@@ -93,7 +93,7 @@ router = APIRouter(prefix="/kbs", tags=["kbs"])
 
 settings = get_settings()
 
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB, mirrors the source platform limit
+MAX_UPLOAD_BYTES = 600 * 1024 * 1024  # 600 MB（2026-10-16 心电图 pdf转word 大文件 258MB，原 50MB 超限）
 
 
 class KBCreateRequest(BaseModel):
