@@ -72,7 +72,6 @@ import {
 } from "@/lib/api";
 import MarkdownViewer from "@/components/MarkdownViewer";
 import TypewriterText from "@/components/TypewriterText";
-import ReferencePanel from "@/components/ReferencePanel";
 import RagPipelineProgress, { RagStep } from "@/components/RagPipelineProgress";
 import AgentToolCalls, { ToolCallEvent } from "@/components/AgentToolCalls";
 import { copyText } from "@/lib/clipboard";
@@ -155,7 +154,6 @@ export default function ChatPage() {
   // 2026-10-12 @提及选择器分组过滤关键字
   const [atSearch, setAtSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [refsDrawer, setRefsDrawer] = useState<{ title: string; refs: ChatRefItem[] } | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [searchResults, setSearchResults] = useState<(ChatMessageItem & { session_id: string; session_title: string })[]>([]);
   const [searching, setSearching] = useState(false);
@@ -1517,15 +1515,7 @@ export default function ChatPage() {
                     />
                   </div>
                 )}
-                {/* 引用（对齐 WeKnora docInfo：按文档分组折叠面板 + chunk hover 预览 + 跳转文档） */}
-                {m.role === "assistant" && m.refs && m.refs.length > 0 && !m.streaming && (
-                  <ReferencePanel
-                    refs={m.refs}
-                    onChunkClick={(r) =>
-                      setRefDrawer({ open: true, refs: m.refs || [], answer: m.content, activeChunk: r.chunk_id })
-                    }
-                  />
-                )}
+                {/* 2026-10-15：消息末尾不再展示来源文档面板（ReferencePanel），仅保留正文引用角标（点击开右侧抽屉） */}
                 {/* 追问建议（对齐 WeKnora FollowUpSuggestions：标题行 + 列表 + 关闭） */}
                 {m.role === "assistant" && !m.streaming && m.followUps && m.followUps.length > 0 && (
                   <div className="kb-followups" style={{ marginTop: 8 }}>
