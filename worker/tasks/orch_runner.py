@@ -22,7 +22,7 @@ logger = logging.getLogger("kb.orch.runner")
 
 from api.db import get_sessionmaker
 from api.models.orchestration import Tape, TapeRun, TapeStep
-from sqlalchemy import text
+from sqlalchemy import select
 from api.services.orchestration_engine import ATOM_MAP, TapeRuntimeContext
 from worker.tasks import orch_loop
 
@@ -110,7 +110,7 @@ def _lock_run(db, run_id: str) -> None:
     """InnoDB 行锁：对 run 行的整个 step_results 读-改-写加锁，防止并行节点
     （QA 三路并行检查等 fan-out）并发 _append_step_result 互相覆盖（lost update，
     实测 n02/n03 成功写回被 n04 陈旧快照覆盖 → 占位永留 running、后继不派发）。"""
-    db.execute(text("SELECT id FROM kb_tape_run WHERE id=:r FOR UPDATE"), {"r": run_id})
+    db.execute(select(TapeRun.id).where(TapeRun.id == run_id).with_for_update())
 
 
 def _append_step_result(run_id: str, result: dict, env: str | None = None) -> None:
