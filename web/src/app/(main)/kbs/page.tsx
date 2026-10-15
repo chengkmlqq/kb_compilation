@@ -101,8 +101,9 @@ export default function KbsPage() {
   const [search, setSearch] = useState("");
   const [configKb, setConfigKb] = useState<KbItem | null>(null);
   const [form] = Form.useForm();
-  const [searchForm] = Form.useForm<{ keyword: string }>();
   const [createSection, setCreateSection] = useState("wiki");
+  // 2026-10-16 DSB 知识集页对齐：左侧分类树（按 label 分组筛选）
+  const [selectedLabel, setSelectedLabel] = useState<string>("all");
 
   // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
   // 首个 tab「知识库管理」= 页面标题 + 列表，不可关闭；后续把知识库的
@@ -249,14 +250,31 @@ export default function KbsPage() {
 
   const visibleKbs = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return q
-      ? kbs.filter(
-          (k) =>
-            k.name.toLowerCase().includes(q) ||
-            (k.label || "").toLowerCase().includes(q)
-        )
-      : kbs;
-  }, [kbs, search]);
+    let list = kbs;
+    if (selectedLabel !== "all") {
+      list = list.filter((k) => (k.label || "无标签") === selectedLabel);
+    }
+    if (q) {
+      list = list.filter(
+        (k) =>
+          k.name.toLowerCase().includes(q) ||
+          (k.label || "").toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [kbs, search, selectedLabel]);
+
+  // DSB 知识集页对齐：左侧分类树数据 = 全部 + 各 label 分组（含计数）
+  const labelTree = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const k of kbs) {
+      const l = k.label || "无标签";
+      map.set(l, (map.get(l) || 0) + 1);
+    }
+    return Array.from(map.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [kbs]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -414,67 +432,63 @@ export default function KbsPage() {
     });
   };
 
-  // 筛选（对齐用户管理页：查询/重置 显式触发；本地过滤当前页数据）
-  const doSearch = (vals: { keyword?: string }) => {
-    setSearch(vals.keyword?.trim() || "");
-  };
-
-  const doReset = () => {
-    searchForm.resetFields();
-    setSearch("");
-  };
-
   // 列表区（首个选项卡内容）：筛选 + 卡片视图 + 钉底分页 + 新建弹窗/配置弹窗
   // 根容器用 height:100% 对齐模型管理页——外层 .ant-tabs-content 非 flex 容器，
   // flex:1 对 block 父无效会退回内容高度，导致卡片区撑不开、分页不钉底（贴在卡片下方而非页面底部）
   const listPane = (
-    // 对齐智能体/模型管理页：外层 flex column，内容用白底 Card 包裹，分页在 Card 外钉底
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      <Card
-        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{
-          body: {
-            flex: 1,
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            padding: "12px 16px 0",
-          },
-        }}
-      >
-        {/* 筛选表单（对齐用户管理页：查询/重置 显式触发） */}
-        <Form
-          form={searchForm}
-          layout="inline"
-          style={{ marginBottom: 12, flexShrink: 0 }}
-          onFinish={doSearch}
-          initialValues={{ keyword: "" }}
-        >
-          <Form.Item name="keyword" label="知识库">
-            <Input allowClear placeholder="搜索名称/标签" style={{ width: 220 }} />
-          </Form.Item>
-          <Form.Item>
-            <Space>
-              <Button type="primary" htmlType="submit">
-                查询
-              </Button>
-              <Button
-                onClick={() => {
-                  searchForm.resetFields();
-                  doReset();
-                }}
-              >
-                重置
-              </Button>
-            </Space>
-          </Form.Item>
-        </Form>
+    <div className="kb-kbs-page">
+      {/* DSB 对齐 header：左标题 + 右搜索胶囊 + 新建胶囊 */}
+      <div className="kb-kbs-header">
+        <div className="kb-kbs-header-left">
+          <FileTextOutlined style={{ color: "#3261ce", fontSize: 16 }} />
+          <span>知识库</span>
+        </div>
+        <div className="kb-kbs-header-right">
+          <Input.Search
+            className="kb-kbs-search"
+            allowClear
+            placeholder="输入并搜索..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onSearch={(v) => setSearch(v.trim())}
+          />
+          <Button
+            type="primary"
+            className="kb-kbs-new-btn"
+            icon={<PlusOutlined />}
+            onClick={openCreate}
+          >
+            新建
+          </Button>
+        </div>
+      </div>
 
-        {/* 卡片视图（保留）——flex:1 占满剩余高度，内容超出时内部滚动。
-            横向隐藏：antd Row 的 gutter 会给行加 -8px 左右外边距，宽出容器 16px，
-            双轴 overflow:auto 会因此常驻横向滚动条（卡片内容本身并未超出）。 */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+      {/* DSB 对齐 main layout：左分类树 260px + 右卡片网格 */}
+      <div className="kb-kbs-main-layout">
+        <div className="kb-kbs-category-sider">
+          <div className="kb-kbs-category-tree-title">分类</div>
+          <div
+            className={`kb-kbs-category-item${selectedLabel === "all" ? " active" : ""}`}
+            onClick={() => setSelectedLabel("all")}
+          >
+            <span>全部</span>
+            <span className="kb-kbs-category-item-count">{kbs.length}</span>
+          </div>
+          {labelTree.map((t) => (
+            <div
+              key={t.label}
+              className={`kb-kbs-category-item${selectedLabel === t.label ? " active" : ""}`}
+              onClick={() => setSelectedLabel(t.label)}
+              title={t.label}
+            >
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.label}</span>
+              <span className="kb-kbs-category-item-count">{t.count}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="kb-kbs-list-panel">
+          <div className="kb-kbs-content">
           {visibleKbs.length === 0 ? (
             <Empty description="暂无知识库，点击右上角「新建知识库」创建">
               <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
@@ -487,91 +501,80 @@ export default function KbsPage() {
                 const graphOn = Boolean(kb.indexing_strategy?.graph_enabled);
                 return (
                   <Col key={kb.id} xs={24} sm={12} lg={8} xl={6}>
-                    <Card
-                      className="kb-list-card"
-                      size="small"
-                      hoverable
-                      style={{ height: 150, overflow: "hidden" }}
+                    <div
+                      className="kb-kbs-card"
                       onClick={() => openKbSection(kb, "docs")}
-                      title={
-                        <Space>
-                          <span
-                            style={{
-                              fontSize: 20,
-                              color: "#3261ce",
+                    >
+                      <div className="kb-kbs-card-header">
+                        <div className="kb-kbs-card-icon">
+                          <FileTextOutlined />
+                        </div>
+                        <div className="kb-kbs-card-detail">
+                          <div className="kb-kbs-card-title-row">
+                            <div className="kb-kbs-card-title-name" title={kb.name}>
+                              {kb.name}
+                            </div>
+                            {graphOn && (
+                              <ApartmentOutlined style={{ color: "#3261ce", fontSize: 13, flexShrink: 0 }} />
+                            )}
+                          </div>
+                          <div className="kb-kbs-card-meta">
+                            {kb.doc_count ?? 0}个文件 · 更新于 {kb.created_at ? kb.created_at.slice(5, 10).replace("-", "/") : "-"}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="kb-kbs-card-description">
+                        {kb.description || "（无描述）"}
+                      </div>
+                      <div className="kb-kbs-card-footer">
+                        <div className="kb-kbs-card-footer-left" title={kb.label || "未分类"}>
+                          {kb.label || "未分类"}
+                        </div>
+                        <div
+                          className="kb-kbs-card-footer-right"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Dropdown
+                            menu={{
+                              items: [
+                                { key: "open", label: "打开知识库" },
+                                { key: "wiki", label: "Wiki" },
+                                { key: "graph", label: "知识图谱" },
+                                { key: "wiki-graph", label: "wiki 关系图" },
+                                { key: "config", label: "知识库配置" },
+                                { type: "divider" },
+                                { key: "delete", label: "删除", danger: true },
+                              ],
+                              onClick: ({ key, domEvent }) => {
+                                domEvent.stopPropagation();
+                                if (key === "open") openKbSection(kb, "docs");
+                                else if (key === "wiki") openKbSection(kb, "wiki");
+                                else if (key === "graph") openKbSection(kb, "graph");
+                                else if (key === "wiki-graph") openKbSection(kb, "wiki-graph");
+                                else if (key === "config") setConfigKb(kb);
+                                else if (key === "delete") onDelete(kb);
+                              },
                             }}
                           >
-                            <FileTextOutlined />
-                          </span>
-                          <Typography.Text strong ellipsis style={{ maxWidth: 140 }}>
-                            {kb.name}
-                          </Typography.Text>
-                        </Space>
-                      }
-                      extra={
-                        <Dropdown
-                          menu={{
-                            items: [
-                              { key: "open", label: "打开知识库" },
-                              { key: "wiki", label: "Wiki" },
-                              { key: "graph", label: "知识图谱" },
-                              { key: "wiki-graph", label: "wiki 关系图" },
-                              { key: "config", label: "知识库配置" },
-                              { type: "divider" },
-                              { key: "delete", label: "删除", danger: true },
-                            ],
-                            onClick: ({ key, domEvent }) => {
-                              domEvent.stopPropagation();
-                              if (key === "open") openKbSection(kb, "docs");
-                              else if (key === "wiki") openKbSection(kb, "wiki");
-                              else if (key === "graph") openKbSection(kb, "graph");
-                              else if (key === "wiki-graph") openKbSection(kb, "wiki-graph");
-                              else if (key === "config") setConfigKb(kb);
-                              else if (key === "delete") onDelete(kb);
-                            },
-                          }}
-                        >
-                          <Button
-                            type="text"
-                            size="small"
-                            icon={<MoreOutlined />}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        </Dropdown>
-                      }
-                    >
-                      <Typography.Paragraph
-                        type="secondary"
-                        ellipsis={{ rows: 2 }}
-                        style={{ minHeight: 40, marginBottom: 8, fontSize: 12, color: "#4d5e7d" }}
-                      >
-                        {kb.description || "（无描述）"}
-                      </Typography.Paragraph>
-                      <Space wrap size={4}>
-                        <Tag color="blue">
-                          <FileTextOutlined /> 文档 {kb.doc_count ?? 0}
-                        </Tag>
-                        <Tag color="green">
-                          <BookOutlined /> Wiki {kb.page_count ?? 0}
-                        </Tag>
-                        {kb.label && <Tag>{kb.label}</Tag>}
-                        {graphOn && (
-                          <Tag icon={<ApartmentOutlined />} color="purple">
-                            图谱
-                          </Tag>
-                        )}
-                      </Space>
-                    </Card>
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<MoreOutlined />}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </Dropdown>
+                        </div>
+                      </div>
+                    </div>
                   </Col>
                 );
               })}
             </Row>
           )}
-        </div>
-      </Card>
+          </div>
 
         {/* 分页常驻底栏 */}
-        <div style={{ flexShrink: 0, marginTop: "auto" }}>
+        <div style={{ flexShrink: 0, padding: "8px 16px" }}>
           <ModoPagination
             current={page}
             pageSize={pageSize}
@@ -583,6 +586,8 @@ export default function KbsPage() {
             }}
           />
         </div>
+        </div>
+      </div>
 
         {/* 新建知识库弹窗（对齐智能体编辑器 AgentEditorModal：Modal + 左侧分区导航 + 底部确定/取消） */}
         <Modal
@@ -755,12 +760,12 @@ export default function KbsPage() {
     <div
       className="kbs-page"
       style={{
-        padding: 8,
         height: "calc(100vh - var(--app-header-h, 45px))",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
         minHeight: 0,
+        background: "#fff",
       }}
     >
       <ModoTabs
