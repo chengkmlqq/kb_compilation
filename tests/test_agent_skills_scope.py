@@ -618,7 +618,8 @@ def test_agent_qa_default_has_no_tools(api_env, monkeypatch) -> None:
 
     2026-10-12 更新断言：ca624ec 起 kb_search 知识库检索工具改为**默认注入**
     （智能体对话即可多轮工具调用，无需开技能/联网），故默认 agent 的请求里
-    **会**带 tools——但只含 kb_search，不含 run_skill_script / web_search。
+    **会**带 tools——但只含 RAG 检索/Wiki/分析等常驻工具，不含
+    run_skill_script / web_search（二者由技能/联网开关控制装配）。
     """
     captured: list[dict] = []
     monkeypatch.setattr(
@@ -635,11 +636,13 @@ def test_agent_qa_default_has_no_tools(api_env, monkeypatch) -> None:
     deltas = "".join(e.get("text", "") for e in events if e.get("type") == "delta")
     assert deltas == "默认回答"
     assert len(captured) == 1
-    # 只带默认注入的 kb_search，不带技能/联网工具
+    # 常驻工具全集（RAG 检索 + Wiki + 数据分析 + 推理标注）；技能/联网工具不注入
     tool_names = {
         (t.get("function") or {}).get("name") for t in (captured[0].get("tools") or [])
     }
-    assert tool_names == {"kb_search"}
+    assert tool_names >= {"kb_search", "grep_chunks", "get_document_info", "wiki_read_page", "data_analysis", "thinking"}
+    assert "run_skill_script" not in tool_names
+    assert "web_search" not in tool_names
 
 
 def test_agent_qa_with_skills_injects_tool_and_executes(api_env, monkeypatch) -> None:

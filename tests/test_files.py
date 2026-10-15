@@ -309,7 +309,10 @@ def test_files_minio_tree_zip_and_raw_download(monkeypatch) -> None:
     with _zf.ZipFile(io.BytesIO(r.content)) as zf:
         names = sorted(zf.namelist())
         assert names == ["f1_a.txt", "f2_b.txt", "sub/f3_c.txt"]
-        assert zf.read("f1_a.txt") == b"minio-bytes:minio://kb-compilation/sys_files/default/team1/20261001/f1_a.txt"
+        # 2026-10-12 环境隔离（7264c88）：zip 内文件内容路径带当前环境前缀（dev/ 或 prod/）
+        raw = zf.read("f1_a.txt")
+        assert raw.startswith(b"minio-bytes:minio://kb-compilation/")
+        assert raw.endswith(b"sys_files/default/team1/20261001/f1_a.txt")
 
     # ---- 单文件按 storage_path 下载（MinIO 树文件项无 id）----
     r = client.get(

@@ -15,7 +15,14 @@ def test_is_remote_and_parse_build() -> None:
     b, k = st.parse_remote("minio://kb-compilation/sys_files/a/b.pdf")
     assert b == "kb-compilation"
     assert k == "sys_files/a/b.pdf"
-    assert st.build_remote("kb", "x/y") == "minio://kb/x/y"
+    # 2026-10-12 环境隔离（7264c88）：build_remote 自动带当前环境前缀（dev/ 或 prod/）
+    built = st.build_remote("kb", "x/y")
+    assert built.startswith("minio://kb/")
+    assert built.endswith("x/y")
+    prefix = built[len("minio://kb/"):-len("x/y")]
+    assert prefix in ("", "dev/", "prod/")
+    # 已带环境前缀的 key 不重复加
+    assert st.build_remote("kb", "prod/x/y") == "minio://kb/prod/x/y"
 
 
 def test_parse_remote_invalid() -> None:
