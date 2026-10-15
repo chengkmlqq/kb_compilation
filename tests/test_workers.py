@@ -282,5 +282,8 @@ def test_worker_registered_tasks(monkeypatch) -> None:
         assert scan["cronConfigs"][0]["cronExpression"] == "*/30 * * * *"
         doc = by_class["worker.tasks.doc_process.KbDocumentProcessTask"]
         assert doc["cronConfigs"] == []  # 无 cron 配置
+        assert doc["taskName"] == "文档解析处理"  # 无 cron label → 中文展示名回退
+        embed = by_class["worker.tasks.doc_process.KbDocumentEmbedTask"]
+        assert embed["taskName"] == "文档向量化嵌入"
     finally:
         app.dependency_overrides.clear()

@@ -154,6 +154,50 @@ def _registered_names(raw: Any) -> list[str]:
     )
 
 
+# 注册任务名 → 中文展示名（Flower registered / TASK_CLASS_REGISTRY 业务类）。
+# 主机监控「注册任务」抽屉的 taskName 无 cron label 时用它回退，避免直接展示英文类名。
+TASK_DISPLAY_NAME_CN: dict[str, str] = {
+    # Celery 任务名（Flower /api/workers 的 registered 字段）
+    "worker.tasks.scheduler.scan_cron_tasks": "定时任务扫描",
+    "worker.tasks.scheduler.recover_orphan_running_jobs": "孤儿任务恢复",
+    "worker.tasks.scheduler.execute_modo_job": "任务执行(通用)",
+    "worker.tasks.orch_runner.execute_run": "编排运行执行",
+    "worker.tasks.orch_runner.advance_run": "编排推进",
+    "worker.tasks.orch_runner.run_node": "编排节点执行",
+    "worker.tasks.agent_worker.run_agent_inline": "智能体内联构建",
+    # 业务任务类（TASK_CLASS_REGISTRY key，cron.task_class 也是这套）
+    "KbDocumentProcessTask": "文档解析处理",
+    "KbDocumentEmbedTask": "文档向量化嵌入",
+    "KbWikiBuildTask": "Wiki 构建",
+    "KbGraphBuildTask": "知识图谱构建",
+    "KbOrchestrationRunTask": "编排运行",
+    "KbOrchestrationNodeTask": "编排节点",
+    "KbOrchestrationAdvanceTask": "编排推进",
+    "KbAgentGatewayTask": "智能体网关任务",
+    "KbAgentWikiBuildTask": "智能体 Wiki 构建",
+    "KbSkillWikiBuildTask": "技能 Wiki 构建",
+    "KbSkillDirectBuildTask": "技能直跑构建",
+    "KbTableIngestTask": "表格数据导入",
+    "KbLogCleanupTask": "日志清理",
+    "KbMetadataCollectionTask": "元数据采集",
+    "KbChunkVerifyTask": "分块校验",
+    "KbOrphanRecoveryTask": "孤儿任务恢复",
+}
+
+
+def _task_display_name(cls: str) -> str:
+    """注册任务名 → 中文展示名（未知任务回退原名，兼容带模块前缀的注册名）。"""
+    text = _text(cls)
+    if not text:
+        return text
+    if text in TASK_DISPLAY_NAME_CN:
+        return TASK_DISPLAY_NAME_CN[text]
+    for name, label in TASK_DISPLAY_NAME_CN.items():
+        if text.endswith(name):
+            return label
+    return text
+
+
 def _active_queue_names(raw: Any) -> list[str]:
     return sorted(
         {_text(_as_record(item).get("name")) for item in _as_array(raw)},
@@ -385,7 +429,11 @@ def worker_registered_tasks(
 
     tasks = [
         {
-            "taskName": (cron_map.get(cls, [{}])[0].get("label") if cron_map.get(cls) else cls),
+            "taskName": (
+                cron_map.get(cls, [{}])[0].get("label")
+                if cron_map.get(cls)
+                else _task_display_name(cls)
+            ),
             "taskClass": cls,
             "cronConfigs": [
                 {k: v for k, v in cfg.items() if k != "taskClass"}
