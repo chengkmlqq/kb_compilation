@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Alert, App, Button, Checkbox, Form, Input, Typography } from "antd";
+import { Alert, Button, Checkbox, Form, Input, message } from "antd";
 import { useRouter } from "next/navigation";
 import { apiAuthMode, apiLogin, AuthModeConfig } from "@/lib/api";
 import styles from "./login.module.css";
@@ -19,7 +19,6 @@ const loginBanner = `${ASSET_BASE}/login/app-login-banner.png`;
 const loginLogo = `${ASSET_BASE}/login/modo-logo.png`;
 
 export default function LoginPage() {
-  const { message } = App.useApp();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm<LoginValues>();
