@@ -984,9 +984,11 @@ export default function ChatPage() {
     }
   };
 
-  // 图片问答门禁（对齐 WeKnora ImageUploadEnabled）：仅绑定智能体开启时可传图
+  // 图片问答门禁：选了智能体时按其 image_upload_enabled 配置判断（对齐
+  // WeKnora ImageUploadEnabled）；未选智能体（普通问答/纯对话模式）默认允许
+  // 传图——后端 /qa/stream 图片链路不依赖知识库/智能体，只要求模型 supports_vision。
   const activeAgentCfg = agents.find((a) => a.id === agentMode)?.config ?? {};
-  const canUploadImage = !!activeAgentCfg.image_upload_enabled;
+  const canUploadImage = agentMode ? !!activeAgentCfg.image_upload_enabled : true;
   const UPLOAD_ACCEPT = canUploadImage
     ? ".pdf,.doc,.docx,.md,.txt,.html,.xlsx,.pptx,.png,.jpg,.jpeg,.gif,.webp,.bmp"
     : ".pdf,.doc,.docx,.md,.txt,.html,.xlsx,.pptx";
