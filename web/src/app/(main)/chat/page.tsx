@@ -14,7 +14,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Spin,
   Tag,
   theme,
   Tooltip,
@@ -1488,11 +1487,7 @@ export default function ChatPage() {
                 )}
                 {/* 2026-10-15：消息末尾不再展示来源文档面板（ReferencePanel），仅保留正文引用角标（点击开右侧抽屉） */}
                 {/* 2026-10-16：回复下方「推荐追问」建议块已移除（用户要求） */}
-                {idx === msgs.length - 1 && m.role === "assistant" && m.streaming && (
-                  <div style={{ marginTop: 4 }}>
-                    <Spin size="small" />
-                  </div>
-                )}
+                {/* 2026-10-16：流式回答期间不再显示消息末尾的 loading 图标（用户要求去掉） */}
               </div>
             ))}
             </div>
@@ -2003,7 +1998,7 @@ function ThinkingBlock({ thinking, streaming }: { thinking: string; streaming?: 
           userSelect: "none",
         }}
       >
-        {streaming && <span className="kb-think-indicator" />}
+        {/* 2026-10-16：思考中不再显示脉冲 loading 圆点（用户要求去掉），仅保留「思考中…」文字 */}
         <span>{streaming ? "思考中…" : <><BulbOutlined /> 思考过程</>}</span>
         <span style={{ fontSize: 10 }}>{expanded ? "▾" : "▸"}</span>
       </div>
