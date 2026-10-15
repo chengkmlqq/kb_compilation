@@ -31,6 +31,7 @@ import {
 import {
   apiCreateKb,
   apiDeleteKb,
+  apiGetDocument,
   apiListBuildEngines,
   apiListDatasources,
   apiListKbs,
@@ -221,6 +222,12 @@ export default function KbsPage() {
           onOpenGraph={(slug?: string) => {
             const kb = kbs.find((k) => k.id === t.kbId);
             if (kb) openKbSection(kb, "wiki-graph", slug);
+          }}
+          onOpenDoc={(docId) => {
+            void (async () => {
+              const res = await apiGetDocument(t.kbId, docId);
+              if (res.success && res.data) openDoc(t.kbId, res.data);
+            })();
           }}
         />
       );

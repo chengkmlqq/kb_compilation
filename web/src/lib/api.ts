@@ -321,6 +321,11 @@ export interface DocFolderItem {
   doc_total?: number;
 }
 
+/** 单文档详情（对齐 WeKnora get_document；wiki 页「来源文档」点击查看用） */
+export function apiGetDocument(kbId: string, docId: string) {
+  return request<DocItem>(`/api/v1/kbs/${kbId}/documents/${docId}`);
+}
+
 export function apiListDocuments(
   kbId: string,
   page = 1,

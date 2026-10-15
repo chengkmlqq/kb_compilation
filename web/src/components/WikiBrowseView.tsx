@@ -143,17 +143,23 @@ function formatDate(value?: string | null): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-/** source_refs 归一化（对齐 WeKnora normalizeSourceRefs）：
- *  裸 id / `<id>|knowledges.file_name` → 展示名取 `|` 之后，否则回落 id */
-function sourceLabel(ref: string): string {
-  const raw = String(ref || "").trim();
-  if (!raw) return "";
-  const bar = raw.indexOf("|");
-  if (bar >= 0) {
-    const name = raw.slice(bar + 1).trim();
-    if (name) return name;
-  }
-  return raw;
+/** source_refs → { id, name }；`<id>|knowledges.file_name` 取 id 为前缀，裸 id 则 id=name */
+function parseSourceRefs(refs: string[]): { id: string; name: string }[] {
+  return (refs || [])
+    .map((ref) => {
+      const raw = String(ref || "").trim();
+      if (!raw) return null;
+      const bar = raw.indexOf("|");
+      if (bar >= 0) {
+        const id = raw.slice(0, bar).trim();
+        const name = raw.slice(bar + 1).trim();
+        // 前缀为空（如 `|name`）或前缀明显不是文档 id（如纯标题）时仅当展示名用
+        if (!id) return null;
+        return { id, name: name || id };
+      }
+      return { id: raw, name: raw };
+    })
+    .filter(Boolean) as { id: string; name: string }[];
 }
 
 // [[slug]] / [[slug|别名]] 双链 → markdown 链接（href 规整为 /kbs/{id}/wiki/{slug}，组件内拦截原地切换）
@@ -184,9 +190,11 @@ interface Props {
   focusSlug?: string;
   onTreeChanged?: () => void;
   onOpenGraph?: (slug: string) => void;
+  /** 点击「来源文档」打开对应文档详情（对齐 WeKnora openSourceDoc；不传则仅展示） */
+  onOpenDoc?: (docId: string) => void;
 }
 
-export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenGraph }: Props) {
+export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenGraph, onOpenDoc }: Props) {
   const router = useRouter();
   const { message } = App.useApp();
 
@@ -472,7 +480,7 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
   };
 
   const hasContentPages = treeRows.length > 0;
-  const sourceRefs = (page?.source_refs || []).map(sourceLabel).filter(Boolean);
+  const sourceRefs = parseSourceRefs(page?.source_refs || []);
   const searchMode = searchResults !== null;
 
   // ── 左栏行渲染 ──
@@ -672,17 +680,25 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
                 </div>
               )}
 
-              {/* 来源文档 */}
-              {sourceRefs.length > 0 && (
-                <div className="kb-wiki-reader-sources">
-                  <span className="kb-wiki-link-label">来源</span>
-                  {sourceRefs.map((name, idx) => (
-                    <span key={`${name}-${idx}`} className="kb-wiki-source-ref">
-                      <FileOutlined style={{ fontSize: 14 }} /> {name}
-                    </span>
-                  ))}
-                </div>
-              )}
+              {/* 来源文档（可点击查看 — 对齐 WeKnora openSourceDoc：点击打开对应文档详情） */}
+                            {sourceRefs.length > 0 && (
+                              <div className="kb-wiki-reader-sources">
+                                <span className="kb-wiki-link-label">来源</span>
+                                {sourceRefs.map((ref, idx) => (
+                                  <a
+                                    key={`${ref.id}-${ref.name}-${idx}`}
+                                    className="kb-wiki-source-ref"
+                                    href="#"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      if (onOpenDoc && ref.id) onOpenDoc(ref.id);
+                                    }}
+                                  >
+                                    <FileOutlined style={{ fontSize: 14 }} /> {ref.name}
+                                  </a>
+                                ))}
+                              </div>
+                            )}
             </>
           )}
         </div>

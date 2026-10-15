@@ -16,9 +16,11 @@ export interface KbWikiPaneProps {
   focusSlug?: string;
   /** 由父级注入：打开「知识图谱」选项卡（不传则 WikiBrowseView 回退到原路由跳转） */
   onOpenGraph?: (slug?: string) => void;
+  /** 由父级注入：点击「来源文档」打开对应文档详情选项卡（对齐 WeKnora openSourceDoc） */
+  onOpenDoc?: (docId: string) => void;
 }
 
-export default function KbWikiPane({ kbId, focusSlug, onOpenGraph }: KbWikiPaneProps) {
+export default function KbWikiPane({ kbId, focusSlug, onOpenGraph, onOpenDoc }: KbWikiPaneProps) {
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       {/* 白底直角面板（标题由页签承担，面板内不重复标题） */}
@@ -40,6 +42,7 @@ export default function KbWikiPane({ kbId, focusSlug, onOpenGraph }: KbWikiPaneP
           focusSlug={focusSlug}
           onTreeChanged={() => undefined}
           onOpenGraph={onOpenGraph}
+          onOpenDoc={onOpenDoc}
         />
       </Card>
     </div>

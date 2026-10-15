@@ -22,7 +22,7 @@ import KbWikiPane from "@/components/kb/KbWikiPane";
 import KbGraphPane from "@/components/kb/KbGraphPane";
 import WikiGraphView from "@/components/WikiGraphView";
 import DocDetailPanel from "@/components/DocDetailPanel";
-import { DocItem } from "@/lib/api";
+import { DocItem, apiGetDocument } from "@/lib/api";
 
 export default function KbDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -125,12 +125,18 @@ export default function KbDetailPage() {
             label: "Wiki",
             closable: false,
             children: (
-              <KbWikiPane
-                kbId={kbId}
-                focusSlug={focusSlug}
-                onOpenGraph={handleOpenGraph}
-              />
-            ),
+                          <KbWikiPane
+                            kbId={kbId}
+                            focusSlug={focusSlug}
+                            onOpenGraph={handleOpenGraph}
+                            onOpenDoc={(docId) => {
+                              void (async () => {
+                                const res = await apiGetDocument(kbId, docId);
+                                if (res.success && res.data) openDoc(res.data);
+                              })();
+                            }}
+                          />
+                        ),
           },
           {
             key: "graph",
