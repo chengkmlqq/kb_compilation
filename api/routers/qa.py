@@ -90,9 +90,10 @@ def _run_generation(
     logger = logging.getLogger(__name__)
     db = get_sessionmaker()()
     try:
-        # 2026-10-15 纯对话模式：kb_id 为空（未选择知识库）→ 跳过知识库校验与检索，
-        # 直接走 LLM 对话；kb_id 非空则校验知识库必须真实存在。
+        # 2026-10-16 全库问答：kb_id 为空（未选择知识库）→ 检索全部可见知识库；
+        # kb_id 非空则校验知识库必须真实存在。
         kb = None
+        kbs: list = []
         if req.kb_id:
             kb = db.execute(
                 select(KbDatasource).where(KbDatasource.id == req.kb_id)
@@ -110,6 +111,13 @@ def _run_generation(
                 ctx_is_admin = is_admin(db, ctx_user_id)
             except Exception:  # noqa: BLE001
                 ctx_is_admin = False
+
+        # 2026-10-16 全库问答：未选知识库时解析可见范围（state=1；非管理员限定团队）
+        if not req.kb_id:
+            _stmt = select(KbDatasource).where(KbDatasource.state == "1")
+            if not ctx_is_admin and ctx_team_name:
+                _stmt = _stmt.where(KbDatasource.team_name == ctx_team_name)
+            kbs = list(db.execute(_stmt).scalars().all())
 
         # Session mode: validate + load history, persist user msg
         session = None
@@ -161,7 +169,7 @@ def _run_generation(
 
         query_embedding = None
         # 纯对话模式（未选知识库）不检索，无需生成查询向量
-        if req.embed_query and kb is not None:
+        if req.embed_query and (kb is not None or kbs):
             try:
                 from api.services.embedding import get_embedding_client
 
@@ -240,6 +248,7 @@ def _run_generation(
             for event in answer_question(
                 kb_db=db,
                 kb=kb,
+                kbs=kbs or None,
                 question=req.question,
                 query_embedding=query_embedding,
                 retrieval_overrides=overrides,

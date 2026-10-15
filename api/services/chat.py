@@ -500,6 +500,7 @@ def answer_question(
     question: str,
     query_embedding: list[float] | None,
     retrieval_overrides: dict | None = None,
+    kbs: list[Any] | None = None,
     history: list[ChatMessage] | list[dict] | None = None,
     chat_cfg: ChatConfig | None = None,
     extra_context: str = "",
@@ -542,14 +543,43 @@ def answer_question(
         chat_cfg = load_chat_config(
             kb_db, user_id=user_id or "", team_name=team_name or "", is_sys_admin=is_sys_admin
         )
-    if kb is None:
+    if kb is None and kbs:
+        # 2026-10-16 全库问答：不选知识库=检索全部可见知识库，按分数合并取 top
+        yield {
+            "type": "stage",
+            "stage": "retrieval",
+            "status": "running",
+            "title": f"正在检索全部知识库（{len(kbs)} 个）…",
+        }
+        merged: list = []
+        for k in kbs:
+            cfg = config_from_kb(k, retrieval_overrides)
+            merged.extend(hybrid_search(kb_db, k.id, question, query_embedding, cfg))
+        merged.sort(key=lambda h: h.score or 0.0, reverse=True)
+        top_n = 8
+        if retrieval_overrides and retrieval_overrides.get("top_k") is not None:
+            try:
+                top_n = int(retrieval_overrides["top_k"])
+            except (TypeError, ValueError):
+                pass
+        hits = merged[:top_n]
+        yield {
+            "type": "stage",
+            "stage": "retrieval",
+            "status": "done",
+            "title": "检索完成",
+            "summary": f"全库 {len(kbs)} 个知识库，命中 {len(hits)} 篇相关片段",
+            "hits_count": len(hits),
+        }
+        yield {"type": "context", "hits": [h.__dict__ for h in hits]}
+    elif kb is None:
         hits: list = []
         yield {
             "type": "stage",
             "stage": "retrieval",
             "status": "done",
             "title": "未选择知识库，直接问答",
-            "summary": "纯对话模式",
+            "summary": "纯对话模式（环境中暂无可用知识库）",
             "hits_count": 0,
         }
         yield {"type": "context", "hits": []}
