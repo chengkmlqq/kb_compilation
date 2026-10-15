@@ -5,16 +5,17 @@ import {
   App,
   Button,
   Card,
-  Checkbox,
   Col,
   Drawer,
   Dropdown,
   Empty,
   Form,
   Input,
+  Radio,
   Row,
   Select,
   Space,
+  Switch,
   Tag,
   Typography,
 } from "antd";
@@ -26,6 +27,7 @@ import {
   MessageOutlined,
   MoreOutlined,
   PlusOutlined,
+  SearchOutlined,
   SlidersOutlined,
 } from "@ant-design/icons";
 import {
@@ -52,11 +54,11 @@ import KbGraphPane from "@/components/kb/KbGraphPane";
 import WikiGraphView from "@/components/WikiGraphView";
 import DocDetailPanel from "@/components/DocDetailPanel";
 
-const PIPELINE_OPTIONS = [
-  { label: "向量检索", value: "vector", default: true },
-  { label: "关键词检索", value: "keyword", default: true },
-  { label: "Wiki 构建", value: "wiki", default: false },
-  { label: "知识图谱", value: "graph", default: false },
+// 新建抽屉分区导航（对齐智能体编辑器 AgentEditorModal 与配置弹窗 KBConfigModal）
+const CREATE_SECTIONS = [
+  { key: "parse", label: "文档解析", icon: <FileTextOutlined /> },
+  { key: "wiki", label: "Wiki 构建", icon: <BookOutlined /> },
+  { key: "retrieval", label: "检索配置", icon: <SearchOutlined /> },
 ];
 
 /** 知识库详情分段：文档 / Wiki / 知识图谱(Neo4j) / wiki 关系图，各自成为顶层动态选项卡 */
@@ -101,6 +103,7 @@ export default function KbsPage() {
   const [configKb, setConfigKb] = useState<KbItem | null>(null);
   const [form] = Form.useForm();
   const [searchForm] = Form.useForm<{ keyword: string }>();
+  const [createSection, setCreateSection] = useState("parse");
 
   // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
   // 首个 tab「知识库管理」= 页面标题 + 列表，不可关闭；后续把知识库的
@@ -333,7 +336,6 @@ export default function KbsPage() {
   const onCreate = async () => {
     const values = await form.validateFields().catch(() => null);
     if (!values) return;
-    const picked: string[] = values.pipelines || [];
     const payload: KbCreatePayload = {
       name: values.name,
       label: values.label,
@@ -341,10 +343,10 @@ export default function KbsPage() {
       scope: values.scope || "personal",
       type: values.type || "document",
       indexing_strategy: {
-        vector_enabled: picked.includes("vector"),
-        keyword_enabled: picked.includes("keyword"),
-        wiki_enabled: picked.includes("wiki"),
-        graph_enabled: picked.includes("graph"),
+        vector_enabled: !!values.vector_enabled,
+        keyword_enabled: !!values.keyword_enabled,
+        wiki_enabled: !!values.wiki_enabled,
+        graph_enabled: !!values.graph_enabled,
       },
       embedding_model_id: values.embedding_model_id || undefined,
       summary_model_id: values.summary_model_id || undefined,
@@ -558,7 +560,7 @@ export default function KbsPage() {
           title="新建知识库"
           open={createOpen}
           onClose={() => setCreateOpen(false)}
-          width={560}
+          width={860}
           extra={
             <Space>
               <Button onClick={() => setCreateOpen(false)}>取消</Button>
@@ -596,75 +598,163 @@ export default function KbsPage() {
                 ]}
               />
             </Form.Item>
-            <Form.Item
-              name="build_engine"
-              label="构建引擎"
-              extra="选择服务编排中已发布的编排程序，文档解析完成后自动按该编排构建 Wiki（录入需先到「服务编排」设计并发布）；留空 = 使用内置构建"
-            >
-              <Select
-                allowClear
-                placeholder={buildEngines.length ? "选择构建引擎" : "暂无已发布的编排，请先到服务编排发布"}
-                options={buildEngines.map((t) => ({
-                  label: `${t.tape_label || t.tape_name}${t.tape_descr ? `（${t.tape_descr}）` : ""}`,
-                  value: t.id,
-                }))}
-              />
-            </Form.Item>
-            <Form.Item
-              name="summary_strategy"
-              label="文档摘要策略"
-              initialValue="auto"
-              extra="上传文档解析成功后自动生成摘要页：自动＝按文档大小与是否已有摘要选择（小文档全文直塞，大文档分块合并，已有摘要增量修订）；也可固定使用某一种模式；关＝不生成"
-            >
-              <Select
-                options={[
-                  { label: "自动（按文档规模选择）", value: "auto" },
-                  { label: "小文档全文直塞（Stuff）", value: "stuff" },
-                  { label: "大文档分块合并（Map-Reduce）", value: "mapreduce" },
-                  { label: "增量修订（Refine，需已有摘要）", value: "refine" },
-                  { label: "关（不生成摘要）", value: "off" },
-                ]}
-              />
-            </Form.Item>
-            <Form.Item
-              name="pipelines"
-              label="索引流水线"
-              initialValue={["vector", "keyword"]}
-              extra="向量/关键词检索默认开启；Wiki 构建与知识图谱需显式开启（上传文档后才会自动构建）"
-            >
-              <Checkbox.Group options={PIPELINE_OPTIONS.map((o) => ({ label: o.label, value: o.value }))} />
-            </Form.Item>
-            <Form.Item
-              name="embedding_model_id"
-              label="向量模型（Embedding）"
-              extra="知识向量化用；留空 = 系统默认"
-            >
-              <Select allowClear options={embeddingOptions} placeholder="选择向量模型" />
-            </Form.Item>
-            <Form.Item
-              name="vector_store_id"
-              label="向量数据库"
-              initialValue=""
-              extra="选择该知识库使用的向量库来源（数据源管理中配置的 ES / PostgreSQL 资源）；创建后不可切换，留空 = 系统默认（pgvector）"
-            >
-              <Select
-                options={[
-                  { label: "默认（系统配置 pgvector）", value: "" },
-                  ...vectorStores.map((s) => ({
-                    label: `${s.dsLabel || s.dsName || s.id}（${s.dsType}）`,
-                    value: s.id as string,
-                  })),
-                ]}
-                placeholder="选择向量数据库"
-              />
-            </Form.Item>
-            <Form.Item
-              name="summary_model_id"
-              label="大语言模型（LLM）"
-              extra="Wiki 合成/文档理解用；留空 = 系统默认"
-            >
-              <Select allowClear options={chatOptions} placeholder="选择大语言模型" />
-            </Form.Item>
+
+            <div style={{ display: "flex", gap: 16, minHeight: 300 }}>
+              {/* 左侧分区导航（对齐智能体编辑器 AgentEditorModal） */}
+              <div
+                style={{
+                  width: 150,
+                  borderRight: "1px solid #f0f0f0",
+                  paddingRight: 12,
+                  flexShrink: 0,
+                }}
+              >
+                {CREATE_SECTIONS.map((s) => (
+                  <div
+                    key={s.key}
+                    onClick={() => setCreateSection(s.key)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "8px 12px",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      marginBottom: 4,
+                      background: createSection === s.key ? "rgba(22,119,255,0.1)" : undefined,
+                      color: createSection === s.key ? "#1677ff" : undefined,
+                      fontWeight: createSection === s.key ? 600 : 400,
+                    }}
+                  >
+                    {s.icon}
+                    {s.label}
+                  </div>
+                ))}
+              </div>
+
+              {/* 右侧分区内容 */}
+              <div style={{ flex: 1, overflowY: "auto", maxHeight: 480 }}>
+                {createSection === "parse" && (
+                  <>
+                    <Form.Item
+                      name="type"
+                      label="知识库类型"
+                      initialValue="document"
+                    >
+                      <Radio.Group optionType="button" buttonStyle="solid">
+                        <Radio.Button value="document">文档型</Radio.Button>
+                        <Radio.Button value="faq">问答对型</Radio.Button>
+                      </Radio.Group>
+                    </Form.Item>
+                  </>
+                )}
+
+                {createSection === "wiki" && (
+                  <>
+                    <Form.Item
+                      name="wiki_enabled"
+                      label="Wiki 构建"
+                      valuePropName="checked"
+                      extra="文档入库后自动生成 Wiki 页面（绑定构建引擎时以编排输出为准）"
+                    >
+                      <Switch />
+                    </Form.Item>
+                    <Form.Item
+                      name="graph_enabled"
+                      label="知识图谱"
+                      valuePropName="checked"
+                      extra="启用图谱构建流水线（实体/关系抽取）"
+                    >
+                      <Switch />
+                    </Form.Item>
+                    <Form.Item
+                      name="build_engine"
+                      label="构建引擎"
+                      extra="选择服务编排中已发布的编排程序，文档解析完成后自动按该编排构建 Wiki（录入需先到「服务编排」设计并发布）；留空 = 使用内置构建"
+                    >
+                      <Select
+                        allowClear
+                        placeholder={buildEngines.length ? "选择构建引擎" : "暂无已发布的编排，请先到服务编排发布"}
+                        options={buildEngines.map((t) => ({
+                          label: `${t.tape_label || t.tape_name}${t.tape_descr ? `（${t.tape_descr}）` : ""}`,
+                          value: t.id,
+                        }))}
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      name="summary_strategy"
+                      label="文档摘要策略"
+                      initialValue="auto"
+                      extra="上传文档解析成功后自动生成摘要页：自动＝按文档大小与是否已有摘要选择（小文档全文直塞，大文档分块合并，已有摘要增量修订）；也可固定使用某一种模式；关＝不生成"
+                    >
+                      <Select
+                        options={[
+                          { label: "自动（按文档规模选择）", value: "auto" },
+                          { label: "小文档全文直塞（Stuff）", value: "stuff" },
+                          { label: "大文档分块合并（Map-Reduce）", value: "mapreduce" },
+                          { label: "增量修订（Refine，需已有摘要）", value: "refine" },
+                          { label: "关（不生成摘要）", value: "off" },
+                        ]}
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      name="summary_model_id"
+                      label="大语言模型（LLM）"
+                      extra="Wiki 合成/文档理解用；留空 = 系统默认"
+                    >
+                      <Select allowClear options={chatOptions} placeholder="选择大语言模型" />
+                    </Form.Item>
+                  </>
+                )}
+
+                {createSection === "retrieval" && (
+                  <>
+                    <Form.Item
+                      name="vector_enabled"
+                      label="向量检索"
+                      valuePropName="checked"
+                      initialValue={true}
+                      extra="基于语义相似度召回，需配置 Embedding 模型"
+                    >
+                      <Switch />
+                    </Form.Item>
+                    <Form.Item
+                      name="keyword_enabled"
+                      label="关键词检索"
+                      valuePropName="checked"
+                      initialValue={true}
+                      extra="基于关键词子串匹配召回（LIKE 检索）"
+                    >
+                      <Switch />
+                    </Form.Item>
+                    <Form.Item
+                      name="embedding_model_id"
+                      label="向量模型（Embedding）"
+                      extra="知识向量化用；留空 = 系统默认"
+                    >
+                      <Select allowClear options={embeddingOptions} placeholder="选择向量模型" />
+                    </Form.Item>
+                    <Form.Item
+                      name="vector_store_id"
+                      label="向量数据库"
+                      initialValue=""
+                      extra="选择该知识库使用的向量库来源（数据源管理中配置的 ES / PostgreSQL 资源）；创建后不可切换，留空 = 系统默认（pgvector）"
+                    >
+                      <Select
+                        options={[
+                          { label: "默认（系统配置 pgvector）", value: "" },
+                          ...vectorStores.map((s) => ({
+                            label: `${s.dsLabel || s.dsName || s.id}（${s.dsType}）`,
+                            value: s.id as string,
+                          })),
+                        ]}
+                        placeholder="选择向量数据库"
+                      />
+                    </Form.Item>
+                  </>
+                )}
+              </div>
+            </div>
           </Form>
         </Drawer>
 

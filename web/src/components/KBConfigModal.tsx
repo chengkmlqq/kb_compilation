@@ -3,9 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   Button,
-  Checkbox,
   Col,
-  Divider,
   Drawer,
   Form,
   InputNumber,
@@ -18,7 +16,12 @@ import {
   Switch,
   Typography,
 } from "antd";
-import { ExperimentOutlined } from "@ant-design/icons";
+import {
+  BookOutlined,
+  ExperimentOutlined,
+  FileTextOutlined,
+  SearchOutlined,
+} from "@ant-design/icons";
 import {
   apiGetChunkingConfig,
   apiListModels,
@@ -37,11 +40,11 @@ import ChunkDebugDrawer from "@/components/ChunkDebugDrawer";
 
 const { Text } = Typography;
 
-const PIPELINE_OPTS = [
-  { label: "向量检索", value: "vector" },
-  { label: "关键词检索", value: "keyword" },
-  { label: "Wiki 构建", value: "wiki" },
-  { label: "知识图谱", value: "graph" },
+// 分区导航（对齐智能体编辑器 AgentEditorModal 的左侧分区模式）
+const KB_SECTIONS = [
+  { key: "parse", label: "文档解析", icon: <FileTextOutlined /> },
+  { key: "wiki", label: "Wiki 构建", icon: <BookOutlined /> },
+  { key: "retrieval", label: "检索配置", icon: <SearchOutlined /> },
 ];
 
 // 切片策略下拉（中文 label + 说明）
@@ -122,6 +125,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
   const [chunkLoading, setChunkLoading] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [section, setSection] = useState("parse");
   const customWiki = Form.useWatch("custom_wiki_generation", form) ?? false;
   const kbType = Form.useWatch("type", form) ?? "document";
   const enableParentChild = Form.useWatch("enable_parent_child", form);
@@ -148,12 +152,10 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
     const strat = kb.indexing_strategy || {};
     form.setFieldsValue({
       type: kb.type || "document",
-      pipelines: [
-        ...(strat.vector_enabled ? ["vector"] : []),
-        ...(strat.keyword_enabled ? ["keyword"] : []),
-        ...(strat.wiki_enabled ? ["wiki"] : []),
-        ...(strat.graph_enabled ? ["graph"] : []),
-      ],
+      vector_enabled: !!strat.vector_enabled,
+      keyword_enabled: !!strat.keyword_enabled,
+      wiki_enabled: !!strat.wiki_enabled,
+      graph_enabled: !!strat.graph_enabled,
       custom_wiki_generation: !!kb.custom_wiki_generation,
       wiki_skill: kb.wiki_config?.skill || undefined,
       extraction_granularity: kb.wiki_config?.extraction_granularity || "standard",
@@ -221,14 +223,13 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
     if (!kb) return;
     const v = await form.validateFields().catch(() => null);
     if (!v) return;
-    const picked: string[] = v.pipelines || [];
     const payload: KbUpdatePayload = {
       type: v.type,
       indexing_strategy: {
-        vector_enabled: picked.includes("vector"),
-        keyword_enabled: picked.includes("keyword"),
-        wiki_enabled: picked.includes("wiki"),
-        graph_enabled: picked.includes("graph"),
+        vector_enabled: !!v.vector_enabled,
+        keyword_enabled: !!v.keyword_enabled,
+        wiki_enabled: !!v.wiki_enabled,
+        graph_enabled: !!v.graph_enabled,
       },
       custom_wiki_generation: v.custom_wiki_generation,
       embedding_model_id: v.embedding_model_id || null,
@@ -280,7 +281,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
         title={`知识库配置 · ${kb?.name ?? ""}`}
         open={open}
         onClose={() => onClose()}
-        width={620}
+        width={860}
         extra={
           <Space>
             <Button onClick={() => onClose()}>取消</Button>
@@ -291,222 +292,271 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
         }
       >
         <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
-          <Form.Item name="type" label="知识库类型">
-            <Radio.Group optionType="button" buttonStyle="solid">
-              <Radio.Button value="document">文档型</Radio.Button>
-              <Radio.Button value="faq">问答对型</Radio.Button>
-            </Radio.Group>
-          </Form.Item>
+          <div style={{ display: "flex", gap: 16, minHeight: 440 }}>
+            {/* 左侧分区导航（对齐智能体编辑器 AgentEditorModal） */}
+            <div
+              style={{
+                width: 150,
+                borderRight: "1px solid #f0f0f0",
+                paddingRight: 12,
+                flexShrink: 0,
+              }}
+            >
+              {KB_SECTIONS.map((s) => (
+                <div
+                  key={s.key}
+                  onClick={() => setSection(s.key)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "8px 12px",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    marginBottom: 4,
+                    background: section === s.key ? "rgba(22,119,255,0.1)" : undefined,
+                    color: section === s.key ? "#1677ff" : undefined,
+                    fontWeight: section === s.key ? 600 : 400,
+                  }}
+                >
+                  {s.icon}
+                  {s.label}
+                </div>
+              ))}
+            </div>
 
-          <Form.Item name="pipelines" label="索引流水线">
-            <Checkbox.Group options={PIPELINE_OPTS} />
-          </Form.Item>
-
-          <Form.Item
-            name="custom_wiki_generation"
-            label="自定义 Wiki 生成"
-            valuePropName="checked"
-          >
-            <Switch />
-          </Form.Item>
-          {customWiki && (
-            <>
-              <Form.Item name="wiki_skill" hidden>
-                <Select />
-              </Form.Item>
-              <Form.Item name="extraction_granularity" label="抽取粒度">
-                <Select
-                  options={[
-                    { label: "聚焦（focused）", value: "focused" },
-                    { label: "标准（standard）", value: "standard" },
-                    { label: "详尽（exhaustive）", value: "exhaustive" },
-                  ]}
-                />
-              </Form.Item>
-            </>
-          )}
-
-          <Divider plain style={{ margin: "8px 0" }}>
-            <Typography.Text type="secondary">模型绑定</Typography.Text>
-          </Divider>
-          <Form.Item name="embedding_model_id" label="Embedding 模型（向量化）">
-            <Select allowClear placeholder="留空 = 系统默认" options={modelOptions("embedding")} />
-          </Form.Item>
-          <Form.Item name="summary_model_id" label="Wiki 合成模型（LLM）">
-            <Select allowClear placeholder="留空 = 系统默认" options={modelOptions("chat")} />
-          </Form.Item>
-          <Form.Item
-            name="summary_strategy"
-            label="文档摘要策略"
-            extra="上传文档解析成功后自动生成摘要页；自动＝按文档规模与是否已有摘要选择（小文档全文直塞/大文档分块合并/已有摘要增量修订）"
-          >
-            <Select
-              options={[
-                { label: "自动（按文档规模选择）", value: "auto" },
-                { label: "小文档全文直塞（Stuff）", value: "stuff" },
-                { label: "大文档分块合并（Map-Reduce）", value: "mapreduce" },
-                { label: "增量修订（Refine，需已有摘要）", value: "refine" },
-                { label: "关（不生成摘要）", value: "off" },
-              ]}
-            />
-          </Form.Item>
-
-          {kbType === "document" && (
-            <>
-              <Divider plain style={{ margin: "8px 0" }}>
-                <Typography.Text type="secondary">图谱与问题生成</Typography.Text>
-              </Divider>
-              <Form.Item name="graph_extract" label="知识图谱抽取" valuePropName="checked">
-                <Switch />
-              </Form.Item>
-              <Form.Item name="question_generation" label="问题生成" valuePropName="checked">
-                <Switch />
-              </Form.Item>
-              <Form.Item name="question_count" label="每文档问题数">
-                <InputNumber min={0} max={20} style={{ width: 120 }} />
-              </Form.Item>
-            </>
-          )}
-          {kbType === "faq" && (
-            <>
-              <Divider plain style={{ margin: "8px 0" }}>
-                <Typography.Text type="secondary">FAQ 索引</Typography.Text>
-              </Divider>
-              <Form.Item name="faq_index_mode" label="索引模式">
-                <Select
-                  options={[
-                    { label: "问题与答案一起索引", value: "question_answer" },
-                    { label: "仅索引问题", value: "question_only" },
-                  ]}
-                />
-              </Form.Item>
-            </>
-          )}
-
-          <Divider plain style={{ margin: "8px 0" }}>
-            <Typography.Text type="secondary">切片配置</Typography.Text>
-          </Divider>
-          <Spin spinning={chunkLoading}>
-            <Row gutter={16}>
-              <Col span={16}>
-                <Form.Item name="strategy" label="切片策略">
-                  <Select options={STRATEGY_OPTIONS} />
-                </Form.Item>
-                <Text type="secondary" style={{ fontSize: 12, marginTop: -8, display: "block" }}>
-                  {STRATEGY_DESC[strategy ?? "auto"] ?? STRATEGY_DESC.auto}
-                </Text>
-              </Col>
-              <Col span={8}>
-                <Form.Item label=" " colon={false}>
-                  <Button
-                    icon={<ExperimentOutlined />}
-                    onClick={() => setDebugOpen(true)}
-                    style={{ width: "100%" }}
-                  >
-                    测试分块
-                  </Button>
-                </Form.Item>
-              </Col>
-            </Row>
-
-            <Row gutter={16}>
-              <Col span={8}>
-                <Form.Item name="chunk_size" label="分块大小">
-                  <InputNumber min={64} max={32768} style={{ width: "100%" }} />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item name="chunk_overlap" label="重叠长度">
-                  <InputNumber min={0} max={4096} style={{ width: "100%" }} />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item name="token_limit" label="Token 上限" tooltip="0 = 按字符数">
-                  <InputNumber min={0} style={{ width: "100%" }} placeholder="0=按字符" />
-                </Form.Item>
-              </Col>
-            </Row>
-
-            <Form.Item name="separators" label="分隔符">
-              <Select mode="tags" options={SEPARATOR_PRESETS.map((v) => ({ value: v, label: JSON.stringify(v) }))} />
-            </Form.Item>
-
-            <Form.Item label="父子分块">
-              <Space>
-                <Form.Item name="enable_parent_child" valuePropName="checked" noStyle>
-                  <Switch checkedChildren="开" unCheckedChildren="关" />
-                </Form.Item>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  开启后子块用于匹配、命中返回父块全文
-                </Text>
-              </Space>
-            </Form.Item>
-
-            {enableParentChild && (
-              <Row gutter={16}>
-                <Col span={12}>
-                  <Form.Item name="parent_chunk_size" label="父块大小" tooltip="512–8192">
-                    <Slider min={512} max={8192} step={128} />
+            {/* 右侧分区内容 */}
+            <div style={{ flex: 1, overflowY: "auto", maxHeight: 560 }}>
+              {section === "parse" && (
+                <>
+                  <Form.Item name="type" label="知识库类型">
+                    <Radio.Group optionType="button" buttonStyle="solid">
+                      <Radio.Button value="document">文档型</Radio.Button>
+                      <Radio.Button value="faq">问答对型</Radio.Button>
+                    </Radio.Group>
                   </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item name="child_chunk_size" label="子块大小" tooltip="64–2048">
-                    <Slider min={64} max={2048} step={32} />
-                  </Form.Item>
-                </Col>
-              </Row>
-            )}
 
-            <Form.Item name="languages" label="语言（留空自动识别）">
-              <Select mode="multiple" options={LANG_OPTIONS} allowClear />
-            </Form.Item>
+                  {kbType === "faq" && (
+                    <Form.Item name="faq_index_mode" label="FAQ 索引模式">
+                      <Select
+                        options={[
+                          { label: "问题与答案一起索引", value: "question_answer" },
+                          { label: "仅索引问题", value: "question_only" },
+                        ]}
+                      />
+                    </Form.Item>
+                  )}
 
-            <Form.Item label="解析引擎规则（按文件类型选引擎）" style={{ marginBottom: 8 }}>
-              <Form.List name="parser_engine_rules">
-                {(fields, { add, remove }) => (
-                  <>
-                    {fields.map((field) => (
-                      <Row key={field.key} gutter={8} align="middle" style={{ marginBottom: 8 }}>
-                        <Col span={11}>
-                          <Form.Item
-                            {...field}
-                            name={[field.name, "file_types"]}
-                            noStyle
-                            rules={[{ required: true, message: "选文件类型" }]}
+                  <Spin spinning={chunkLoading}>
+                    <Row gutter={16}>
+                      <Col span={16}>
+                        <Form.Item name="strategy" label="切片策略">
+                          <Select options={STRATEGY_OPTIONS} />
+                        </Form.Item>
+                        <Text type="secondary" style={{ fontSize: 12, marginTop: -8, display: "block" }}>
+                          {STRATEGY_DESC[strategy ?? "auto"] ?? STRATEGY_DESC.auto}
+                        </Text>
+                      </Col>
+                      <Col span={8}>
+                        <Form.Item label=" " colon={false}>
+                          <Button
+                            icon={<ExperimentOutlined />}
+                            onClick={() => setDebugOpen(true)}
+                            style={{ width: "100%" }}
                           >
-                            <Select
-                              mode="multiple"
-                              placeholder="文件类型"
-                              options={FILE_TYPE_OPTIONS}
-                              style={{ width: "100%" }}
-                            />
-                          </Form.Item>
-                        </Col>
-                        <Col span={11}>
-                          <Form.Item {...field} name={[field.name, "engine"]} noStyle
-                            rules={[{ required: true, message: "选引擎" }]}
-                          >
-                            <Select placeholder="解析引擎" options={engineOptions} style={{ width: "100%" }} />
-                          </Form.Item>
-                        </Col>
-                        <Col span={2}>
-                          <Button type="text" danger size="small" onClick={() => remove(field.name)}>
-                            删除
+                            测试分块
                           </Button>
+                        </Form.Item>
+                      </Col>
+                    </Row>
+
+                    <Row gutter={16}>
+                      <Col span={8}>
+                        <Form.Item name="chunk_size" label="分块大小">
+                          <InputNumber min={64} max={32768} style={{ width: "100%" }} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={8}>
+                        <Form.Item name="chunk_overlap" label="重叠长度">
+                          <InputNumber min={0} max={4096} style={{ width: "100%" }} />
+                        </Form.Item>
+                      </Col>
+                      <Col span={8}>
+                        <Form.Item name="token_limit" label="Token 上限" tooltip="0 = 按字符数">
+                          <InputNumber min={0} style={{ width: "100%" }} placeholder="0=按字符" />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+
+                    <Form.Item name="separators" label="分隔符">
+                      <Select mode="tags" options={SEPARATOR_PRESETS.map((v) => ({ value: v, label: JSON.stringify(v) }))} />
+                    </Form.Item>
+
+                    <Form.Item label="父子分块">
+                      <Space>
+                        <Form.Item name="enable_parent_child" valuePropName="checked" noStyle>
+                          <Switch checkedChildren="开" unCheckedChildren="关" />
+                        </Form.Item>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          开启后子块用于匹配、命中返回父块全文
+                        </Text>
+                      </Space>
+                    </Form.Item>
+
+                    {enableParentChild && (
+                      <Row gutter={16}>
+                        <Col span={12}>
+                          <Form.Item name="parent_chunk_size" label="父块大小" tooltip="512–8192">
+                            <Slider min={512} max={8192} step={128} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item name="child_chunk_size" label="子块大小" tooltip="64–2048">
+                            <Slider min={64} max={2048} step={32} />
+                          </Form.Item>
                         </Col>
                       </Row>
-                    ))}
-                    <Button type="dashed" onClick={() => add({ file_types: [], engine: "docreader" })} block>
-                      添加规则
-                    </Button>
-                  </>
-                )}
-              </Form.List>
-            </Form.Item>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              提示：不可用的引擎已置灰，鼠标悬停查看原因（如 MinerU endpoint 未配置）。
-            </Text>
-          </Spin>
+                    )}
+
+                    <Form.Item name="languages" label="语言（留空自动识别）">
+                      <Select mode="multiple" options={LANG_OPTIONS} allowClear />
+                    </Form.Item>
+
+                    <Form.Item label="解析引擎规则（按文件类型选引擎）" style={{ marginBottom: 8 }}>
+                      <Form.List name="parser_engine_rules">
+                        {(fields, { add, remove }) => (
+                          <>
+                            {fields.map((field) => (
+                              <Row key={field.key} gutter={8} align="middle" style={{ marginBottom: 8 }}>
+                                <Col span={11}>
+                                  <Form.Item
+                                    {...field}
+                                    name={[field.name, "file_types"]}
+                                    noStyle
+                                    rules={[{ required: true, message: "选文件类型" }]}
+                                  >
+                                    <Select
+                                      mode="multiple"
+                                      placeholder="文件类型"
+                                      options={FILE_TYPE_OPTIONS}
+                                      style={{ width: "100%" }}
+                                    />
+                                  </Form.Item>
+                                </Col>
+                                <Col span={11}>
+                                  <Form.Item {...field} name={[field.name, "engine"]} noStyle
+                                    rules={[{ required: true, message: "选引擎" }]}
+                                  >
+                                    <Select placeholder="解析引擎" options={engineOptions} style={{ width: "100%" }} />
+                                  </Form.Item>
+                                </Col>
+                                <Col span={2}>
+                                  <Button type="text" danger size="small" onClick={() => remove(field.name)}>
+                                    删除
+                                  </Button>
+                                </Col>
+                              </Row>
+                            ))}
+                            <Button type="dashed" onClick={() => add({ file_types: [], engine: "docreader" })} block>
+                              添加规则
+                            </Button>
+                          </>
+                        )}
+                      </Form.List>
+                    </Form.Item>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      提示：不可用的引擎已置灰，鼠标悬停查看原因（如 MinerU endpoint 未配置）。
+                    </Text>
+                  </Spin>
+                </>
+              )}
+
+              {section === "wiki" && (
+                <>
+                  <Form.Item
+                    name="wiki_enabled"
+                    label="Wiki 构建"
+                    valuePropName="checked"
+                    extra="文档入库后自动生成 Wiki 页面（绑定构建引擎时以编排输出为准）"
+                  >
+                    <Switch />
+                  </Form.Item>
+                  <Form.Item
+                    name="custom_wiki_generation"
+                    label="自定义 Wiki 生成"
+                    valuePropName="checked"
+                  >
+                    <Switch />
+                  </Form.Item>
+                  {customWiki && (
+                    <>
+                      <Form.Item name="wiki_skill" hidden>
+                        <Select />
+                      </Form.Item>
+                      <Form.Item name="extraction_granularity" label="抽取粒度">
+                        <Select
+                          options={[
+                            { label: "聚焦（focused）", value: "focused" },
+                            { label: "标准（standard）", value: "standard" },
+                            { label: "详尽（exhaustive）", value: "exhaustive" },
+                          ]}
+                        />
+                      </Form.Item>
+                    </>
+                  )}
+                  <Form.Item
+                    name="summary_strategy"
+                    label="文档摘要策略"
+                    extra="上传文档解析成功后自动生成摘要页；自动＝按文档规模与是否已有摘要选择（小文档全文直塞/大文档分块合并/已有摘要增量修订）"
+                  >
+                    <Select
+                      options={[
+                        { label: "自动（按文档规模选择）", value: "auto" },
+                        { label: "小文档全文直塞（Stuff）", value: "stuff" },
+                        { label: "大文档分块合并（Map-Reduce）", value: "mapreduce" },
+                        { label: "增量修订（Refine，需已有摘要）", value: "refine" },
+                        { label: "关（不生成摘要）", value: "off" },
+                      ]}
+                    />
+                  </Form.Item>
+                  <Form.Item name="summary_model_id" label="Wiki 合成模型（LLM）">
+                    <Select allowClear placeholder="留空 = 系统默认" options={modelOptions("chat")} />
+                  </Form.Item>
+
+                  {kbType === "document" && (
+                    <>
+                      <Form.Item name="graph_enabled" label="知识图谱" valuePropName="checked" extra="启用图谱构建流水线（实体/关系抽取）">
+                        <Switch />
+                      </Form.Item>
+                      <Form.Item name="graph_extract" label="知识图谱抽取" valuePropName="checked">
+                        <Switch />
+                      </Form.Item>
+                      <Form.Item name="question_generation" label="问题生成" valuePropName="checked">
+                        <Switch />
+                      </Form.Item>
+                      <Form.Item name="question_count" label="每文档问题数">
+                        <InputNumber min={0} max={20} style={{ width: 120 }} />
+                      </Form.Item>
+                    </>
+                  )}
+                </>
+              )}
+
+              {section === "retrieval" && (
+                <>
+                  <Form.Item name="vector_enabled" label="向量检索" valuePropName="checked" extra="基于语义相似度召回，需配置 Embedding 模型">
+                    <Switch />
+                  </Form.Item>
+                  <Form.Item name="keyword_enabled" label="关键词检索" valuePropName="checked" extra="基于关键词子串匹配召回（LIKE 检索）">
+                    <Switch />
+                  </Form.Item>
+                  <Form.Item name="embedding_model_id" label="Embedding 模型（向量化）">
+                    <Select allowClear placeholder="留空 = 系统默认" options={modelOptions("embedding")} />
+                  </Form.Item>
+                </>
+              )}
+            </div>
+          </div>
         </Form>
       </Drawer>
 
