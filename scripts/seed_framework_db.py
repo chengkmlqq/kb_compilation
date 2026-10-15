@@ -757,28 +757,15 @@ def main(argv: list[str] | None = None) -> None:
         d_created, d_updated = _seed_step_defines(db)
         print(f"[7/7] 编排组件定义种子 OK: 内置 {len(ORCH_STEP_DEFINES)} 个 [新建 {d_created} / 修正 {d_updated}]")
 
-        # 8) 种子编排模板：wiki 构建（细粒度基础原子组合，2026-10-12）
-        #    幂等：按 tape_name 查存在则 skip。编排自己实现 wiki 构建逻辑
-        #    （读切片→LLM→解析→摘要页→实体页循环→互链），节点全是可复用基础原子。
-        _seed_wiki_build_tape(db)
-
-        # 9) 种子编排模板：表→wiki 构建（2026-10-12）
-        #    幂等：按 tape_name 查存在则 skip。编排自己实现表 wiki 构建逻辑
-        #    （kb_read_table 取数→script 构 md→LLM 表用途→script 拼正文→
-        #    wiki_upsert_page 写表主页→wiki_rebuild_links），节点全是可复用基础原子。
-        _seed_table_wiki_tape(db)
-
-        # 10-12) 种子编排模板：文档摘要三模式（Stuff / Map-Reduce / Refine，2026-10-12）
-        #    业界经典摘要模式，全部用基础原子组装（读切片→分批→LLM→合并/修订→写摘要页）。
-        _seed_summary_tapes(db)
-        _seed_domain_resolve_tape(db)
-
-        # 13) 种子编排模板：质量评估（2026-10-13）
-        #    文档构建质量评估：切片/wiki/图数据三维度检查 + 规则归因汇总落库。
-        _seed_quality_tape(db)
-
-        # 14) 种子编排：20 个领域 wiki 构建（2026-10-15 固化，数据 seed_tape_data/*.json）
-        _seed_domain_wiki_tapes(db)
+        # 8) 种子编排（2026-10-17 统一为 seed_tape_data/ 单源数据）
+        #    编排数据唯一真源 = scripts/seed_tape_data/*.json（线上编排管理数据的
+        #    导出固化：20 领域构建 + 表构建Wiki + 摘要三模式 + 题材分析 + 质量评估，
+        #    2026-10-17 与线上一致共 26 条；由 export_orchestrations_to_seed.py 重新导出）。
+        #    按 tape_name 幂等，已存在跳过；status/category/tape_type 从文件恢复。
+        #    旧的逐编排播种函数（_seed_wiki_build_tape / _seed_table_wiki_tape /
+        #    _seed_summary_tapes / _seed_domain_resolve_tape / _seed_quality_tape）
+        #    已停用（保留仅供查阅）——以常量为准会与线上编排数据脱节。
+        _seed_tapes_from_exports(db)
 
         # 15) 种子本体 Schema：24 套领域/业务本体（2026-10-15 固化，数据 seed_ontology_data/*.json）
         _seed_ontology_schemas(db)
@@ -2561,12 +2548,57 @@ def _seed_domain_resolve_tape(db) -> None:
     print(f"[seed-resolve] 提示：把该 id 写入 modo_dim(SYSTEM_CONFIG).DOMAIN_RESOLVE_TAPE 即启用自动领域分发")
 
 
-def _seed_domain_wiki_tapes(db) -> None:
-    """幂等建 20 个领域 wiki 构建编排（数据在 scripts/seed_tape_data/*.json，2026-10-15 固化）。
+def _restore_tape_steps(db, tape_id: str, steps: list) -> None:
+    """按导出的执行层 steps 原样重建 kb_tape_step（不经过画布推导）。
 
-    每个 JSON 为导出草稿（type=kb.orchestration.draft, draft.tapeName/nodes/edges/execParams），
-    category 由 tapeName 推导（wiki构建-<领域> → <领域>，自动落一级分类挂载树）。
-    存在则 skip；改内容需删 Tape+TapeStep 行重建（与其它种子编排同语义）。
+    step id 沿用 save_tape_design 的 "{tape_id[:12]}::{node_id}" 约定；pre/next
+    引用按新 tape 前缀重映射（导出值可能带旧前缀或裸 node id，两者都兼容）。
+    """
+    from api.models.orchestration import TapeStep
+
+    prefix = tape_id[:12]
+
+    def _sid(nid) -> str:
+        bare = str(nid or "").rsplit("::", 1)[-1]
+        return f"{prefix}::{bare}" if bare else ""
+
+    db.query(TapeStep).filter(TapeStep.tape_id == tape_id).delete()
+    db.commit()
+    for st in sorted(steps, key=lambda s: int(s.get("step_seq") or 0)):
+        sid = _sid(st.get("step_id") or "")
+        db.add(
+            TapeStep(
+                id=sid or uuid.uuid4().hex[:64],
+                tape_id=tape_id,
+                step_inst=str(st.get("step_inst") or "def"),
+                step_label=str(st.get("step_label") or "")[:128],
+                step_config=st.get("step_config") or {},
+                step_seq=int(st.get("step_seq") or 0),
+                pre_step_ids=[x for x in (_sid(i) for i in (st.get("pre_step_ids") or [])) if x],
+                next_step_ids=[x for x in (_sid(i) for i in (st.get("next_step_ids") or [])) if x],
+                queue_name=str(st.get("queue_name") or ""),
+            )
+        )
+    db.commit()
+
+
+def _seed_tapes_from_exports(db) -> None:
+    """幂等建全部种子编排（数据源 scripts/seed_tape_data/*.json，2026-10-17 由编排管理数据统一固化）。
+
+    每个 JSON 为导出草稿（type=kb.orchestration.draft；draft.tapeName/tapeLabel/
+    tapeDescr/tapeType/category/status/nodes/edges/execParams[/steps]）。**该目录
+    是编排数据的唯一真源**：由 scripts/export_orchestrations_to_seed.py 从线上
+    kb_tape/kb_tape_step 导出，改动线上编排后重跑该脚本即可让种子与线上一致。
+
+    编排集合（2026-10-17 与线上编排管理一致，共 26 条）：20 个领域 wiki 构建 +
+    表构建Wiki-基础原子版 + 摘要三模式（Stuff/Map-Reduce/Refine）+ 题材分析-领域判定
+    + 质量评估-QA。
+
+    幂等：按 tape_name 判重，已存在则跳过（不改动已有编排，不覆盖线上设计）。
+    缺字段兜底：category 按「wiki构建-<领域>」推导、status=draft、tapeType=general。
+    draft.steps 存在时按执行层原样重建 kb_tape_step（画布 nodes 与 kb_tape_step
+    历史上会脱节——2026-10-15 实测三个摘要编排画布仍是远古版，此路径避免播种时
+    把执行层修复覆盖回画布旧版）；否则用 save_tape_design 由画布推导步骤。
     """
     import json
     from pathlib import Path
@@ -2576,47 +2608,74 @@ def _seed_domain_wiki_tapes(db) -> None:
 
     data_dir = Path(__file__).resolve().parent / "seed_tape_data"
     if not data_dir.is_dir():
-        print("[seed-domain] 无 seed_tape_data/ 目录，跳过领域编排种子")
+        print("[seed-tapes] 无 seed_tape_data/ 目录，跳过编排种子")
         return
     files = sorted(data_dir.glob("*.json"))
     created = skipped = 0
+    resolve_tape_id = ""
     for fp in files:
         try:
-            draft = json.loads(fp.read_text(encoding="utf-8"))
+            doc = json.loads(fp.read_text(encoding="utf-8"))
         except Exception as e:  # noqa: BLE001
-            print(f"[seed-domain] 读取失败 {fp.name}: {e}")
+            print(f"[seed-tapes] 读取失败 {fp.name}: {e}")
             continue
-        d = draft.get("draft") or draft
+        d = doc.get("draft") or doc
         name = str(d.get("tapeName") or "").strip()
         if not name:
-            print(f"[seed-domain] 无 tapeName: {fp.name}")
+            print(f"[seed-tapes] 无 tapeName: {fp.name}")
             continue
         existing = db.execute(select(Tape).where(Tape.tape_name == name)).scalars().first()
         if existing:
             skipped += 1
-            print(f"[seed-domain] 编排「{name}」已存在 (skip)")
+            print(f"[seed-tapes] 编排「{name}」已存在 (skip)")
             continue
-        category = name.replace("wiki构建-", "", 1) or "通用"
+        nodes = list(d.get("nodes") or [])
+        edges = list(d.get("edges") or [])
+        exec_params = d.get("execParams")
+        category = str(d.get("category") or "").strip() or (name.replace("wiki构建-", "", 1) or "通用")
         ensure_tape_category(db, category, cat_type="tape")
         tape = Tape(
             id=uuid.uuid4().hex[:32],
             tape_name=name,
             tape_label=str(d.get("tapeLabel") or name),
             tape_descr=str(d.get("tapeDescr") or ""),
-            tape_type="kb_build",  # 2026-10-15 功能标签：领域 wiki 构建统一「知识构建」（JSON tapeType 恒 general）
+            tape_type=str(d.get("tapeType") or "general") or "general",
             category=category,
-            status="draft",
-            nodes=list(d.get("nodes") or []),
-            edges=list(d.get("edges") or []),
-            exec_params=d.get("execParams") or {},
+            status=str(d.get("status") or "draft") or "draft",
+            nodes=nodes,
+            edges=edges,
+            exec_params=exec_params,
             create_user=None,
         )
         db.add(tape)
         db.commit()
-        save_tape_design(db, tape.id, d.get("nodes") or [], d.get("edges") or [], d.get("execParams") or {})
+        steps = d.get("steps") or []
+        if steps:
+            _restore_tape_steps(db, tape.id, steps)
+        else:
+            save_tape_design(db, tape.id, nodes, edges, exec_params)
         created += 1
-        print(f"[seed-domain] 编排「{name}」OK: id={tape.id[:12]}… 分类「{category}」 节点 {len(d.get('nodes') or [])}")
-    print(f"[seed-domain] 完成: 新建 {created} / 跳过 {skipped}")
+        if name == "题材分析-领域判定":
+            resolve_tape_id = tape.id
+        print(
+            f"[seed-tapes] 编排「{name}」OK: id={tape.id[:12]}… 分类「{category}」 "
+            f"{len(nodes)} 节点 / {len(steps) or len(nodes)} 步骤 status={tape.status}"
+        )
+    # 题材分析编排建完自动接线：新环境开箱即用「摘要驱动自动领域构建」
+    # （线上等价：modo_dim(SYSTEM_CONFIG).DOMAIN_RESOLVE_TAPE = 该编排 id，留空=不启用）
+    if resolve_tape_id:
+        dim = db.execute(
+            select(Dim).where(
+                Dim.dim_group == "SYSTEM_CONFIG", Dim.dim_code == "DOMAIN_RESOLVE_TAPE"
+            )
+        ).scalars().first()
+        if dim is not None and not (dim.dim_value or "").strip():
+            dim.dim_value = resolve_tape_id
+            db.commit()
+            print(f"[seed-tapes] 参数 DOMAIN_RESOLVE_TAPE 已指向新编排 {resolve_tape_id[:12]}…（启用自动领域分发）")
+        elif dim is None:
+            print("[seed-tapes] 参数 DOMAIN_RESOLVE_TAPE 不存在，跳过自动接线（需先播系统参数种子）")
+    print(f"[seed-tapes] 完成: 新建 {created} / 跳过 {skipped}")
 
 
 def _seed_ontology_schemas(db) -> None:

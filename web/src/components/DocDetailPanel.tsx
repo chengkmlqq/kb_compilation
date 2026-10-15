@@ -5,7 +5,7 @@
  * 由原「文档详情抽屉」DocDetailDrawer 改造而来：不再用 Drawer，改为承载在
  * 动态选项卡页签内的内容面板（2026-10-14）。
  *
- *  - 头部：文件图标 + 文件名 + 下载 / 重新解析
+ *  - 头部：文件图标 + 文件名 + 下载
  *  - 内容顺序：基本信息（Descriptions）→ AI 摘要 → 视图切换 → 预览/合并/分块
  *  - 三视图：预览（可预览类型 / 表源实时样例）、合并（按 seq 拼接全文）、分块（卡片网格，支持关键字检索+高亮）
  *  - 默认视图：音频 → 合并；表源 / 可预览 → 预览；其他 → 合并
@@ -30,7 +30,7 @@ import DocPreviewModal, { canPreviewExt } from "./DocPreviewModal";
 interface Props {
   kbId: string;
   doc: DocItem;
-  /** 重新解析成功后回调（父级刷新文档列表） */
+  /** 文档内容变更后回调（父级刷新文档列表，预留：详情面板内解析/变更操作后触发） */
   onDocReparsed?: (doc: DocItem) => void;
 }
 
