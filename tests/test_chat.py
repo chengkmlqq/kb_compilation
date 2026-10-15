@@ -57,9 +57,16 @@ def test_build_messages_includes_history() -> None:
 
 
 def test_build_messages_no_context_uses_fallback_system() -> None:
+    """无检索片段且无附件：使用通用助手人设（2026-10-15 纯对话模式改动）。
+
+    此前人设是「知识库问答助手。若检索片段不足以回答…」；纯对话模式（未选
+    知识库）下不注入检索片段，人设改为通用「智能问答助手」，信息不足时
+    明确说明、不编造——服务于 RAG 零命中与不选知识库两种场景。
+    """
     messages = build_messages("问题", [])
     assert messages[0].role == "system"
-    assert "检索片段不足以回答" in messages[0].content
+    assert "你是一个智能问答助手" in messages[0].content
+    assert "信息不足时请明确说明" in messages[0].content
 
 
 def test_chat_client_endpoint_normalization() -> None:
