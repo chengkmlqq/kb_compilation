@@ -1554,93 +1554,887 @@ SUMMARY_REFINE_TAPE: dict = {
 }
 
 
-# ── 质量评估编排（2026-10-13 v1）──────────────────────────────
-# 文档构建质量评估：切片/wiki/图数据三维度检查（并行）+ 规则归因汇总落库。
-# 脚本节点 import worker/builtin_engine/code_rev_src 下的 quality_*.py。
+# ── 质量评估编排（2026-10-15 v2 语义评估版）────────────────────────
+# 文档构建质量评估：切片/wiki/图数据三维度程序性检查（内联，不再依赖 quality_*.py）
+# + 语义评估（wiki 单文档/wiki-原文对比/图数据三层抽样，LLM 驱动）。
+# 健康分：每维度 程序性×0.6 + 语义×0.4，综合分=三维度平均。
+# 语义节点 LLM 失败自动降级（不拖垮 run），quality_id 传空则汇总自建行。
+QC_CODE = """
+
+import json
+from api.db import get_sessionmaker
+from sqlalchemy import text
+
+SHORT = 50
+LONG = 2000
+TRUNC_MARKS = ("…", "...", "（节选）", "[截断]")
+
+_kb = bindings.get("kb_id") or ""
+_docs = [d.strip() for d in str(bindings.get("doc_ids") or "").split(",") if d.strip()] or None
+_db = get_sessionmaker()()
+try:
+    if _docs:
+        _cond = "kb_id=:kb AND document_id IN :ids"
+        _params = {"kb": _kb, "ids": tuple(_docs)}
+    else:
+        _cond = "kb_id=:kb"
+        _params = {"kb": _kb}
+    _rows = _db.execute(
+        text(f"SELECT document_id, seq, content, meta FROM doc_chunk WHERE {_cond} AND enabled=1 ORDER BY document_id, seq"),
+        _params,
+    ).all()
+finally:
+    _db.close()
+
+if not _rows:
+    _r = {"metrics": {"docs": 0, "chunks": 0, "avg_len": 0},
+          "issues": [{"dim": "chunk", "issue_type": "no_chunks", "detail": "无切片数据(文档未解析或无切片)"}],
+          "attribution": [{"dim": "chunk", "cause": "文档未进入切片阶段或解析失败", "suggestion": "检查 parse_state / 重跑解析"}]}
+else:
+    _by_doc = {}
+    for _rid, _seq, _content, _meta in _rows:
+        _by_doc.setdefault(str(_rid), []).append((int(_seq or 0), str(_content or ""), _meta))
+    _issues = []
+    _totals = {"docs": len(_by_doc), "chunks": 0, "short": 0, "long": 0, "truncated": 0, "dup": 0}
+    _per_doc = {}
+    for _doc_id, _chunks in _by_doc.items():
+        _lens = [len(c) for _, c, _ in _chunks]
+        _n = len(_chunks)
+        _totals["chunks"] += _n
+        _short_n = sum(1 for L in _lens if L < SHORT)
+        _long_n = sum(1 for L in _lens if L > LONG)
+        _trunc_n = sum(1 for _, c, _ in _chunks if any(m in c for m in TRUNC_MARKS))
+        _seen = set()
+        _dup_n = 0
+        for _, c, _ in _chunks:
+            _h = __import__("hashlib").md5(c.strip()[:200].encode("utf-8")).hexdigest()
+            if _h in _seen:
+                _dup_n += 1
+            _seen.add(_h)
+        _totals["short"] += _short_n
+        _totals["long"] += _long_n
+        _totals["truncated"] += _trunc_n
+        _totals["dup"] += _dup_n
+        _per_doc[_doc_id] = {"doc_id": _doc_id, "chunks": _n, "avg_len": round(sum(_lens) / _n, 1) if _n else 0,
+                             "short": _short_n, "long": _long_n, "truncated": _trunc_n, "dup": _dup_n}
+        if _short_n / max(_n, 1) > 0.3:
+            _issues.append({"dim": "chunk", "doc_id": _doc_id, "issue_type": "too_many_short_chunks", "detail": f"{_short_n}/{_n} 切片过短(<{SHORT}字),占比 {_short_n/_n:.0%}"})
+        if _long_n / max(_n, 1) > 0.1:
+            _issues.append({"dim": "chunk", "doc_id": _doc_id, "issue_type": "too_many_long_chunks", "detail": f"{_long_n}/{_n} 切片过长(>{LONG}字),占比 {_long_n/_n:.0%}"})
+        if _trunc_n > 0:
+            _issues.append({"dim": "chunk", "doc_id": _doc_id, "issue_type": "truncated_chunks", "detail": f"{_trunc_n} 个切片含截断标记"})
+        if _dup_n / max(_n, 1) > 0.2:
+            _issues.append({"dim": "chunk", "doc_id": _doc_id, "issue_type": "duplicate_chunks", "detail": f"{_dup_n}/{_n} 切片疑似近似重复"})
+    _short_r = _totals["short"] / max(_totals["chunks"], 1)
+    _long_r = _totals["long"] / max(_totals["chunks"], 1)
+    _trunc_r = _totals["truncated"] / max(_totals["chunks"], 1)
+    _score = max(0, int(100.0 - _short_r * 60 - _long_r * 60 - _trunc_r * 80))
+    _metrics = {**_totals, "short_ratio": round(_short_r, 4), "long_ratio": round(_long_r, 4),
+                "health_score": _score, "per_doc": _per_doc}
+    _attr = []
+    if _metrics.get("short_ratio", 0) > 0.3:
+        _attr.append({"dim": "chunk", "cause": "过短切片占比高 → 切分粒度偏细/按词切分", "suggestion": "调大 chunk_size 或按段落合并相邻短块"})
+    if _metrics.get("long_ratio", 0) > 0.1:
+        _attr.append({"dim": "chunk", "cause": "过长切片占比高 → 切分边界未生效(表/长句整块保留)", "suggestion": "对长表/长句二次切分,或提高 max_chars 后按语义边界再分"})
+    if _metrics.get("truncated", 0) > 0:
+        _attr.append({"dim": "chunk", "cause": "切片带截断标记 → 切分在硬长度处截断而非语义边界", "suggestion": "开启 overlap/按句号段号切分,减少硬截断"})
+    if _metrics.get("dup", 0) > 0:
+        _attr.append({"dim": "chunk", "cause": "近似重复切片 → 重叠窗口/段落重复扫描", "suggestion": "关闭 overlap 或调小重叠比例,去重后再入库"})
+    _r = {"metrics": _metrics, "issues": _issues, "attribution": _attr}
+
+bindings["chunk_r"] = _r
+print(f"[n02] 切片质量: 健康分 {_r['metrics'].get('health_score')} 问题 {len(_r['issues'])}")
+
+"""
+
+QW_CODE = """
+
+import re
+from api.db import get_sessionmaker
+from sqlalchemy import text
+
+PLACEHOLDER = "*由 LLM 生成*"
+_SOURCE_MARKS = ("出处", "来源制度", "原文关联", "来源")
+
+_kb = bindings.get("kb_id") or ""
+_db = get_sessionmaker()()
+try:
+    _pages = _db.execute(
+        text("SELECT id, slug, title, page_type, content, folder_id, folder_ids FROM wiki_page WHERE kb_id=:kb AND status='active'"),
+        {"kb": _kb},
+    ).all()
+    _links = _db.execute(
+        text("SELECT from_page_id, to_page_id FROM wiki_link WHERE kb_id=:kb"),
+        {"kb": _kb},
+    ).all()
+finally:
+    _db.close()
+
+if not _pages:
+    _r = {"metrics": {"pages": 0, "health_score": 0},
+          "issues": [{"dim": "wiki", "issue_type": "no_pages", "detail": "无 wiki 页面(未构建或构建失败)"}],
+          "attribution": [{"dim": "wiki", "cause": "wiki 构建未执行或全部失败", "suggestion": "检查构建编排 run 状态 / 重跑构建"}]}
+else:
+    _by_id = {str(p[0]): p for p in _pages}
+    _slug_by_id = {str(p[0]): str(p[1]) for p in _pages}
+    _linked_ids = {str(l[0]) for l in _links} | {str(l[1]) for l in _links}
+    _issues = []
+    _empty = [p for p in _pages if not (p[4] or "").strip()]
+    for _p in _empty:
+        _issues.append({"dim": "wiki", "slug": str(_p[1]), "page_type": str(_p[3]), "issue_type": "empty_content", "detail": "页面内容为空"})
+    _orphans = [p for p in _pages if str(p[0]) not in _linked_ids]
+    for _p in _orphans:
+        _issues.append({"dim": "wiki", "slug": str(_p[1]), "page_type": str(_p[3]), "issue_type": "orphan", "detail": "无任何双向链接"})
+    _broken = 0
+    _broken_slugs = set()
+    for _p in _pages:
+        _targets = re.findall(r"\[\[([^\]|]+)", _p[4] or "")
+        for _t in _targets:
+            _t = _t.strip()
+            if _t and _t not in _slug_by_id.values():
+                _broken += 1
+                _broken_slugs.add(_t)
+    if _broken:
+        _issues.append({"dim": "wiki", "issue_type": "broken_links", "detail": f"{_broken} 处断链,目标示例: {list(_broken_slugs)[:5]}"})
+    _placeholder = [p for p in _pages if PLACEHOLDER in (p[4] or "")]
+    for _p in _placeholder:
+        _issues.append({"dim": "wiki", "slug": str(_p[1]), "page_type": str(_p[3]), "issue_type": "llm_placeholder", "detail": "LLM 解读占位未填充"})
+    _no_source = [p for p in _pages if not any(m in (p[4] or "") for m in _SOURCE_MARKS)]
+    for _p in _no_source:
+        _issues.append({"dim": "wiki", "slug": str(_p[1]), "page_type": str(_p[3]), "issue_type": "missing_source", "detail": "页面无出处/原文引用标记"})
+    _no_folder = [p for p in _pages if not (p[5] or p[6] or "")]
+    for _p in _no_folder:
+        _issues.append({"dim": "wiki", "slug": str(_p[1]), "page_type": str(_p[3]), "issue_type": "no_folder", "detail": "页面未挂载任何目录"})
+    _n = len(_pages)
+    _s = 100.0
+    _s -= (len(_empty) / _n) * 100 + (len(_orphans) / _n) * 60
+    _s -= min(_broken, _n) * 0.5
+    _s -= (len(_placeholder) / _n) * 80 + (len(_no_source) / _n) * 40
+    _metrics = {"pages": _n, "empty": len(_empty), "orphan": len(_orphans), "broken_links": _broken,
+                "placeholder": len(_placeholder), "missing_source": len(_no_source), "no_folder": len(_no_folder),
+                "empty_ratio": round(len(_empty) / _n, 4), "orphan_ratio": round(len(_orphans) / _n, 4),
+                "health_score": max(0, int(_s))}
+    _attr = []
+    if _metrics.get("empty_ratio", 0) > 0.05:
+        _attr.append({"dim": "wiki", "cause": "空内容页占比高 → 建页流程在生成内容前中断/LLM 输出为空", "suggestion": "检查构建日志中该页的生成步骤;对空页重跑补写"})
+    if _metrics.get("orphan_ratio", 0) > 0.3:
+        _attr.append({"dim": "wiki", "cause": "孤立页占比高 → 实体抽取过泛/页面间未建立互链", "suggestion": "收敛实体抽取范围,构建尾部执行 rebuild_links"})
+    if _metrics.get("broken_links", 0) > 0:
+        _attr.append({"dim": "wiki", "cause": "断链 = 引用了未创建的页面/实体(抽取了未建的实体名)", "suggestion": "构建前先建全部实体页再补引用,或对断链目标补建页面"})
+    if _metrics.get("placeholder", 0) > 0:
+        _attr.append({"dim": "wiki", "cause": "LLM 占位未填充 → 解读步骤未跑/供应商失败中断", "suggestion": "重跑 LLM 解读补位(断点续传),或修供应商可达性"})
+    if _metrics.get("missing_source", 0) > 0:
+        _attr.append({"dim": "wiki", "cause": "页面缺出处标记 → 渲染模板未带原文出处章节", "suggestion": "渲染器补「出处」行,保证证据链可回原文"})
+    _r = {"metrics": _metrics, "issues": _issues, "attribution": _attr}
+
+bindings["wiki_r"] = _r
+print(f"[n03] Wiki质量: 健康分 {_r['metrics'].get('health_score')} 问题 {len(_r['issues'])}")
+
+"""
+
+QG_CODE = """
+
+import os
+from api.db import get_sessionmaker
+from sqlalchemy import text
+from neo4j import GraphDatabase
+
+_STABLE_REL_TYPES = ("约束", "主体", "客体", "条件", "出自", "依据")
+
+_kb = bindings.get("kb_id") or ""
+_label = "ENTITY" + _kb.replace("-", "_")
+_uri = os.getenv("NEO4J_URI", "bolt://kb-neo4j:7687")
+_user = os.getenv("NEO4J_USERNAME", "neo4j")
+_pwd = os.getenv("NEO4J_PASSWORD", "")
+_driver = GraphDatabase.driver(_uri, auth=(_user, _pwd))
+try:
+    with _driver.session() as _sess:
+        _nodes = _sess.run(f"MATCH (n:`{_label}`) RETURN count(n) AS c").single()["c"]
+        _rels = _sess.run(f"MATCH (a:`{_label}`)-[r]-(b:`{_label}`) RETURN count(r) AS c").single()["c"]
+        _dumb = _sess.run(f"MATCH (n:`{_label}`) WHERE n.attributes IS NULL OR size(n.attributes)=0 RETURN count(n) AS c").single()["c"]
+        _rel_rows = _sess.run(f"MATCH (a:`{_label}`)-[r]-(b:`{_label}`) RETURN type(r) AS t, count(*) AS c ORDER BY c DESC").data()
+        _rel_types = {_r["t"]: _r["c"] for _r in _rel_rows}
+        _untraceable = _sess.run(f"MATCH (a:`{_label}`)-[r]-(b:`{_label}`) WHERE (r.rule_slug IS NULL OR r.rule_slug='') AND (r.note IS NULL OR r.note='') RETURN count(r) AS c").single()["c"]
+        _node_slugs = _sess.run(f"MATCH (n:`{_label}`) WHERE n.page_slug IS NOT NULL AND n.page_slug<>'' RETURN collect(DISTINCT n.page_slug) AS slugs").single()["slugs"] or []
+finally:
+    _driver.close()
+
+_issues = []
+if _dumb > 0:
+    _issues.append({"dim": "graph", "issue_type": "dumb_nodes", "detail": f"{_dumb} 个哑节点(无 attributes),占 {_dumb/max(_nodes,1):.0%}"})
+_bad_types = {t: c for t, c in _rel_types.items() if t not in _STABLE_REL_TYPES}
+if _bad_types:
+    _issues.append({"dim": "graph", "issue_type": "illegal_rel_types", "detail": f"非稳定边类型: {_bad_types}"})
+if _untraceable > 0:
+    _issues.append({"dim": "graph", "issue_type": "untraceable_rels", "detail": f"{_untraceable} 条边无 rule_slug/note,无法回溯规则卡/原文"})
+
+_db = get_sessionmaker()()
+try:
+    if _node_slugs:
+        _existing = _db.execute(text("SELECT slug FROM wiki_page WHERE kb_id=:kb AND slug IN :slugs AND status='active'"), {"kb": _kb, "slugs": tuple(_node_slugs)}).scalars().all()
+        _missing_slugs = [s for s in _node_slugs if s not in set(_existing)]
+        if _missing_slugs:
+            _issues.append({"dim": "graph", "issue_type": "wiki_missing_nodes", "detail": f"{len(_missing_slugs)} 个图节点对应 wiki 页不存在,示例: {_missing_slugs[:5]}"})
+    _wiki_pages = _db.execute(text("SELECT count(*) FROM wiki_page WHERE kb_id=:kb AND status='active'"), {"kb": _kb}).scalar() or 0
+finally:
+    _db.close()
+
+_health = 100.0
+if _nodes:
+    _health -= (_dumb / _nodes) * 80
+    _health -= (_untraceable / max(_rels, 1)) * 60
+if _bad_types:
+    _health -= 40
+if _issues:
+    _health -= 10 * len(_issues)
+_metrics = {"nodes": _nodes, "rels": _rels, "dumb_nodes": _dumb, "rel_types": _rel_types,
+            "untraceable_rels": _untraceable, "wiki_pages": _wiki_pages,
+            "dumb_ratio": round(_dumb / max(_nodes, 1), 4) if _nodes else 0,
+            "health_score": max(0, int(_health))}
+_attr = []
+if _metrics.get("dumb_nodes", 0) > 0:
+    _attr.append({"dim": "graph", "cause": "哑节点 = 写入方未补 attributes(仅 name+kg)", "suggestion": "图谱写入脚本收尾兜底补 attributes(定义/来源)"})
+if _bad_types:
+    _attr.append({"dim": "graph", "cause": "存在非稳定边类型 → 写入方未收敛到 6 种稳定边", "suggestion": "关系类型映射归一(约束/主体/客体/条件/出自/依据)"})
+if _metrics.get("untraceable_rels", 0) > 0:
+    _attr.append({"dim": "graph", "cause": "边缺 rule_slug/note → 无法回溯规则卡/原文证据", "suggestion": "写入时给每条边带 rule_slug+note(原文句子)"})
+_r = {"metrics": _metrics, "issues": _issues, "attribution": _attr}
+
+bindings["graph_r"] = _r
+print(f"[n04] 图数据质量: 健康分 {_r['metrics'].get('health_score')} 问题 {len(_r['issues'])}")
+
+"""
+
+WIKI_SEM_CODE = """
+
+import json
+from api.db import get_sessionmaker
+from sqlalchemy import text
+
+
+def _llm(prompt, system="", temperature=0.2, max_tokens=2048, json_mode=True):
+    from api.services.chat import ChatClient, load_chat_config, ChatMessage
+    from api.db import get_sessionmaker
+    import time as _t
+    _db = get_sessionmaker()()
+    try:
+        cfg = load_chat_config(_db, model_id=None)
+        client = ChatClient(cfg)
+        msgs = []
+        if system:
+            msgs.append(ChatMessage(role="system", content=system))
+        msgs.append(ChatMessage(role="user", content=prompt))
+        last = None
+        for attempt in range(4):
+            try:
+                raw = client.chat(msgs, temperature=temperature, max_tokens=max_tokens, thinking=False)
+                if json_mode:
+                    text_ = (raw or "").strip()
+                    if text_.startswith("```"):
+                        text_ = text_.strip("`")
+                        if text_.startswith("json"):
+                            text_ = text_[4:].strip()
+                    return __import__("json").loads(text_)
+                return raw or ""
+            except Exception as e:
+                last = e
+                resp = getattr(e, "response", None)
+                code = getattr(resp, "status_code", None) if resp is not None else None
+                if code == 429:
+                    _t.sleep(min(15 * (attempt + 1), 45))
+                else:
+                    _t.sleep(3)
+        raise last
+    finally:
+        _db.close()
+
+
+_kb = bindings.get("kb_id") or ""
+_db = get_sessionmaker()()
+try:
+    _pages = _db.execute(
+        text("SELECT slug, title, content FROM wiki_page WHERE kb_id=:kb AND status='active' AND content IS NOT NULL ORDER BY updated_at DESC LIMIT 15"),
+        {"kb": _kb},
+    ).all()
+finally:
+    _db.close()
+
+if not _pages:
+    bindings["wiki_sem_r"] = {"metrics": {"health_score": 0, "pages_eval": 0}, "issues": [], "attribution": []}
+    print("[n05] wiki 单文档语义: 无页面, 跳过")
+else:
+    _items = []
+    for _p in _pages:
+        _items.append({"slug": str(_p[0]), "title": str(_p[1] or ""), "content": str(_p[2] or "")[:1500]})
+    _prompt = (
+        "你是知识库质量评估专家。以下是从 wiki 中抽出的若干页面（含 slug/title/content）。\n"
+        "对每个页面从**单文档视角**评估:\n"
+        "1. 是否能让读者独立看出这页在讲什么（主题明确、开场即点题）\n"
+        "2. 内容是否完整可理解（有上下文、有结论/定义，不是碎片或只有标题）\n"
+        "3. 是否有明显占位/未完成/LLM 残留\n"
+        "输出 JSON 数组，每个元素: {slug, score(0-100, 主题清晰度与完整度的综合分), issue(null 或简短问题描述)}\n"
+        "只输出 JSON。页面列表:\n" + json.dumps(_items, ensure_ascii=False)
+    )
+    try:
+        _out = _llm(_prompt, system="你是严谨的知识库质量评估器。只输出 JSON，不输出其他内容。")
+    except Exception as _e:
+        _r = {"metrics": {"health_score": None, "pages_eval": 0, "error": str(_e)[:200]},
+              "issues": [{"issue_type": "sem_eval_error", "detail": "LLM 语义评估失败: " + str(_e)}], "attribution": []}
+        bindings["wiki_sem_r"] = _r
+        print("[n05] wiki 单文档语义: LLM 失败, 降级 -> " + str(_e))
+    else:
+        _rows = _out if isinstance(_out, list) else (_out.get("items") or _out.get("results") or [])
+        _issues = []
+        _scores = []
+        for _row in _rows if isinstance(_rows, list) else []:
+            _slug = str(_row.get("slug") or "")
+            _sc = _row.get("score")
+            if isinstance(_sc, (int, float)):
+                _scores.append(float(_sc))
+            _iss = str(_row.get("issue") or "").strip()
+            if _iss and _iss.lower() not in ("null", "none", "无", "no"):
+                _issues.append({"dim": "wiki", "slug": _slug, "issue_type": "wiki_sem_unclear",
+                                "detail": _iss[:200]})
+        _avg = round(sum(_scores) / len(_scores), 1) if _scores else None
+        _r = {"metrics": {"health_score": _avg, "pages_eval": len(_rows), "semantic": "single_doc"},
+              "issues": _issues,
+              "attribution": ([{"dim": "wiki", "cause": "存在单文档视角看不明白的页面", "suggestion": "重写页面开场点题,补充背景与结论"}] if _issues else [])}
+        bindings["wiki_sem_r"] = _r
+        print("[n05] wiki 单文档语义: 均分 " + str(_avg) + " 问题 " + str(len(_issues)))
+
+"""
+
+WIKI_CMP_CODE = """
+
+import json
+from api.db import get_sessionmaker
+from sqlalchemy import text
+
+
+def _llm(prompt, system="", temperature=0.2, max_tokens=2048, json_mode=True):
+    from api.services.chat import ChatClient, load_chat_config, ChatMessage
+    from api.db import get_sessionmaker
+    import time as _t
+    _db = get_sessionmaker()()
+    try:
+        cfg = load_chat_config(_db, model_id=None)
+        client = ChatClient(cfg)
+        msgs = []
+        if system:
+            msgs.append(ChatMessage(role="system", content=system))
+        msgs.append(ChatMessage(role="user", content=prompt))
+        last = None
+        for attempt in range(4):
+            try:
+                raw = client.chat(msgs, temperature=temperature, max_tokens=max_tokens, thinking=False)
+                if json_mode:
+                    text_ = (raw or "").strip()
+                    if text_.startswith("```"):
+                        text_ = text_.strip("`")
+                        if text_.startswith("json"):
+                            text_ = text_[4:].strip()
+                    return __import__("json").loads(text_)
+                return raw or ""
+            except Exception as e:
+                last = e
+                resp = getattr(e, "response", None)
+                code = getattr(resp, "status_code", None) if resp is not None else None
+                if code == 429:
+                    _t.sleep(min(15 * (attempt + 1), 45))
+                else:
+                    _t.sleep(3)
+        raise last
+    finally:
+        _db.close()
+
+
+_kb = bindings.get("kb_id") or ""
+_db = get_sessionmaker()()
+try:
+    _pages = _db.execute(
+        text("SELECT slug, title, content, source_refs FROM wiki_page WHERE kb_id=:kb AND status='active' AND content IS NOT NULL ORDER BY updated_at DESC LIMIT 10"),
+        {"kb": _kb},
+    ).all()
+finally:
+    _db.close()
+
+if not _pages:
+    bindings["wiki_cmp_r"] = {"metrics": {"health_score": 0, "pages_cmp": 0}, "issues": [], "attribution": []}
+    print("[n06] wiki-原文对比: 无页面, 跳过")
+else:
+    _items = []
+    for _p in _pages:
+        _refs = _p[3] or []
+        _doc_ids = []
+        for _r in _refs if isinstance(_refs, list) else []:
+            if isinstance(_r, dict) and _r.get("doc"):
+                _doc_ids.append(str(_r["doc"]))
+        _src = ""
+        if _doc_ids:
+            _db2 = get_sessionmaker()()
+            try:
+                _chunks = _db2.execute(
+                    text("SELECT document_id, seq, content FROM doc_chunk WHERE kb_id=:kb AND document_id IN :ids ORDER BY document_id, seq LIMIT 25"),
+                    {"kb": _kb, "ids": tuple(_doc_ids)},
+                ).all()
+                _src = "\n".join("[" + str(c[0])[:8] + "#" + str(c[1]) + "] " + str(c[2] or "")[:400] for c in _chunks)
+            finally:
+                _db2.close()
+        _items.append({"slug": str(_p[0]), "title": str(_p[1] or ""),
+                       "wiki_content": str(_p[2] or "")[:1800],
+                       "source_excerpt": _src[:2500]})
+    _prompt = (
+        "你是知识库质量评估专家，负责**核对 wiki 页面与原始文档是否一致**。\n"
+        "对每个页面，把 wiki 内容与提供的原文摘录（source_excerpt，可能不完整）对比，找出**明显错误**：\n"
+        "1. 事实性错误（数字/日期/主体/结论与原文明说矛盾）\n"
+        "2. 编造/无中生有（原文没有的内容被 wiki 写成事实）\n"
+        "3. 张冠李戴/移花接木（把别处的定义安到这页）\n"
+        "注意：source_excerpt 若为空或明显不完整，标注 insufficient 而不是编造错误。\n"
+        "输出 JSON 数组，每个元素: {slug, has_error(true/false), errors: [简短错误描述], confidence(low/medium/high)}\n"
+        "只输出 JSON。\n页面列表: " + json.dumps(_items, ensure_ascii=False)
+    )
+    try:
+        _out = _llm(_prompt, system="你是严谨的知识库质量评估器，只依据给定原文判断，不确定就标注 insufficient。只输出 JSON。")
+    except Exception as _e:
+        _r = {"metrics": {"health_score": None, "pages_cmp": 0, "error": str(_e)[:200]},
+              "issues": [{"issue_type": "sem_eval_error", "detail": "LLM 语义评估失败: " + str(_e)}], "attribution": []}
+        bindings["wiki_cmp_r"] = _r
+        print("[n06] wiki-原文对比: LLM 失败, 降级 -> " + str(_e))
+    else:
+        _rows = _out if isinstance(_out, list) else (_out.get("items") or _out.get("results") or [])
+        _issues = []
+        _error_pages = 0
+        for _row in _rows if isinstance(_rows, list) else []:
+            _slug = str(_row.get("slug") or "")
+            if _row.get("has_error") is True or _row.get("has_error") in (1, "true", "True", "yes"):
+                _errs = _row.get("errors") or []
+                if isinstance(_errs, str):
+                    _errs = [_errs]
+                for _e2 in _errs[:3]:
+                    _issues.append({"dim": "wiki", "slug": _slug, "issue_type": "wiki_sem_error",
+                                    "detail": str(_e2)[:200]})
+                _error_pages += 1
+        _n = len(_rows) or 1
+        _score = max(0, int(100 - (_error_pages / _n) * 100))
+        _r = {"metrics": {"health_score": _score, "pages_cmp": len(_rows), "error_pages": _error_pages,
+                          "semantic": "doc_compare"},
+              "issues": _issues,
+              "attribution": ([{"dim": "wiki", "cause": "wiki 与原文存在不一致/编造内容", "suggestion": "以原文为准修正 wiki 页面,构建时加强 LLM 事实约束"}] if _issues else [])}
+        bindings["wiki_cmp_r"] = _r
+        print("[n06] wiki-原文对比: 得分 " + str(_score) + " 错误页 " + str(_error_pages) + "/" + str(len(_rows)))
+
+"""
+
+GRAPH_SEM_CODE = """
+
+import json
+import os
+from neo4j import GraphDatabase
+from api.db import get_sessionmaker
+from sqlalchemy import text
+
+
+def _llm(prompt, system="", temperature=0.2, max_tokens=2048, json_mode=True):
+    from api.services.chat import ChatClient, load_chat_config, ChatMessage
+    from api.db import get_sessionmaker
+    import time as _t
+    _db = get_sessionmaker()()
+    try:
+        cfg = load_chat_config(_db, model_id=None)
+        client = ChatClient(cfg)
+        msgs = []
+        if system:
+            msgs.append(ChatMessage(role="system", content=system))
+        msgs.append(ChatMessage(role="user", content=prompt))
+        last = None
+        for attempt in range(4):
+            try:
+                raw = client.chat(msgs, temperature=temperature, max_tokens=max_tokens, thinking=False)
+                if json_mode:
+                    text_ = (raw or "").strip()
+                    if text_.startswith("```"):
+                        text_ = text_.strip("`")
+                        if text_.startswith("json"):
+                            text_ = text_[4:].strip()
+                    return __import__("json").loads(text_)
+                return raw or ""
+            except Exception as e:
+                last = e
+                resp = getattr(e, "response", None)
+                code = getattr(resp, "status_code", None) if resp is not None else None
+                if code == 429:
+                    _t.sleep(min(15 * (attempt + 1), 45))
+                else:
+                    _t.sleep(3)
+        raise last
+    finally:
+        _db.close()
+
+
+_kb = bindings.get("kb_id") or ""
+_label = "ENTITY" + _kb.replace("-", "_")
+_uri = os.getenv("NEO4J_URI", "bolt://kb-neo4j:7687")
+_user = os.getenv("NEO4J_USERNAME", "neo4j")
+_pwd = os.getenv("NEO4J_PASSWORD", "")
+_driver = GraphDatabase.driver(_uri, auth=(_user, _pwd))
+try:
+    with _driver.session() as _sess:
+        _sample_nodes = _sess.run(
+            "MATCH (n:`" + _label + "`) WHERE n.name IS NOT NULL RETURN n.name AS name, n.entity_type AS et LIMIT 12"
+        ).data()
+        _sample_rels = _sess.run(
+            "MATCH (a:`" + _label + "`)-[r]->(b:`" + _label + "`) RETURN a.name AS src, type(r) AS rel, b.name AS dst, r.note AS note LIMIT 12"
+        ).data()
+        _total_nodes = _sess.run("MATCH (n:`" + _label + "`) RETURN count(n) AS c").single()["c"] or 0
+finally:
+    _driver.close()
+
+if not _sample_nodes and not _sample_rels:
+    bindings["graph_sem_r"] = {"metrics": {"health_score": 0, "nodes_sampled": 0, "rels_sampled": 0}, "issues": [], "attribution": []}
+    print("[n07] 图数据语义: 图无数据, 跳过")
+else:
+    _prompt = (
+        "你是知识库图谱质量评估专家。以下是 Neo4j 语义图中抽样的**节点**与**关系**。\n"
+        "**节点层**（评估实体名是否有意义）：" + json.dumps(_sample_nodes, ensure_ascii=False) +
+        "\n**边层**（评估三元组 A-关系-B 语义是否正确：关系类型是否符合两端实体、note 是否支撑该关系）：" +
+        json.dumps(_sample_rels, ensure_ascii=False) +
+        "\n请输出 JSON 对象: {node_issues: [{name, problem}], rel_issues: [{src, rel, dst, problem}], "
+        "overall_score: 0-100(图整体可理解性与语义正确性综合分), summary: 一句话总评}。\n"
+        "问题包括: 实体名无意义/乱码/太泛、关系类型与实体不匹配、note 与关系矛盾或缺失、三元组明显错误。\n只输出 JSON。"
+    )
+    try:
+        _out = _llm(_prompt, system="你是严谨的知识库图谱质量评估器。只输出 JSON。")
+    except Exception as _e:
+        _r = {"metrics": {"health_score": None, "nodes_sampled": 0, "rels_sampled": 0, "error": str(_e)[:200]},
+              "issues": [{"issue_type": "sem_eval_error", "detail": "LLM 语义评估失败: " + str(_e)}], "attribution": []}
+        bindings["graph_sem_r"] = _r
+        print("[n07] 图数据语义: LLM 失败, 降级 -> " + str(_e))
+    else:
+        _n_issues = (_out.get("node_issues") or []) if isinstance(_out, dict) else []
+        _r_issues = (_out.get("rel_issues") or []) if isinstance(_out, dict) else []
+        _issues = []
+        for _it in _n_issues[:8] if isinstance(_n_issues, list) else []:
+            _issues.append({"dim": "graph", "issue_type": "graph_sem_node",
+                            "detail": ("节点 [" + str(_it.get("name", "")) + "] " + str(_it.get("problem", ""))).strip()[:200]})
+        for _it in _r_issues[:8] if isinstance(_r_issues, list) else []:
+            _issues.append({"dim": "graph", "issue_type": "graph_sem_rel",
+                            "detail": ("边 [" + str(_it.get("src", "")) + "-" + str(_it.get("rel", "")) + "->" + str(_it.get("dst", "")) + "] " + str(_it.get("problem", ""))).strip()[:200]})
+        _sc = _out.get("overall_score") if isinstance(_out, dict) else None
+        _score = int(_sc) if isinstance(_sc, (int, float)) else None
+        _r = {"metrics": {"health_score": _score, "nodes_sampled": len(_sample_nodes), "rels_sampled": len(_sample_rels),
+                          "total_nodes": _total_nodes, "semantic": "graph_3layer"},
+              "issues": _issues,
+              "attribution": ([{"dim": "graph", "cause": "图谱存在语义问题(实体名/关系/note)", "suggestion": "检查实体抽取与关系写入口径"}] if _issues else [])}
+        bindings["graph_sem_r"] = _r
+        print("[n07] 图数据语义: 得分 " + str(_score) + " 问题 " + str(len(_issues)))
+
+"""
+
+SUMMARY_CODE = """
+
+import json
+import uuid
+from api.db import get_sessionmaker
+from sqlalchemy import text
+
+_kb = bindings.get("kb_id") or ""
+_docs = [d.strip() for d in str(bindings.get("doc_ids") or "").split(",") if d.strip()] or None
+_scope = str(bindings.get("scope") or "all")
+_qid = str(bindings.get("quality_id") or "").strip()  # quality.py 传入的占位行 id
+
+_chunk_r = bindings.get("chunk_r") or {}
+_wiki_r = bindings.get("wiki_r") or {}
+_graph_r = bindings.get("graph_r") or {}
+_wiki_sem_r = bindings.get("wiki_sem_r") or {}
+_wiki_cmp_r = bindings.get("wiki_cmp_r") or {}
+_graph_sem_r = bindings.get("graph_sem_r") or {}
+
+# 每维度指标：程序性 health_score + 语义 semantic_score
+def _m(r):
+    return r.get("metrics") or {}
+
+_chunk_m = _m(_chunk_r)
+_wiki_m = _m(_wiki_r)
+_graph_m = _m(_graph_r)
+# wiki 语义分 = 单文档 + 原文对比 两路平均（None 则用另一路）
+_wiki_sem_scores = [s for s in (_m(_wiki_sem_r).get("health_score"), _m(_wiki_cmp_r).get("health_score")) if isinstance(s, (int, float))]
+_wiki_semantic = round(sum(_wiki_sem_scores) / len(_wiki_sem_scores), 1) if _wiki_sem_scores else None
+# 图语义分
+_graph_semantic = _m(_graph_sem_r).get("health_score")
+_graph_semantic = int(_graph_semantic) if isinstance(_graph_semantic, (int, float)) else None
+
+# 综合分：每维度 程序×0.6 + 语义×0.4（无语义分则该维直接用程序分）
+def _dim_score(prog, sem_score):
+    if not isinstance(prog, (int, float)):
+        return None
+    if isinstance(sem_score, (int, float)):
+        return round(prog * 0.6 + sem_score * 0.4, 1)
+    return round(float(prog), 1)
+
+_dims = {
+    "chunk": {"prog": _chunk_m.get("health_score"), "semantic": None},
+    "wiki": {"prog": _wiki_m.get("health_score"), "semantic": _wiki_semantic},
+    "graph": {"prog": _graph_m.get("health_score"), "semantic": _graph_semantic},
+}
+_scores = {d: _dim_score(v["prog"], v["semantic"]) for d, v in _dims.items()}
+_valid = [s for s in _scores.values() if isinstance(s, (int, float))]
+_overall = round(sum(_valid) / len(_valid), 1) if _valid else 0
+
+# issues / attribution 合并（程序性 + 语义）
+_issues = []
+_attribution = []
+for r in (_chunk_r, _wiki_r, _graph_r, _wiki_sem_r, _wiki_cmp_r, _graph_sem_r):
+    for it in (r.get("issues") or []):
+        _issues.append(it)
+    for at in (r.get("attribution") or []):
+        _attribution.append(at)
+
+_metrics_map = {
+    "chunk": {**{k: v for k, v in _chunk_m.items() if k != "per_doc"},
+              "semantic_score": None, "final_score": _scores.get("chunk")},
+    "wiki": {**_wiki_m, "semantic_score": _wiki_semantic, "final_score": _scores.get("wiki")},
+    "graph": {**_graph_m, "semantic_score": _graph_semantic, "final_score": _scores.get("graph")},
+}
+_summary = (
+    f"评估完成: 综合 {_overall} | 切片 {_scores.get('chunk','-')}(程序 {_chunk_m.get('health_score','-')}) "
+    f"| wiki {_scores.get('wiki','-')}(程序 {_wiki_m.get('health_score','-')}/语义 {_wiki_semantic or '-'}) "
+    f"| 图数据 {_scores.get('graph','-')}(程序 {_graph_m.get('health_score','-')}/语义 {_graph_semantic or '-'}); "
+    f"问题 {len(_issues)} 条, 归因建议 {len(_attribution)} 条"
+)
+
+_db = get_sessionmaker()()
+try:
+    if _qid:
+        # quality.py 已建 queued 占位行 → 更新它（状态流转 queued→success）
+        _db.execute(
+            text("UPDATE kb_quality_run SET status='success', chunk_metrics=:cm, wiki_metrics=:wm, "
+                 "graph_metrics=:gm, issues=:iss, attribution=:att, summary=:sum, updated_at=CURRENT_TIMESTAMP "
+                 "WHERE id=:rid"),
+            {"rid": _qid, "cm": json.dumps(_metrics_map["chunk"], ensure_ascii=False),
+             "wm": json.dumps(_metrics_map["wiki"], ensure_ascii=False),
+             "gm": json.dumps(_metrics_map["graph"], ensure_ascii=False),
+             "iss": json.dumps(_issues, ensure_ascii=False),
+             "att": json.dumps(_attribution, ensure_ascii=False),
+             "sum": _summary},
+        )
+    else:
+        # 兼容独立运行：自建行
+        _rid = uuid.uuid4().hex[:32]
+        _db.execute(
+            text("INSERT INTO kb_quality_run (id, kb_id, scope, doc_ids, status, chunk_metrics, wiki_metrics, "
+                 "graph_metrics, issues, attribution, summary, updated_at) VALUES "
+                 "(:id, :kb, :scope, :docs, 'success', :cm, :wm, :gm, :iss, :att, :sum, CURRENT_TIMESTAMP)"),
+            {"id": _rid, "kb": _kb, "scope": _scope, "docs": json.dumps(_docs or [], ensure_ascii=False),
+             "cm": json.dumps(_metrics_map["chunk"], ensure_ascii=False),
+             "wm": json.dumps(_metrics_map["wiki"], ensure_ascii=False),
+             "gm": json.dumps(_metrics_map["graph"], ensure_ascii=False),
+             "iss": json.dumps(_issues, ensure_ascii=False),
+             "att": json.dumps(_attribution, ensure_ascii=False),
+             "sum": _summary},
+        )
+    # kb_quality_report 每维度一条（含语义分）
+    _db.execute(text("DELETE FROM kb_quality_report WHERE run_id=:rid"), {"rid": _qid or _rid})
+    for _dim, _r in (("chunk", _chunk_r), ("wiki", _wiki_r), ("graph", _graph_r)):
+        _db.execute(
+            text("INSERT INTO kb_quality_report (id, run_id, kb_id, doc_id, dim, metrics, issues) "
+                 "VALUES (:id, :rid, :kb, :doc, :dim, :m, :i)"),
+            {"id": uuid.uuid4().hex[:32], "rid": _qid or _rid, "kb": _kb,
+             "doc": _docs[0] if _docs and _scope == "single" else None,
+             "dim": _dim,
+             "m": json.dumps(_metrics_map[_dim], ensure_ascii=False),
+             "i": json.dumps([x for x in _issues if x.get("dim") == _dim], ensure_ascii=False)},
+        )
+    _db.commit()
+except Exception as _e:
+    _db.rollback()
+    try:
+        _db.execute(text("UPDATE kb_quality_run SET status='failed', error=:e, updated_at=CURRENT_TIMESTAMP WHERE id=:rid"),
+                    {"e": str(_e)[:500], "rid": _qid or (_rid if '_rid' in dir() else "")})
+        _db.commit()
+    except Exception:
+        pass
+    raise
+finally:
+    _db.close()
+
+bindings["quality_summary"] = _summary
+print("[n08] " + _summary)
+
+"""
+
 QUALITY_TAPE: dict = {
-    "exec_params": {"kb_id": "", "doc_ids": "", "scope": "all"},
+    "exec_params": {
+        "kb_id": "",
+        "doc_ids": "",
+        "scope": "all",
+        "quality_id": ""
+    },
     "nodes": [
         {
-            "id": "n01", "type": "custom",
-            "data": {"label": "输入定义", "stepInst": "def",
-                     "config": {"queue": "build", "assignments": (
-                         "[{\"variable\": \"kb_id\", \"expression\": \"bindings.get('kb_id', '')\"},"
-                         "{\"variable\": \"doc_ids\", \"expression\": \"bindings.get('doc_ids', '')\"},"
-                         "{\"variable\": \"scope\", \"expression\": \"bindings.get('scope', 'all')\"}]"
-                     )}},
+            "id": "n01",
+            "type": "custom",
+            "data": {
+                "label": "输入定义",
+                "stepInst": "def",
+                "config": {
+                    "queue": "build",
+                    "assignments": "[{\"variable\": \"kb_id\", \"expression\": \"bindings.get('kb_id', '')\"}, {\"variable\": \"doc_ids\", \"expression\": \"bindings.get('doc_ids', '')\"}, {\"variable\": \"scope\", \"expression\": \"bindings.get('scope', 'all')\"}, {\"variable\": \"quality_id\", \"expression\": \"bindings.get('quality_id', '')\"}]"
+                }
+            }
         },
         {
-            "id": "n02", "type": "custom",
-            "data": {"label": "切片质量检查", "stepInst": "script",
-                     "config": {"queue": "build", "code": (
-                         "import sys, os, json\n"
-                         "sys.path.insert(0, '/srv/kb/worker/builtin_engine/code_rev_src')\n"
-                         "import quality_chunk\n"
-                         "_kb = bindings.get('kb_id') or ''\n"
-                         "_docs = [d.strip() for d in str(bindings.get('doc_ids') or '').split(',') if d.strip()] or None\n"
-                         "r = quality_chunk.run(_kb, _docs)\n"
-                         "bindings['chunk_r'] = r\n"
-                         "print(f\"[n02] 切片质量: 健康分 {r['metrics'].get('health_score')} 问题 {len(r['issues'])}\")\n"
-                     )}},
+            "id": "n02",
+            "type": "custom",
+            "data": {
+                "label": "切片质量检查",
+                "stepInst": "script",
+                "config": {
+                    "queue": "build",
+                    "code": "\nimport json\nfrom api.db import get_sessionmaker\nfrom sqlalchemy import text\n\nSHORT = 50\nLONG = 2000\nTRUNC_MARKS = (\"…\", \"...\", \"（节选）\", \"[截断]\")\n\n_kb = bindings.get(\"kb_id\") or \"\"\n_docs = [d.strip() for d in str(bindings.get(\"doc_ids\") or \"\").split(\",\") if d.strip()] or None\n_db = get_sessionmaker()()\ntry:\n    if _docs:\n        _cond = \"kb_id=:kb AND document_id IN :ids\"\n        _params = {\"kb\": _kb, \"ids\": tuple(_docs)}\n    else:\n        _cond = \"kb_id=:kb\"\n        _params = {\"kb\": _kb}\n    _rows = _db.execute(\n        text(f\"SELECT document_id, seq, content, meta FROM doc_chunk WHERE {_cond} AND enabled=1 ORDER BY document_id, seq\"),\n        _params,\n    ).all()\nfinally:\n    _db.close()\n\nif not _rows:\n    _r = {\"metrics\": {\"docs\": 0, \"chunks\": 0, \"avg_len\": 0},\n          \"issues\": [{\"dim\": \"chunk\", \"issue_type\": \"no_chunks\", \"detail\": \"无切片数据(文档未解析或无切片)\"}],\n          \"attribution\": [{\"dim\": \"chunk\", \"cause\": \"文档未进入切片阶段或解析失败\", \"suggestion\": \"检查 parse_state / 重跑解析\"}]}\nelse:\n    _by_doc = {}\n    for _rid, _seq, _content, _meta in _rows:\n        _by_doc.setdefault(str(_rid), []).append((int(_seq or 0), str(_content or \"\"), _meta))\n    _issues = []\n    _totals = {\"docs\": len(_by_doc), \"chunks\": 0, \"short\": 0, \"long\": 0, \"truncated\": 0, \"dup\": 0}\n    _per_doc = {}\n    for _doc_id, _chunks in _by_doc.items():\n        _lens = [len(c) for _, c, _ in _chunks]\n        _n = len(_chunks)\n        _totals[\"chunks\"] += _n\n        _short_n = sum(1 for L in _lens if L < SHORT)\n        _long_n = sum(1 for L in _lens if L > LONG)\n        _trunc_n = sum(1 for _, c, _ in _chunks if any(m in c for m in TRUNC_MARKS))\n        _seen = set()\n        _dup_n = 0\n        for _, c, _ in _chunks:\n            _h = __import__(\"hashlib\").md5(c.strip()[:200].encode(\"utf-8\")).hexdigest()\n            if _h in _seen:\n                _dup_n += 1\n            _seen.add(_h)\n        _totals[\"short\"] += _short_n\n        _totals[\"long\"] += _long_n\n        _totals[\"truncated\"] += _trunc_n\n        _totals[\"dup\"] += _dup_n\n        _per_doc[_doc_id] = {\"doc_id\": _doc_id, \"chunks\": _n, \"avg_len\": round(sum(_lens) / _n, 1) if _n else 0,\n                             \"short\": _short_n, \"long\": _long_n, \"truncated\": _trunc_n, \"dup\": _dup_n}\n        if _short_n / max(_n, 1) > 0.3:\n            _issues.append({\"dim\": \"chunk\", \"doc_id\": _doc_id, \"issue_type\": \"too_many_short_chunks\", \"detail\": f\"{_short_n}/{_n} 切片过短(<{SHORT}字),占比 {_short_n/_n:.0%}\"})\n        if _long_n / max(_n, 1) > 0.1:\n            _issues.append({\"dim\": \"chunk\", \"doc_id\": _doc_id, \"issue_type\": \"too_many_long_chunks\", \"detail\": f\"{_long_n}/{_n} 切片过长(>{LONG}字),占比 {_long_n/_n:.0%}\"})\n        if _trunc_n > 0:\n            _issues.append({\"dim\": \"chunk\", \"doc_id\": _doc_id, \"issue_type\": \"truncated_chunks\", \"detail\": f\"{_trunc_n} 个切片含截断标记\"})\n        if _dup_n / max(_n, 1) > 0.2:\n            _issues.append({\"dim\": \"chunk\", \"doc_id\": _doc_id, \"issue_type\": \"duplicate_chunks\", \"detail\": f\"{_dup_n}/{_n} 切片疑似近似重复\"})\n    _short_r = _totals[\"short\"] / max(_totals[\"chunks\"], 1)\n    _long_r = _totals[\"long\"] / max(_totals[\"chunks\"], 1)\n    _trunc_r = _totals[\"truncated\"] / max(_totals[\"chunks\"], 1)\n    _score = max(0, int(100.0 - _short_r * 60 - _long_r * 60 - _trunc_r * 80))\n    _metrics = {**_totals, \"short_ratio\": round(_short_r, 4), \"long_ratio\": round(_long_r, 4),\n                \"health_score\": _score, \"per_doc\": _per_doc}\n    _attr = []\n    if _metrics.get(\"short_ratio\", 0) > 0.3:\n        _attr.append({\"dim\": \"chunk\", \"cause\": \"过短切片占比高 → 切分粒度偏细/按词切分\", \"suggestion\": \"调大 chunk_size 或按段落合并相邻短块\"})\n    if _metrics.get(\"long_ratio\", 0) > 0.1:\n        _attr.append({\"dim\": \"chunk\", \"cause\": \"过长切片占比高 → 切分边界未生效(表/长句整块保留)\", \"suggestion\": \"对长表/长句二次切分,或提高 max_chars 后按语义边界再分\"})\n    if _metrics.get(\"truncated\", 0) > 0:\n        _attr.append({\"dim\": \"chunk\", \"cause\": \"切片带截断标记 → 切分在硬长度处截断而非语义边界\", \"suggestion\": \"开启 overlap/按句号段号切分,减少硬截断\"})\n    if _metrics.get(\"dup\", 0) > 0:\n        _attr.append({\"dim\": \"chunk\", \"cause\": \"近似重复切片 → 重叠窗口/段落重复扫描\", \"suggestion\": \"关闭 overlap 或调小重叠比例,去重后再入库\"})\n    _r = {\"metrics\": _metrics, \"issues\": _issues, \"attribution\": _attr}\n\nbindings[\"chunk_r\"] = _r\nprint(f\"[n02] 切片质量: 健康分 {_r['metrics'].get('health_score')} 问题 {len(_r['issues'])}\")\n"
+                }
+            }
         },
         {
-            "id": "n03", "type": "custom",
-            "data": {"label": "Wiki质量检查", "stepInst": "script",
-                     "config": {"queue": "build", "code": (
-                         "import sys, os, json\n"
-                         "sys.path.insert(0, '/srv/kb/worker/builtin_engine/code_rev_src')\n"
-                         "import quality_wiki\n"
-                         "_kb = bindings.get('kb_id') or ''\n"
-                         "r = quality_wiki.run(_kb)\n"
-                         "bindings['wiki_r'] = r\n"
-                         "print(f\"[n03] Wiki质量: 健康分 {r['metrics'].get('health_score')} 问题 {len(r['issues'])}\")\n"
-                     )}},
+            "id": "n03",
+            "type": "custom",
+            "data": {
+                "label": "Wiki质量检查",
+                "stepInst": "script",
+                "config": {
+                    "queue": "build",
+                    "code": "\nimport re\nfrom api.db import get_sessionmaker\nfrom sqlalchemy import text\n\nPLACEHOLDER = \"*由 LLM 生成*\"\n_SOURCE_MARKS = (\"出处\", \"来源制度\", \"原文关联\", \"来源\")\n\n_kb = bindings.get(\"kb_id\") or \"\"\n_db = get_sessionmaker()()\ntry:\n    _pages = _db.execute(\n        text(\"SELECT id, slug, title, page_type, content, folder_id, folder_ids FROM wiki_page WHERE kb_id=:kb AND status='active'\"),\n        {\"kb\": _kb},\n    ).all()\n    _links = _db.execute(\n        text(\"SELECT from_page_id, to_page_id FROM wiki_link WHERE kb_id=:kb\"),\n        {\"kb\": _kb},\n    ).all()\nfinally:\n    _db.close()\n\nif not _pages:\n    _r = {\"metrics\": {\"pages\": 0, \"health_score\": 0},\n          \"issues\": [{\"dim\": \"wiki\", \"issue_type\": \"no_pages\", \"detail\": \"无 wiki 页面(未构建或构建失败)\"}],\n          \"attribution\": [{\"dim\": \"wiki\", \"cause\": \"wiki 构建未执行或全部失败\", \"suggestion\": \"检查构建编排 run 状态 / 重跑构建\"}]}\nelse:\n    _by_id = {str(p[0]): p for p in _pages}\n    _slug_by_id = {str(p[0]): str(p[1]) for p in _pages}\n    _linked_ids = {str(l[0]) for l in _links} | {str(l[1]) for l in _links}\n    _issues = []\n    _empty = [p for p in _pages if not (p[4] or \"\").strip()]\n    for _p in _empty:\n        _issues.append({\"dim\": \"wiki\", \"slug\": str(_p[1]), \"page_type\": str(_p[3]), \"issue_type\": \"empty_content\", \"detail\": \"页面内容为空\"})\n    _orphans = [p for p in _pages if str(p[0]) not in _linked_ids]\n    for _p in _orphans:\n        _issues.append({\"dim\": \"wiki\", \"slug\": str(_p[1]), \"page_type\": str(_p[3]), \"issue_type\": \"orphan\", \"detail\": \"无任何双向链接\"})\n    _broken = 0\n    _broken_slugs = set()\n    for _p in _pages:\n        _targets = re.findall(r\"\\[\\[([^\\]|]+)\", _p[4] or \"\")\n        for _t in _targets:\n            _t = _t.strip()\n            if _t and _t not in _slug_by_id.values():\n                _broken += 1\n                _broken_slugs.add(_t)\n    if _broken:\n        _issues.append({\"dim\": \"wiki\", \"issue_type\": \"broken_links\", \"detail\": f\"{_broken} 处断链,目标示例: {list(_broken_slugs)[:5]}\"})\n    _placeholder = [p for p in _pages if PLACEHOLDER in (p[4] or \"\")]\n    for _p in _placeholder:\n        _issues.append({\"dim\": \"wiki\", \"slug\": str(_p[1]), \"page_type\": str(_p[3]), \"issue_type\": \"llm_placeholder\", \"detail\": \"LLM 解读占位未填充\"})\n    _no_source = [p for p in _pages if not any(m in (p[4] or \"\") for m in _SOURCE_MARKS)]\n    for _p in _no_source:\n        _issues.append({\"dim\": \"wiki\", \"slug\": str(_p[1]), \"page_type\": str(_p[3]), \"issue_type\": \"missing_source\", \"detail\": \"页面无出处/原文引用标记\"})\n    _no_folder = [p for p in _pages if not (p[5] or p[6] or \"\")]\n    for _p in _no_folder:\n        _issues.append({\"dim\": \"wiki\", \"slug\": str(_p[1]), \"page_type\": str(_p[3]), \"issue_type\": \"no_folder\", \"detail\": \"页面未挂载任何目录\"})\n    _n = len(_pages)\n    _s = 100.0\n    _s -= (len(_empty) / _n) * 100 + (len(_orphans) / _n) * 60\n    _s -= min(_broken, _n) * 0.5\n    _s -= (len(_placeholder) / _n) * 80 + (len(_no_source) / _n) * 40\n    _metrics = {\"pages\": _n, \"empty\": len(_empty), \"orphan\": len(_orphans), \"broken_links\": _broken,\n                \"placeholder\": len(_placeholder), \"missing_source\": len(_no_source), \"no_folder\": len(_no_folder),\n                \"empty_ratio\": round(len(_empty) / _n, 4), \"orphan_ratio\": round(len(_orphans) / _n, 4),\n                \"health_score\": max(0, int(_s))}\n    _attr = []\n    if _metrics.get(\"empty_ratio\", 0) > 0.05:\n        _attr.append({\"dim\": \"wiki\", \"cause\": \"空内容页占比高 → 建页流程在生成内容前中断/LLM 输出为空\", \"suggestion\": \"检查构建日志中该页的生成步骤;对空页重跑补写\"})\n    if _metrics.get(\"orphan_ratio\", 0) > 0.3:\n        _attr.append({\"dim\": \"wiki\", \"cause\": \"孤立页占比高 → 实体抽取过泛/页面间未建立互链\", \"suggestion\": \"收敛实体抽取范围,构建尾部执行 rebuild_links\"})\n    if _metrics.get(\"broken_links\", 0) > 0:\n        _attr.append({\"dim\": \"wiki\", \"cause\": \"断链 = 引用了未创建的页面/实体(抽取了未建的实体名)\", \"suggestion\": \"构建前先建全部实体页再补引用,或对断链目标补建页面\"})\n    if _metrics.get(\"placeholder\", 0) > 0:\n        _attr.append({\"dim\": \"wiki\", \"cause\": \"LLM 占位未填充 → 解读步骤未跑/供应商失败中断\", \"suggestion\": \"重跑 LLM 解读补位(断点续传),或修供应商可达性\"})\n    if _metrics.get(\"missing_source\", 0) > 0:\n        _attr.append({\"dim\": \"wiki\", \"cause\": \"页面缺出处标记 → 渲染模板未带原文出处章节\", \"suggestion\": \"渲染器补「出处」行,保证证据链可回原文\"})\n    _r = {\"metrics\": _metrics, \"issues\": _issues, \"attribution\": _attr}\n\nbindings[\"wiki_r\"] = _r\nprint(f\"[n03] Wiki质量: 健康分 {_r['metrics'].get('health_score')} 问题 {len(_r['issues'])}\")\n"
+                }
+            }
         },
         {
-            "id": "n04", "type": "custom",
-            "data": {"label": "图数据质量检查", "stepInst": "script",
-                     "config": {"queue": "build", "code": (
-                         "import sys, os, json\n"
-                         "sys.path.insert(0, '/srv/kb/worker/builtin_engine/code_rev_src')\n"
-                         "import quality_graph\n"
-                         "_kb = bindings.get('kb_id') or ''\n"
-                         "r = quality_graph.run(_kb)\n"
-                         "bindings['graph_r'] = r\n"
-                         "print(f\"[n04] 图数据质量: 健康分 {r['metrics'].get('health_score')} 问题 {len(r['issues'])}\")\n"
-                     )}},
+            "id": "n04",
+            "type": "custom",
+            "data": {
+                "label": "图数据质量检查",
+                "stepInst": "script",
+                "config": {
+                    "queue": "build",
+                    "code": "\nimport os\nfrom api.db import get_sessionmaker\nfrom sqlalchemy import text\nfrom neo4j import GraphDatabase\n\n_STABLE_REL_TYPES = (\"约束\", \"主体\", \"客体\", \"条件\", \"出自\", \"依据\")\n\n_kb = bindings.get(\"kb_id\") or \"\"\n_label = \"ENTITY\" + _kb.replace(\"-\", \"_\")\n_uri = os.getenv(\"NEO4J_URI\", \"bolt://kb-neo4j:7687\")\n_user = os.getenv(\"NEO4J_USERNAME\", \"neo4j\")\n_pwd = os.getenv(\"NEO4J_PASSWORD\", \"\")\n_driver = GraphDatabase.driver(_uri, auth=(_user, _pwd))\ntry:\n    with _driver.session() as _sess:\n        _nodes = _sess.run(f\"MATCH (n:`{_label}`) RETURN count(n) AS c\").single()[\"c\"]\n        _rels = _sess.run(f\"MATCH (a:`{_label}`)-[r]-(b:`{_label}`) RETURN count(r) AS c\").single()[\"c\"]\n        _dumb = _sess.run(f\"MATCH (n:`{_label}`) WHERE n.attributes IS NULL OR size(n.attributes)=0 RETURN count(n) AS c\").single()[\"c\"]\n        _rel_rows = _sess.run(f\"MATCH (a:`{_label}`)-[r]-(b:`{_label}`) RETURN type(r) AS t, count(*) AS c ORDER BY c DESC\").data()\n        _rel_types = {_r[\"t\"]: _r[\"c\"] for _r in _rel_rows}\n        _untraceable = _sess.run(f\"MATCH (a:`{_label}`)-[r]-(b:`{_label}`) WHERE (r.rule_slug IS NULL OR r.rule_slug='') AND (r.note IS NULL OR r.note='') RETURN count(r) AS c\").single()[\"c\"]\n        _node_slugs = _sess.run(f\"MATCH (n:`{_label}`) WHERE n.page_slug IS NOT NULL AND n.page_slug<>'' RETURN collect(DISTINCT n.page_slug) AS slugs\").single()[\"slugs\"] or []\nfinally:\n    _driver.close()\n\n_issues = []\nif _dumb > 0:\n    _issues.append({\"dim\": \"graph\", \"issue_type\": \"dumb_nodes\", \"detail\": f\"{_dumb} 个哑节点(无 attributes),占 {_dumb/max(_nodes,1):.0%}\"})\n_bad_types = {t: c for t, c in _rel_types.items() if t not in _STABLE_REL_TYPES}\nif _bad_types:\n    _issues.append({\"dim\": \"graph\", \"issue_type\": \"illegal_rel_types\", \"detail\": f\"非稳定边类型: {_bad_types}\"})\nif _untraceable > 0:\n    _issues.append({\"dim\": \"graph\", \"issue_type\": \"untraceable_rels\", \"detail\": f\"{_untraceable} 条边无 rule_slug/note,无法回溯规则卡/原文\"})\n\n_db = get_sessionmaker()()\ntry:\n    if _node_slugs:\n        _existing = _db.execute(text(\"SELECT slug FROM wiki_page WHERE kb_id=:kb AND slug IN :slugs AND status='active'\"), {\"kb\": _kb, \"slugs\": tuple(_node_slugs)}).scalars().all()\n        _missing_slugs = [s for s in _node_slugs if s not in set(_existing)]\n        if _missing_slugs:\n            _issues.append({\"dim\": \"graph\", \"issue_type\": \"wiki_missing_nodes\", \"detail\": f\"{len(_missing_slugs)} 个图节点对应 wiki 页不存在,示例: {_missing_slugs[:5]}\"})\n    _wiki_pages = _db.execute(text(\"SELECT count(*) FROM wiki_page WHERE kb_id=:kb AND status='active'\"), {\"kb\": _kb}).scalar() or 0\nfinally:\n    _db.close()\n\n_health = 100.0\nif _nodes:\n    _health -= (_dumb / _nodes) * 80\n    _health -= (_untraceable / max(_rels, 1)) * 60\nif _bad_types:\n    _health -= 40\nif _issues:\n    _health -= 10 * len(_issues)\n_metrics = {\"nodes\": _nodes, \"rels\": _rels, \"dumb_nodes\": _dumb, \"rel_types\": _rel_types,\n            \"untraceable_rels\": _untraceable, \"wiki_pages\": _wiki_pages,\n            \"dumb_ratio\": round(_dumb / max(_nodes, 1), 4) if _nodes else 0,\n            \"health_score\": max(0, int(_health))}\n_attr = []\nif _metrics.get(\"dumb_nodes\", 0) > 0:\n    _attr.append({\"dim\": \"graph\", \"cause\": \"哑节点 = 写入方未补 attributes(仅 name+kg)\", \"suggestion\": \"图谱写入脚本收尾兜底补 attributes(定义/来源)\"})\nif _bad_types:\n    _attr.append({\"dim\": \"graph\", \"cause\": \"存在非稳定边类型 → 写入方未收敛到 6 种稳定边\", \"suggestion\": \"关系类型映射归一(约束/主体/客体/条件/出自/依据)\"})\nif _metrics.get(\"untraceable_rels\", 0) > 0:\n    _attr.append({\"dim\": \"graph\", \"cause\": \"边缺 rule_slug/note → 无法回溯规则卡/原文证据\", \"suggestion\": \"写入时给每条边带 rule_slug+note(原文句子)\"})\n_r = {\"metrics\": _metrics, \"issues\": _issues, \"attribution\": _attr}\n\nbindings[\"graph_r\"] = _r\nprint(f\"[n04] 图数据质量: 健康分 {_r['metrics'].get('health_score')} 问题 {len(_r['issues'])}\")\n"
+                }
+            }
         },
         {
-            "id": "n05", "type": "custom",
-            "data": {"label": "汇总+落库", "stepInst": "script",
-                     "config": {"queue": "build", "code": (
-                         "import sys, os, json\n"
-                         "sys.path.insert(0, '/srv/kb/worker/builtin_engine/code_rev_src')\n"
-                         "import quality_summary\n"
-                         "_kb = bindings.get('kb_id') or ''\n"
-                         "_docs = [d.strip() for d in str(bindings.get('doc_ids') or '').split(',') if d.strip()] or None\n"
-                         "_scope = str(bindings.get('scope') or 'all')\n"
-                         "r = quality_summary.run(_kb, '', _scope, _docs,\n"
-                         "                          bindings.get('chunk_r'), bindings.get('wiki_r'), bindings.get('graph_r'))\n"
-                         "bindings['quality_summary'] = r\n"
-                         "print(f\"[n05] {r.get('summary', '')}\")\n"
-                     )}},
+            "id": "n05",
+            "type": "custom",
+            "data": {
+                "label": "Wiki单文档语义评估",
+                "stepInst": "script",
+                "config": {
+                    "queue": "build",
+                    "code": "\nimport json\nfrom api.db import get_sessionmaker\nfrom sqlalchemy import text\n\n\ndef _llm(prompt, system=\"\", temperature=0.2, max_tokens=2048, json_mode=True):\n    from api.services.chat import ChatClient, load_chat_config, ChatMessage\n    from api.db import get_sessionmaker\n    import time as _t\n    _db = get_sessionmaker()()\n    try:\n        cfg = load_chat_config(_db, model_id=None)\n        client = ChatClient(cfg)\n        msgs = []\n        if system:\n            msgs.append(ChatMessage(role=\"system\", content=system))\n        msgs.append(ChatMessage(role=\"user\", content=prompt))\n        last = None\n        for attempt in range(4):\n            try:\n                raw = client.chat(msgs, temperature=temperature, max_tokens=max_tokens, thinking=False)\n                if json_mode:\n                    text_ = (raw or \"\").strip()\n                    if text_.startswith(\"```\"):\n                        text_ = text_.strip(\"`\")\n                        if text_.startswith(\"json\"):\n                            text_ = text_[4:].strip()\n                    return __import__(\"json\").loads(text_)\n                return raw or \"\"\n            except Exception as e:\n                last = e\n                resp = getattr(e, \"response\", None)\n                code = getattr(resp, \"status_code\", None) if resp is not None else None\n                if code == 429:\n                    _t.sleep(min(15 * (attempt + 1), 45))\n                else:\n                    _t.sleep(3)\n        raise last\n    finally:\n        _db.close()\n\n\n_kb = bindings.get(\"kb_id\") or \"\"\n_db = get_sessionmaker()()\ntry:\n    _pages = _db.execute(\n        text(\"SELECT slug, title, content FROM wiki_page WHERE kb_id=:kb AND status='active' AND content IS NOT NULL ORDER BY updated_at DESC LIMIT 15\"),\n        {\"kb\": _kb},\n    ).all()\nfinally:\n    _db.close()\n\nif not _pages:\n    bindings[\"wiki_sem_r\"] = {\"metrics\": {\"health_score\": 0, \"pages_eval\": 0}, \"issues\": [], \"attribution\": []}\n    print(\"[n05] wiki 单文档语义: 无页面, 跳过\")\nelse:\n    _items = []\n    for _p in _pages:\n        _items.append({\"slug\": str(_p[0]), \"title\": str(_p[1] or \"\"), \"content\": str(_p[2] or \"\")[:1500]})\n    _prompt = (\n        \"你是知识库质量评估专家。以下是从 wiki 中抽出的若干页面（含 slug/title/content）。\\n\"\n        \"对每个页面从**单文档视角**评估:\\n\"\n        \"1. 是否能让读者独立看出这页在讲什么（主题明确、开场即点题）\\n\"\n        \"2. 内容是否完整可理解（有上下文、有结论/定义，不是碎片或只有标题）\\n\"\n        \"3. 是否有明显占位/未完成/LLM 残留\\n\"\n        \"输出 JSON 数组，每个元素: {slug, score(0-100, 主题清晰度与完整度的综合分), issue(null 或简短问题描述)}\\n\"\n        \"只输出 JSON。页面列表:\\n\" + json.dumps(_items, ensure_ascii=False)\n    )\n    try:\n        _out = _llm(_prompt, system=\"你是严谨的知识库质量评估器。只输出 JSON，不输出其他内容。\")\n    except Exception as _e:\n        _r = {\"metrics\": {\"health_score\": None, \"pages_eval\": 0, \"error\": str(_e)[:200]},\n              \"issues\": [{\"issue_type\": \"sem_eval_error\", \"detail\": \"LLM 语义评估失败: \" + str(_e)}], \"attribution\": []}\n        bindings[\"wiki_sem_r\"] = _r\n        print(\"[n05] wiki 单文档语义: LLM 失败, 降级 -> \" + str(_e))\n    else:\n        _rows = _out if isinstance(_out, list) else (_out.get(\"items\") or _out.get(\"results\") or [])\n        _issues = []\n        _scores = []\n        for _row in _rows if isinstance(_rows, list) else []:\n            _slug = str(_row.get(\"slug\") or \"\")\n            _sc = _row.get(\"score\")\n            if isinstance(_sc, (int, float)):\n                _scores.append(float(_sc))\n            _iss = str(_row.get(\"issue\") or \"\").strip()\n            if _iss and _iss.lower() not in (\"null\", \"none\", \"无\", \"no\"):\n                _issues.append({\"dim\": \"wiki\", \"slug\": _slug, \"issue_type\": \"wiki_sem_unclear\",\n                                \"detail\": _iss[:200]})\n        _avg = round(sum(_scores) / len(_scores), 1) if _scores else None\n        _r = {\"metrics\": {\"health_score\": _avg, \"pages_eval\": len(_rows), \"semantic\": \"single_doc\"},\n              \"issues\": _issues,\n              \"attribution\": ([{\"dim\": \"wiki\", \"cause\": \"存在单文档视角看不明白的页面\", \"suggestion\": \"重写页面开场点题,补充背景与结论\"}] if _issues else [])}\n        bindings[\"wiki_sem_r\"] = _r\n        print(\"[n05] wiki 单文档语义: 均分 \" + str(_avg) + \" 问题 \" + str(len(_issues)))\n"
+                }
+            }
         },
         {
-            "id": "n06", "type": "custom",
-            "data": {"label": "完成汇总", "stepInst": "print",
-                     "config": {"text": "{{quality_summary}}", "queue": "build"}},
+            "id": "n06",
+            "type": "custom",
+            "data": {
+                "label": "Wiki-原文对比评估",
+                "stepInst": "script",
+                "config": {
+                    "queue": "build",
+                    "code": "\nimport json\nfrom api.db import get_sessionmaker\nfrom sqlalchemy import text\n\n\ndef _llm(prompt, system=\"\", temperature=0.2, max_tokens=2048, json_mode=True):\n    from api.services.chat import ChatClient, load_chat_config, ChatMessage\n    from api.db import get_sessionmaker\n    import time as _t\n    _db = get_sessionmaker()()\n    try:\n        cfg = load_chat_config(_db, model_id=None)\n        client = ChatClient(cfg)\n        msgs = []\n        if system:\n            msgs.append(ChatMessage(role=\"system\", content=system))\n        msgs.append(ChatMessage(role=\"user\", content=prompt))\n        last = None\n        for attempt in range(4):\n            try:\n                raw = client.chat(msgs, temperature=temperature, max_tokens=max_tokens, thinking=False)\n                if json_mode:\n                    text_ = (raw or \"\").strip()\n                    if text_.startswith(\"```\"):\n                        text_ = text_.strip(\"`\")\n                        if text_.startswith(\"json\"):\n                            text_ = text_[4:].strip()\n                    return __import__(\"json\").loads(text_)\n                return raw or \"\"\n            except Exception as e:\n                last = e\n                resp = getattr(e, \"response\", None)\n                code = getattr(resp, \"status_code\", None) if resp is not None else None\n                if code == 429:\n                    _t.sleep(min(15 * (attempt + 1), 45))\n                else:\n                    _t.sleep(3)\n        raise last\n    finally:\n        _db.close()\n\n\n_kb = bindings.get(\"kb_id\") or \"\"\n_db = get_sessionmaker()()\ntry:\n    _pages = _db.execute(\n        text(\"SELECT slug, title, content, source_refs FROM wiki_page WHERE kb_id=:kb AND status='active' AND content IS NOT NULL ORDER BY updated_at DESC LIMIT 10\"),\n        {\"kb\": _kb},\n    ).all()\nfinally:\n    _db.close()\n\nif not _pages:\n    bindings[\"wiki_cmp_r\"] = {\"metrics\": {\"health_score\": 0, \"pages_cmp\": 0}, \"issues\": [], \"attribution\": []}\n    print(\"[n06] wiki-原文对比: 无页面, 跳过\")\nelse:\n    _items = []\n    for _p in _pages:\n        _refs = _p[3] or []\n        _doc_ids = []\n        for _r in _refs if isinstance(_refs, list) else []:\n            if isinstance(_r, dict) and _r.get(\"doc\"):\n                _doc_ids.append(str(_r[\"doc\"]))\n        _src = \"\"\n        if _doc_ids:\n            _db2 = get_sessionmaker()()\n            try:\n                _chunks = _db2.execute(\n                    text(\"SELECT document_id, seq, content FROM doc_chunk WHERE kb_id=:kb AND document_id IN :ids ORDER BY document_id, seq LIMIT 25\"),\n                    {\"kb\": _kb, \"ids\": tuple(_doc_ids)},\n                ).all()\n                _src = \"\\n\".join(\"[\" + str(c[0])[:8] + \"#\" + str(c[1]) + \"] \" + str(c[2] or \"\")[:400] for c in _chunks)\n            finally:\n                _db2.close()\n        _items.append({\"slug\": str(_p[0]), \"title\": str(_p[1] or \"\"),\n                       \"wiki_content\": str(_p[2] or \"\")[:1800],\n                       \"source_excerpt\": _src[:2500]})\n    _prompt = (\n        \"你是知识库质量评估专家，负责**核对 wiki 页面与原始文档是否一致**。\\n\"\n        \"对每个页面，把 wiki 内容与提供的原文摘录（source_excerpt，可能不完整）对比，找出**明显错误**：\\n\"\n        \"1. 事实性错误（数字/日期/主体/结论与原文明说矛盾）\\n\"\n        \"2. 编造/无中生有（原文没有的内容被 wiki 写成事实）\\n\"\n        \"3. 张冠李戴/移花接木（把别处的定义安到这页）\\n\"\n        \"注意：source_excerpt 若为空或明显不完整，标注 insufficient 而不是编造错误。\\n\"\n        \"输出 JSON 数组，每个元素: {slug, has_error(true/false), errors: [简短错误描述], confidence(low/medium/high)}\\n\"\n        \"只输出 JSON。\\n页面列表: \" + json.dumps(_items, ensure_ascii=False)\n    )\n    try:\n        _out = _llm(_prompt, system=\"你是严谨的知识库质量评估器，只依据给定原文判断，不确定就标注 insufficient。只输出 JSON。\")\n    except Exception as _e:\n        _r = {\"metrics\": {\"health_score\": None, \"pages_cmp\": 0, \"error\": str(_e)[:200]},\n              \"issues\": [{\"issue_type\": \"sem_eval_error\", \"detail\": \"LLM 语义评估失败: \" + str(_e)}], \"attribution\": []}\n        bindings[\"wiki_cmp_r\"] = _r\n        print(\"[n06] wiki-原文对比: LLM 失败, 降级 -> \" + str(_e))\n    else:\n        _rows = _out if isinstance(_out, list) else (_out.get(\"items\") or _out.get(\"results\") or [])\n        _issues = []\n        _error_pages = 0\n        for _row in _rows if isinstance(_rows, list) else []:\n            _slug = str(_row.get(\"slug\") or \"\")\n            if _row.get(\"has_error\") is True or _row.get(\"has_error\") in (1, \"true\", \"True\", \"yes\"):\n                _errs = _row.get(\"errors\") or []\n                if isinstance(_errs, str):\n                    _errs = [_errs]\n                for _e2 in _errs[:3]:\n                    _issues.append({\"dim\": \"wiki\", \"slug\": _slug, \"issue_type\": \"wiki_sem_error\",\n                                    \"detail\": str(_e2)[:200]})\n                _error_pages += 1\n        _n = len(_rows) or 1\n        _score = max(0, int(100 - (_error_pages / _n) * 100))\n        _r = {\"metrics\": {\"health_score\": _score, \"pages_cmp\": len(_rows), \"error_pages\": _error_pages,\n                          \"semantic\": \"doc_compare\"},\n              \"issues\": _issues,\n              \"attribution\": ([{\"dim\": \"wiki\", \"cause\": \"wiki 与原文存在不一致/编造内容\", \"suggestion\": \"以原文为准修正 wiki 页面,构建时加强 LLM 事实约束\"}] if _issues else [])}\n        bindings[\"wiki_cmp_r\"] = _r\n        print(\"[n06] wiki-原文对比: 得分 \" + str(_score) + \" 错误页 \" + str(_error_pages) + \"/\" + str(len(_rows)))\n"
+                }
+            }
         },
+        {
+            "id": "n07",
+            "type": "custom",
+            "data": {
+                "label": "图数据语义评估",
+                "stepInst": "script",
+                "config": {
+                    "queue": "build",
+                    "code": "\nimport json\nimport os\nfrom neo4j import GraphDatabase\nfrom api.db import get_sessionmaker\nfrom sqlalchemy import text\n\n\ndef _llm(prompt, system=\"\", temperature=0.2, max_tokens=2048, json_mode=True):\n    from api.services.chat import ChatClient, load_chat_config, ChatMessage\n    from api.db import get_sessionmaker\n    import time as _t\n    _db = get_sessionmaker()()\n    try:\n        cfg = load_chat_config(_db, model_id=None)\n        client = ChatClient(cfg)\n        msgs = []\n        if system:\n            msgs.append(ChatMessage(role=\"system\", content=system))\n        msgs.append(ChatMessage(role=\"user\", content=prompt))\n        last = None\n        for attempt in range(4):\n            try:\n                raw = client.chat(msgs, temperature=temperature, max_tokens=max_tokens, thinking=False)\n                if json_mode:\n                    text_ = (raw or \"\").strip()\n                    if text_.startswith(\"```\"):\n                        text_ = text_.strip(\"`\")\n                        if text_.startswith(\"json\"):\n                            text_ = text_[4:].strip()\n                    return __import__(\"json\").loads(text_)\n                return raw or \"\"\n            except Exception as e:\n                last = e\n                resp = getattr(e, \"response\", None)\n                code = getattr(resp, \"status_code\", None) if resp is not None else None\n                if code == 429:\n                    _t.sleep(min(15 * (attempt + 1), 45))\n                else:\n                    _t.sleep(3)\n        raise last\n    finally:\n        _db.close()\n\n\n_kb = bindings.get(\"kb_id\") or \"\"\n_label = \"ENTITY\" + _kb.replace(\"-\", \"_\")\n_uri = os.getenv(\"NEO4J_URI\", \"bolt://kb-neo4j:7687\")\n_user = os.getenv(\"NEO4J_USERNAME\", \"neo4j\")\n_pwd = os.getenv(\"NEO4J_PASSWORD\", \"\")\n_driver = GraphDatabase.driver(_uri, auth=(_user, _pwd))\ntry:\n    with _driver.session() as _sess:\n        _sample_nodes = _sess.run(\n            \"MATCH (n:`\" + _label + \"`) WHERE n.name IS NOT NULL RETURN n.name AS name, n.entity_type AS et LIMIT 12\"\n        ).data()\n        _sample_rels = _sess.run(\n            \"MATCH (a:`\" + _label + \"`)-[r]->(b:`\" + _label + \"`) RETURN a.name AS src, type(r) AS rel, b.name AS dst, r.note AS note LIMIT 12\"\n        ).data()\n        _total_nodes = _sess.run(\"MATCH (n:`\" + _label + \"`) RETURN count(n) AS c\").single()[\"c\"] or 0\nfinally:\n    _driver.close()\n\nif not _sample_nodes and not _sample_rels:\n    bindings[\"graph_sem_r\"] = {\"metrics\": {\"health_score\": 0, \"nodes_sampled\": 0, \"rels_sampled\": 0}, \"issues\": [], \"attribution\": []}\n    print(\"[n07] 图数据语义: 图无数据, 跳过\")\nelse:\n    _prompt = (\n        \"你是知识库图谱质量评估专家。以下是 Neo4j 语义图中抽样的**节点**与**关系**。\\n\"\n        \"**节点层**（评估实体名是否有意义）：\" + json.dumps(_sample_nodes, ensure_ascii=False) +\n        \"\\n**边层**（评估三元组 A-关系-B 语义是否正确：关系类型是否符合两端实体、note 是否支撑该关系）：\" +\n        json.dumps(_sample_rels, ensure_ascii=False) +\n        \"\\n请输出 JSON 对象: {node_issues: [{name, problem}], rel_issues: [{src, rel, dst, problem}], \"\n        \"overall_score: 0-100(图整体可理解性与语义正确性综合分), summary: 一句话总评}。\\n\"\n        \"问题包括: 实体名无意义/乱码/太泛、关系类型与实体不匹配、note 与关系矛盾或缺失、三元组明显错误。\\n只输出 JSON。\"\n    )\n    try:\n        _out = _llm(_prompt, system=\"你是严谨的知识库图谱质量评估器。只输出 JSON。\")\n    except Exception as _e:\n        _r = {\"metrics\": {\"health_score\": None, \"nodes_sampled\": 0, \"rels_sampled\": 0, \"error\": str(_e)[:200]},\n              \"issues\": [{\"issue_type\": \"sem_eval_error\", \"detail\": \"LLM 语义评估失败: \" + str(_e)}], \"attribution\": []}\n        bindings[\"graph_sem_r\"] = _r\n        print(\"[n07] 图数据语义: LLM 失败, 降级 -> \" + str(_e))\n    else:\n        _n_issues = (_out.get(\"node_issues\") or []) if isinstance(_out, dict) else []\n        _r_issues = (_out.get(\"rel_issues\") or []) if isinstance(_out, dict) else []\n        _issues = []\n        for _it in _n_issues[:8] if isinstance(_n_issues, list) else []:\n            _issues.append({\"dim\": \"graph\", \"issue_type\": \"graph_sem_node\",\n                            \"detail\": (\"节点 [\" + str(_it.get(\"name\", \"\")) + \"] \" + str(_it.get(\"problem\", \"\"))).strip()[:200]})\n        for _it in _r_issues[:8] if isinstance(_r_issues, list) else []:\n            _issues.append({\"dim\": \"graph\", \"issue_type\": \"graph_sem_rel\",\n                            \"detail\": (\"边 [\" + str(_it.get(\"src\", \"\")) + \"-\" + str(_it.get(\"rel\", \"\")) + \"->\" + str(_it.get(\"dst\", \"\")) + \"] \" + str(_it.get(\"problem\", \"\"))).strip()[:200]})\n        _sc = _out.get(\"overall_score\") if isinstance(_out, dict) else None\n        _score = int(_sc) if isinstance(_sc, (int, float)) else None\n        _r = {\"metrics\": {\"health_score\": _score, \"nodes_sampled\": len(_sample_nodes), \"rels_sampled\": len(_sample_rels),\n                          \"total_nodes\": _total_nodes, \"semantic\": \"graph_3layer\"},\n              \"issues\": _issues,\n              \"attribution\": ([{\"dim\": \"graph\", \"cause\": \"图谱存在语义问题(实体名/关系/note)\", \"suggestion\": \"检查实体抽取与关系写入口径\"}] if _issues else [])}\n        bindings[\"graph_sem_r\"] = _r\n        print(\"[n07] 图数据语义: 得分 \" + str(_score) + \" 问题 \" + str(len(_issues)))\n"
+                }
+            }
+        },
+        {
+            "id": "n08",
+            "type": "custom",
+            "data": {
+                "label": "汇总+落库",
+                "stepInst": "script",
+                "config": {
+                    "queue": "build",
+                    "code": "\nimport json\nimport uuid\nfrom api.db import get_sessionmaker\nfrom sqlalchemy import text\n\n_kb = bindings.get(\"kb_id\") or \"\"\n_docs = [d.strip() for d in str(bindings.get(\"doc_ids\") or \"\").split(\",\") if d.strip()] or None\n_scope = str(bindings.get(\"scope\") or \"all\")\n_qid = str(bindings.get(\"quality_id\") or \"\").strip()  # quality.py 传入的占位行 id\n\n_chunk_r = bindings.get(\"chunk_r\") or {}\n_wiki_r = bindings.get(\"wiki_r\") or {}\n_graph_r = bindings.get(\"graph_r\") or {}\n_wiki_sem_r = bindings.get(\"wiki_sem_r\") or {}\n_wiki_cmp_r = bindings.get(\"wiki_cmp_r\") or {}\n_graph_sem_r = bindings.get(\"graph_sem_r\") or {}\n\n# 每维度指标：程序性 health_score + 语义 semantic_score\ndef _m(r):\n    return r.get(\"metrics\") or {}\n\n_chunk_m = _m(_chunk_r)\n_wiki_m = _m(_wiki_r)\n_graph_m = _m(_graph_r)\n# wiki 语义分 = 单文档 + 原文对比 两路平均（None 则用另一路）\n_wiki_sem_scores = [s for s in (_m(_wiki_sem_r).get(\"health_score\"), _m(_wiki_cmp_r).get(\"health_score\")) if isinstance(s, (int, float))]\n_wiki_semantic = round(sum(_wiki_sem_scores) / len(_wiki_sem_scores), 1) if _wiki_sem_scores else None\n# 图语义分\n_graph_semantic = _m(_graph_sem_r).get(\"health_score\")\n_graph_semantic = int(_graph_semantic) if isinstance(_graph_semantic, (int, float)) else None\n\n# 综合分：每维度 程序×0.6 + 语义×0.4（无语义分则该维直接用程序分）\ndef _dim_score(prog, sem_score):\n    if not isinstance(prog, (int, float)):\n        return None\n    if isinstance(sem_score, (int, float)):\n        return round(prog * 0.6 + sem_score * 0.4, 1)\n    return round(float(prog), 1)\n\n_dims = {\n    \"chunk\": {\"prog\": _chunk_m.get(\"health_score\"), \"semantic\": None},\n    \"wiki\": {\"prog\": _wiki_m.get(\"health_score\"), \"semantic\": _wiki_semantic},\n    \"graph\": {\"prog\": _graph_m.get(\"health_score\"), \"semantic\": _graph_semantic},\n}\n_scores = {d: _dim_score(v[\"prog\"], v[\"semantic\"]) for d, v in _dims.items()}\n_valid = [s for s in _scores.values() if isinstance(s, (int, float))]\n_overall = round(sum(_valid) / len(_valid), 1) if _valid else 0\n\n# issues / attribution 合并（程序性 + 语义）\n_issues = []\n_attribution = []\nfor r in (_chunk_r, _wiki_r, _graph_r, _wiki_sem_r, _wiki_cmp_r, _graph_sem_r):\n    for it in (r.get(\"issues\") or []):\n        _issues.append(it)\n    for at in (r.get(\"attribution\") or []):\n        _attribution.append(at)\n\n_metrics_map = {\n    \"chunk\": {**{k: v for k, v in _chunk_m.items() if k != \"per_doc\"},\n              \"semantic_score\": None, \"final_score\": _scores.get(\"chunk\")},\n    \"wiki\": {**_wiki_m, \"semantic_score\": _wiki_semantic, \"final_score\": _scores.get(\"wiki\")},\n    \"graph\": {**_graph_m, \"semantic_score\": _graph_semantic, \"final_score\": _scores.get(\"graph\")},\n}\n_summary = (\n    f\"评估完成: 综合 {_overall} | 切片 {_scores.get('chunk','-')}(程序 {_chunk_m.get('health_score','-')}) \"\n    f\"| wiki {_scores.get('wiki','-')}(程序 {_wiki_m.get('health_score','-')}/语义 {_wiki_semantic or '-'}) \"\n    f\"| 图数据 {_scores.get('graph','-')}(程序 {_graph_m.get('health_score','-')}/语义 {_graph_semantic or '-'}); \"\n    f\"问题 {len(_issues)} 条, 归因建议 {len(_attribution)} 条\"\n)\n\n_db = get_sessionmaker()()\ntry:\n    if _qid:\n        # quality.py 已建 queued 占位行 → 更新它（状态流转 queued→success）\n        _db.execute(\n            text(\"UPDATE kb_quality_run SET status='success', chunk_metrics=:cm, wiki_metrics=:wm, \"\n                 \"graph_metrics=:gm, issues=:iss, attribution=:att, summary=:sum, updated_at=CURRENT_TIMESTAMP \"\n                 \"WHERE id=:rid\"),\n            {\"rid\": _qid, \"cm\": json.dumps(_metrics_map[\"chunk\"], ensure_ascii=False),\n             \"wm\": json.dumps(_metrics_map[\"wiki\"], ensure_ascii=False),\n             \"gm\": json.dumps(_metrics_map[\"graph\"], ensure_ascii=False),\n             \"iss\": json.dumps(_issues, ensure_ascii=False),\n             \"att\": json.dumps(_attribution, ensure_ascii=False),\n             \"sum\": _summary},\n        )\n    else:\n        # 兼容独立运行：自建行\n        _rid = uuid.uuid4().hex[:32]\n        _db.execute(\n            text(\"INSERT INTO kb_quality_run (id, kb_id, scope, doc_ids, status, chunk_metrics, wiki_metrics, \"\n                 \"graph_metrics, issues, attribution, summary, updated_at) VALUES \"\n                 \"(:id, :kb, :scope, :docs, 'success', :cm, :wm, :gm, :iss, :att, :sum, CURRENT_TIMESTAMP)\"),\n            {\"id\": _rid, \"kb\": _kb, \"scope\": _scope, \"docs\": json.dumps(_docs or [], ensure_ascii=False),\n             \"cm\": json.dumps(_metrics_map[\"chunk\"], ensure_ascii=False),\n             \"wm\": json.dumps(_metrics_map[\"wiki\"], ensure_ascii=False),\n             \"gm\": json.dumps(_metrics_map[\"graph\"], ensure_ascii=False),\n             \"iss\": json.dumps(_issues, ensure_ascii=False),\n             \"att\": json.dumps(_attribution, ensure_ascii=False),\n             \"sum\": _summary},\n        )\n    # kb_quality_report 每维度一条（含语义分）\n    _db.execute(text(\"DELETE FROM kb_quality_report WHERE run_id=:rid\"), {\"rid\": _qid or _rid})\n    for _dim, _r in ((\"chunk\", _chunk_r), (\"wiki\", _wiki_r), (\"graph\", _graph_r)):\n        _db.execute(\n            text(\"INSERT INTO kb_quality_report (id, run_id, kb_id, doc_id, dim, metrics, issues) \"\n                 \"VALUES (:id, :rid, :kb, :doc, :dim, :m, :i)\"),\n            {\"id\": uuid.uuid4().hex[:32], \"rid\": _qid or _rid, \"kb\": _kb,\n             \"doc\": _docs[0] if _docs and _scope == \"single\" else None,\n             \"dim\": _dim,\n             \"m\": json.dumps(_metrics_map[_dim], ensure_ascii=False),\n             \"i\": json.dumps([x for x in _issues if x.get(\"dim\") == _dim], ensure_ascii=False)},\n        )\n    _db.commit()\nexcept Exception as _e:\n    _db.rollback()\n    try:\n        _db.execute(text(\"UPDATE kb_quality_run SET status='failed', error=:e, updated_at=CURRENT_TIMESTAMP WHERE id=:rid\"),\n                    {\"e\": str(_e)[:500], \"rid\": _qid or (_rid if '_rid' in dir() else \"\")})\n        _db.commit()\n    except Exception:\n        pass\n    raise\nfinally:\n    _db.close()\n\nbindings[\"quality_summary\"] = _summary\nprint(\"[n08] \" + _summary)\n"
+                }
+            }
+        },
+        {
+            "id": "n09",
+            "type": "custom",
+            "data": {
+                "label": "完成汇总",
+                "stepInst": "print",
+                "config": {
+                    "text": "{{quality_summary}}",
+                    "queue": "build"
+                }
+            }
+        }
     ],
     "edges": [
-        {"source": "n01", "target": "n02"},
-        {"source": "n01", "target": "n03"},
-        {"source": "n01", "target": "n04"},
-        {"source": "n02", "target": "n05"},
-        {"source": "n03", "target": "n05"},
-        {"source": "n04", "target": "n05"},
-        {"source": "n05", "target": "n06"},
-    ],
+        {
+            "source": "n01",
+            "target": "n02"
+        },
+        {
+            "source": "n01",
+            "target": "n03"
+        },
+        {
+            "source": "n01",
+            "target": "n04"
+        },
+        {
+            "source": "n01",
+            "target": "n05"
+        },
+        {
+            "source": "n01",
+            "target": "n06"
+        },
+        {
+            "source": "n01",
+            "target": "n07"
+        },
+        {
+            "source": "n02",
+            "target": "n08"
+        },
+        {
+            "source": "n03",
+            "target": "n08"
+        },
+        {
+            "source": "n04",
+            "target": "n08"
+        },
+        {
+            "source": "n05",
+            "target": "n08"
+        },
+        {
+            "source": "n06",
+            "target": "n08"
+        },
+        {
+            "source": "n07",
+            "target": "n08"
+        },
+        {
+            "source": "n08",
+            "target": "n09"
+        }
+    ]
 }
+
 
 
 def _seed_quality_tape(db) -> None:

@@ -3825,8 +3825,29 @@ export interface QualityIssue {
   detail?: string;
 }
 
+export interface QualityMetrics {
+  health_score?: number | null;
+  semantic_score?: number | null;
+  final_score?: number | null;
+  chunks?: number;
+  short_ratio?: number;
+  dup?: number;
+  pages?: number;
+  orphan?: number;
+  broken_links?: number;
+  nodes?: number;
+  rels?: number;
+  dumb_nodes?: number;
+  semantic?: string;
+  pages_eval?: number;
+  pages_cmp?: number;
+  error_pages?: number;
+  nodes_sampled?: number;
+  rels_sampled?: number;
+}
+
 export interface QualityRunDetail extends QualityRunItem {
-  reports?: Record<string, { metrics?: Record<string, unknown>; issues?: QualityIssue[] }>;
+  reports?: Record<string, { metrics?: QualityMetrics; issues?: QualityIssue[] }>;
 }
 
 export function apiListQualityRuns(params: {

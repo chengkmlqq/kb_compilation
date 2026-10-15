@@ -66,18 +66,7 @@ def launch_quality(req: QualityLaunchRequest, db: Session = Depends(get_db),
     scope = req.scope
     if not scope or scope not in ("single", "multi", "all"):
         scope = "all" if not req.doc_ids else ("single" if len(req.doc_ids) == 1 else "multi")
-    inputs = {
-        "kb_id": req.kb_id,
-        "doc_ids": ",".join(req.doc_ids),
-        "scope": scope,
-    }
-    try:
-        tape_id = _tape_id_by_name(db, QUALITY_TAPE_NAME)
-        r = execute_tape(db, tape_id, inputs)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    run_id = r.get("run_id") or ""
-    # 编排执行记录在 dev 库；kb_quality_run 落框架库。先记一行 queued 占位（编排汇总节点会 UPDATE）
+    # 先建 queued 占位行（编排汇总节点会 UPDATE 它，避免「占位行+自建行」重复记录）
     from uuid import uuid4
 
     qrun = QualityRun(id=uuid4().hex[:32], kb_id=req.kb_id, scope=scope,
@@ -85,6 +74,18 @@ def launch_quality(req: QualityLaunchRequest, db: Session = Depends(get_db),
                       created_by=caller.get("user_id") or "")
     db.add(qrun)
     db.commit()
+    inputs = {
+        "kb_id": req.kb_id,
+        "doc_ids": ",".join(req.doc_ids),
+        "scope": scope,
+        "quality_id": qrun.id,
+    }
+    try:
+        tape_id = _tape_id_by_name(db, QUALITY_TAPE_NAME)
+        r = execute_tape(db, tape_id, inputs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    run_id = r.get("run_id") or ""
     return {"success": True, "data": {"run_id": run_id, "quality_id": qrun.id,
                                       "scope": scope, "status": "queued"}}
 
@@ -136,7 +137,10 @@ def _run_item(r: QualityRun) -> dict:
     scores = {}
     for dim, key in (("chunk", "chunk_metrics"), ("wiki", "wiki_metrics"), ("graph", "graph_metrics")):
         m = getattr(r, key) or {}
-        scores[dim] = m.get("health_score") if isinstance(m, dict) else None
+        if not isinstance(m, dict):
+            m = {}
+        # 综合分优先（final_score = 程序×0.6+语义×0.4），老数据无则回落程序分
+        scores[dim] = m.get("final_score") if m.get("final_score") is not None else m.get("health_score")
     return {
         "id": r.id,
         "kb_id": r.kb_id,

@@ -93,6 +93,11 @@ const ISSUE_TYPE_LABEL: Record<string, string> = {
   illegal_rel_types: "非法边类型",
   untraceable_rels: "不可回溯边",
   wiki_missing_nodes: "图页缺失",
+  wiki_sem_unclear: "单文档语义不明",
+  wiki_sem_error: "Wiki与原文不一致",
+  graph_sem_node: "图节点语义问题",
+  graph_sem_rel: "图边语义问题",
+  sem_eval_error: "语义评估失败",
 };
 
 export default function QualityPage() {
@@ -547,7 +552,27 @@ export default function QualityPage() {
                     padding: 12,
                   }}
                 >
-                  {scoreTag(DIM_MAP[d].label, detail.scores?.[d])}
+                  {scoreTag(
+                    `${DIM_MAP[d].label}综合`,
+                    detail.reports?.[d]?.metrics?.final_score ?? detail.scores?.[d],
+                  )}
+                  <div style={{ marginBottom: 8 }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      程序分{" "}
+                      <Tag color={scoreColor(detail.reports?.[d]?.metrics?.health_score)}>
+                        {detail.reports?.[d]?.metrics?.health_score ?? "-"}
+                      </Tag>
+                      {d !== "chunk" && (
+                        <>
+                          {" "}
+                          语义分{" "}
+                          <Tag color={scoreColor(detail.reports?.[d]?.metrics?.semantic_score)}>
+                            {detail.reports?.[d]?.metrics?.semantic_score ?? "-"}
+                          </Tag>
+                        </>
+                      )}
+                    </Text>
+                  </div>
                   {detail.reports?.[d]?.metrics && (
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {(() => {
@@ -561,10 +586,13 @@ export default function QualityPage() {
                           parts.push(`页面 ${m.pages ?? "-"}`);
                           parts.push(`孤立 ${m.orphan ?? 0}`);
                           parts.push(`断链 ${m.broken_links ?? 0}`);
+                          if (m.semantic === "single_doc") parts.push(`语义评估 ${m.pages_eval ?? 0} 页`);
+                          if (m.semantic === "doc_compare") parts.push(`原文对比 ${m.error_pages ?? 0}/${m.pages_cmp ?? 0} 错误`);
                         } else {
                           parts.push(`节点 ${m.nodes ?? "-"}`);
                           parts.push(`边 ${m.rels ?? 0}`);
                           parts.push(`哑节点 ${m.dumb_nodes ?? 0}`);
+                          if (m.semantic === "graph_3layer") parts.push(`语义抽样 ${m.nodes_sampled ?? 0}点/${m.rels_sampled ?? 0}边`);
                         }
                         return parts.join(" · ");
                       })()}
