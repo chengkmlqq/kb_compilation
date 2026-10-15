@@ -42,7 +42,7 @@ export function GlobalWatermark({ children }: { children: React.ReactNode }) {
 
   return (
     <Watermark
-      content={[text, "知识库平台"]}
+      content={[text, "领域知识构建"]}
       font={{ color: "rgba(36, 46, 67, 0.06)", fontSize: 16 }}
       rotate={-22}
       gap={[120, 120]}

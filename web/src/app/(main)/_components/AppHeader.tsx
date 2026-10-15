@@ -286,7 +286,7 @@ export const AppHeader: React.FC = () => {
           style={{ display: "flex", alignItems: "center", cursor: "pointer", fontSize: 16, fontWeight: 600, color: "#242e43" }}
           onClick={() => router.push("/kbs")}
         >
-          知识库平台
+          领域知识构建
         </div>
         <div style={{ width: "1px", height: "14px", background: "#E3E9EF" }} />
       </div>

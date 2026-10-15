@@ -105,7 +105,7 @@ export default function LoginPage() {
         }}
       >
         <Typography.Title level={3} style={{ textAlign: "center", marginTop: 0 }}>
-          知识库平台
+          领域知识构建
         </Typography.Title>
         <Typography.Paragraph type="secondary" style={{ textAlign: "center" }}>
           文档解析 · 向量检索 · Wiki 生成 · 智能问答

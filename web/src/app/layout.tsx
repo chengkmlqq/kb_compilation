@@ -4,8 +4,8 @@ import StyledComponentsRegistry from "@/lib/antd-registry";
 import { ThemeModeProvider, themeInitScript } from "@/lib/theme-mode";
 
 export const metadata: Metadata = {
-  title: "知识库平台",
-  description: "知识库 wiki 平台（文档解析 → 向量化 → 混合检索 → Wiki → 问答）",
+  title: "领域知识构建",
+  description: "领域知识构建（文档解析 → 向量化 → 混合检索 → Wiki → 问答）",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

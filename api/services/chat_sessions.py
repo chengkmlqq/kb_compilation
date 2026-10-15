@@ -373,7 +373,7 @@ def _llm_chat(
                 [
                     ChatMessage(
                         role="system",
-                        content="你是知识库平台的助手。严格只输出最终结果本身，不要输出任何操作指令、任务描述或说明。",
+                        content="你是领域知识构建的助手。严格只输出最终结果本身，不要输出任何操作指令、任务描述或说明。",
                     ),
                     ChatMessage(role="user", content=prompt),
                 ],
