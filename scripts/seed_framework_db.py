@@ -181,6 +181,9 @@ SYSTEM_CONFIG_DIMS: list[tuple[str, str, str, int]] = [
     ("SUMMARY_TAPE_STUFF", "", "上传摘要编排-Stuff全文直塞（kb_tape.id，留空=不触发）", 38),
     ("SUMMARY_TAPE_MAPREDUCE", "", "上传摘要编排-Map-Reduce分块合并（kb_tape.id，留空=不触发）", 39),
     ("SUMMARY_TAPE_REFINE", "", "上传摘要编排-Refine增量修订（kb_tape.id，留空=不触发）", 40),
+    # 2026-10-16 题材分析：未选构建引擎时，摘要完成后由该编排自动判定
+    # 文档属于哪个领域、选对应的领域 wiki 构建编排继续构建（留空=回退技能链）。
+    ("DOMAIN_RESOLVE_TAPE", "", "题材分析编排-自动选择领域构建（kb_tape.id，留空=不启用自动领域分发）", 41),
 ]
 
 
@@ -768,6 +771,7 @@ def main(argv: list[str] | None = None) -> None:
         # 10-12) 种子编排模板：文档摘要三模式（Stuff / Map-Reduce / Refine，2026-10-12）
         #    业界经典摘要模式，全部用基础原子组装（读切片→分批→LLM→合并/修订→写摘要页）。
         _seed_summary_tapes(db)
+        _seed_domain_resolve_tape(db)
 
         # 13) 种子编排模板：质量评估（2026-10-13）
         #    文档构建质量评估：切片/wiki/图数据三维度检查 + 规则归因汇总落库。
@@ -1330,6 +1334,113 @@ SUMMARY_MAPREDUCE_TAPE: dict = {
     ],
 }
 
+# ── 题材分析编排（2026-10-16）：自动选择领域构建编排 ──────────────
+# 未选构建引擎的文档：摘要完成后跑本编排，LLM 基于摘要 + 平台已有领域
+# wiki 构建编排的划分，判定文档属于哪个领域，输出 resolved_tape_id，
+# 上层链路（doc_process._enqueue_domain_guided_build）据此启动对应编排。
+# 产物 bindings：domain（领域名）/ resolved_tape_id（编排 id）/ resolved_tape_name。
+DOMAIN_RESOLVE_TAPE: dict = {
+    "exec_params": {"kb_id": "", "document_id": ""},
+    "nodes": [
+        {
+            "id": "n1", "type": "custom",
+            "data": {"label": "读取领域编排清单", "stepInst": "script",
+                     "config": {"code": (
+                         "# 题材分析-第一步：读平台已有的领域知识构建编排（kb_tape 按 category 去重）"
+                         "与文档摘要，拼领域判定 prompt\n"
+                         "from api.db import get_sessionmaker as _gsm\n"
+                         "from api.models.orchestration import Tape as _Tape\n"
+                         "from api.models.knowledge import KbDocument as _KbDoc\n"
+                         "from sqlalchemy import or_ as _or, select as _select\n"
+                         "doc_id = str(bindings.get('document_id') or bindings.get('doc_id') or '')\n"
+                         "_db = _gsm()()\n"
+                         "try:\n"
+                         "    _rows = _db.execute(_select(_Tape.id, _Tape.tape_name, _Tape.category).where(\n"
+                         "        _Tape.status != 'offline', _or(_Tape.tape_type == 'kb_build', _Tape.tape_name.like('wiki构建-%'))\n"
+                         "    ).order_by(_Tape.tape_name)).all()\n"
+                         "finally:\n"
+                         "    _db.close()\n"
+                         "_by_cat = {}\n"
+                         "for _tid, _tname, _cat in _rows:\n"
+                         "    _cat = (_cat or '通用').strip()\n"
+                         "    if _cat and _cat not in _by_cat:\n"
+                         "        _by_cat[_cat] = {'tape_id': _tid, 'tape_name': _tname}\n"
+                         "bindings['domain_cats'] = sorted(_by_cat)\n"
+                         "bindings['domain_map'] = _by_cat\n"
+                         "bindings['doc_summary'] = ''\n"
+                         "if doc_id:\n"
+                         "    _db2 = _gsm()()\n"
+                         "    try:\n"
+                         "        _sum = _db2.execute(_select(_KbDoc.summary).where(_KbDoc.id == doc_id)).scalar()\n"
+                         "        bindings['doc_summary'] = (_sum or '').strip()\n"
+                         "    finally:\n"
+                         "        _db2.close()\n"
+                         "if not _by_cat:\n"
+                         "    bindings['domain_ready'] = False\n"
+                         "    bindings['domain_prompt'] = ''\n"
+                         "else:\n"
+                         "    _lines = ['%s（对应编排：%s）' % (c, _by_cat[c]['tape_name'])\n"
+                         "              for c in sorted(_by_cat)]\n"
+                         "    bindings['domain_prompt'] = (\n"
+                         "        '以下是知识库平台已有的全部领域构建编排分类，请判断文档属于哪个领域：\\n'\n"
+                         "        + '\\n'.join('- ' + l for l in _lines)\n"
+                         "        + '\\n\\n只输出一个领域名称，必须原样取自上面列表，不要输出任何其它内容。\\n'\n"
+                         "        + '文档摘要：\\n' + (bindings.get('doc_summary') or '（无摘要）')\n"
+                         "    )\n"
+                         "    bindings['domain_ready'] = True\n"
+                     )}},
+        },
+        {
+            "id": "n2", "type": "custom",
+            "data": {"label": "LLM领域判定", "stepInst": "kb_llm_chat",
+                     "config": {"prompt": "{{domain_prompt}}", "output_var": "domain_raw",
+                                "model": "{{summary_model_id}}", "temperature": "0.2",
+                                "max_tokens": "128", "skip_empty": True,
+                                "thinking": "disabled",
+                                "system": (
+                                    "你是文档题材分类专家。只输出领域名称本身，"
+                                    "禁止输出解释、序号、引号、标点或任何多余文字。"
+                                )}},
+        },
+        {
+            "id": "n3", "type": "custom",
+            "data": {"label": "映射为构建编排", "stepInst": "script",
+                     "config": {"code": (
+                         "import re as _re\n"
+                         "raw = str(bindings.get('domain_raw') or '').strip()\n"
+                         "raw = _re.sub(r'[\\\"\\\'。、，《》（）\\[\\]\\n\\s]', '', raw).strip()\n"
+                         "cats = bindings.get('domain_cats') or []\n"
+                         "dmap = bindings.get('domain_map') or {}\n"
+                         "chosen = ''\n"
+                         "for c in cats:\n"
+                         "    if raw == c or (raw and (raw in c or c in raw)):\n"
+                         "        chosen = c\n"
+                         "        break\n"
+                         "if not chosen:\n"
+                         "    # 兜底：部分领域名含连接词（与/和），去掉后子串匹配\n"
+                         "    for c in cats:\n"
+                         "        _key = c.replace('与', '').replace('和', '')\n"
+                         "        if _key and _key in raw:\n"
+                         "            chosen = c\n"
+                         "            break\n"
+                         "if chosen and chosen in dmap:\n"
+                         "    bindings['domain'] = chosen\n"
+                         "    bindings['resolved_tape_id'] = dmap[chosen]['tape_id']\n"
+                         "    bindings['resolved_tape_name'] = dmap[chosen]['tape_name']\n"
+                         "else:\n"
+                         "    bindings['domain'] = ''\n"
+                         "    bindings['resolved_tape_id'] = ''\n"
+                         "    bindings['resolved_tape_name'] = ''\n"
+                     )}},
+        },
+    ],
+    "edges": [
+        {"source": "n1", "target": "n2"},
+        {"source": "n2", "target": "n3"},
+    ],
+}
+
+
 SUMMARY_REFINE_TAPE: dict = {
     "exec_params": {"kb_id": "", "document_id": "", "batch_size": "3", "chunk_cap": "3000"},
     "nodes": [
@@ -1610,6 +1721,50 @@ def _seed_summary_tapes(db) -> None:
         db.commit()
         save_tape_design(db, tape.id, tape_dict["nodes"], tape_dict["edges"], tape_dict.get("exec_params") or {})
         print(f"[{i}/12] 种子编排「{name}」OK: id={tape.id[:12]}… 节点 {len(tape_dict['nodes'])} 边 {len(tape_dict['edges'])}（status=draft，页面点执行即可用）")
+
+
+def _seed_domain_resolve_tape(db) -> None:
+    """幂等建「题材分析-领域判定」编排（存在则 skip；改内容需删 Tape+TapeStep 行重建）。
+
+    用途：知识库/上传均未选构建引擎时，摘要完成后由本编排基于文档摘要 +
+    平台已有领域 wiki 构建编排的划分，自动判定使用哪个编排继续构建。
+    参数联动：modo_dim(SYSTEM_CONFIG).DOMAIN_RESOLVE_TAPE = 本编排 id（留空
+    = 上传链回退原 skill 链构建，不启用自动领域分发）。
+    """
+    from api.models.orchestration import Tape
+    from api.services.orchestration import ensure_tape_category, save_tape_design
+
+    name = "题材分析-领域判定"
+    existing = db.execute(select(Tape).where(Tape.tape_name == name)).scalars().first()
+    if existing:
+        print(f"[seed-resolve] 编排「{name}」已存在 (skip) id={existing.id[:12]}…")
+        return
+    ensure_tape_category(db, "通用", cat_type="tape")
+    tape = Tape(
+        id=uuid.uuid4().hex[:32],
+        tape_name=name,
+        tape_label="题材分析（自动选择领域构建编排）",
+        tape_descr=(
+            "根据文档摘要与平台已有领域构建编排的划分，自动判定该文档应使用哪个编排"
+            "进行后续 wiki 构建。产物：resolved_tape_id（上传链据此启动对应编排）。"
+        ),
+        tape_type="general",
+        category="通用",
+        status="draft",
+        nodes=list(DOMAIN_RESOLVE_TAPE["nodes"]),
+        edges=list(DOMAIN_RESOLVE_TAPE["edges"]),
+        exec_params=DOMAIN_RESOLVE_TAPE.get("exec_params") or {},
+        create_user=None,
+    )
+    db.add(tape)
+    db.commit()
+    save_tape_design(
+        db, tape.id,
+        DOMAIN_RESOLVE_TAPE["nodes"], DOMAIN_RESOLVE_TAPE["edges"],
+        DOMAIN_RESOLVE_TAPE.get("exec_params") or {},
+    )
+    print(f"[seed-resolve] 编排「{name}」OK: id={tape.id[:12]}… 节点 {len(DOMAIN_RESOLVE_TAPE['nodes'])} 边 {len(DOMAIN_RESOLVE_TAPE['edges'])}（status=draft）")
+    print(f"[seed-resolve] 提示：把该 id 写入 modo_dim(SYSTEM_CONFIG).DOMAIN_RESOLVE_TAPE 即启用自动领域分发")
 
 
 def _seed_domain_wiki_tapes(db) -> None:

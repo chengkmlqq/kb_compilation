@@ -2,7 +2,21 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-15（编排分类按 cates.md 固化为多级种子并补充描述）
+最后更新：2026-10-16（未选构建引擎时摘要驱动自动领域构建）
+
+## 20. 当前状态（2026-10-16 题材分析编排：自动选择领域构建编排）
+
+- **需求**：知识库创建时未选构建引擎、上传文件也未选 → 构建任务**等摘要任务结束**，调用 LLM 基于摘要 + 平台已有领域构建编排的划分**自动判定用哪个编排**继续构建；配置了构建引擎（KB 级或文档级）→ 保持现状**并行执行**
+- **代码改动**：
+  1. `worker/tasks/doc_process.py`：`_enqueue_summary_task` 返回值 bool → run_id（供串行链等待）；新增 `_enqueue_domain_guided_build`（串行链：等摘要 run 终态 → enqueue 题材分析 run → 等终态 → 读 `bindings.resolved_tape_id` → enqueue 对应领域编排）、`_wait_run_terminal`（窄列轮询）、`_read_run_binding`、`_enqueue_resolve_run`（RESOLVE_RUN_* job）、`_domain_resolve_tape_id`（读 DOMAIN_RESOLVE_TAPE 参数）；`_handle_process_document` 的 `elif flags["wiki"]` 分支改走 domain-guided，任一环节缺失/失败/超时回退 skill 链（原行为）
+  2. `scripts/seed_framework_db.py`：SYSTEM_CONFIG 加 `DOMAIN_RESOLVE_TAPE` 参数（seq 41，留空=不启用）+ 题材分析编排模板 `DOMAIN_RESOLVE_TAPE`（n1 script 读 kb_tape 领域清单+文档摘要拼 prompt / n2 kb_llm_chat thinking=disabled 判领域 / n3 script 映射 resolved_tape_id）+ `_seed_domain_resolve_tape`
+  3. 新增 `scripts/apply_domain_resolve_tape.py`（幂等可重放：建编排+写参数，`--disable` 清参数停用）
+  4. 新增 `tests/test_domain_guided_build.py` 8 用例（参数未配置/摘要未触发/摘要失败/成功选定/未匹配/题材分析失败 各回退路径）
+- **库内数据（apply 脚本已应用）**：编排「题材分析-领域判定」id=`8255bb048a884d87b82b17479399244e`（draft，3 节点：读取领域编排清单/LLM领域判定/映射为构建编排）；参数 `DOMAIN_RESOLVE_TAPE`=该 id
+- **容器热修**：doc_process.py cp 到 5 业务容器（api-server + 4 celery worker）+ restart；seed/apply cp 进 kb-api-server；api health UP
+- **验证**：全量 pytest 639 passed / 3 failed（3 红仍为 §15 既有基线）；端到端 execute 题材分析 → LLM 判定 `domain=行业监管与公共政策` → `resolved_tape_id=1c6267d3…`（wiki构建-行业监管与公共政策），领域清单 21 个、摘要 311 字符正确读取
+- **坑位（实测）**：①execute 接口 body 必须是 `{"inputs":{...}}`（平铺 {kb_id,document_id} 会被当空 inputs）；②线上 kb_tape.tape_type 全是 general（3de3c25 打标晚于存量编排导入）→ n1 清单条件用 `or_(tape_type=='kb_build', tape_name.like('wiki构建-%'))` 双判据；③领域编排 seed 是 draft（未发布）→ 清单筛 `status != 'offline'` 而非 effective
+- **部署注意**：①上传链未选引擎时 doc_process handler 同步轮询摘要 run（最长 30 分钟超时），期间占 default worker 槽位；②用户在服务编排页「保存设计/发布」会覆盖 kb_tape_step 冲掉 n2 的 system/thinking → 重跑 apply 恢复；③CI 重建前容器内热修有效，重建后需 pull 新镜像固化
 
 ## 19. 当前状态（2026-10-15 编排分类多级化 + 补充描述）
 

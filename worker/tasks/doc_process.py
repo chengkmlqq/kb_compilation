@@ -164,8 +164,8 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
     #   - KB 绑定了构建引擎（build_tape_id，服务编排中已发布的编排）→ 按该编排
     #     构建 wiki（替代内置 skill 链，2026-10-12）
     #   - 未绑定时：wiki_enabled=true 且 custom_wiki_generation=false →
-    #     enqueue KbAgentGatewayTask 用 KB 绑定的 wiki_config.skill（回退
-    #     WIKI_SKILL_NAME）跑 build_wiki.py
+    #     2026-10-16 起先等摘要完成后经「题材分析」编排自动选领域编排构建
+    #     （DOMAIN_RESOLVE_TAPE 参数未配置时回退 skill 链）
     #   - 2026-10-14: 不再自动触发 KbGraphBuildTask（图谱构建改由文档 wiki
     #     处理编排自行承接，避免上传即全库切片 LLM 抽取 + 网关 429 限流）
     # 开关与技能绑定从 kb_datasource 读（_kb_pipeline_flags），读取失败回退历史默认。
@@ -174,13 +174,17 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
         # 2026-10-13 上传链摘要（方案A 自动路由）：文档解析成功后按 KB 摘要策略
         # （off/auto/stuff/mapreduce/refine）触发标准摘要编排，生成摘要 wiki 页。
         # 独立于 wiki 构建（build_tape_id），两者可并存；失败静默不阻断解析。
+        # 2026-10-16 起返回 run_id：未选构建引擎时要等它结束后驱动题材分析。
+        summary_run_id = None
         try:
-            result["summary_triggered"] = _enqueue_summary_task(
+            summary_run_id = _enqueue_summary_task(
                 kb_id, document_id, parent_job_id=job_id, cookie=caller_cookie,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("failed to trigger summary task: %s", exc)
-            result["summary_triggered"] = False
+        result["summary_triggered"] = bool(summary_run_id)
+        if summary_run_id:
+            result["summary_run_id"] = summary_run_id
         flags = _kb_pipeline_flags(kb_id, document_id)
         tape_id = flags.get("tape") or ""
         if tape_id:
@@ -194,15 +198,14 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
                 logger.warning("failed to trigger build engine task: %s", exc)
                 result["build_engine_triggered"] = False
         elif flags["wiki"]:
-            try:
-                enqueued = _enqueue_wiki_skill_task(
-                    kb_id, document_id, skill_name=flags["skill"] or None,
-                    parent_job_id=job_id,  # 2026-10-12 父子：挂链头解析任务
-                )
-                result["wiki_skill_triggered"] = enqueued
-            except Exception as exc:  # noqa: BLE001 — 触发失败不使文档处理任务失败
-                logger.warning("failed to trigger wiki skill task: %s", exc)
-                result["wiki_skill_triggered"] = False
+            # 2026-10-16 摘要驱动自动领域构建：知识库创建时未选构建引擎、上传
+            # 文件也未选时，构建任务等摘要任务结束，题材分析编排基于摘要 +
+            # 平台已有领域构建编排的划分自动选定编排继续构建；任一环节
+            # 缺失/失败/超时回退 skill 链（原行为），保证构建不静默丢失。
+            result.update(_enqueue_domain_guided_build(
+                kb_id, document_id, parent_job_id=job_id, cookie=caller_cookie,
+                summary_run_id=summary_run_id, skill_name=flags.get("skill") or None,
+            ))
         else:
             result["wiki_skill_triggered"] = False
             result["wiki_skipped"] = "wiki_enabled=false 或 custom_wiki_generation=true"
@@ -373,12 +376,13 @@ def _enqueue_summary_task(
     document_id: str,
     parent_job_id: str | None = None,
     cookie: str = "",
-) -> bool:
+) -> str | None:
     """文档解析 READY 后按 KB 摘要策略触发标准摘要编排（生成摘要 wiki 页）。
 
     与 _enqueue_build_engine_task 同链路：建 kb_tape_run(env=prod) → 写
     modo_job 行（KbOrchestrationRunTask，任务监控可见）→ 投 orch 队列。
-    失败（策略 off / 参数缺失 / 编排不可用）静默返回 False，不使解析任务失败。
+    失败（策略 off / 参数缺失 / 编排不可用）静默返回 None，不使解析任务失败。
+    成功返回 run_id（供摘要驱动链路等待完成后消费，如 _enqueue_domain_guided_build）。
     """
     from api.models.framework import Dim  # noqa: F401
     from api.models.knowledge import KbDatasource
@@ -389,7 +393,7 @@ def _enqueue_summary_task(
         doc = db.execute(select(KbDocument).where(KbDocument.id == document_id)).scalars().first()
         if not kb or not doc:
             logger.warning("summary trigger skipped: kb/doc not found kb=%s doc=%s", kb_id, document_id)
-            return False
+            return None
         tape_ids = _summary_tape_ids()
         # 文件级摘要策略覆盖（上传确认弹窗「构建配置 → 摘要生成服务」，
         # 存 kb_document.process_config.summary_strategy）；未设置时回退 KB 级。
@@ -408,7 +412,7 @@ def _enqueue_summary_task(
             tape_ids,
         )
         if not resolved:
-            return False  # off / 参数缺失：不生成摘要
+            return None  # off / 参数缺失：不生成摘要
         mode, tape_id = resolved
         inputs = {
             "kb_id": kb_id,
@@ -433,7 +437,7 @@ def _enqueue_summary_task(
         )
     except Exception as exc:  # noqa: BLE001 — 摘要触发失败不使解析任务失败
         logger.warning("failed to create summary run (kb=%s doc=%s): %s", kb_id, document_id, exc)
-        return False
+        return None
     finally:
         db.close()
     run_id, run_env = created["run_id"], created["run_env"]
@@ -459,7 +463,7 @@ def _enqueue_summary_task(
         db2.commit()
     except Exception:  # noqa: BLE001
         db2.rollback()
-        return False
+        return None
     finally:
         db2.close()
     try:
@@ -473,8 +477,224 @@ def _enqueue_summary_task(
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("failed to enqueue summary run %s: %s", run_id, exc)
-        return False
-    return True
+        return None
+    return run_id
+
+
+# ── 题材分析驱动构建（2026-10-16）────────────────────────────────
+# 知识库创建时未选构建引擎、上传文件也未选时：摘要 run 完成后先跑题材分析
+# 编排（LLM 基于摘要 + 平台已有领域构建编排的划分判定领域），再按判定结果
+# 启动对应领域编排构建 wiki。任一环节缺失/失败/超时 → 回退 skill 链。
+DOMAIN_RESOLVE_DIM_KEY = "DOMAIN_RESOLVE_TAPE"
+# 等待上限：Map-Reduce 大文档摘要可能数分钟~十几分钟；题材分析仅一次 LLM 调用。
+SUMMARY_RUN_WAIT_TIMEOUT_S = 1800
+RESOLVE_RUN_WAIT_TIMEOUT_S = 600
+RUN_POLL_INTERVAL_S = 2.0
+
+
+def _domain_resolve_tape_id() -> str:
+    """读 modo_dim(SYSTEM_CONFIG) 的题材分析编排 tape_id（空 = 未启用自动领域分发）。"""
+    from api.db import get_sessionmaker as _gsm
+    from api.models.framework import Dim
+
+    db = _gsm()()
+    try:
+        row = db.execute(
+            select(Dim.dim_value).where(
+                Dim.dim_group == "SYSTEM_CONFIG", Dim.dim_code == DOMAIN_RESOLVE_DIM_KEY
+            )
+        ).scalar()
+        return (row or "").strip()
+    except Exception:  # noqa: BLE001 — 参数缺失/读取失败 = 未启用
+        logger.warning("failed to read %s", DOMAIN_RESOLVE_DIM_KEY, exc_info=True)
+        return ""
+    finally:
+        db.close()
+
+
+def _wait_run_terminal(
+    run_id: str, timeout_s: int, poll_s: float = RUN_POLL_INTERVAL_S
+) -> str | None:
+    """同步轮询 kb_tape_run 直到终态；返回 success/failed/cancelled，超时返回 None。
+
+    只查 status 窄列（kb_tape_run 是含大 JSON 列的宽行表）。调用场景：链头解析
+    任务同步等待摘要 / 题材分析 run 完成后启动下一环节（串行链路语义）。
+    """
+    import time as _time
+
+    from api.db import get_sessionmaker as _gsm
+    from api.models.orchestration import TapeRun
+
+    deadline = _time.time() + timeout_s
+    while _time.time() < deadline:
+        db = _gsm()()
+        try:
+            st = db.execute(select(TapeRun.status).where(TapeRun.id == run_id)).scalar()
+        finally:
+            db.close()
+        if st in ("success", "failed", "cancelled"):
+            return str(st)
+        _time.sleep(poll_s)
+    return None
+
+
+def _read_run_binding(run_id: str, key: str):
+    """读 kb_tape_run.bindings 的单个键（节点执行后 context.bindings 整体合并写回）。"""
+    from api.db import get_sessionmaker as _gsm
+    from api.models.orchestration import TapeRun
+
+    db = _gsm()()
+    try:
+        b = db.execute(select(TapeRun.bindings).where(TapeRun.id == run_id)).scalar()
+    finally:
+        db.close()
+    return (b or {}).get(key) if isinstance(b, dict) else None
+
+
+def _enqueue_resolve_run(
+    kb_id: str, document_id: str, tape_id: str,
+    parent_job_id: str | None = None,  # 挂链头解析任务
+    cookie: str = "",  # 操作者身份 cookie，透传进编排 bindings
+) -> str | None:
+    """enqueue 题材分析编排 run（骨架对齐 _enqueue_build_engine_task）。返回 run_id。
+
+    编排产物：bindings.domain / resolved_tape_id / resolved_tape_name。
+    inputs.summary_model_id：编排 LLM 节点 model={{summary_model_id}}，
+    KB 配置了摘要模型则用之，未配置为空串 → 引擎按平台默认模型。
+    """
+    from api.db import get_sessionmaker as _gsm
+    from api.models.knowledge import KbDatasource
+    from api.services.orchestration import _create_tape_run
+
+    db = _gsm()()
+    try:
+        kb = db.execute(select(KbDatasource).where(KbDatasource.id == kb_id)).scalars().first()
+        inputs = {
+            "kb_id": kb_id,
+            "document_id": document_id,
+            "doc_id": document_id,  # 兼容存量编排 def/script 读 doc_id
+            "x_next_identity": cookie,
+            "limit": "",
+            "only_codes": "",
+            "build_summary": "",
+            "language": "中文",
+            "summary_model_id": (getattr(kb, "summary_model_id", None) or "") if kb else "",
+        }
+        created = _create_tape_run(db, tape_id, inputs=inputs, env="prod")
+    except Exception as exc:  # noqa: BLE001 — 触发失败不使解析任务失败
+        logger.warning("failed to create resolve run (kb=%s doc=%s): %s", kb_id, document_id, exc)
+        return None
+    finally:
+        db.close()
+    run_id, run_env = created["run_id"], created["run_env"]
+
+    job_id = f"RESOLVE_RUN_{uuid.uuid4().hex[:12]}"
+    task_params = json.dumps({"runId": run_id, "env": run_env}, ensure_ascii=False)
+    db2 = _gsm()()
+    try:
+        from api.models.framework import Job
+
+        db2.add(
+            Job(
+                id=job_id,
+                task_id=job_id,
+                task_class="KbOrchestrationRunTask",
+                queue_name="orch",
+                task_params=task_params,
+                trigger_type="API",
+                state="PENDING",
+                parent_id=parent_job_id,
+            )
+        )
+        db2.commit()
+    except Exception:  # noqa: BLE001
+        db2.rollback()
+        return None
+    finally:
+        db2.close()
+
+    try:
+        from worker.celery_app import celery_app
+
+        celery_app.send_task(
+            "worker.tasks.scheduler.execute_modo_job",
+            args=[job_id],
+            task_id=job_id,
+            queue="orch",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("failed to enqueue resolve run %s: %s", run_id, exc)
+        return None
+    return run_id
+
+
+def _enqueue_domain_guided_build(
+    kb_id: str, document_id: str,
+    parent_job_id: str | None = None, cookie: str = "",
+    summary_run_id: str | None = None, skill_name: str | None = None,
+) -> dict:
+    """未选构建引擎时的「摘要 → 题材分析 → 领域编排构建」串行链路。
+
+    返回可并入 result 的诊断字段（domain_guided / summary_run_status /
+    resolve_run_status / domain / resolved_tape_id / build_engine_triggered /
+    fallback_reason / wiki_skill_triggered）。回退时 fallback_reason 说明原因。
+    """
+    out: dict = {"domain_guided": False}
+
+    def _fallback(reason: str) -> dict:
+        logger.info("domain-guided build fallback (kb=%s doc=%s): %s", kb_id, document_id, reason)
+        out["fallback_reason"] = reason
+        try:
+            out["wiki_skill_triggered"] = _enqueue_wiki_skill_task(
+                kb_id, document_id, skill_name=skill_name, parent_job_id=parent_job_id
+            )
+        except Exception as exc:  # noqa: BLE001 — 回退也失败不使解析任务失败
+            logger.warning("failed to enqueue wiki skill task (fallback): %s", exc)
+            out["wiki_skill_triggered"] = False
+        return out
+
+    resolve_tape = _domain_resolve_tape_id()
+    if not resolve_tape:
+        return _fallback(f"{DOMAIN_RESOLVE_DIM_KEY} 未配置")
+    if not summary_run_id:
+        return _fallback("摘要未触发")
+
+    st = _wait_run_terminal(summary_run_id, SUMMARY_RUN_WAIT_TIMEOUT_S)
+    out["summary_run_status"] = st
+    if st != "success":
+        return _fallback(f"摘要未成功({st or 'timeout'})")
+
+    resolve_run_id = _enqueue_resolve_run(
+        kb_id, document_id, resolve_tape, parent_job_id=parent_job_id, cookie=cookie
+    )
+    if not resolve_run_id:
+        return _fallback("题材分析 run 创建失败")
+    out["domain_guided"] = True
+    out["resolve_run_id"] = resolve_run_id
+    st2 = _wait_run_terminal(resolve_run_id, RESOLVE_RUN_WAIT_TIMEOUT_S)
+    out["resolve_run_status"] = st2
+    if st2 == "success":
+        domain = str(_read_run_binding(resolve_run_id, "domain") or "")
+        tape_id = str(_read_run_binding(resolve_run_id, "resolved_tape_id") or "")
+        out["domain"] = domain
+        out["resolved_tape_id"] = tape_id
+        if tape_id:
+            try:
+                out["build_engine_triggered"] = _enqueue_build_engine_task(
+                    kb_id, document_id, tape_id, parent_job_id=parent_job_id, cookie=cookie
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("failed to enqueue domain build (tape=%s): %s", tape_id, exc)
+                out["build_engine_triggered"] = False
+            if out.get("build_engine_triggered"):
+                logger.info(
+                    "domain-guided build ok (kb=%s doc=%s domain=%s tape=%s)",
+                    kb_id, document_id, domain, tape_id,
+                )
+                return out
+            return _fallback("领域编排触发失败")
+        return _fallback(f"题材分析未匹配到领域(domain={domain or '空'})")
+    return _fallback(f"题材分析未成功({st2 or 'timeout'})")
 
 
 def _enqueue_wiki_build_task(kb_id: str, document_id: str, parent_job_id: str | None = None) -> bool:
