@@ -277,15 +277,25 @@ export const AppHeader: React.FC = () => {
         lineHeight: "45px",
       }}
     >
-      {/* Left: Logo + divider */}
-      <div style={{ display: "flex", alignItems: "center", width: "176px", justifyContent: "space-between" }}>
+      {/* Left: Logo + 标题 + divider（2026-10-16 左上角改用 data_supply_base 的 dataatlas logo） */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div
-          style={{ display: "flex", alignItems: "center", cursor: "pointer", fontSize: 16, fontWeight: 600, color: "#242e43" }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            cursor: "pointer",
+            gap: 8,
+          }}
           onClick={() => router.push("/kbs")}
         >
-          领域知识构建
+          <img
+            src="/wiki/login/dataatlas.png"
+            alt="logo"
+            style={{ height: 28, width: "auto", display: "block" }}
+          />
+          <span style={{ fontSize: 16, fontWeight: 600, color: "#242e43" }}>领域知识构建</span>
         </div>
-        <div style={{ width: "1px", height: "14px", background: "#E3E9EF" }} />
+        <div style={{ width: "1px", height: "14px", background: "#E3E9EF", marginLeft: 16 }} />
       </div>
 
       {/* Middle: Top Nav（两级模式显示顶级菜单；单级模式留空） */}

@@ -16,7 +16,8 @@ interface LoginValues {
 const ASSET_BASE = "/wiki";
 const loginBg = `${ASSET_BASE}/login/app-login-bg.png`;
 const loginBanner = `${ASSET_BASE}/login/app-login-banner.png`;
-const loginLogo = `${ASSET_BASE}/login/modo-logo.png`;
+// 2026-10-16 左上角 logo 换成 data_supply_base 的 dataatlas logo（dataos_logo.png）
+const loginLogo = `${ASSET_BASE}/login/dataatlas.png`;
 
 export default function LoginPage() {
   const router = useRouter();
