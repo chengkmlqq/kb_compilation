@@ -93,18 +93,41 @@ export default function MetadataCollectionPage() {
   const [runsPage, setRunsPage] = useState(1);
   const [runsTotal, setRunsTotal] = useState(0);
 
-  // 元数据查看器（表列表 → 字段）
-  const [viewerOpen, setViewerOpen] = useState(false);
-  const [viewerDs, setViewerDs] = useState<MetadataDatasourceItem | null>(null);
-  const [tables, setTables] = useState<MetadataTableItem[]>([]);
-  const [tablesLoading, setTablesLoading] = useState(false);
-  const [tablesPage, setTablesPage] = useState(1);
-  const [tablesTotal, setTablesTotal] = useState(0);
-  const [tableKeyword, setTableKeyword] = useState("");
-  const [columnsOpen, setColumnsOpen] = useState(false);
-  const [columnsFor, setColumnsFor] = useState<MetadataTableItem | null>(null);
-  const [columns, setColumns] = useState<MetadataColumnItem[]>([]);
-  const [columnsLoading, setColumnsLoading] = useState(false);
+  // 元数据查看器（动态选项卡：表列表 → 字段，对齐 kbs 文档详情模式）
+  const [viewerTabs, setViewerTabs] = useState<{ key: string; title: string; ds: MetadataDatasourceItem }[]>([]);
+  const [colTabs, setColTabs] = useState<{ key: string; title: string; table: MetadataTableItem; dsId: string }[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeViewerTab = (key: string) => {
+    setViewerTabs((prev) => prev.filter((t) => t.key !== key));
+    // 关闭元数据查看页签时，级联关闭其下已打开的字段页签
+    const dsId = key.replace(/^meta-/, "");
+    setColTabs((prev) => prev.filter((t) => t.dsId !== dsId));
+    if (activeTab === key) setActiveTab("home");
+  };
+
+  const closeColTab = (key: string) => {
+    setColTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
+
+  const openViewer = (ds: MetadataDatasourceItem) => {
+    const key = `meta-${ds.id}`;
+    setViewerTabs((prev) => {
+      if (prev.some((t) => t.key === key)) return prev;
+      return [...prev, { key, title: `元数据 · ${ds.label || ds.name}`, ds }];
+    });
+    setActiveTab(key);
+  };
+
+  const openColumns = (t: MetadataTableItem, dsId: string) => {
+    const key = `meta-${dsId}-cols-${t.id}`;
+    setColTabs((prev) => {
+      if (prev.some((x) => x.key === key)) return prev;
+      return [...prev, { key, title: `字段 · ${t.tableName}`, table: t, dsId }];
+    });
+    setActiveTab(key);
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -200,40 +223,6 @@ export default function MetadataCollectionPage() {
     }
   };
 
-  const openViewer = async (ds: MetadataDatasourceItem) => {
-    setViewerDs(ds);
-    setViewerOpen(true);
-    setTablesPage(1);
-    setTableKeyword("");
-    await loadTables(1, "", ds.id);
-  };
-
-  const loadTables = async (p: number, kw: string, dsId: string) => {
-    setTablesLoading(true);
-    try {
-      const res = await apiListMetadataTables({ datasourceId: dsId, keyword: kw, page: p, pageSize: 20 });
-      if (res.success && res.data) {
-        setTables(res.data.items || []);
-        setTablesTotal(res.data.total || 0);
-        setTablesPage(p);
-      }
-    } finally {
-      setTablesLoading(false);
-    }
-  };
-
-  const openColumns = async (t: MetadataTableItem) => {
-    setColumnsFor(t);
-    setColumnsOpen(true);
-    setColumnsLoading(true);
-    try {
-      const res = await apiListMetadataColumns(t.id);
-      if (res.success && res.data) setColumns(res.data.items || []);
-    } finally {
-      setColumnsLoading(false);
-    }
-  };
-
   const onDelete = (ds: MetadataDatasourceItem) => {
     modal.confirm({
       title: `删除数据源「${ds.label || ds.name}」的全部元数据？`,
@@ -250,37 +239,6 @@ export default function MetadataCollectionPage() {
         }
       },
     });
-  };
-
-  const onDownloadTemplate = async () => {
-    if (!viewerDs) return;
-    try {
-      const { blob, filename } = await apiDownloadMetadataTemplate(viewerDs.id);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
-      message.success("模板已下载");
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : "下载失败");
-    }
-  };
-
-  const onImportFile = async (file: File) => {
-    if (!viewerDs) return;
-    try {
-      const res = await apiImportMetadataCollection(viewerDs.id, file);
-      if (res.success) {
-        message.success(res.message || `已提交 ${res.data?.targetCount ?? 0} 张表定向采集`);
-        delayedRefresh();
-      } else {
-        message.error(res.message || "导入失败");
-      }
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : "导入失败");
-    }
   };
 
   const columnsDef: ColumnsType<MetadataDatasourceItem> = [
@@ -403,13 +361,36 @@ export default function MetadataCollectionPage() {
       <ModoTabs
         type="editable-card"
         hideAdd
-        activeKey="home"
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action !== "remove") return;
+          const k = String(key);
+          if (k.includes("-cols-")) closeColTab(k);
+          else closeViewerTab(k);
+        }}
         tabBarExtraContent={
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
             刷新
           </Button>
         }
-        items={[{ key: "home", label: "元数据采集", children: listPane }]}
+        items={[
+          { key: "home", label: "元数据采集", children: listPane },
+          // 元数据查看：点击「查看元数据」打开的动态选项卡（可关闭）
+          ...viewerTabs.map((t) => ({
+            key: t.key,
+            label: t.title,
+            closable: true,
+            children: <MetadataTablesPane ds={t.ds} onOpenCols={(tb) => openColumns(tb, t.ds.id)} onChanged={delayedRefresh} />,
+          })),
+          // 字段详情：表列表点「字段」打开的动态选项卡（可关闭）
+          ...colTabs.map((t) => ({
+            key: t.key,
+            label: t.title,
+            closable: true,
+            children: <MetadataColumnsPane table={t.table} />,
+          })),
+        ]}
       />
 
       {/* 采集确认弹窗 */}
@@ -506,129 +487,200 @@ export default function MetadataCollectionPage() {
           />
         </div>
       </ModoDrawer>
-
-      {/* 元数据查看器 */}
-      <ModoDrawer
-        title={`元数据查看 · ${viewerDs?.label || viewerDs?.name || ""}`}
-        open={viewerOpen}
-        onCancel={() => setViewerOpen(false)}
-        width={900}
-        showFooter={false}
-      >
-        <Space style={{ marginBottom: 12 }} wrap>
-          <Input
-            placeholder="按表名/注释搜索"
-            allowClear
-            style={{ width: 220 }}
-            value={tableKeyword}
-            onChange={(e) => setTableKeyword(e.target.value)}
-            onPressEnter={() => viewerDs && void loadTables(1, tableKeyword, viewerDs.id)}
-          />
-          <Button onClick={() => viewerDs && void loadTables(1, tableKeyword, viewerDs.id)}>
-            搜索
-          </Button>
-          <Button icon={<DownloadOutlined />} onClick={() => void onDownloadTemplate()}>
-            下载导入模板
-          </Button>
-          <label
-            style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
-          >
-            <input
-              type="file"
-              accept=".xlsx"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void onImportFile(f);
-                e.target.value = "";
-              }}
-            />
-            <Button icon={<UploadOutlined />}>导入定向采集</Button>
-          </label>
-        </Space>
-        <Table<MetadataTableItem>
-          rowKey="id"
-          size="small"
-          loading={tablesLoading}
-          pagination={false}
-          dataSource={tables}
-          columns={[
-            { title: "表名", dataIndex: "tableName", key: "tableName", ellipsis: true },
-            {
-              title: "类型",
-              dataIndex: "tableType",
-              key: "tableType",
-              width: 80,
-              render: (v: string) => <Tag color={v === "VIEW" ? "purple" : "blue"}>{v || "TABLE"}</Tag>,
-            },
-            { title: "注释", dataIndex: "tableComment", key: "tableComment", ellipsis: true },
-            { title: "行数", dataIndex: "rowCount", key: "rowCount", width: 90 },
-            { title: "字段数", dataIndex: "columnCount", key: "columnCount", width: 80 },
-            { title: "采集时间", dataIndex: "collectionTime", key: "collectionTime", width: 170 },
-            {
-              title: "操作",
-              key: "actions",
-              width: 100,
-              render: (_v, r) => (
-                <ModoActionGroup
-                  maxCount={1}
-                  actions={[{ key: "columns", label: "字段", onClick: () => void openColumns(r) }]}
-                />
-              ),
-            },
-          ]}
-        />
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-          <ModoPagination
-            current={tablesPage}
-            pageSize={20}
-            total={tablesTotal}
-            onChange={(p) => viewerDs && void loadTables(p, tableKeyword, viewerDs.id)}
-          />
-        </div>
-      </ModoDrawer>
-
-      {/* 字段详情抽屉 */}
-      <ModoDrawer
-        title={`字段 · ${columnsFor?.tableName || ""}`}
-        open={columnsOpen}
-        onCancel={() => setColumnsOpen(false)}
-        width={820}
-        showFooter={false}
-      >
-        <Table<MetadataColumnItem>
-          rowKey="id"
-          size="small"
-          loading={columnsLoading}
-          pagination={false}
-          dataSource={columns}
-          columns={[
-            {
-              title: "列名",
-              dataIndex: "columnName",
-              key: "columnName",
-              render: (v: string, r) => (
-                <Space size={4}>
-                  <b>{v}</b>
-                  {r.isPrimaryKey ? <Tag color="red">PK</Tag> : null}
-                  {r.isUnique ? <Tag color="orange">UQ</Tag> : null}
-                </Space>
-              ),
-            },
-            { title: "类型", dataIndex: "columnType", key: "columnType", width: 140 },
-            {
-              title: "长度",
-              dataIndex: "columnLength",
-              key: "columnLength",
-              width: 70,
-              render: (v) => v ?? "—",
-            },
-            { title: "可空", dataIndex: "isNullable", key: "isNullable", width: 70 },
-            { title: "默认值", dataIndex: "columnDefault", key: "columnDefault", ellipsis: true },
-            { title: "注释", dataIndex: "columnComment", key: "columnComment", ellipsis: true },
-          ]}
-        />
-      </ModoDrawer>
     </div>
+  );
+}
+
+/** 元数据查看（动态选项卡内容）：表列表 + 搜索 + 模板下载/定向导入 + 分页 */
+function MetadataTablesPane({
+  ds,
+  onOpenCols,
+  onChanged,
+}: {
+  ds: MetadataDatasourceItem;
+  onOpenCols: (t: MetadataTableItem) => void;
+  onChanged: () => void;
+}) {
+  const { message } = App.useApp();
+  const [tables, setTables] = useState<MetadataTableItem[]>([]);
+  const [tablesLoading, setTablesLoading] = useState(false);
+  const [tablesPage, setTablesPage] = useState(1);
+  const [tablesTotal, setTablesTotal] = useState(0);
+  const [tableKeyword, setTableKeyword] = useState("");
+
+  const loadTables = async (p: number, kw: string) => {
+    setTablesLoading(true);
+    try {
+      const res = await apiListMetadataTables({ datasourceId: ds.id, keyword: kw, page: p, pageSize: 20 });
+      if (res.success && res.data) {
+        setTables(res.data.items || []);
+        setTablesTotal(res.data.total || 0);
+        setTablesPage(p);
+      }
+    } finally {
+      setTablesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadTables(1, "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ds.id]);
+
+  const onDownloadTemplate = async () => {
+    try {
+      const { blob, filename } = await apiDownloadMetadataTemplate(ds.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      message.success("模板已下载");
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : "下载失败");
+    }
+  };
+
+  const onImportFile = async (file: File) => {
+    try {
+      const res = await apiImportMetadataCollection(ds.id, file);
+      if (res.success) {
+        message.success(res.message || `已提交 ${res.data?.targetCount ?? 0} 张表定向采集`);
+        onChanged();
+      } else {
+        message.error(res.message || "导入失败");
+      }
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : "导入失败");
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <Space style={{ marginBottom: 12 }} wrap>
+        <Input
+          placeholder="按表名/注释搜索"
+          allowClear
+          style={{ width: 220 }}
+          value={tableKeyword}
+          onChange={(e) => setTableKeyword(e.target.value)}
+          onPressEnter={() => void loadTables(1, tableKeyword)}
+        />
+        <Button onClick={() => void loadTables(1, tableKeyword)}>搜索</Button>
+        <Button icon={<DownloadOutlined />} onClick={() => void onDownloadTemplate()}>
+          下载导入模板
+        </Button>
+        <label style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <input
+            type="file"
+            accept=".xlsx"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void onImportFile(f);
+              e.target.value = "";
+            }}
+          />
+          <Button icon={<UploadOutlined />}>导入定向采集</Button>
+        </label>
+      </Space>
+      <Table<MetadataTableItem>
+        rowKey="id"
+        size="small"
+        loading={tablesLoading}
+        pagination={false}
+        dataSource={tables}
+        columns={[
+          { title: "表名", dataIndex: "tableName", key: "tableName", ellipsis: true },
+          {
+            title: "类型",
+            dataIndex: "tableType",
+            key: "tableType",
+            width: 80,
+            render: (v: string) => <Tag color={v === "VIEW" ? "purple" : "blue"}>{v || "TABLE"}</Tag>,
+          },
+          { title: "注释", dataIndex: "tableComment", key: "tableComment", ellipsis: true },
+          { title: "行数", dataIndex: "rowCount", key: "rowCount", width: 90 },
+          { title: "字段数", dataIndex: "columnCount", key: "columnCount", width: 80 },
+          { title: "采集时间", dataIndex: "collectionTime", key: "collectionTime", width: 170 },
+          {
+            title: "操作",
+            key: "actions",
+            width: 100,
+            render: (_v, r) => (
+              <ModoActionGroup
+                maxCount={1}
+                actions={[{ key: "columns", label: "字段", onClick: () => onOpenCols(r) }]}
+              />
+            ),
+          },
+        ]}
+      />
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+        <ModoPagination
+          current={tablesPage}
+          pageSize={20}
+          total={tablesTotal}
+          onChange={(p) => void loadTables(p, tableKeyword)}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** 字段详情（动态选项卡内容）：某表字段列表 */
+function MetadataColumnsPane({ table }: { table: MetadataTableItem }) {
+  const [columns, setColumns] = useState<MetadataColumnItem[]>([]);
+  const [columnsLoading, setColumnsLoading] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setColumnsLoading(true);
+    apiListMetadataColumns(table.id)
+      .then((res) => {
+        if (alive && res.success && res.data) setColumns(res.data.items || []);
+      })
+      .finally(() => {
+        if (alive) setColumnsLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [table.id]);
+
+  return (
+    <Table<MetadataColumnItem>
+      rowKey="id"
+      size="small"
+      loading={columnsLoading}
+      pagination={false}
+      dataSource={columns}
+      columns={[
+        {
+          title: "列名",
+          dataIndex: "columnName",
+          key: "columnName",
+          render: (v: string, r) => (
+            <Space size={4}>
+              <b>{v}</b>
+              {r.isPrimaryKey ? <Tag color="red">PK</Tag> : null}
+              {r.isUnique ? <Tag color="orange">UQ</Tag> : null}
+            </Space>
+          ),
+        },
+        { title: "类型", dataIndex: "columnType", key: "columnType", width: 140 },
+        {
+          title: "长度",
+          dataIndex: "columnLength",
+          key: "columnLength",
+          width: 70,
+          render: (v) => v ?? "—",
+        },
+        { title: "可空", dataIndex: "isNullable", key: "isNullable", width: 70 },
+        { title: "默认值", dataIndex: "columnDefault", key: "columnDefault", ellipsis: true },
+        { title: "注释", dataIndex: "columnComment", key: "columnComment", ellipsis: true },
+      ]}
+    />
   );
 }
