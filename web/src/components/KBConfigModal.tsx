@@ -225,7 +225,9 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
         vector_enabled: !!v.vector_enabled,
         keyword_enabled: !!v.keyword_enabled,
         wiki_enabled: !!v.wiki_enabled,
-        graph_enabled: !!v.graph_enabled,
+        // 知识图谱开关表单已移除（2026-10-15）：保存时保留 KB 原值，
+        // 不走 !!v.graph_enabled（undefined→false 会误关已开启图谱的存量 KB）。
+        graph_enabled: !!kb.indexing_strategy?.graph_enabled,
       },
       custom_wiki_generation: v.custom_wiki_generation,
       embedding_model_id: v.embedding_model_id || null,
@@ -237,7 +239,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
           skill: v.wiki_skill || "",
           extraction_granularity: v.extraction_granularity || "standard",
         },
-        extract_config: { enabled: !!v.graph_extract },
+        extract_config: kb.extract_config ?? { enabled: false },
         question_generation_config: {
           enabled: !!v.question_generation,
           question_count: v.question_count || 3,
@@ -486,12 +488,6 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                     <Select allowClear placeholder="留空 = 系统默认" options={modelOptions("chat")} />
                   </Form.Item>
 
-                  <Form.Item name="graph_enabled" label="知识图谱" valuePropName="checked" extra="启用图谱构建流水线（实体/关系抽取）">
-                    <Switch />
-                  </Form.Item>
-                  <Form.Item name="graph_extract" label="知识图谱抽取" valuePropName="checked">
-                    <Switch />
-                  </Form.Item>
                   <Form.Item name="question_generation" label="问题生成" valuePropName="checked">
                     <Switch />
                   </Form.Item>

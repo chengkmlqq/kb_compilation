@@ -357,7 +357,8 @@ export default function KbsPage() {
         vector_enabled: !!values.vector_enabled,
         keyword_enabled: !!values.keyword_enabled,
         wiki_enabled: !!values.wiki_enabled,
-        graph_enabled: !!values.graph_enabled,
+        // 知识图谱开关表单已移除（2026-10-15）：新建默认关闭（对齐后端新库默认）
+        graph_enabled: false,
       },
       embedding_model_id: values.embedding_model_id || undefined,
       summary_model_id: values.summary_model_id || undefined,
@@ -654,14 +655,6 @@ export default function KbsPage() {
                       label="Wiki 构建"
                       valuePropName="checked"
                       extra="文档入库后自动生成 Wiki 页面（绑定构建引擎时以编排输出为准）"
-                    >
-                      <Switch />
-                    </Form.Item>
-                    <Form.Item
-                      name="graph_enabled"
-                      label="知识图谱"
-                      valuePropName="checked"
-                      extra="启用图谱构建流水线（实体/关系抽取）"
                     >
                       <Switch />
                     </Form.Item>
