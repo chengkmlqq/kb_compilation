@@ -180,14 +180,26 @@ export default function KbsPage() {
   const openKbSection = (kb: KbItem, section: KbSection, focusSlug?: string) => {
     const key = `kb-${kb.id}-${section}`;
     setTabs((prev) => {
-      const exists = prev.find((t) => t.key === key);
+      // 「知识图谱」pane 承载 PopotoGraphView：popoto 是全局单例且用固定 DOM id
+      // （#popoto-graph/#popoto-taxonomy 等）渲染。多个 KB 的图谱页签并存时，
+      // 后挂载实例的 resetPopotoContainers 会清掉先开页签的图、start() 又只渲染
+      // 进 getElementById 命中的第一个容器，且各实例的 IntersectionObserver/
+      // cleanup 竞态操作同一个 d3 force simulation → rAF 循环叠加 → CPU 打满
+      // 页面卡死（2026-10-15 实测「图谱按钮有时点开页面卡死」根因）。故同一时间
+      // 只保留一个图谱页签：打开新 KB 图谱时自动关掉其他 KB 的图谱页签。
+      // （wiki-graph 分段用自绘 WikiGraphView，不依赖 popoto 单例，不受影响）
+      const base =
+        section === "graph"
+          ? prev.filter((t) => !(t.section === "graph" && t.kbId !== kb.id))
+          : prev;
+      const exists = base.find((t) => t.key === key);
       if (exists) {
         // 已存在：仅更新 focusSlug（wiki 关系图 ego 聚焦），不重复开
-        if (exists.focusSlug === focusSlug) return prev;
-        return prev.map((t) => (t.key === key ? { ...t, focusSlug } : t));
+        if (exists.focusSlug === focusSlug) return base;
+        return base.map((t) => (t.key === key ? { ...t, focusSlug } : t));
       }
       return [
-        ...prev,
+        ...base,
         {
           key,
           title: `${SECTION_LABEL[section]} · ${kb.name}`,
