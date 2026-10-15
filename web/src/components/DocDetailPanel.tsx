@@ -14,14 +14,13 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { App, Button, Card, Descriptions, Empty, Input, List, Pagination, Space, Spin, Table, Tag, Typography } from "antd";
-import { DownloadOutlined, RedoOutlined, RobotOutlined } from "@ant-design/icons";
+import { DownloadOutlined, RobotOutlined } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   apiDownloadDocument,
   apiGetDocumentChunks,
   apiGetTableSample,
-  apiReparseDocument,
   DocChunkItem,
   DocItem,
 } from "@/lib/api";
@@ -157,16 +156,6 @@ export default function DocDetailPanel({ kbId, doc, onDocReparsed }: Props) {
     }
   };
 
-  const onReparse = async () => {
-    const res = await apiReparseDocument(kbId, doc.id);
-    if (res.success) {
-      message.success("已重新入队解析");
-      onDocReparsed?.(doc);
-    } else {
-      message.error(res.message || "重新解析失败");
-    }
-  };
-
   const summaryReady = doc.summary_status === "READY" && doc.summary;
   const summaryFailed = doc.summary_status === "FAILED";
 
@@ -203,9 +192,6 @@ export default function DocDetailPanel({ kbId, doc, onDocReparsed }: Props) {
           <Space size={4} style={{ flexShrink: 0 }}>
             <Button size="small" icon={<DownloadOutlined />} onClick={() => void onDownload()}>
               下载
-            </Button>
-            <Button size="small" icon={<RedoOutlined />} onClick={() => void onReparse()}>
-              重新解析
             </Button>
           </Space>
         </div>
