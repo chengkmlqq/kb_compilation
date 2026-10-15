@@ -23,17 +23,20 @@ import {
 } from "@ant-design/icons";
 import {
   apiGetChunkingConfig,
+  apiListBuildEngines,
   apiListModels,
   apiListParserEngines,
   apiListSkillsRegistry,
   apiPutChunkingConfig,
   apiUpdateKb,
+  BuildEngineItem,
   ChunkingConfig,
   KbItem,
   KbUpdatePayload,
   ModelItem,
   ParserEngineItem,
 } from "@/lib/api";
+import { groupBuildEngineOptions } from "@/lib/tape-func";
 import { App } from "antd";
 import ChunkDebugDrawer from "@/components/ChunkDebugDrawer";
 
@@ -121,6 +124,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
   const [skills, setSkills] = useState<{ name: string }[]>([]);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [engines, setEngines] = useState<ParserEngineItem[]>([]);
+  const [buildEngines, setBuildEngines] = useState<BuildEngineItem[]>([]);
   const [chunkLoading, setChunkLoading] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -141,6 +145,11 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
         const m = await apiListModels();
         if (m.success && m.data) setModels(m.data.items);
       } catch { /* 不阻断 */ }
+      try {
+        // 构建引擎下拉（2026-10-16 配置弹窗补入口）：服务编排中已发布的编排
+        const be = await apiListBuildEngines();
+        if (be.success && Array.isArray(be.data?.items)) setBuildEngines(be.data.items);
+      } catch { /* 不阻断 */ }
     })();
   }, [open]);
 
@@ -153,6 +162,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
       keyword_enabled: !!strat.keyword_enabled,
       graph_enabled: !!strat.graph_enabled,
       custom_wiki_generation: !!kb.custom_wiki_generation,
+      build_engine: kb.build_tape_id || undefined,
       wiki_skill: kb.wiki_config?.skill || undefined,
       extraction_granularity: kb.wiki_config?.extraction_granularity || "standard",
       embedding_model_id: kb.embedding_model_id || undefined,
@@ -232,6 +242,9 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
         graph_enabled: !!kb.indexing_strategy?.graph_enabled,
       },
       custom_wiki_generation: v.custom_wiki_generation,
+      // 构建引擎（2026-10-16 配置弹窗补入口）：回填保证未动时表单值=原绑定；
+      // allowClear 清空 → null = 解除绑定（后端「字段在 payload 才更新」语义）
+      build_tape_id: (v.build_engine as string | undefined) || null,
       embedding_model_id: v.embedding_model_id || null,
       summary_model_id: v.summary_model_id || null,
       // 摘要策略固定 auto：系统按文档规模自动路由（小文档全文直塞 / 大文档分块合并）
@@ -455,6 +468,17 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
 
               {section === "wiki" && (
                 <>
+                  <Form.Item
+                    name="build_engine"
+                    label="构建引擎"
+                    extra="选择服务编排中已发布的编排程序，文档解析完成后自动按该编排构建 Wiki（未选 = 走内置构建/摘要驱动自动领域分发）"
+                  >
+                    <Select
+                      allowClear
+                      placeholder={buildEngines.length ? "选择构建引擎" : "暂无已发布的编排，请先到服务编排发布"}
+                      options={groupBuildEngineOptions(buildEngines)}
+                    />
+                  </Form.Item>
                   <Form.Item
                     name="custom_wiki_generation"
                     label="自定义 Wiki 生成"

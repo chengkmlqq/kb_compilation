@@ -216,6 +216,8 @@ export interface KbUpdatePayload {
   configs?: Record<string, unknown>;
   /** 上传摘要策略（2026-10-13）：off / auto / stuff / mapreduce / refine */
   summary_strategy?: string;
+  /** 构建引擎（2026-10-16 配置弹窗补入口）：kb_tape.id；null = 清除绑定 */
+  build_tape_id?: string | null;
 }
 
 export function apiUpdateKb(kbId: string, payload: KbUpdatePayload) {
