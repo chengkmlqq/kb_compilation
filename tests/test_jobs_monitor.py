@@ -734,6 +734,52 @@ def test_parents_attached_run_not_top_level(monkeypatch) -> None:
         app.dependency_overrides.clear()
 
 
+def test_orchestration_child_state_follows_run(monkeypatch) -> None:
+    """2026-10-15 语义修正：编排子任务（KbOrchestrationRunTask）状态展示跟随
+    编排 run 的真实状态——job 是「投递即成功」语义（handler 建完 run 即 SUCCESS），
+    实际编排还在后台跑。此时子任务行应显示 RUNNING（原 job 状态保留在 job_state），
+    主任务 child_states 聚合也按 run 状态计，主任务不再「提前成功」。
+    """
+    from api.models.orchestration import TapeRun
+
+    db = _make_session()
+    db.query(Job).delete()
+    db.query(TapeRun).delete()
+    db.commit()
+
+    db.add(Job(id="DOC_doc1", task_id="doc1", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"kbId": "kb1", "documentId": "doc1"}),
+               trigger_type="API", state="SUCCESS"))
+    db.add(Job(id="SUMMARY_RUN_abc", task_id="SUMMARY_RUN_abc", task_class="KbOrchestrationRunTask",
+               queue_name="orch", task_params=json.dumps({"runId": "run_running", "env": "prod"}),
+               trigger_type="API", state="SUCCESS", parent_id="DOC_doc1"))
+    db.add(TapeRun(id="run_running", tape_id="tape1", tape_name="摘要-Map-Reduce（分块合并）",
+                   status="running", inputs={"kb_id": "kb1"}, step_results=[
+                       {"step_id": "n1", "step_inst": "kb_read_doc", "status": "success"},
+                   ]))
+    db.commit()
+
+    client = _jobs_client(db, monkeypatch)
+    try:
+        # 子任务行：状态跟随 run（running），原 job 状态保留在 job_state
+        r = client.get("/api/v1/jobs/DOC_doc1/children")
+        assert r.status_code == 200
+        child = r.json()["data"]["items"][0]
+        assert child["id"] == "SUMMARY_RUN_abc"
+        assert child["state"] == "RUNNING", f"run 运行中子任务应显示 RUNNING: {child['state']}"
+        assert child["job_state"] == "SUCCESS", "原始 job 状态应保留在 job_state"
+
+        # 主任务聚合：子任务按 run 状态计（RUNNING），不再按 job 的 SUCCESS
+        r = client.get("/api/v1/jobs/parents")
+        assert r.status_code == 200
+        by_id = {it["id"]: it for it in r.json()["data"]["items"]}
+        parent = by_id["DOC_doc1"]
+        assert parent["child_states"].get("RUNNING") == 1, parent["child_states"]
+        assert parent["child_states"].get("SUCCESS") is None, parent["child_states"]
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_parents_run_state_filter_mapping_and_mixed_paging(monkeypatch) -> None:
     """编排 run 与任务监控枚举对齐（2026-10-13）：
 

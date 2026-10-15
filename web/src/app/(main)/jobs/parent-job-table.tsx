@@ -142,6 +142,23 @@ function childProgress(record: ParentJobItem): string {
   return `${done}/${record.child_count || 0}`;
 }
 
+/** 2026-10-15 主任务展示状态合成：链头 job 是「投递即成功」语义（解析完成即
+ *  SUCCESS，不等编排子任务），后端 child_states 已按编排 run 真实状态聚合。
+ *  自身终态但存在非终态子任务（RUNNING/PENDING）时主任务展示为「运行中」，
+ *  全部子任务终态后才显示自身状态。
+ */
+function effectiveState(record: ParentJobItem): string {
+  const own = String(record.state || "");
+  if (own === "RUNNING" || own === "running") return own;
+  const states = record.child_states || {};
+  const pending =
+    (states.RUNNING || 0) +
+    (states.PENDING || 0) +
+    (states.running || 0) +
+    (states.queued || 0);
+  return pending > 0 ? "RUNNING" : own;
+}
+
 /** 展开行：子任务列表（文档链子任务 或 编排节点） */
 /** 编排节点明细列（模块级，一级展开的子任务表与二级展开的节点明细表共用）。 */
 const ORCH_STEP_COLS: ColumnsType<Record<string, unknown>> = [
@@ -297,7 +314,7 @@ const ParentJobTable: React.FC<ParentJobTableProps> = ({
       dataIndex: "state",
       key: "state",
       width: 110,
-      render: (state) => renderStateTag(state),
+      render: (state, record) => renderStateTag(effectiveState(record as ParentJobItem)),
     },
     {
       title: "子任务进度",
@@ -341,8 +358,8 @@ const ParentJobTable: React.FC<ParentJobTableProps> = ({
       width: 100,
       render: (_, record) => {
         const text = fmtDur(rowDurationMs(record, now));
-        // 运行中：套实时样式（与「全部任务」表一致）
-        return record.state === "RUNNING" || record.state === "running" ? (
+        // 运行中（含子任务未完成合成态）：套实时样式（与「全部任务」表一致）
+        return effectiveState(record as ParentJobItem) === "RUNNING" ? (
           <span className="modo-running-duration">{text}</span>
         ) : (
           text

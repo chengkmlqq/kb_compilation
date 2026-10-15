@@ -111,19 +111,52 @@ def _job_doc_names(db: Session, jobs: Sequence[Job]) -> dict[str, str]:
 # 父任务 = 文档处理链头（modo_job.parent_id IS NULL 的 API 触发任务）+
 # 编排执行（kb_tape_run，虚拟父任务，子任务 = step_results）。
 def _child_agg(db: Session, parent_ids: list[str]) -> dict[str, dict]:
-    """按父任务 id 聚合子任务：{parent_id: {"count": N, "states": {...}}}"""
+    """按父任务 id 聚合子任务：{parent_id: {"count": N, "states": {...}}}
+
+    2026-10-15 语义修正：摘要/构建编排子任务（KbOrchestrationRunTask）的 job
+    状态是「投递成功」语义（handler 建完 run 即返回 SUCCESS），不代表编排执行
+    结果——主任务解析完成即 SUCCESS 而子任务编排还在后台跑（用户反馈「子任务
+    还在处理，主任务就显示成功了」）。这类子任务的 states 改按其编排 run
+    （task_params.runId → kb_tape_run.status）的真实状态归一化（大写）；run
+    查不到时回退 job 自身状态。
+    """
     if not parent_ids:
         return {}
     rows = db.execute(
-        select(Job.parent_id, Job.state, func.count())
-        .where(Job.parent_id.in_(parent_ids))
-        .group_by(Job.parent_id, Job.state)
+        select(Job.parent_id, Job.state, Job.task_class, Job.task_params).where(
+            Job.parent_id.in_(parent_ids)
+        )
     ).all()
+    # 编排 run 真实状态（窄列查询 kb_tape_run，避免宽行 filesort）
+    run_state_by_id: dict[str, str] = {}
+    orch_ids: list[str] = []
+    for _pid, _st, cls, params in rows:
+        if cls == "KbOrchestrationRunTask":
+            try:
+                rid = str((json.loads(params or "{}") or {}).get("runId") or "")
+            except (TypeError, json.JSONDecodeError):
+                rid = ""
+            if rid:
+                orch_ids.append(rid)
+    if orch_ids:
+        from api.models.orchestration import TapeRun
+
+        for rid, st in db.execute(
+            select(TapeRun.id, TapeRun.status).where(TapeRun.id.in_(orch_ids))
+        ).all():
+            run_state_by_id[str(rid)] = _run_state_to_job(str(st or ""))
     agg: dict[str, dict] = {}
-    for pid, state, cnt in rows:
+    for pid, state, cls, params in rows:
         a = agg.setdefault(str(pid), {"count": 0, "states": {}})
-        a["count"] += int(cnt)
-        a["states"][str(state or "")] = int(cnt)
+        st = str(state or "")
+        if cls == "KbOrchestrationRunTask":
+            try:
+                rid = str((json.loads(params or "{}") or {}).get("runId") or "")
+            except (TypeError, json.JSONDecodeError):
+                rid = ""
+            st = run_state_by_id.get(rid, st)
+        a["count"] += 1
+        a["states"][st] = a["states"].get(st, 0) + 1
     return agg
 
 
@@ -304,6 +337,12 @@ def list_job_children(
                         d["run_id"] = run.id
                         d["step_results"] = run.step_results or []
                         d["run_tape_name"] = run.tape_name
+                        # 2026-10-15 语义修正：job 状态是「投递成功」语义（建完 run 即
+                        # SUCCESS），展示层改用编排 run 的真实状态（大写归一化），否则
+                        # 子任务还在后台跑就显示「成功」（用户反馈）。原 job 状态保留
+                        # 在 job_state 供排障对比。
+                        d["job_state"] = d["state"]
+                        d["state"] = _run_state_to_job(run.status)
             except (TypeError, json.JSONDecodeError):
                 pass
         items.append(d)
