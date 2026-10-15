@@ -95,8 +95,8 @@ def test_dgb_success_selects_domain_tape(dgb_env, monkeypatch) -> None:
     """摘要成功 → 题材分析 success 命中领域 → 用选定领域编排启动构建。"""
     built: dict = {}
 
-    def fake_build(kb_id, document_id, tape_id, parent_job_id=None, cookie=""):
-        built.update(kb_id=kb_id, document_id=document_id, tape_id=tape_id)
+    def fake_build(kb_id, document_id, tape_id, parent_job_id=None, cookie="", domain=""):
+        built.update(kb_id=kb_id, document_id=document_id, tape_id=tape_id, domain=domain)
         return True
 
     _patch(monkeypatch,
@@ -114,7 +114,7 @@ def test_dgb_success_selects_domain_tape(dgb_env, monkeypatch) -> None:
     assert out["domain"] == "法务与合同管理"
     assert out["resolved_tape_id"] == "tape-law"
     assert out["build_engine_triggered"] is True
-    assert built == {"kb_id": "kb-1", "document_id": "doc-1", "tape_id": "tape-law"}
+    assert built == {"kb_id": "kb-1", "document_id": "doc-1", "tape_id": "tape-law", "domain": "法务与合同管理"}
 
 
 def test_dgb_resolve_no_match_falls_back(dgb_env, monkeypatch) -> None:
@@ -129,6 +129,41 @@ def test_dgb_resolve_no_match_falls_back(dgb_env, monkeypatch) -> None:
     assert out["domain_guided"] is True
     assert "未匹配到领域" in out["fallback_reason"]
     assert out["wiki_skill_triggered"] is True
+
+
+def test_dgb_build_engine_run_injects_kid_and_doc_name(dgb_env, monkeypatch) -> None:
+    """2026-10-15 修复：构建编排 run 的 inputs 必须注入 kid/doc_name/source_file
+    （wiki构建-* 领域编排 n01 输入契约，缺失则 n03 raise「缺少 kid」整个编排失败）。"""
+    import api.services.orchestration as orch_mod
+    from api.models.knowledge import KbDocument
+
+    Session = dgb_env
+    db = Session()
+    db.add(KbDocument(id="doc-k1", kb_id="kb-1", file_name="测试文件.docx", parse_state="READY"))
+    db.commit()
+    db.close()
+
+    captured: dict = {}
+
+    def fake_create(db_, tape_id, inputs, env):
+        captured["inputs"] = inputs
+        return {"run_id": "run-1", "run_env": "prod"}
+
+    import worker.celery_app as celery_mod
+
+    class FakeCelery:
+        def send_task(self, *a, **k):
+            pass
+
+    monkeypatch.setattr(celery_mod, "celery_app", FakeCelery())
+    monkeypatch.setattr(orch_mod, "_create_tape_run", fake_create)
+    ok = dp._enqueue_build_engine_task("kb-1", "doc-k1", "tape-x", domain="采购与供应链")
+    assert ok is True
+    ins = captured["inputs"]
+    assert ins["kid"] == "doc-k1"
+    assert ins["doc_name"] == "测试文件.docx"
+    assert ins["source_file"] == "测试文件.docx"
+    assert ins["domain"] == "采购与供应链"
 
 
 def test_dgb_resolve_failed_falls_back(dgb_env, monkeypatch) -> None:

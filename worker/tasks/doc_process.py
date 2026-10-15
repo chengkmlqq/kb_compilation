@@ -224,6 +224,7 @@ def _enqueue_build_engine_task(
     kb_id: str, document_id: str, tape_id: str,
     parent_job_id: str | None = None,  # 2026-10-12 父子：链头解析任务 job id
     cookie: str = "",  # 操作者身份 cookie，透传进编排 bindings.x_next_identity
+    domain: str = "",  # 2026-10-15 领域构建链路已知领域时透传（编排 n01 默认兜底）
 ) -> bool:
     """KB 绑定构建引擎（服务编排中已发布的编排）时：按该编排构建 wiki。
 
@@ -232,12 +233,27 @@ def _enqueue_build_engine_task(
     execute_run 按 DAG 逐步执行（编排节点内 kb_read_doc 读文档切片、
     wiki_upsert_page/wiki_publish 写 wiki 页）。
     输入 bindings：kb_id / document_id（编排节点模板 {{kb_id}}/{{document_id}}）。
+    2026-10-15 编排输入契约：领域构建编排（wiki构建-*）的 n01 输入定义从
+    bindings 读 kid（文档 id）/doc_name/source_file（文件名），n03 硬校验
+    kid——上传链必须注入这三个变量，否则 n03 抛「缺少 kid」整个编排失败。
     """
     from api.db import get_sessionmaker
     from api.models.framework import Job
+    from api.models.knowledge import KbDocument
     from api.services.orchestration import _create_tape_run
 
     db = get_sessionmaker()()
+    file_name = ""
+    try:
+        if document_id:
+            file_name = (
+                db.execute(
+                    select(KbDocument.file_name).where(KbDocument.id == document_id)
+                ).scalars().first()
+                or ""
+            )
+    except Exception:  # noqa: BLE001 — 读不到文件名不影响构建触发
+        file_name = ""
     try:
         created = _create_tape_run(
             db, tape_id,
@@ -247,6 +263,11 @@ def _enqueue_build_engine_task(
                 # 2026-10-12 兼容存量编排：部分自建编排的 def/script 读 doc_id
                 #（如「指标WIKI构建」），别名注入后开箱即用，无需逐个改编排
                 "doc_id": document_id,
+                # 2026-10-15 编排输入契约（wiki构建-* 领域编排）：
+                # kid=文档 id，doc_name/source_file=文档文件名
+                "kid": document_id,
+                "doc_name": file_name,
+                "source_file": file_name,
                 # 2026-10-12 身份透传：自建编排脚本经 weknora_rpc 调平台 API
                 # 需要登录身份（def 读 x_next_identity）；上传操作者的 cookie
                 # 在此注入，过期时 weknora_rpc 自动用服务账号重登兜底
@@ -257,6 +278,7 @@ def _enqueue_build_engine_task(
                 "only_codes": "",
                 "build_summary": "",
                 "language": "中文",
+                **({"domain": domain} if domain else {}),
             },
             env="prod",  # 上传链数据在 prod，编排节点须同环境读写（2026-10-12）
         )
@@ -687,7 +709,8 @@ def _enqueue_domain_guided_build(
         if tape_id:
             try:
                 out["build_engine_triggered"] = _enqueue_build_engine_task(
-                    kb_id, document_id, tape_id, parent_job_id=parent_job_id, cookie=cookie
+                    kb_id, document_id, tape_id, parent_job_id=parent_job_id,
+                    cookie=cookie, domain=domain,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("failed to enqueue domain build (tape=%s): %s", tape_id, exc)
