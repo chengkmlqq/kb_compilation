@@ -121,8 +121,14 @@ def list_metadata_datasources(
             select(Job.state, Job.create_time, Job.error_message)
             .where(
                 Job.task_class == TASK_CLASS_METADATA,
-                Job.task_params.like(f'%"datasource_id": "{ds.id}"%'),
-                Job.task_params.like(f'%"datasource_id":"{ds.id}"%'),
+                # 2026-10-15 修复：两个 like 此前是隐式 AND——json.dumps 默认分隔符
+                # 带空格（`"datasource_id": "xxx"`），无空格变体恒不匹配 → jobs 恒空
+                # → COLLECTING/FAILED 分支永远不触发，full 重采清空表格的窗口期
+                # 显示「未采集」。改 or_ 兼容两种分隔符（与 list_collection_runs 一致）。
+                or_(
+                    Job.task_params.like(f'%"datasource_id": "{ds.id}"%'),
+                    Job.task_params.like(f'%"datasource_id":"{ds.id}"%'),
+                ),
             )
             .order_by(Job.create_time.desc())
             .limit(5)
