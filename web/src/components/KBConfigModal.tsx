@@ -151,7 +151,6 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
     form.setFieldsValue({
       vector_enabled: !!strat.vector_enabled,
       keyword_enabled: !!strat.keyword_enabled,
-      wiki_enabled: !!strat.wiki_enabled,
       graph_enabled: !!strat.graph_enabled,
       custom_wiki_generation: !!kb.custom_wiki_generation,
       wiki_skill: kb.wiki_config?.skill || undefined,
@@ -224,7 +223,10 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
       indexing_strategy: {
         vector_enabled: !!v.vector_enabled,
         keyword_enabled: !!v.keyword_enabled,
-        wiki_enabled: !!v.wiki_enabled,
+        // 「Wiki 构建」开关表单已移除（2026-10-15）：触发不再依赖该开关——
+        // 配置了构建引擎（KB 级或文档级）即自动触发构建；保存时保留 KB 原值，
+        // 不走 !!v.wiki_enabled（undefined→false 会误关存量 KB）。
+        wiki_enabled: !!kb.indexing_strategy?.wiki_enabled,
         // 知识图谱开关表单已移除（2026-10-15）：保存时保留 KB 原值，
         // 不走 !!v.graph_enabled（undefined→false 会误关已开启图谱的存量 KB）。
         graph_enabled: !!kb.indexing_strategy?.graph_enabled,
@@ -454,17 +456,10 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
               {section === "wiki" && (
                 <>
                   <Form.Item
-                    name="wiki_enabled"
-                    label="Wiki 构建"
-                    valuePropName="checked"
-                    extra="文档入库后自动生成 Wiki 页面（绑定构建引擎时以编排输出为准）"
-                  >
-                    <Switch />
-                  </Form.Item>
-                  <Form.Item
                     name="custom_wiki_generation"
                     label="自定义 Wiki 生成"
                     valuePropName="checked"
+                    extra="关闭自动构建、改为手动触发（配置了构建引擎时仍会自动构建）"
                   >
                     <Switch />
                   </Form.Item>

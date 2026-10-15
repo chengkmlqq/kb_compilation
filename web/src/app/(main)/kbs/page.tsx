@@ -356,7 +356,9 @@ export default function KbsPage() {
       indexing_strategy: {
         vector_enabled: !!values.vector_enabled,
         keyword_enabled: !!values.keyword_enabled,
-        wiki_enabled: !!values.wiki_enabled,
+        // 「Wiki 构建」开关表单已移除（2026-10-15）：新建不再需要该开关——
+        // 配置了构建引擎（build_engine）即自动触发构建任务
+        wiki_enabled: true,
         // 知识图谱开关表单已移除（2026-10-15）：新建默认关闭（对齐后端新库默认）
         graph_enabled: false,
       },
@@ -650,14 +652,6 @@ export default function KbsPage() {
               <div style={{ flex: 1, overflowY: "auto", maxHeight: 480 }}>
                 {createSection === "wiki" && (
                   <>
-                    <Form.Item
-                      name="wiki_enabled"
-                      label="Wiki 构建"
-                      valuePropName="checked"
-                      extra="文档入库后自动生成 Wiki 页面（绑定构建引擎时以编排输出为准）"
-                    >
-                      <Switch />
-                    </Form.Item>
                     <Form.Item
                       name="build_engine"
                       label="构建引擎"

@@ -161,14 +161,17 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
     result["job_id"] = job_id
 
     # 自动触发下游构建（WeKnora 索引策略对齐）：文档解析/向量化成功后，
-    #   - KB 绑定了构建引擎（build_tape_id，服务编排中已发布的编排）→ 按该编排
-    #     构建 wiki（替代内置 skill 链，2026-10-12）
-    #   - 未绑定时：wiki_enabled=true 且 custom_wiki_generation=false →
-    #     2026-10-16 起先等摘要完成后经「题材分析」编排自动选领域编排构建
-    #     （DOMAIN_RESOLVE_TAPE 参数未配置时回退 skill 链）
+    #   - KB 或文档绑定了构建引擎（build_tape_id，服务编排中已发布的编排）
+    #     → 按该编排构建 wiki（替代内置 skill 链，2026-10-12）
+    #   - 未绑定时：custom_wiki_generation=false → 2026-10-16 起先等摘要完成后
+    #     经「题材分析」编排自动选领域编排构建（DOMAIN_RESOLVE_TAPE 参数未配置
+    #     时回退 skill 链）
+    #   - custom_wiki_generation=true（用户显式手动模式）→ 不自动构建
+    #   - 2026-10-15: 「Wiki 构建」开关（indexing_strategy.wiki_enabled）表单已
+    #     移除且不再作为触发前置条件——配置了构建编排（KB 级或文档级）即触发；
+    #     该字段仅保留历史值存储，不再参与判定
     #   - 2026-10-14: 不再自动触发 KbGraphBuildTask（图谱构建改由文档 wiki
     #     处理编排自行承接，避免上传即全库切片 LLM 抽取 + 网关 429 限流）
-    # 开关与技能绑定从 kb_datasource 读（_kb_pipeline_flags），读取失败回退历史默认。
     # 成功标志：ingest_document 返回 parse_state == "READY"（无 success 键）。
     if result.get("parse_state") == "READY" and kb_id:
         # 2026-10-13 上传链摘要（方案A 自动路由）：文档解析成功后按 KB 摘要策略
@@ -188,6 +191,7 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
         flags = _kb_pipeline_flags(kb_id, document_id)
         tape_id = flags.get("tape") or ""
         if tape_id:
+            # 绑定了构建编排（文档级优先于 KB 级）：按编排构建，不看任何开关
             try:
                 result["build_engine_triggered"] = _enqueue_build_engine_task(
                     kb_id, document_id, tape_id,
@@ -207,8 +211,10 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
                 summary_run_id=summary_run_id, skill_name=flags.get("skill") or None,
             ))
         else:
+            # 2026-10-15：不再依赖 wiki_enabled 开关——仅 custom_wiki_generation
+            # （手动模式）会跳过自动构建
             result["wiki_skill_triggered"] = False
-            result["wiki_skipped"] = "wiki_enabled=false 或 custom_wiki_generation=true"
+            result["wiki_skipped"] = "custom_wiki_generation=true（手动模式）"
         # 2026-10-14: 移除上传链自动触发 KbGraphBuildTask（图谱构建改由文档 wiki
         # 处理编排自行承接，避免上传即全库切片 LLM 抽取 + 网关 429 限流）。
     return result
@@ -868,10 +874,13 @@ def _enqueue_wiki_skill_task(
 
 
 def _kb_pipeline_flags(kb_id: str, document_id: str = "") -> dict:
-    """读 KB 的 wiki_enabled/graph_enabled 开关、wiki 技能绑定与构建引擎绑定。
+    """读 KB 的 wiki 构建开关（2026-10-15 起仅手动模式）、技能绑定与构建引擎绑定。
 
     构建引擎（tape）优先级：文档级 kb_document.build_tape_id（上传/选表时
     重选）> 知识库级 kb_datasource.build_tape_id（创建库时选定的默认）。
+    wiki 键语义：2026-10-15 移除 wiki_enabled 前置——未开启自定义生成
+    （custom_wiki_generation=false，即自动模式）即允许自动构建；配置了构建
+    引擎（tape）时无论手动/自动都按编排构建。
     读取失败时返回兼容默认（wiki=True 自动建、graph=False），保证存量行为不回退。
     """
     fallback = {"wiki": True, "graph": False, "skill": "", "tape": ""}
@@ -892,11 +901,13 @@ def _kb_pipeline_flags(kb_id: str, document_id: str = "") -> dict:
             db.close()
         if not kb:
             return fallback
-        from api.services.kb_config import custom_wiki_generation, pipeline_enabled, wiki_skill_name
+        from api.services.kb_config import custom_wiki_generation, wiki_skill_name
 
         return {
-            "wiki": pipeline_enabled(kb, "wiki_enabled") and not custom_wiki_generation(kb),
-            "graph": pipeline_enabled(kb, "graph_enabled"),
+            # 2026-10-15: wiki_enabled 开关已从表单移除且不再参与判定——
+            # 自动模式（非自定义生成）即可自动构建
+            "wiki": not custom_wiki_generation(kb),
+            "graph": False,
             "skill": wiki_skill_name(kb),
             # 构建引擎：文档级覆盖优先，其次服务编排中已发布的编排程序
             "tape": doc_tape or getattr(kb, "build_tape_id", None) or "",

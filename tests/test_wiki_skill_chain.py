@@ -168,7 +168,9 @@ def test_handle_process_document_no_chain_on_failure(chain_env, monkeypatch) -> 
 
 def test_handle_process_document_graph_no_longer_auto_triggered(chain_env, monkeypatch) -> None:
     """2026-10-14 改造：graph_enabled=true 也不再自动触发 KbGraphBuildTask
-    （图谱构建改由文档 wiki 处理编排自行承接；避免上传即全库切片 LLM 抽取）。"""
+    （图谱构建改由文档 wiki 处理编排自行承接；避免上传即全库切片 LLM 抽取）。
+    2026-10-15 改造：wiki 构建不再依赖 wiki_enabled 开关——未配置构建引擎时
+    走 domain-guided 链路（未配置题材分析编排则回退 skill 链）触发构建。"""
     Session, sent = chain_env
     # 种子 KB：graph 开、wiki 关
     from api.models.knowledge import KbDatasource
@@ -191,17 +193,18 @@ def test_handle_process_document_graph_no_longer_auto_triggered(chain_env, monke
     result = dp._handle_process_document("job-1", json.dumps({"documentId": "doc-1", "kbId": "kb-1"}))
     # 2026-10-14 起不再自动触发图谱构建
     assert result.get("graph_build_triggered") is None
-    # wiki 关闭 → 不触发 wiki
-    assert result["wiki_skill_triggered"] is False
+    # wiki_enabled=false 不再阻断构建：未绑构建引擎 → 回退 skill 链触发
+    assert result["wiki_skill_triggered"] is True
     db = Session()
     classes = {j.task_class for j in db.execute(select(Job)).scalars().all()}
     assert "KbGraphBuildTask" not in classes
-    assert "KbAgentWikiBuildTask" not in classes
+    assert "KbAgentWikiBuildTask" not in classes  # 默认 direct：KbSkillDirectBuildTask
     db.close()
 
 
-def test_handle_process_document_no_wiki_when_disabled(chain_env, monkeypatch) -> None:
-    """wiki_enabled=false → 不触发 wiki 构建（WeKnora 默认语义）。"""
+def test_handle_process_document_auto_build_without_wiki_flag(chain_env, monkeypatch) -> None:
+    """2026-10-15 改造：wiki_enabled=false 也能自动构建——「Wiki 构建」开关
+    已从表单移除，只要未开启自定义生成（手动模式）即触发构建（skill 回退）。"""
     Session, sent = chain_env
     from api.models.knowledge import KbDatasource
 
@@ -221,9 +224,12 @@ def test_handle_process_document_no_wiki_when_disabled(chain_env, monkeypatch) -
         lambda doc_id, content, parser_engine=None: {"success": True, "parse_state": "READY", "document_id": doc_id},
     )
     result = dp._handle_process_document("job-1", json.dumps({"documentId": "doc-1", "kbId": "kb-1"}))
-    assert result["wiki_skill_triggered"] is False
+    # wiki_enabled=false 也触发（不再依赖开关）
+    assert result["wiki_skill_triggered"] is True
     db = Session()
-    assert len(db.execute(select(Job)).scalars().all()) == 0
+    jobs = db.execute(select(Job)).scalars().all()
+    assert len(jobs) == 1
+    assert jobs[0].id.startswith("WIKI_SKILL_")
     db.close()
 
 
