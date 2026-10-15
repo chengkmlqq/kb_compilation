@@ -705,6 +705,9 @@ def main(argv: list[str] | None = None) -> None:
         # 14) 种子编排：20 个领域 wiki 构建（2026-10-15 固化，数据 seed_tape_data/*.json）
         _seed_domain_wiki_tapes(db)
 
+        # 15) 种子本体 Schema：24 套领域/业务本体（2026-10-15 固化，数据 seed_ontology_data/*.json）
+        _seed_ontology_schemas(db)
+
         print("\nDONE — 登录: " + SEED_USER_ID + "/" + SEED_PASSWORD + "（编排内置组件 " + str(len(ORCH_STEP_DEFINES)) + " 个）")
     finally:
         db.close()
@@ -1594,6 +1597,71 @@ def _seed_domain_wiki_tapes(db) -> None:
         created += 1
         print(f"[seed-domain] 编排「{name}」OK: id={tape.id[:12]}… 分类「{category}」 节点 {len(d.get('nodes') or [])}")
     print(f"[seed-domain] 完成: 新建 {created} / 跳过 {skipped}")
+
+
+def _seed_ontology_schemas(db) -> None:
+    """幂等建本体 Schema（24 套领域/业务本体，数据 scripts/seed_ontology_data/*.json，2026-10-15 固化）。
+
+    每 JSON 为 schema export（schema_name/label/desc + 4 列 LLM 配置 + items[] 分类行）。
+    存在则 skip；KB↔schema 绑定（kb_ontology_schema）按 kb_id 属环境数据不固化，
+    新环境在前端「绑定知识库」选择即可。
+    """
+    import json
+    from pathlib import Path
+
+    from api.models.ontology import OntologySchema
+
+    data_dir = Path(__file__).resolve().parent / "seed_ontology_data"
+    if not data_dir.is_dir():
+        print("[seed-onto] 无 seed_ontology_data/ 目录，跳过本体 Schema 种子")
+        return
+    files = sorted(data_dir.glob("*.json"))
+    created = skipped = 0
+    for fp in files:
+        try:
+            d = json.loads(fp.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            print(f"[seed-onto] 读取失败 {fp.name}: {e}")
+            continue
+        name = str(d.get("schema_name") or "").strip()
+        if not name:
+            continue
+        exists = db.execute(select(OntologySchema).where(OntologySchema.schema_name == name).limit(1)).scalars().first()
+        if exists:
+            skipped += 1
+            print(f"[seed-onto] Schema「{name}」已存在 (skip)")
+            continue
+        items = d.get("items") or []
+        for it in items:
+            dim = str(it.get("dimension") or "")
+            if dim not in ("business", "rule"):
+                continue
+            cat_no = int(it.get("cat_no") or 0)
+            cat_name = str(it.get("cat_name") or "").strip()
+            if not cat_name:
+                continue
+            db.add(OntologySchema(
+                id=uuid.uuid4().hex[:24],
+                schema_name=name,
+                schema_label=str(d.get("schema_label") or name),
+                schema_desc=d.get("schema_desc"),
+                dimension=dim,
+                cat_no=cat_no,
+                cat_name=cat_name,
+                cat_label=str(it.get("cat_label") or f"{cat_no}-{cat_name}"),
+                prompt_hint=it.get("prompt_hint"),
+                neo4j_edge=it.get("neo4j_edge"),
+                expert_role=d.get("expert_role"),
+                extract_rules=d.get("extract_rules"),
+                summary_config=d.get("summary_config"),
+                term_filter_config=d.get("term_filter_config"),
+                state=str(it.get("state") or "1") or "1",
+                sort=cat_no,
+            ))
+        db.commit()
+        created += 1
+        print(f"[seed-onto] Schema「{name}」OK: {len(items)} 分类行")
+    print(f"[seed-onto] 完成: 新建 {created} / 跳过 {skipped}")
 
 
 if __name__ == "__main__":

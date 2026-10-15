@@ -1,0 +1,219 @@
+{
+ "schema_name": "法务与合同管理",
+ "schema_label": "法务与合同管理",
+ "schema_desc": "法务与合同管理领域 wiki 构建本体 Schema（2026-10-14 批量生成）",
+ "expert_role": "你是法务与合同管理解析专家，只输出JSON，不要任何思考过程。",
+ "extract_rules": "从长句列表**同时**抽取：① 业务实体（entities）——名词性对象/组织/角色/文件/事项/概念；② 规则（rules）——长句蕴含的规范性要求卡。\n【主谓配对硬约束】rules[].constraint 与 rules[].objects[].name **必须逐字等于本次输出 entities[].name 之一**（同一 JSON 内引用，禁止同义改写/自创变体）；若作用对象未出现在 entities 中，先在 entities 里补出；同一概念多次出现只输出一次；无明确约束对象时 constraint 填空串 \"\"。\n【质量硬约束】entities[].name / rules[].constraint / objects[].name / rules[].evidence 必须**逐字来自长句原文**；禁止①介词引导动词短语（按照/遵照/根据/依据/经…后/由/对于/将/不纳入 开头）②动作动词结尾描述（执行/办理/施行/审议/印发/废止/开展/引入/归集/备案 等结尾）③指示定语开头的衍生表达（本制度/本办法/本文件/本单位——取去定语后的核心实体）④纯日期/时间点（如 2025年9月1日）⑤表格列名/字段名/码值/表号。\n只输出一个 JSON 对象：{\"entities\":[{\"name\":\"实体名\",\"category\":\"业务对象\",\"definition\":\"一句话定义\"}],\"rules\":[{\"title\":\"规则概括（≤20字）\",\"category\":\"约束规则\",\"structure\":{\"主体\":\"x\",\"条件\":\"x\",\"动作\":\"x\"},\"description\":\"规则具体内容\",\"evidence\":\"原文关键片段（逐字）\",\"constraint\":\"实体名\",\"objects\":[{\"name\":\"实体名\",\"role\":\"客体\"}]}]}",
+ "summary_config": "{\"expert_role\": \"你是法务与合同管理知识库的文档摘要专家。\", \"output_rule\": \"严格按 markdown 结构输出文档卡片，禁止任何问候/聊天内容\", \"card_fields\": [\"一句话定位\", \"文件类型\", \"适用范围\", \"归口部门\", \"生效状态\"], \"sections\": [\"## 文档定位\", \"## 重点内容概览\", \"## 与其他文档的关系\"], \"relation_table_cols\": [\"相关文档\", \"关系说明\", \"原文依据\"], \"relation_rules\": [\"关系识别必须基于原文——每条关系必须在切片原文中有直接出处；原文依据列填原文句子摘录（禁止“暂无引用原文”）\", \"库内关联文档用 [[summary/<md5(关联kid)>|文档名]] 双链；库内无对应文档用纯文本《文档名》\", \"通知类文档只列核心关系（本通知是《被通知文档》的印发/修订通知）\"]}",
+ "term_filter_config": "{\"expert_role\": \"你是法务与合同管理知识库的术语筛选专家。\", \"keep_standards\": \"具有业务含义的制度术语、业务对象、业务事件、业务概念（如“合同审查、法律意见、违约责任、知识产权”）\", \"reject_standards\": [\"纯通用词——任何文档都可出现的通用动词/修饰词（确定/完善/规范/加强/开展/落实/相关/主要/重要/明确/部分/遵照/印发/纳入/引入/使用/完成/提交/支撑/负责/调整/变更/组织/监督/评审/审批/电子/技术/程序/配置 等）\", \"无业务含义的功能词（“特此”“年月日”）\"], \"fragment_rejects\": [\"跨词切碎残片\", \"纯数字/文号/年份\", \"制度文种词（管理办法、实施细则、管理规定——文件名后缀）\", \"介词/动词粘连片段\", \"单字/双字泛化词\"], \"output_format\": \"只输出JSON数组：[{\\\"word\\\":\\\"词\\\",\\\"keep\\\":true,\\\"reason\\\":\\\"一句话理由\\\"}]，不要输出任何其他文字\", \"doc_word_types\": [\"管理办法\", \"实施细则\", \"管理规定\"]}",
+ "exported_at": "2026-10-15T02:00:14",
+ "items": [
+  {
+   "dimension": "business",
+   "cat_no": 1,
+   "cat_name": "合同文件",
+   "cat_label": "1-合同文件",
+   "prompt_hint": "合同/协议文本对象（采购合同、服务合同、框架协议）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 2,
+   "cat_name": "合同主体",
+   "cat_label": "2-合同主体",
+   "prompt_hint": "合同当事人/签约主体（甲方、乙方、供应商、客户）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 3,
+   "cat_name": "合同要素",
+   "cat_label": "3-合同要素",
+   "prompt_hint": "合同要素（标的、价款、期限、违约责任、争议解决条款）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 4,
+   "cat_name": "法律文件",
+   "cat_label": "4-法律文件",
+   "prompt_hint": "法律法规/规章制度/司法解释等文件对象",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 5,
+   "cat_name": "合规事项",
+   "cat_label": "5-合规事项",
+   "prompt_hint": "合规审查/合规风险事项",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 6,
+   "cat_name": "争议与纠纷",
+   "cat_label": "6-争议与纠纷",
+   "prompt_hint": "争议/纠纷/诉讼/仲裁事项",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 7,
+   "cat_name": "知识产权",
+   "cat_label": "7-知识产权",
+   "prompt_hint": "专利/商标/著作权/商业秘密等对象",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 8,
+   "cat_name": "授权与委托",
+   "cat_label": "8-授权与委托",
+   "prompt_hint": "授权委托/代理事项",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 9,
+   "cat_name": "法律责任",
+   "cat_label": "9-法律责任",
+   "prompt_hint": "法律责任/违约后果/处罚对象",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 10,
+   "cat_name": "法务事件",
+   "cat_label": "10-法务事件",
+   "prompt_hint": "“动作+对象”完整事件（合同审查、签订、履行、变更、解除、法律纠纷处理）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 11,
+   "cat_name": "法律术语",
+   "cat_label": "11-法律术语",
+   "prompt_hint": "法律/合同领域定义的专有名词",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 1,
+   "cat_name": "定义规则",
+   "cat_label": "1-定义规则",
+   "prompt_hint": "术语/概念/名词的明确界定",
+   "neo4j_edge": "定义",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 2,
+   "cat_name": "条件规则",
+   "cat_label": "2-条件规则",
+   "prompt_hint": "条款适用的前提/范围/对象条件",
+   "neo4j_edge": "触发条件",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 3,
+   "cat_name": "约束规则",
+   "cat_label": "3-约束规则",
+   "prompt_hint": "必须/应/不得/禁止等硬性条款",
+   "neo4j_edge": "约束",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 4,
+   "cat_name": "职责规则",
+   "cat_label": "4-职责规则",
+   "prompt_hint": "部门/岗位职责分工",
+   "neo4j_edge": "管理",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 5,
+   "cat_name": "审批规则",
+   "cat_label": "5-审批规则",
+   "prompt_hint": "审批事项、层级与权限",
+   "neo4j_edge": "审批",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 6,
+   "cat_name": "流程规则",
+   "cat_label": "6-流程规则",
+   "prompt_hint": "流程步骤/顺序/环节要求",
+   "neo4j_edge": "执行",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 7,
+   "cat_name": "引用规则",
+   "cat_label": "7-引用规则",
+   "prompt_hint": "引用其他制度/标准/文件",
+   "neo4j_edge": "引用",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 8,
+   "cat_name": "例外规则",
+   "cat_label": "8-例外规则",
+   "prompt_hint": "豁免/例外情形",
+   "neo4j_edge": "豁免",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 9,
+   "cat_name": "决策规则",
+   "cat_label": "9-决策规则",
+   "prompt_hint": "决策权限/决策机制/集体决策",
+   "neo4j_edge": "决策",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 10,
+   "cat_name": "时限规则",
+   "cat_label": "10-时限规则",
+   "prompt_hint": "期限/时限/时效要求",
+   "neo4j_edge": "时限",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 11,
+   "cat_name": "金额规则",
+   "cat_label": "11-金额规则",
+   "prompt_hint": "金额/预算/定额/价费标准",
+   "neo4j_edge": "金额",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 12,
+   "cat_name": "版本规则",
+   "cat_label": "12-版本规则",
+   "prompt_hint": "版本演进/修订记录/废止替代",
+   "neo4j_edge": "版本",
+   "state": "1"
+  }
+ ]
+}

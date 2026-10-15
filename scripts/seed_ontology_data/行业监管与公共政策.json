@@ -1,0 +1,201 @@
+{
+ "schema_name": "行业监管与公共政策",
+ "schema_label": "行业监管与公共政策",
+ "schema_desc": "行业监管与公共政策领域 wiki 构建本体 Schema（copy 市场监管法规，2026-10-14）",
+ "expert_role": "你是行业监管与公共政策解析专家，只输出JSON，不要任何思考过程。",
+ "extract_rules": "从长句列表抽取业务实体(name/category/definition)和规则(title/category/constraint/evidence)。\ncategory 用业务本体类别之一（见本 schema business 维度 cat_name）；规则 category 用规则本体类别之一（见 rule 维度 cat_name）。\nconstraint 必须逐字等于 entities[].name 之一；name/evidence 必须逐字来自长句原文；rules[].structure 只填相关字段(主体/条件/动作)，objects 可选带 role；禁止纯日期/第X条/本法本规定等指示定语；同一概念只输出一次。\n只输出JSON对象 {\"entities\":[{\"name\":\"实体名\",\"category\":\"监管对象\",\"definition\":\"一句话定义\"}],\"rules\":[{\"title\":\"规则概括≤20字\",\"category\":\"约束规则\",\"constraint\":\"实体名\",\"evidence\":\"原文片段\",\"description\":\"...\",\"structure\":{\"主体\":\"x\"},\"objects\":[{\"name\":\"实体名\",\"role\":\"客体\"}]}]}",
+ "summary_config": "{\"expert_role\": \"你是市场监管法律法规知识库的文档摘要专家。请根据下面给定的法规原文切片，生成一张「法规文档卡片」形式的 markdown 摘要。\", \"output_rule\": \"严格按 markdown 结构输出卡片本体，禁止任何问候/聊天内容\", \"card_fields\": [\"一句话定位\", \"位阶\", \"领域\", \"制定机关\", \"文号\"], \"sections\": [\"## 法规定位\", \"## 重点内容概览\", \"## 与其他法律法规的关系\"], \"relation_table_cols\": [\"相关法律法规\", \"关系说明\", \"原文依据\"], \"relation_rules\": [\"关系表只列原文中明确提到的法律法规关系\", \"库内关联法规用 [[summary/<md5(关联kid)>|法规名]] 双链；库内无对应文档用纯文本《引用名》\", \"原文依据列必须逐字来自切片；禁止“暂无引用原文”\", \"位阶判断：全国人大及其常委会制定=法律；国务院制定或“国务院令”发布=行政法规；部门令/总局令发布=部门规章；其他规范性文件=规范性文件\"]}",
+ "term_filter_config": "{\"expert_role\": \"你是行业监管与公共政策知识库的术语筛选专家。\", \"keep_standards\": \"具有业务含义的制度术语、业务对象、业务事件、业务概念（如“行政处罚”“药品经营许可”“进口药材”“医疗器械网络销售”“食品生产许可”）\", \"reject_standards\": [\"纯通用词——没有业务含义、可出现在任何文档中的通用动词/修饰词（确定/完善/规范/加强/开展/落实/相关/主要/重要/明确/部分/遵照/印发/纳入/引入）\", \"无业务含义的功能词（“特此”“年月日”）\"], \"fragment_rejects\": [\"跨词切碎残片（如“理办”来自“管理办法”）\", \"纯数字/文号/年份（如“25”“2025年”）\", \"制度文种词（“管理办法”“实施细则”“管理规定”——文件名后缀）\", \"介词/动词粘连片段（“经本单位”“文件明确”“达到或超过”）\", \"单字/双字泛化词（“使用”“完成”“提交”“业务”“电子”“程序”）\"], \"output_format\": \"只输出JSON数组：[{\\\"word\\\":\\\"词\\\",\\\"keep\\\":true,\\\"reason\\\":\\\"一句话理由\\\"}]，不要输出任何其他文字\", \"doc_word_types\": [\"管理办法\", \"实施细则\", \"管理规定\"]}",
+ "exported_at": "2026-10-15T02:00:14",
+ "items": [
+  {
+   "dimension": "business",
+   "cat_no": 1,
+   "cat_name": "法律法规",
+   "cat_label": "1-法律法规",
+   "prompt_hint": "法规文件本身/法律体系/立法层级（如\"药品管理法\"\"行政法规\"\"部门规章\"）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 2,
+   "cat_name": "监管对象",
+   "cat_label": "2-监管对象",
+   "prompt_hint": "被监管的主体/事物/行为（如\"药品\"\"医疗器械\"\"食品经营者\"\"特种设备\"\"网络交易平台\"）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 3,
+   "cat_name": "许可事项",
+   "cat_label": "3-许可事项",
+   "prompt_hint": "需要审批/许可/备案的事项（如\"药品生产许可\"\"食品经营许可\"\"CCC认证\"\"注册\"\"备案\"）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 4,
+   "cat_name": "违法行为",
+   "cat_label": "4-违法行为",
+   "prompt_hint": "违反法规的行为/情形（如\"无证生产\"\"虚假宣传\"\"掺杂掺假\"）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 5,
+   "cat_name": "行政处罚",
+   "cat_label": "5-行政处罚",
+   "prompt_hint": "处罚种类/措施（如\"罚款\"\"没收违法所得\"\"吊销许可证\"\"责令停产停业\"）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 6,
+   "cat_name": "监管职责",
+   "cat_label": "6-监管职责",
+   "prompt_hint": "监管部门/机构/人员职责（如\"市场监督管理部门\"\"药品监管部门\"\"检验机构\"）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 7,
+   "cat_name": "标准规范",
+   "cat_label": "7-标准规范",
+   "prompt_hint": "技术标准/规范/指南（如\"强制性国家标准\"\"行业标准\"\"检验规范\"）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 8,
+   "cat_name": "程序事项",
+   "cat_label": "8-程序事项",
+   "prompt_hint": "执法/许可程序概念（如\"立案\"\"调查\"\"听证\"\"行政复议\"\"检验检测\"）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 9,
+   "cat_name": "时限要求",
+   "cat_label": "9-时限要求",
+   "prompt_hint": "期限/期间概念（如\"20个工作日\"\"30日\"\"有效期5年\"\"复检期限\"）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 1,
+   "cat_name": "定义规则",
+   "cat_label": "1-定义规则",
+   "prompt_hint": "术语/概念定义（\"本法所称XX是指…\"）",
+   "neo4j_edge": "定义",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 2,
+   "cat_name": "条件规则",
+   "cat_label": "2-条件规则",
+   "prompt_hint": "适用条件/前提/触发情形（\"有下列情形之一的…\"）",
+   "neo4j_edge": "触发条件",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 3,
+   "cat_name": "约束规则",
+   "cat_label": "3-约束规则",
+   "prompt_hint": "禁止性/限制性规定（\"禁止…\"\"不得…\"\"应当…\"义务）",
+   "neo4j_edge": "约束",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 4,
+   "cat_name": "职责规则",
+   "cat_label": "4-职责规则",
+   "prompt_hint": "监管部门/机构/人员职责分工",
+   "neo4j_edge": "管理",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 5,
+   "cat_name": "审批规则",
+   "cat_label": "5-审批规则",
+   "prompt_hint": "许可/审批/备案事项及程序层级",
+   "neo4j_edge": "审批",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 6,
+   "cat_name": "流程规则",
+   "cat_label": "6-流程规则",
+   "prompt_hint": "执法/许可/检验流程步骤",
+   "neo4j_edge": "执行",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 7,
+   "cat_name": "引用规则",
+   "cat_label": "7-引用规则",
+   "prompt_hint": "引用其他法律法规/标准/上位法",
+   "neo4j_edge": "引用",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 8,
+   "cat_name": "例外规则",
+   "cat_label": "8-例外规则",
+   "prompt_hint": "例外情形/豁免/但书",
+   "neo4j_edge": "豁免",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 9,
+   "cat_name": "处罚规则",
+   "cat_label": "9-处罚规则",
+   "prompt_hint": "行政处罚规定（责令改正、罚款、没收、吊销等）",
+   "neo4j_edge": "处罚",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 10,
+   "cat_name": "时限规则",
+   "cat_label": "10-时限规则",
+   "prompt_hint": "期限/期间/有效期规定",
+   "neo4j_edge": "时限",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 11,
+   "cat_name": "版本规则",
+   "cat_label": "11-版本规则",
+   "prompt_hint": "施行日期/修订/废止/替代关系",
+   "neo4j_edge": "版本",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 12,
+   "cat_name": "程序规则",
+   "cat_label": "12-程序规则",
+   "prompt_hint": "通用程序规定（立案/调查/听证/送达/复议等）",
+   "neo4j_edge": "程序",
+   "state": "1"
+  }
+ ]
+}

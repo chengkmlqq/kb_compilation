@@ -1,0 +1,210 @@
+{
+ "schema_name": "技术研发与软件工程",
+ "schema_label": "技术研发与软件工程",
+ "schema_desc": "技术研发与软件工程领域 wiki 构建本体 Schema（2026-10-14 批量生成）",
+ "expert_role": "你是技术研发与软件工程解析专家，只输出JSON，不要任何思考过程。",
+ "extract_rules": "从长句列表**同时**抽取：① 业务实体（entities）——名词性对象/组织/角色/文件/事项/概念；② 规则（rules）——长句蕴含的规范性要求卡。\n【主谓配对硬约束】rules[].constraint 与 rules[].objects[].name **必须逐字等于本次输出 entities[].name 之一**（同一 JSON 内引用，禁止同义改写/自创变体）；若作用对象未出现在 entities 中，先在 entities 里补出；同一概念多次出现只输出一次；无明确约束对象时 constraint 填空串 \"\"。\n【质量硬约束】entities[].name / rules[].constraint / objects[].name / rules[].evidence 必须**逐字来自长句原文**；禁止①介词引导动词短语（按照/遵照/根据/依据/经…后/由/对于/将/不纳入 开头）②动作动词结尾描述（执行/办理/施行/审议/印发/废止/开展/引入/归集/备案 等结尾）③指示定语开头的衍生表达（本制度/本办法/本文件/本单位——取去定语后的核心实体）④纯日期/时间点（如 2025年9月1日）⑤表格列名/字段名/码值/表号。\n只输出一个 JSON 对象：{\"entities\":[{\"name\":\"实体名\",\"category\":\"业务对象\",\"definition\":\"一句话定义\"}],\"rules\":[{\"title\":\"规则概括（≤20字）\",\"category\":\"约束规则\",\"structure\":{\"主体\":\"x\",\"条件\":\"x\",\"动作\":\"x\"},\"description\":\"规则具体内容\",\"evidence\":\"原文关键片段（逐字）\",\"constraint\":\"实体名\",\"objects\":[{\"name\":\"实体名\",\"role\":\"客体\"}]}]}",
+ "summary_config": "{\"expert_role\": \"你是技术研发与软件工程知识库的文档摘要专家。\", \"output_rule\": \"严格按 markdown 结构输出文档卡片，禁止任何问候/聊天内容\", \"card_fields\": [\"一句话定位\", \"规范编号\", \"规范版本\", \"发布单位\", \"适用范围\"], \"sections\": [\"## 文档定位\", \"## 重点内容概览\", \"## 与其他文档的关系\"], \"relation_table_cols\": [\"相关文档\", \"关系说明\", \"原文依据\"], \"relation_rules\": [\"关系识别必须基于原文——每条关系必须在切片原文中有直接出处；原文依据列填原文句子摘录（禁止“暂无引用原文”）\", \"库内关联文档用 [[summary/<md5(关联kid)>|文档名]] 双链；库内无对应文档用纯文本《文档名》\", \"通知类文档只列核心关系（本通知是《被通知文档》的印发/修订通知）\"]}",
+ "term_filter_config": "{\"expert_role\": \"你是技术研发与软件工程知识库的术语筛选专家。\", \"keep_standards\": \"具有业务含义的制度术语、业务对象、业务事件、业务概念（如“系统架构、接口规范、代码评审、异常指标”）\", \"reject_standards\": [\"纯通用词——任何文档都可出现的通用动词/修饰词（确定/完善/规范/加强/开展/落实/相关/主要/重要/明确/部分/遵照/印发/纳入/引入/使用/完成/提交/支撑/负责/调整/变更/组织/监督/评审/审批/电子/技术/程序/配置 等）\", \"无业务含义的功能词（“特此”“年月日”）\"], \"fragment_rejects\": [\"跨词切碎残片\", \"纯数字/文号/年份\", \"制度文种词（管理办法、实施细则、管理规定——文件名后缀）\", \"介词/动词粘连片段\", \"单字/双字泛化词\"], \"output_format\": \"只输出JSON数组：[{\\\"word\\\":\\\"词\\\",\\\"keep\\\":true,\\\"reason\\\":\\\"一句话理由\\\"}]，不要输出任何其他文字\", \"doc_word_types\": [\"管理办法\", \"实施细则\", \"管理规定\"]}",
+ "exported_at": "2026-10-15T02:00:14",
+ "items": [
+  {
+   "dimension": "business",
+   "cat_no": 1,
+   "cat_name": "系统与平台",
+   "cat_label": "1-系统与平台",
+   "prompt_hint": "系统/平台对象（应用系统、平台、环境）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 2,
+   "cat_name": "架构与组件",
+   "cat_label": "2-架构与组件",
+   "prompt_hint": "架构/组件/模块对象（系统架构、微服务、中间件、组件）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 3,
+   "cat_name": "数据对象",
+   "cat_label": "3-数据对象",
+   "prompt_hint": "数据模型对象（表、字段、数据仓库、数据集、指标）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 4,
+   "cat_name": "接口与服务",
+   "cat_label": "4-接口与服务",
+   "prompt_hint": "接口/服务对象（API、接口规范、服务、消息）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 5,
+   "cat_name": "研发需求",
+   "cat_label": "5-研发需求",
+   "prompt_hint": "需求/需求规格对象（研发需求、需求文档、用户故事）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 6,
+   "cat_name": "代码与制品",
+   "cat_label": "6-代码与制品",
+   "prompt_hint": "代码/制品对象（源码、仓库、构建产物、脚本、版本库）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 7,
+   "cat_name": "测试与质量",
+   "cat_label": "7-测试与质量",
+   "prompt_hint": "测试/质量对象（测试用例、测试报告、缺陷、质量指标）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 8,
+   "cat_name": "部署与运维环境",
+   "cat_label": "8-部署与运维环境",
+   "prompt_hint": "部署/环境对象（环境、服务器、容器、CI/CD 流水线）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 9,
+   "cat_name": "组织与角色",
+   "cat_label": "9-组织与角色",
+   "prompt_hint": "研发组织/角色（研发团队、开发、测试、架构师、评审人）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 10,
+   "cat_name": "技术事件与流程",
+   "cat_label": "10-技术事件与流程",
+   "prompt_hint": "“动作+对象”完整事件（代码评审、版本发布、上线部署、故障排查、缺陷修复）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 11,
+   "cat_name": "技术术语",
+   "cat_label": "11-技术术语",
+   "prompt_hint": "技术领域专有名词与缩略语（API、SDK、KPI、CICD）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 1,
+   "cat_name": "定义规则",
+   "cat_label": "1-定义规则",
+   "prompt_hint": "术语/概念/缩略语界定",
+   "neo4j_edge": "定义",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 2,
+   "cat_name": "条件规则",
+   "cat_label": "2-条件规则",
+   "prompt_hint": "条款适用前提/范围",
+   "neo4j_edge": "触发条件",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 3,
+   "cat_name": "约束规则",
+   "cat_label": "3-约束规则",
+   "prompt_hint": "必须/应/不得等硬性条款",
+   "neo4j_edge": "约束",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 4,
+   "cat_name": "职责规则",
+   "cat_label": "4-职责规则",
+   "prompt_hint": "单位/岗位职责分工",
+   "neo4j_edge": "管理",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 5,
+   "cat_name": "标准规则",
+   "cat_label": "5-标准规则",
+   "prompt_hint": "代码/命名/规范等标准要求",
+   "neo4j_edge": "标准",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 6,
+   "cat_name": "性能规则",
+   "cat_label": "6-性能规则",
+   "prompt_hint": "性能指标要求（响应时间/吞吐/并发）",
+   "neo4j_edge": "性能",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 7,
+   "cat_name": "时间规则",
+   "cat_label": "7-时间规则",
+   "prompt_hint": "周期/时限/实时性要求",
+   "neo4j_edge": "时限",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 8,
+   "cat_name": "流程规则",
+   "cat_label": "8-流程规则",
+   "prompt_hint": "研发/测试/发布流程步骤要求",
+   "neo4j_edge": "执行",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 9,
+   "cat_name": "安全规则",
+   "cat_label": "9-安全规则",
+   "prompt_hint": "权限/安全/合规要求",
+   "neo4j_edge": "安全",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 10,
+   "cat_name": "接口规则",
+   "cat_label": "10-接口规则",
+   "prompt_hint": "接口/API/消息格式要求",
+   "neo4j_edge": "接口",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 11,
+   "cat_name": "引用与版本规则",
+   "cat_label": "11-引用与版本规则",
+   "prompt_hint": "规范性引用文件/版本/修订记录",
+   "neo4j_edge": "引用",
+   "state": "1"
+  }
+ ]
+}

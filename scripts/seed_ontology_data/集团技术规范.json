@@ -1,0 +1,201 @@
+{
+ "schema_name": "集团技术规范",
+ "schema_label": "集团技术规范",
+ "schema_desc": "中国移动企业级技术规范/标准体系：省大数据平台V1.0/V2.0/1202、智慧中台、NG2-BASS、安全、数据标准分册等",
+ "expert_role": "你是中国移动技术规范解析专家，只输出JSON，不要任何思考过程。",
+ "extract_rules": "从长句列表**同时**抽取：① 知识对象（entities）——名词性对象/系统/数据/接口/工具/角色/事件/术语；② 规范要求（rules）——长句蕴含的规范性要求卡。\n【主谓配对硬约束】rules[].constraint（本要求约束/作用的对象）与 rules[].objects[].name**必须逐字等于本次输出 entities[].name 之一**（同一 JSON 内引用，禁止同义改写/自创变体/缩写/加修饰语）；若要求作用的对象未出现在 entities 中，先在 entities 里补出该实体再在 rule 中引用；同一概念多次出现只输出一次。\n【质量硬约束】entities[].name / rules[].constraint / objects[].name / rules[].evidence 必须**逐字来自长句原文**；禁止①介词引导动词短语（按照/遵照/根据/依据/经…后/由/对于/将/不纳入 开头描述怎么做）②动作动词结尾描述（执行/办理/施行/审议/印发/废止/开展/引入/归集/备案/决策 等结尾）③指示定语开头的衍生表达（本规范/本标准/本分册/本单位/该分册——取去定语后的核心实体）④纯日期/时间点（如 2025年9月1日）⑤表格列名/字段名/码值/表号（实体编号/科目代码/任务名称/00/01/表5-1）。\n只输出一个 JSON 对象：{\"entities\":[{\"name\":\"实体名\",\"category\":\"数据对象\",\"definition\":\"一句话定义\"}],\"rules\":[{\"title\":\"要求标题（≤20字概括）\",\"category\":\"性能要求\",\"structure\":{\"主体\":\"x\",\"条件\":\"x\",\"动作\":\"x\"},\"description\":\"要求具体内容\",\"evidence\":\"原文关键片段（逐字）\",\"constraint\":\"约束对象（知识对象名）\",\"objects\":[{\"name\":\"规则涉及的其他对象名\",\"role\":\"主体/条件/动作/客体\"}]}]}",
+ "summary_config": "{\"expert_role\": \"你是中国移动技术规范知识库的规范文档摘要专家。\", \"output_rule\": \"严格按 markdown 结构输出规范文档卡片，禁止任何问候/聊天内容\", \"card_fields\": [\"一句话定位\", \"规范编号\", \"规范版本\", \"发布单位\", \"适用范围\"], \"sections\": [\"## 规范定位\", \"## 重点内容概览\", \"## 与其他规范的关系\"], \"relation_table_cols\": [\"相关规范\", \"关系说明\", \"原文依据\"], \"relation_rules\": [\"关系识别必须基于原文——每条关系必须在切片原文中有直接出处；原文依据列填原文句子摘录（禁止“暂无引用原文”）\", \"库内关联规范用 [[summary/<md5(关联kid)>|规范名]] 双链；库内无对应文档用纯文本《规范名》\"]}",
+ "term_filter_config": "{\"expert_role\": \"你是技术规范知识库的术语筛选专家。\", \"keep_standards\": \"具有业务含义的技术术语、系统/平台/组件对象、接口/数据对象、业务事件、技术概念\", \"reject_standards\": [\"纯通用词——任何技术规范都可出现的通用动词/修饰词（确定/明确/完善/规范/加强/开展/落实/推进/建立/健全/强化/提高/促进/实现/做好/抓好/严格/认真/积极/深入/全面/充分/不断/进一步/有关/相关/主要/重要/具体/有效/合理/科学/统一/直接/其他/各类/各种/部分/相应/一定/必要/特此/年月日）\", \"无业务含义的功能词（“特此”“年月日”）\"], \"fragment_rejects\": [\"跨词切碎残片\", \"纯数字/文号/年份\", \"制度文种词（“管理办法”“实施细则”等文件名后缀）\", \"介词/动词粘连片段\", \"单字/双字泛化词（“使用”“完成”“提交”“业务”“电子”“程序”等）\"], \"output_format\": \"只输出JSON数组：[{\\\"word\\\":\\\"词\\\",\\\"keep\\\":true,\\\"reason\\\":\\\"一句话理由\\\"}]，不要输出任何其他文字\", \"doc_word_types\": [\"管理办法\", \"实施细则\", \"规范分册\"]}",
+ "exported_at": "2026-10-15T02:00:14",
+ "items": [
+  {
+   "dimension": "business",
+   "cat_no": 1,
+   "cat_name": "规范文档",
+   "cat_label": "1-规范文档",
+   "prompt_hint": "规范/标准/分册/测试方案/实施指南文档本身（含版本号、发布单位、编制单位）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 2,
+   "cat_name": "平台产品",
+   "cat_label": "2-平台产品",
+   "prompt_hint": "平台/产品级实体：大数据平台、智慧中台、数据中台、NG2-BASS、标签平台、GIS、位置服务平台、流数据开发",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 3,
+   "cat_name": "子系统组件",
+   "cat_label": "3-子系统组件",
+   "prompt_hint": "系统组成模块：统一数据采集、统一数据中心、数据标准、数据治理、运营维护、服务开放、安全管理、PaaS、O域数据分析",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 4,
+   "cat_name": "数据对象",
+   "cat_label": "4-数据对象",
+   "prompt_hint": "数据模型实体/属性、外部接口、数据标准、指标、字段等数据侧对象",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 5,
+   "cat_name": "技术工具设备",
+   "cat_label": "5-技术工具设备",
+   "prompt_hint": "ETL/OLAP/Hadoop/报表/元数据管理工具，主机/存储/网络/备份设备、操作系统、数据仓库",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 6,
+   "cat_name": "组织角色",
+   "cat_label": "6-组织角色",
+   "prompt_hint": "集团/省公司、设计/开发/测试/维护/运营人员、厂商、使用对象（内部/外部/管理人员）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 7,
+   "cat_name": "业务事件流程",
+   "cat_label": "7-业务事件流程",
+   "prompt_hint": "动作+对象完整事件：数据采集、数据加工、服务开放、运营维护、安全管控流程",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 8,
+   "cat_name": "术语概念",
+   "cat_label": "8-术语概念",
+   "prompt_hint": "术语/定义/缩略语章节的专有名词概念",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 9,
+   "cat_name": "规范关系",
+   "cat_label": "9-规范关系",
+   "prompt_hint": "规范性引用文件、编制历史、版本演进、分册与总册的从属关系",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 1,
+   "cat_name": "定义规则",
+   "cat_label": "1-定义规则",
+   "prompt_hint": "术语/缩略语/概念的明确定义条款",
+   "neo4j_edge": "DEFINES",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 2,
+   "cat_name": "条件规则",
+   "cat_label": "2-条件规则",
+   "prompt_hint": "条款适用的前提/范围/对象条件",
+   "neo4j_edge": "CONDITIONS",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 3,
+   "cat_name": "约束规则",
+   "cat_label": "3-约束规则",
+   "prompt_hint": "功能/技术要求的必须/应/不得等硬性条款",
+   "neo4j_edge": "CONSTRAINS",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 4,
+   "cat_name": "职责规则",
+   "cat_label": "4-职责规则",
+   "prompt_hint": "使用对象/岗位/部门职责与责任要求",
+   "neo4j_edge": "RESPONSIBLE_FOR",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 5,
+   "cat_name": "标准规则",
+   "cat_label": "5-标准规则",
+   "prompt_hint": "数据标准/数据模型/外部接口规范要求",
+   "neo4j_edge": "STANDARDIZES",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 6,
+   "cat_name": "性能规则",
+   "cat_label": "6-性能规则",
+   "prompt_hint": "性能指标要求（容量/时延/吞吐/并发/可用性）",
+   "neo4j_edge": "REQUIRES",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 7,
+   "cat_name": "时间规则",
+   "cat_label": "7-时间规则",
+   "prompt_hint": "数据存储周期/保留时限/备份周期要求",
+   "neo4j_edge": "REQUIRES_WITHIN",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 8,
+   "cat_name": "设备规则",
+   "cat_label": "8-设备规则",
+   "prompt_hint": "软硬件设备配置/选型要求",
+   "neo4j_edge": "REQUIRES",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 9,
+   "cat_name": "流程规则",
+   "cat_label": "9-流程规则",
+   "prompt_hint": "数据采集/加工/服务开放/运维流程步骤要求",
+   "neo4j_edge": "FLOWS",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 10,
+   "cat_name": "安全规则",
+   "cat_label": "10-安全规则",
+   "prompt_hint": "安全防护/脱敏/安全管理要求",
+   "neo4j_edge": "SECURES",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 11,
+   "cat_name": "引用规则",
+   "cat_label": "11-引用规则",
+   "prompt_hint": "规范性引用文件/引用其他规范条款",
+   "neo4j_edge": "REFERENCES",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 12,
+   "cat_name": "版本规则",
+   "cat_label": "12-版本规则",
+   "prompt_hint": "版本号/修订记录/编制历史条款",
+   "neo4j_edge": "VERSION_OF",
+   "state": "1"
+  }
+ ]
+}

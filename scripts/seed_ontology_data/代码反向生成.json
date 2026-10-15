@@ -1,0 +1,156 @@
+{
+ "schema_name": "代码反向生成",
+ "schema_label": "代码反向生成",
+ "schema_desc": "湖北移动经分取数资产与取数SQL加工代码：历史工单/全量指标/hive映射/变量sql生成算子/接口规范",
+ "expert_role": "你是中国移动智能取数/代码反向生成知识解析专家，只输出JSON，不要任何思考过程。",
+ "extract_rules": "从长句列表**同时**抽取：① 业务对象（entities）——名词性对象/表/指标/算子/字段口径/系统/角色/事件/版本；② 规则（rules）——长句蕴含的可复用方法性规则卡。\n【主谓配对硬约束】rules[].constraint 与 rules[].objects[].name **必须逐字等于本次输出 entities[].name 之一**（同一 JSON 内引用，禁止同义改写/自创变体/缩写）；若规则作用的对象未出现在 entities 中，先在 entities 里补出；同一概念多次出现只输出一次；规则确实无明确约束对象时 constraint 填空串 \"\"。\n【质量硬约束】entities[].name / rules[].constraint / objects[].name / rules[].evidence 必须**逐字来自长句原文**；禁止①介词引导动词短语（按照/遵照/根据/依据/经…后/由/对于/将/不纳入 开头）②动作动词结尾描述（执行/办理/生成/清洗/替换/映射/解析/同步/建表 等结尾）③指示定语衍生表达（本脚本/本算子/本文档/该工单——取去定语后的核心）④纯日期/码值/表头列名（table_name/originaltable/task_id/指标编码/原始sql/修改后sql）、SQL 关键字⑤具体工单实例号（如 AITR00020260520236103）——工单类目才是实体，实例号是属性。\n只输出一个 JSON 对象：{\"entities\":[{\"name\":\"实体名\",\"category\":\"代码/算子\",\"definition\":\"一句话定义\"}],\"rules\":[{\"title\":\"规则概括（≤20字）\",\"category\":\"生成规则\",\"structure\":{\"主体\":\"x\",\"条件\":\"x\",\"动作\":\"x\",\"结果\":\"x\"},\"description\":\"规则具体内容\",\"evidence\":\"原文关键片段（逐字）\",\"constraint\":\"约束/作用对象（业务本体名）\",\"objects\":[{\"name\":\"规则涉及的其他对象名\",\"role\":\"主体/条件/动作/客体\"}]}]}",
+ "summary_config": "{\"expert_role\": \"你是中国移动智能取数知识库的资产文档摘要专家。\", \"output_rule\": \"严格按 markdown 结构输出资产文档卡片，禁止任何问候/聊天内容\", \"card_fields\": [\"一句话定位\", \"资产类型\", \"数据范围\", \"适用范围\", \"版本\"], \"sections\": [\"## 资产定位\", \"## 重点内容概览\", \"## 与其他资产的关系\"], \"relation_table_cols\": [\"相关资产\", \"关系说明\", \"原文依据\"], \"relation_rules\": [\"关系识别必须基于原文——每条关系必须在切片原文中有直接出处；原文依据列填原文句子摘录（禁止“暂无引用原文”）\", \"库内关联资产用 [[summary/<md5(关联kid)>|资产名]] 双链；库内无对应文档用纯文本《资产名》\"]}",
+ "term_filter_config": "{\"expert_role\": \"你是智能取数/代码反向生成知识库的术语筛选专家。\", \"keep_standards\": \"具有业务含义的技术/业务术语、数据表/接口/指标/算子对象、业务域主题、系统平台、组织角色、业务事件\", \"reject_standards\": [\"纯通用词（确定/明确/完善/规范/加强/开展/落实/推进/建立/健全/强化/提高/促进/实现/做好/抓好/严格/认真/积极/深入/全面/充分/不断/进一步/有关/相关/主要/重要/具体/有效/合理/科学/统一/直接/其他/各类/各种/部分/相应/一定/必要/特此/年月日/本脚本/本文档/有关要求/相关要求/具体规定/遵照/印发/纳入/引入/专业/业务/使用/完成/增加/提交/支撑/负责/调整/变更/合作/计划/组织/监督/评审/审批/领导/框架/级别/层级/分级/办公/电子/技术/程序/配置/集体/集中/规范/文档/系统/平台/功能/模块/要求/规定/说明/概述/原则/目标/范围/内容/方式/方法/流程/过程/阶段/环节/情况/信息/文件/标准/能力/支持/实现/提供/采用/包括/进行/满足/保证/确保/提高/提升/优化/建设/设计/开发/实施/部署/运行/维护/管理/中国移动/省公司/集团公司/有限/责任/通信/相关管理/相关规定/达到或超过）\", \"SQL 关键字、表头列名、纯码值\"], \"fragment_rejects\": [\"跨词切碎残片\", \"纯数字/文号/年份/工单实例号\", \"SQL 关键字\", \"单字/双字泛化词\"], \"output_format\": \"只输出JSON数组：[{\\\"word\\\":\\\"词\\\",\\\"keep\\\":true,\\\"reason\\\":\\\"一句话理由\\\"}]，不要输出任何其他文字\", \"doc_word_types\": [\"接口规范\", \"业务本体\", \"技术规范\"]}",
+ "exported_at": "2026-10-15T02:00:14",
+ "items": [
+  {
+   "dimension": "business",
+   "cat_no": 1,
+   "cat_name": "数据表/接口",
+   "cat_label": "1-数据表/接口",
+   "prompt_hint": "数据表/视图/接口/报表实体（temp_qs_hxj_ysgxb、结果表、rel_table_list输入表、经分接口、hive映射表）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 2,
+   "cat_name": "指标对象",
+   "cat_label": "2-指标对象",
+   "prompt_hint": "指标字典的指标名称或文档衡量对象（全量指标、集团短彩收入、消息下发量）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 3,
+   "cat_name": "取数需求/工单",
+   "cat_label": "3-取数需求/工单",
+   "prompt_hint": "需求/工单/任务类目（取数需求、变量sql生成需求、数据需求工单、重复历史工单）——非某张具体工单实例",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 4,
+   "cat_name": "代码/算子",
+   "cat_label": "4-代码/算子",
+   "prompt_hint": "py脚本/SQL模板/算子（hive映射、sql清洗、实体名替换、变量sql生成、结果表名解析、order_list、重复变量模板）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 5,
+   "cat_name": "数据字段/口径",
+   "cat_label": "5-数据字段/口径",
+   "prompt_hint": "贯穿文档的业务口径/字段概念（上月出账收入口径）——非表头列名",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 6,
+   "cat_name": "业务域/主题",
+   "cat_label": "6-业务域/主题",
+   "prompt_hint": "业务阶段/分析主题/业务分类（智能取数、AI场景、短彩、政企、规划、营销、计费）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 7,
+   "cat_name": "系统/平台",
+   "cat_label": "7-系统/平台",
+   "prompt_hint": "系统平台（Hive、Gbase、集中化经分系统、AI网关、大数据平台、数据库）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 8,
+   "cat_name": "组织/角色",
+   "cat_label": "8-组织/角色",
+   "prompt_hint": "部门/单位/角色（需求部门、规划部门、大数据负责人、开发方、客户经理、省公司）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 9,
+   "cat_name": "业务事件/流程",
+   "cat_label": "9-业务事件/流程",
+   "prompt_hint": "动作+对象完整事件（取数、变量sql生成、sql清洗、数据同步、建表、表映射、接口调用）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 10,
+   "cat_name": "规范/版本",
+   "cat_label": "10-规范/版本",
+   "prompt_hint": "规范文档/版本概念（省级数据接口规范经分分册、V13.3、业务本体v1.0）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 1,
+   "cat_name": "映射规则",
+   "cat_label": "1-映射规则",
+   "prompt_hint": "hive映射/表名解析规则（完全映射→hive，未完全映射→Gbase；无前缀表名小写比对）",
+   "neo4j_edge": "MAPS_TO",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 2,
+   "cat_name": "清洗规则",
+   "cat_label": "2-清洗规则",
+   "prompt_hint": "sql脚本清洗/实体名替换为变量规则",
+   "neo4j_edge": "CLEANS",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 3,
+   "cat_name": "生成规则",
+   "cat_label": "3-生成规则",
+   "prompt_hint": "变量sql生成/重复工单转变量模板规则",
+   "neo4j_edge": "GENERATES",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 4,
+   "cat_name": "口径规则",
+   "cat_label": "4-口径规则",
+   "prompt_hint": "业务口径/指标口径定义",
+   "neo4j_edge": "DEFINES",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 5,
+   "cat_name": "约束规则",
+   "cat_label": "5-约束规则",
+   "prompt_hint": "同步周期/存储周期/可用状态/是否可用约束",
+   "neo4j_edge": "CONSTRAINS",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 6,
+   "cat_name": "版本规则",
+   "cat_label": "6-版本规则",
+   "prompt_hint": "接口规范/业务本体版本演进",
+   "neo4j_edge": "VERSION_OF",
+   "state": "1"
+  }
+ ]
+}

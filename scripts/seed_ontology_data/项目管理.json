@@ -1,0 +1,228 @@
+{
+ "schema_name": "项目管理",
+ "schema_label": "项目管理",
+ "schema_desc": "项目管理领域 wiki 构建本体 Schema（2026-10-14 批量生成）",
+ "expert_role": "你是项目管理解析专家，只输出JSON，不要任何思考过程。",
+ "extract_rules": "从长句列表**同时**抽取：① 业务实体（entities）——名词性对象/组织/角色/文件/事项/概念；② 规则（rules）——长句蕴含的规范性要求卡。\n【主谓配对硬约束】rules[].constraint 与 rules[].objects[].name **必须逐字等于本次输出 entities[].name 之一**（同一 JSON 内引用，禁止同义改写/自创变体）；若作用对象未出现在 entities 中，先在 entities 里补出；同一概念多次出现只输出一次；无明确约束对象时 constraint 填空串 \"\"。\n【质量硬约束】entities[].name / rules[].constraint / objects[].name / rules[].evidence 必须**逐字来自长句原文**；禁止①介词引导动词短语（按照/遵照/根据/依据/经…后/由/对于/将/不纳入 开头）②动作动词结尾描述（执行/办理/施行/审议/印发/废止/开展/引入/归集/备案 等结尾）③指示定语开头的衍生表达（本制度/本办法/本文件/本单位——取去定语后的核心实体）④纯日期/时间点（如 2025年9月1日）⑤表格列名/字段名/码值/表号。\n只输出一个 JSON 对象：{\"entities\":[{\"name\":\"实体名\",\"category\":\"业务对象\",\"definition\":\"一句话定义\"}],\"rules\":[{\"title\":\"规则概括（≤20字）\",\"category\":\"约束规则\",\"structure\":{\"主体\":\"x\",\"条件\":\"x\",\"动作\":\"x\"},\"description\":\"规则具体内容\",\"evidence\":\"原文关键片段（逐字）\",\"constraint\":\"实体名\",\"objects\":[{\"name\":\"实体名\",\"role\":\"客体\"}]}]}",
+ "summary_config": "{\"expert_role\": \"你是项目管理知识库的文档摘要专家。\", \"output_rule\": \"严格按 markdown 结构输出文档卡片，禁止任何问候/聊天内容\", \"card_fields\": [\"一句话定位\", \"文档类型\", \"适用项目\", \"版本\", \"编制单位\"], \"sections\": [\"## 文档定位\", \"## 重点内容概览\", \"## 与其他文档的关系\"], \"relation_table_cols\": [\"相关文档\", \"关系说明\", \"原文依据\"], \"relation_rules\": [\"关系识别必须基于原文——每条关系必须在切片原文中有直接出处；原文依据列填原文句子摘录（禁止“暂无引用原文”）\", \"库内关联文档用 [[summary/<md5(关联kid)>|文档名]] 双链；库内无对应文档用纯文本《文档名》\", \"通知类文档只列核心关系（本通知是《被通知文档》的印发/修订通知）\"]}",
+ "term_filter_config": "{\"expert_role\": \"你是项目管理知识库的术语筛选专家。\", \"keep_standards\": \"具有业务含义的制度术语、业务对象、业务事件、业务概念（如“项目里程碑、风险管理、验收交付、项目成本”）\", \"reject_standards\": [\"纯通用词——任何文档都可出现的通用动词/修饰词（确定/完善/规范/加强/开展/落实/相关/主要/重要/明确/部分/遵照/印发/纳入/引入/使用/完成/提交/支撑/负责/调整/变更/组织/监督/评审/审批/电子/技术/程序/配置 等）\", \"无业务含义的功能词（“特此”“年月日”）\"], \"fragment_rejects\": [\"跨词切碎残片\", \"纯数字/文号/年份\", \"制度文种词（管理办法、实施细则、管理规定——文件名后缀）\", \"介词/动词粘连片段\", \"单字/双字泛化词\"], \"output_format\": \"只输出JSON数组：[{\\\"word\\\":\\\"词\\\",\\\"keep\\\":true,\\\"reason\\\":\\\"一句话理由\\\"}]，不要输出任何其他文字\", \"doc_word_types\": [\"管理办法\", \"实施细则\", \"管理规定\"]}",
+ "exported_at": "2026-10-15T02:00:14",
+ "items": [
+  {
+   "dimension": "business",
+   "cat_no": 1,
+   "cat_name": "项目对象",
+   "cat_label": "1-项目对象",
+   "prompt_hint": "项目/项目集对象（立项项目、在建项目、项目编号）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 2,
+   "cat_name": "组织与角色",
+   "cat_label": "2-组织与角色",
+   "prompt_hint": "项目组织/角色（PM、项目经理、项目组、干系人、评审委员会）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 3,
+   "cat_name": "项目计划",
+   "cat_label": "3-项目计划",
+   "prompt_hint": "计划对象（项目计划、里程碑、WBS、进度计划）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 4,
+   "cat_name": "需求管理",
+   "cat_label": "4-需求管理",
+   "prompt_hint": "需求/需求变更对象",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 5,
+   "cat_name": "进度与里程碑",
+   "cat_label": "5-进度与里程碑",
+   "prompt_hint": "进度/里程碑事项（进度报告、节点、延误、里程碑）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 6,
+   "cat_name": "成本与预算",
+   "cat_label": "6-成本与预算",
+   "prompt_hint": "成本/预算对象（项目预算、费用、成本核算）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 7,
+   "cat_name": "风险与问题",
+   "cat_label": "7-风险与问题",
+   "prompt_hint": "风险/问题对象（风险登记册、问题清单、风险等级）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 8,
+   "cat_name": "质量与验收",
+   "cat_label": "8-质量与验收",
+   "prompt_hint": "质量/验收对象（质量标准、验收报告、验收单）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 9,
+   "cat_name": "交付成果",
+   "cat_label": "9-交付成果",
+   "prompt_hint": "交付物/成果对象（成果物、交付清单、项目文档）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 10,
+   "cat_name": "项目会议与报告",
+   "cat_label": "10-项目会议与报告",
+   "prompt_hint": "会议/报告对象（例会、周报、月报、评审会、决策材料）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 11,
+   "cat_name": "项目事件",
+   "cat_label": "11-项目事件",
+   "prompt_hint": "“动作+对象”完整事件（立项、开工、里程碑评审、验收交付、项目关闭）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 12,
+   "cat_name": "项目术语",
+   "cat_label": "12-项目术语",
+   "prompt_hint": "项目管理领域专有名词（里程碑、干系人、WBS）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 1,
+   "cat_name": "定义规则",
+   "cat_label": "1-定义规则",
+   "prompt_hint": "术语/概念/名词的明确界定",
+   "neo4j_edge": "定义",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 2,
+   "cat_name": "条件规则",
+   "cat_label": "2-条件规则",
+   "prompt_hint": "条款适用的前提/范围/对象条件",
+   "neo4j_edge": "触发条件",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 3,
+   "cat_name": "约束规则",
+   "cat_label": "3-约束规则",
+   "prompt_hint": "必须/应/不得/禁止等硬性条款",
+   "neo4j_edge": "约束",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 4,
+   "cat_name": "职责规则",
+   "cat_label": "4-职责规则",
+   "prompt_hint": "部门/岗位职责分工",
+   "neo4j_edge": "管理",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 5,
+   "cat_name": "审批规则",
+   "cat_label": "5-审批规则",
+   "prompt_hint": "审批事项、层级与权限",
+   "neo4j_edge": "审批",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 6,
+   "cat_name": "流程规则",
+   "cat_label": "6-流程规则",
+   "prompt_hint": "流程步骤/顺序/环节要求",
+   "neo4j_edge": "执行",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 7,
+   "cat_name": "引用规则",
+   "cat_label": "7-引用规则",
+   "prompt_hint": "引用其他制度/标准/文件",
+   "neo4j_edge": "引用",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 8,
+   "cat_name": "例外规则",
+   "cat_label": "8-例外规则",
+   "prompt_hint": "豁免/例外情形",
+   "neo4j_edge": "豁免",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 9,
+   "cat_name": "决策规则",
+   "cat_label": "9-决策规则",
+   "prompt_hint": "决策权限/决策机制/集体决策",
+   "neo4j_edge": "决策",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 10,
+   "cat_name": "时限规则",
+   "cat_label": "10-时限规则",
+   "prompt_hint": "期限/时限/时效要求",
+   "neo4j_edge": "时限",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 11,
+   "cat_name": "金额规则",
+   "cat_label": "11-金额规则",
+   "prompt_hint": "金额/预算/定额/价费标准",
+   "neo4j_edge": "金额",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 12,
+   "cat_name": "版本规则",
+   "cat_label": "12-版本规则",
+   "prompt_hint": "版本演进/修订记录/废止替代",
+   "neo4j_edge": "版本",
+   "state": "1"
+  }
+ ]
+}

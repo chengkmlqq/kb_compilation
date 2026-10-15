@@ -1,0 +1,201 @@
+{
+ "schema_name": "采购与供应链",
+ "schema_label": "采购与供应链",
+ "schema_desc": "采购与供应链领域 wiki 构建本体 Schema（copy 供管制度，2026-10-14）",
+ "expert_role": "你是采购与供应链解析专家，只输出JSON，不要任何思考过程。",
+ "extract_rules": "从长句列表联合抽取业务实体和规则（同一批内闭包引用，名称空间闭包配对）。\n规则 constraint/objects[].name 必须逐字等于同批 entities[].name（禁止同义改写）；name/evidence 必须逐字来自长句原文。\n实体必须是名词性概念（能填入“XX是什么/是谁”名词框架）；禁止①介词引导动词短语（按照/遵照/根据/依据/经…后/由/对于/将/不纳入开头）②动作动词结尾描述（执行/办理/施行/审议/印发/废止/开展/引入/归集/备案）③指示定语开头（本单位/本部门/本公司/相关部门/各单位/各子公司/该单位/本区）④纯日期/时间点⑤表格列名/审批流节点（任务名称/处理结果/序号/同意/不同意）。同一概念只输出一次。\n只输出JSON对象 {\"entities\":[{\"name\":\"实体名\",\"category\":\"采购业务对象\",\"definition\":\"一句话定义\"}],\"rules\":[{\"title\":\"规则概括≤20字\",\"category\":\"约束规则\",\"constraint\":\"实体名\",\"evidence\":\"原文片段\",\"description\":\"...\",\"structure\":{\"主体\":\"x\"},\"objects\":[{\"name\":\"实体名\",\"role\":\"客体\"}]}]}",
+ "summary_config": "{\"expert_role\": \"你是采购与供应链知识库的文档摘要专家。请根据下面给定的制度原文切片，生成一张「制度文档卡片」形式的 markdown 摘要。\", \"output_rule\": \"严格按 markdown 结构输出卡片本体，禁止任何问候/聊天内容\", \"card_fields\": [\"一句话定位\", \"制度类型\", \"领域\", \"适用范围\", \"归口部门\", \"状态\", \"替代废止\"], \"sections\": [\"## 制度定位\", \"## 重点内容概览\", \"## 与其他制度的关系\"], \"relation_table_cols\": [\"相关制度\", \"关系说明\", \"原文依据\"], \"relation_rules\": [\"关系识别必须基于原文——每条关系必须在切片原文中有直接出处；原文依据列填原文句子摘录（禁止“暂无引用原文”）\", \"库内关联制度用 [[summary/<md5(关联kid)>|制度名]] 双链；库内无对应文档用纯文本《制度名》\", \"通知类文档只列核心关系（本通知是《被通知制度》的印发/修订通知），不罗列正文提到的其他制度\"]}",
+ "term_filter_config": "{\"expert_role\": \"你是采购与供应链知识库的术语筛选专家。\", \"keep_standards\": \"具有业务含义的制度术语、业务对象、业务事件、业务概念（如“集中采购”“框架协议”“供应商准入”）\", \"reject_standards\": [\"纯通用词——任何文档都可出现的通用动词/修饰词（使用/完成/增加/提交/支撑/负责/调整/变更/合作/计划/组织/监督/评审/审批/领导/框架/份额/媒介/级别/层级/分级/办公/电子/技术/程序/配置/预研/集体/集中）\", \"无业务含义的功能词（“特此”“年月日”）\"], \"fragment_rejects\": [\"跨词切碎残片\", \"纯数字/文号/年份\", \"制度文种词（“管理办法”“实施细则”“管理规定”“工作计划”）\", \"介词/动词粘连片段（“达到或超过”）\", \"单字/双字泛化词（“使用”“完成”“提交”等）\"], \"output_format\": \"只输出JSON数组：[{\\\"word\\\":\\\"词\\\",\\\"keep\\\":true,\\\"reason\\\":\\\"一句话理由\\\"}]，不要输出任何其他文字\", \"doc_word_types\": [\"管理办法\", \"实施细则\", \"管理规定\", \"工作计划\", \"采购办法\"]}",
+ "exported_at": "2026-10-15T02:00:14",
+ "items": [
+  {
+   "dimension": "business",
+   "cat_no": 1,
+   "cat_name": "制度对象",
+   "cat_label": "1-制度对象",
+   "prompt_hint": "制度所规范的核心对象",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 2,
+   "cat_name": "采购业务对象",
+   "cat_label": "2-采购业务对象",
+   "prompt_hint": "采购业务中的具体对象(如合同、单据、订单)",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 3,
+   "cat_name": "采购方式",
+   "cat_label": "3-采购方式",
+   "prompt_hint": "采购的方式/模式",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 4,
+   "cat_name": "组织角色",
+   "cat_label": "4-组织角色",
+   "prompt_hint": "承担管理职能的部门",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 5,
+   "cat_name": "参与角色",
+   "cat_label": "5-参与角色",
+   "prompt_hint": "参与采购活动的角色/岗位",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 6,
+   "cat_name": "采购成果",
+   "cat_label": "6-采购成果",
+   "prompt_hint": "采购活动产生的成果",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 7,
+   "cat_name": "业务事件",
+   "cat_label": "7-业务事件",
+   "prompt_hint": "采购执行中的关键事件(必须是'动作+对象'完整事件如'细则施行''采购招标''合同签订';禁止纯日期/时间点)",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 8,
+   "cat_name": "资源对象",
+   "cat_label": "8-资源对象",
+   "prompt_hint": "采购执行涉及的资源",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 9,
+   "cat_name": "制度概念",
+   "cat_label": "9-制度概念",
+   "prompt_hint": "制度中定义的核心概念",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 1,
+   "cat_name": "定义规则",
+   "cat_label": "1-定义规则",
+   "prompt_hint": "术语/概念定义",
+   "neo4j_edge": "定义",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 2,
+   "cat_name": "条件规则",
+   "cat_label": "2-条件规则",
+   "prompt_hint": "触发条件/前提条件",
+   "neo4j_edge": "触发条件",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 3,
+   "cat_name": "约束规则",
+   "cat_label": "3-约束规则",
+   "prompt_hint": "限制性/禁止性规定",
+   "neo4j_edge": "约束",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 4,
+   "cat_name": "职责规则",
+   "cat_label": "4-职责规则",
+   "prompt_hint": "部门/岗位职责分工",
+   "neo4j_edge": "管理",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 5,
+   "cat_name": "审批规则",
+   "cat_label": "5-审批规则",
+   "prompt_hint": "审批事项及层级",
+   "neo4j_edge": "审批",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 6,
+   "cat_name": "流程规则",
+   "cat_label": "6-流程规则",
+   "prompt_hint": "操作流程步骤",
+   "neo4j_edge": "执行",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 7,
+   "cat_name": "引用规则",
+   "cat_label": "7-引用规则",
+   "prompt_hint": "引用其他制度",
+   "neo4j_edge": "引用",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 8,
+   "cat_name": "例外规则",
+   "cat_label": "8-例外规则",
+   "prompt_hint": "例外情形/但书",
+   "neo4j_edge": "豁免",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 9,
+   "cat_name": "决策规则",
+   "cat_label": "9-决策规则",
+   "prompt_hint": "决策事项",
+   "neo4j_edge": "决策",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 10,
+   "cat_name": "时间规则",
+   "cat_label": "10-时间规则",
+   "prompt_hint": "时间期限",
+   "neo4j_edge": "时限",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 11,
+   "cat_name": "金钱规则",
+   "cat_label": "11-金钱规则",
+   "prompt_hint": "金额/价格阈值",
+   "neo4j_edge": "金额",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 12,
+   "cat_name": "版本规则",
+   "cat_label": "12-版本规则",
+   "prompt_hint": "版本/替代关系",
+   "neo4j_edge": "版本",
+   "state": "1"
+  }
+ ]
+}

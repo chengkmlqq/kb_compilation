@@ -1,0 +1,228 @@
+{
+ "schema_name": "工程建设与设计",
+ "schema_label": "工程建设与设计",
+ "schema_desc": "工程建设与设计领域 wiki 构建本体 Schema（2026-10-14 批量生成）",
+ "expert_role": "你是工程建设与设计解析专家，只输出JSON，不要任何思考过程。",
+ "extract_rules": "从长句列表**同时**抽取：① 业务实体（entities）——名词性对象/组织/角色/文件/事项/概念；② 规则（rules）——长句蕴含的规范性要求卡。\n【主谓配对硬约束】rules[].constraint 与 rules[].objects[].name **必须逐字等于本次输出 entities[].name 之一**（同一 JSON 内引用，禁止同义改写/自创变体）；若作用对象未出现在 entities 中，先在 entities 里补出；同一概念多次出现只输出一次；无明确约束对象时 constraint 填空串 \"\"。\n【质量硬约束】entities[].name / rules[].constraint / objects[].name / rules[].evidence 必须**逐字来自长句原文**；禁止①介词引导动词短语（按照/遵照/根据/依据/经…后/由/对于/将/不纳入 开头）②动作动词结尾描述（执行/办理/施行/审议/印发/废止/开展/引入/归集/备案 等结尾）③指示定语开头的衍生表达（本制度/本办法/本文件/本单位——取去定语后的核心实体）④纯日期/时间点（如 2025年9月1日）⑤表格列名/字段名/码值/表号。\n只输出一个 JSON 对象：{\"entities\":[{\"name\":\"实体名\",\"category\":\"业务对象\",\"definition\":\"一句话定义\"}],\"rules\":[{\"title\":\"规则概括（≤20字）\",\"category\":\"约束规则\",\"structure\":{\"主体\":\"x\",\"条件\":\"x\",\"动作\":\"x\"},\"description\":\"规则具体内容\",\"evidence\":\"原文关键片段（逐字）\",\"constraint\":\"实体名\",\"objects\":[{\"name\":\"实体名\",\"role\":\"客体\"}]}]}",
+ "summary_config": "{\"expert_role\": \"你是工程建设与设计知识库的文档摘要专家。\", \"output_rule\": \"严格按 markdown 结构输出文档卡片，禁止任何问候/聊天内容\", \"card_fields\": [\"一句话定位\", \"文件类型\", \"工程对象\", \"版本\", \"适用阶段\"], \"sections\": [\"## 文档定位\", \"## 重点内容概览\", \"## 与其他文档的关系\"], \"relation_table_cols\": [\"相关文档\", \"关系说明\", \"原文依据\"], \"relation_rules\": [\"关系识别必须基于原文——每条关系必须在切片原文中有直接出处；原文依据列填原文句子摘录（禁止“暂无引用原文”）\", \"库内关联文档用 [[summary/<md5(关联kid)>|文档名]] 双链；库内无对应文档用纯文本《文档名》\", \"通知类文档只列核心关系（本通知是《被通知文档》的印发/修订通知）\"]}",
+ "term_filter_config": "{\"expert_role\": \"你是工程建设与设计知识库的术语筛选专家。\", \"keep_standards\": \"具有业务含义的制度术语、业务对象、业务事件、业务概念（如“施工组织、竣工验收、工程变更、图纸会审”）\", \"reject_standards\": [\"纯通用词——任何文档都可出现的通用动词/修饰词（确定/完善/规范/加强/开展/落实/相关/主要/重要/明确/部分/遵照/印发/纳入/引入/使用/完成/提交/支撑/负责/调整/变更/组织/监督/评审/审批/电子/技术/程序/配置 等）\", \"无业务含义的功能词（“特此”“年月日”）\"], \"fragment_rejects\": [\"跨词切碎残片\", \"纯数字/文号/年份\", \"制度文种词（管理办法、实施细则、管理规定——文件名后缀）\", \"介词/动词粘连片段\", \"单字/双字泛化词\"], \"output_format\": \"只输出JSON数组：[{\\\"word\\\":\\\"词\\\",\\\"keep\\\":true,\\\"reason\\\":\\\"一句话理由\\\"}]，不要输出任何其他文字\", \"doc_word_types\": [\"管理办法\", \"实施细则\", \"管理规定\"]}",
+ "exported_at": "2026-10-15T02:00:14",
+ "items": [
+  {
+   "dimension": "business",
+   "cat_no": 1,
+   "cat_name": "工程项目对象",
+   "cat_label": "1-工程项目对象",
+   "prompt_hint": "工程项目/标段/合同段对象",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 2,
+   "cat_name": "组织与角色",
+   "cat_label": "2-组织与角色",
+   "prompt_hint": "工程组织/角色（建设单位、监理、施工方、设计方、项目经理）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 3,
+   "cat_name": "设计文件",
+   "cat_label": "3-设计文件",
+   "prompt_hint": "设计文件对象（设计方案、施工图设计、设计说明、图纸会审）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 4,
+   "cat_name": "图纸与模型",
+   "cat_label": "4-图纸与模型",
+   "prompt_hint": "图纸/模型对象（施工图、详图、BIM 模型）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 5,
+   "cat_name": "工程合同",
+   "cat_label": "5-工程合同",
+   "prompt_hint": "工程合同/协议对象（总包、分包、变更、索赔）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 6,
+   "cat_name": "施工组织",
+   "cat_label": "6-施工组织",
+   "prompt_hint": "施工组织对象（施组设计、施工方案、进度计划、专项方案）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 7,
+   "cat_name": "施工记录",
+   "cat_label": "7-施工记录",
+   "prompt_hint": "施工记录对象（隐蔽工程记录、施工日志、检验批）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 8,
+   "cat_name": "质量与验收",
+   "cat_label": "8-质量与验收",
+   "prompt_hint": "质量/验收对象（验收标准、分部分项验收、竣工验收、质量报告）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 9,
+   "cat_name": "安全与合规",
+   "cat_label": "9-安全与合规",
+   "prompt_hint": "安全/合规事项（安全方案、隐患排查、特种作业、环保）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 10,
+   "cat_name": "设备材料",
+   "cat_label": "10-设备材料",
+   "prompt_hint": "设备/材料对象（材料报验、设备进场、检测报告）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 11,
+   "cat_name": "工程变更",
+   "cat_label": "11-工程变更",
+   "prompt_hint": "变更/签证对象（工程变更、设计变更、现场签证、索赔）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "business",
+   "cat_no": 12,
+   "cat_name": "工程术语",
+   "cat_label": "12-工程术语",
+   "prompt_hint": "工程建设领域专有名词（BIM、EHS、竣工验收、质保期）",
+   "neo4j_edge": null,
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 1,
+   "cat_name": "定义规则",
+   "cat_label": "1-定义规则",
+   "prompt_hint": "术语/概念界定",
+   "neo4j_edge": "定义",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 2,
+   "cat_name": "条件规则",
+   "cat_label": "2-条件规则",
+   "prompt_hint": "适用前提/触发条件",
+   "neo4j_edge": "触发条件",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 3,
+   "cat_name": "约束规则",
+   "cat_label": "3-约束规则",
+   "prompt_hint": "必须/应/不得等硬性条款",
+   "neo4j_edge": "约束",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 4,
+   "cat_name": "职责规则",
+   "cat_label": "4-职责规则",
+   "prompt_hint": "建设/监理/施工/设计方职责分工",
+   "neo4j_edge": "管理",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 5,
+   "cat_name": "审批规则",
+   "cat_label": "5-审批规则",
+   "prompt_hint": "图纸/方案/变更审批事项",
+   "neo4j_edge": "审批",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 6,
+   "cat_name": "流程规则",
+   "cat_label": "6-流程规则",
+   "prompt_hint": "施工/验收/变更流程步骤",
+   "neo4j_edge": "执行",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 7,
+   "cat_name": "引用规则",
+   "cat_label": "7-引用规则",
+   "prompt_hint": "引用规范/标准/图集",
+   "neo4j_edge": "引用",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 8,
+   "cat_name": "例外规则",
+   "cat_label": "8-例外规则",
+   "prompt_hint": "豁免/特殊情形/应急情形",
+   "neo4j_edge": "豁免",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 9,
+   "cat_name": "时限规则",
+   "cat_label": "9-时限规则",
+   "prompt_hint": "工期/节点/质保期时限",
+   "neo4j_edge": "时限",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 10,
+   "cat_name": "标准规则",
+   "cat_label": "10-标准规则",
+   "prompt_hint": "设计/施工/验收标准",
+   "neo4j_edge": "标准",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 11,
+   "cat_name": "安全规则",
+   "cat_label": "11-安全规则",
+   "prompt_hint": "施工安全/特种作业/EHS 要求",
+   "neo4j_edge": "安全",
+   "state": "1"
+  },
+  {
+   "dimension": "rule",
+   "cat_no": 12,
+   "cat_name": "版本规则",
+   "cat_label": "12-版本规则",
+   "prompt_hint": "图纸/设计文件版本",
+   "neo4j_edge": "版本",
+   "state": "1"
+  }
+ ]
+}
