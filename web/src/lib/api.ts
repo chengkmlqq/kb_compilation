@@ -2358,6 +2358,8 @@ export function apiUpdateSession(
     title?: string;
     kb_id?: string | null;
     pinned?: boolean;
+    /** 2026-10-15 绑定/解绑会话智能体（图片门禁按会话 agent_id 校验）；空串 = 解绑 */
+    agent_id?: string | null;
     last_request_state?: ChatSessionInputState | null;
   },
 ) {

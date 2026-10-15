@@ -619,6 +619,16 @@ export default function ChatPage() {
         setStreaming(false);
         return;
       }
+    } else if (effectiveAgent) {
+      // 复用已有会话且选了智能体：把智能体绑定到会话（否则后端图片门禁按
+      // session.agent_id 校验会报「仅智能体会话支持图片上传」——前端门禁按下拉
+      // 状态放行、后端按会话绑定校验，判据不一致导致传图被拒）。绑定失败不阻断
+      // 发送（文本问答照常），仅提示。
+      try {
+        await apiUpdateSession(sessionId, { agent_id: effectiveAgent });
+      } catch (e) {
+        toast.warning(`智能体绑定失败: ${(e as Error)?.message || String(e)}`);
+      }
     }
 
     // 对齐 WeKnora：图片随发送上传到当前会话（作为问答上下文附件）
@@ -1643,7 +1653,13 @@ export default function ChatPage() {
             {/* 左下角：智能体选择（对齐 WeKnora agent-mode-btn） */}
             <Select
               value={agentMode || undefined}
-              onChange={(v) => setAgentMode(v || undefined)}
+              onChange={(v) => {
+                setAgentMode(v || undefined);
+                // 选/切智能体时同步活跃会话的绑定（后端图片门禁按 session.agent_id 校验）
+                if (activeSession) {
+                  void apiUpdateSession(activeSession, { agent_id: v || "" });
+                }
+              }}
               placeholder="普通问答"
               allowClear
               style={{ minWidth: 130, marginRight: 6 }}

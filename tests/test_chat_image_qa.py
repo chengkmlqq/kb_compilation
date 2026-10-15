@@ -173,6 +173,42 @@ def test_upload_image_plain_session_rejected(client, db) -> None:
     assert "仅智能体会话支持图片上传" in r.json()["detail"]
 
 
+def test_bind_agent_to_plain_session_then_upload_image_accepted(client, db) -> None:
+    """2026-10-15 修复：前端选智能体后复用已有普通会话传图——先 PUT 绑定 agent
+    再上传即通过图片门禁（此前按 session.agent_id 校验被拒）。"""
+    sid = _session_id(client, db)  # 普通会话，agent_id 为空
+    # 绑定智能体（开启图片上传的 agent-imgs）
+    r = client.put(f"/api/v1/sessions/{sid}", json={"agent_id": "agent-imgs"})
+    assert r.status_code == 200
+    assert r.json()["data"]["agent_id"] == "agent-imgs"
+
+    r2 = client.post(
+        f"/api/v1/sessions/{sid}/attachments",
+        files={"file": ("pic.png", b"\x89PNGdata", "image/png")},
+    )
+    assert r2.status_code == 200
+    assert r2.json()["data"]["media_type"] == "image"
+
+    # 解绑回普通会话后，图片门禁重新拒绝
+    r3 = client.put(f"/api/v1/sessions/{sid}", json={"agent_id": ""})
+    assert r3.status_code == 200
+    assert r3.json()["data"]["agent_id"] is None
+    r4 = client.post(
+        f"/api/v1/sessions/{sid}/attachments",
+        files={"file": ("pic.png", b"\x89PNGdata", "image/png")},
+    )
+    assert r4.status_code == 400
+    assert "仅智能体会话支持图片上传" in r4.json()["detail"]
+
+
+def test_bind_agent_to_session_missing_agent_rejected(client, db) -> None:
+    """绑定不存在的智能体 → 400（避免绑定后图片门禁报「未知智能体」）。"""
+    sid = _session_id(client, db)
+    r = client.put(f"/api/v1/sessions/{sid}", json={"agent_id": "ghost-agent"})
+    assert r.status_code == 400
+    assert "智能体不存在" in r.json()["detail"]
+
+
 def test_upload_image_agent_without_gate_rejected(client, db) -> None:
     sid = _session_id(client, db, agent_id="agent-noimgs")
     r = client.post(

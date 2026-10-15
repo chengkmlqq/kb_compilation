@@ -91,6 +91,9 @@ class UpdateSessionRequest(BaseModel):
     title: str | None = None
     kb_id: str | None = None
     pinned: bool | None = None
+    # 2026-10-15 会话绑定/解绑智能体：非空 = 绑定（图片门禁按会话 agent_id 校验），
+    # 显式传 null/空 = 解绑回普通会话
+    agent_id: str | None = None
     # 2026-10-12 对齐 WeKnora last_request_state：会话输入态快照（JSON 对象）
     last_request_state: dict | None = None
 
@@ -163,18 +166,22 @@ def api_update_session(
     db: Session = Depends(get_db),
     user_id: str = Depends(_require_user_id),
 ) -> dict:
-    return {
-        "success": True,
-        "data": update_session(
-            db,
-            user_id,
-            session_id,
-            title=req.title,
-            kb_id=req.kb_id,
-            pinned=req.pinned,
-            last_request_state=req.last_request_state,
-        ),
-    }
+    try:
+        return {
+            "success": True,
+            "data": update_session(
+                db,
+                user_id,
+                session_id,
+                title=req.title,
+                kb_id=req.kb_id,
+                pinned=req.pinned,
+                agent_id=req.agent_id,
+                last_request_state=req.last_request_state,
+            ),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.delete("/{session_id}")

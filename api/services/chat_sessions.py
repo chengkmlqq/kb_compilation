@@ -111,6 +111,7 @@ def update_session(
     title: str | None = None,
     kb_id: str | None = None,
     pinned: bool | None = None,
+    agent_id: str | None = None,
     last_request_state: dict | None = None,
 ) -> dict:
     s = get_session(db, user_id, session_id)
@@ -120,6 +121,20 @@ def update_session(
         s.kb_id = kb_id or None
     if pinned is not None:
         s.pinned = 1 if pinned else 0
+    if agent_id is not None:
+        # None=不改变；显式传空串/空白 = 解绑回普通会话（图片门禁按 agent_id 判）
+        bound = agent_id.strip() or None
+        if bound:
+            # 绑定前校验智能体存在，避免绑定后图片门禁报「未知智能体」
+            from api.models.knowledge import KbAgent
+            from sqlalchemy import select
+
+            exists = db.execute(
+                select(KbAgent).where(KbAgent.id == bound)
+            ).scalars().first()
+            if not exists:
+                raise ValueError(f"智能体不存在: {bound}")
+        s.agent_id = bound
     if last_request_state is not None:
         # 2026-10-12 会话输入态快照（对齐 WeKnora last_request_state）
         s.last_request_state = json.dumps(last_request_state, ensure_ascii=False)
