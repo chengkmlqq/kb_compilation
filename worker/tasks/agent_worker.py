@@ -19,6 +19,7 @@ import os
 import subprocess
 import threading
 import time
+import uuid
 from typing import Any
 
 from api.db import get_sessionmaker
@@ -294,11 +295,6 @@ def _handle_agent_wiki_build(job_id: str, task_params: str | None) -> dict[str, 
     """worker 内联执行 agent（openai-agents SDK），完成 wiki 构建。"""
     params = _params(task_params)
     config: dict[str, Any] = dict(params.get("config") or {})
-    config["job_id"] = job_id
-
-    _attach_skill_zip(config, kb_id=str(config.get("kb_id") or ""))
-    _attach_mcp_servers(config, kb_id=str(config.get("kb_id") or ""))
-    _resolve_llm_config(config, kb_id=str(config.get("kb_id") or ""))
 
     payload = {
         "input": str(params.get("input") or ""),
@@ -310,6 +306,29 @@ def _handle_agent_wiki_build(job_id: str, task_params: str | None) -> dict[str, 
     instructions = _first_str(params, "instructions")
     if instructions:
         payload["instructions"] = instructions
+
+    return _execute_agent_payload(payload, job_id)
+
+
+def _execute_agent_payload(payload: dict[str, Any], job_id: str) -> dict[str, Any]:
+    """跑一次 agent 循环（worker 内联运行时）并聚合 trace/事件日志——公共执行体。
+
+    供两条路径共用：① KbAgentWikiBuildTask（Job 驱动的 wiki 构建）；②
+    run_agent_inline（编排 agent_run 节点投递到 agent 队列的任务）。payload 结构：
+    {input, instructions, agent_name, config{skill/kb_id/model/base_url/api_key/...}}。
+
+    技能/MCP/LLM 按 config.kb_id 的创建者个人/团队权限解析（_attach_* 系列），
+    与文档处理链路的 wiki 构建任务同语义。
+    """
+    config: dict[str, Any] = dict(payload.get("config") or {})
+    config["job_id"] = job_id
+
+    _attach_skill_zip(config, kb_id=str(config.get("kb_id") or ""))
+    _attach_mcp_servers(config, kb_id=str(config.get("kb_id") or ""))
+    _resolve_llm_config(config, kb_id=str(config.get("kb_id") or ""))
+
+    payload = dict(payload)
+    payload["config"] = config
 
     _write_progress(job_id, f"[agent] 启动内联 agent，skill={config.get('skill') or '-'}")
 
@@ -812,3 +831,35 @@ def register_task_handlers() -> None:
 
 
 register_task_handlers()
+
+
+# ===========================================================================
+# run_agent_inline —— 编排「Agent 执行」组件（agent_run 原子）的执行任务
+#
+# 编排节点（api/services/orchestration_engine.py::KbAgentRunStep）在所在
+# worker 进程内 handle()：本 worker 即 agent worker（SDK 可用）时进程内内联
+# 执行；否则 send_task 投 agent 队列由 kb-celery-agent-worker 执行并回传结果。
+# 技能/MCP/LLM 解析与 wiki 构建链路完全一致（_execute_agent_payload 公共体）。
+#
+# payload 结构与 KbAgentWikiBuildTask 的 task_params 同构：
+#     {input, instructions, agent_name, config{skill/kb_id/model/...}}
+# ===========================================================================
+
+def run_agent_inline(payload: dict[str, Any], task_id: str = "") -> dict[str, Any]:
+    """编排 agent_run 节点投递的 agent 循环任务（agent 队列消费）。"""
+    job_id = task_id or f"agent_run_{uuid.uuid4().hex[:12]}"
+    try:
+        return _execute_agent_payload(payload, job_id)
+    except Exception as exc:  # noqa: BLE001 — 兜底：编排节点据此标记 failed
+        logger.exception("orchestration agent run crashed task_id=%s", job_id)
+        return {"success": False, "error": repr(exc), "job_id": job_id}
+
+
+# 注册为 celery task（编排原子按名 send_task 投递到 agent 队列）。
+# 与 orch_runner 末尾同款模式：普通函数不注册，worker 消费时 strategies 里
+# 找不到任务名会报 KeyError。
+from worker.celery_app import celery_app  # noqa: E402
+
+celery_app.task(name="worker.tasks.agent_worker.run_agent_inline")(run_agent_inline)
+logger.info("registered celery task worker.tasks.agent_worker.run_agent_inline")
+

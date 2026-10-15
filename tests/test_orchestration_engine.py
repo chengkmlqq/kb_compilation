@@ -45,7 +45,8 @@ def orch_db():
 def test_atom_map_registered() -> None:
     for inst in ("kb_read_doc", "kb_read_table", "kb_llm_chat", "wiki_upsert_page",
                  "kb_write_doc_summary", "wiki_rebuild_links",
-                 "wiki_ensure_folder", "long_sentence_extract", "keyword_extract"):
+                 "wiki_ensure_folder", "long_sentence_extract", "keyword_extract",
+                 "agent_run"):
         assert inst in ATOM_MAP, f"{inst} 未注册到 ATOM_MAP"
 
 
@@ -402,3 +403,190 @@ def test_summary_tapes_mode_semantics() -> None:
     # Refine：单 LLM 节点（滚动更新），无 skip_empty 需要
     rf_llms = [n for n in SUMMARY_REFINE_TAPE["nodes"] if n["data"]["stepInst"] == "kb_llm_chat"]
     assert len(rf_llms) == 1, f"Refine 应有 1 个 LLM 节点，实际 {len(rf_llms)}"
+
+
+# ───────────────────────── Agent 执行组件（agent_run，2026-10-15）─────────────────────────
+
+def _stub_agent_runtime(monkeypatch, fn) -> None:
+    """把 worker.agent.runtime 替换为 stub 模块（openai-agents SDK 不在测试依赖）。"""
+    import sys
+    import types
+
+    fake = types.ModuleType("worker.agent.runtime")
+    setattr(fake, "run_agent_sync", fn)
+    monkeypatch.setitem(sys.modules, "worker.agent.runtime", fake)
+
+
+def _fake_async_result(result: dict):
+    """模拟 celery AsyncResult（只暴露编排原子用到的 .get）。"""
+    class _FakeRes:
+        def get(self, timeout=None):
+            return result
+    return _FakeRes()
+
+
+def test_agent_run_registered() -> None:
+    assert "agent_run" in ATOM_MAP
+    from api.services.orchestration_engine import KbAgentRunStep
+
+    assert ATOM_MAP["agent_run"] is KbAgentRunStep
+
+
+def test_agent_run_skip_empty() -> None:
+    from api.services.orchestration_engine import KbAgentRunStep
+
+    step = KbAgentRunStep("n1", "Agent执行", "agent_run", {"skip_empty": True})
+    ctx = TapeRuntimeContext({})
+    resp = step.handle(ctx)
+    assert resp.success
+    assert resp.body.get("skipped") is True
+
+
+def test_agent_run_requires_prompt() -> None:
+    from api.services.orchestration_engine import KbAgentRunStep
+
+    step = KbAgentRunStep("n1", "Agent执行", "agent_run", {})
+    resp = step.handle(TapeRuntimeContext({}))
+    assert not resp.success
+    assert "缺 prompt" in resp.error
+
+
+def test_agent_run_inline_success(monkeypatch) -> None:
+    """节点 worker 即 agent worker（SDK 可 import）→ 进程内内联执行，无投递。"""
+    from api.services.orchestration_engine import KbAgentRunStep
+
+    captured: dict = {}
+
+    def fake_run_agent_sync(payload, task_id=None):
+        captured["payload"] = payload
+        captured["task_id"] = task_id
+        return {"success": True, "output": "agent 输出结果", "runs_ms": 123, "sdk_trace_id": "tr-1"}
+
+    _stub_agent_runtime(monkeypatch, fake_run_agent_sync)
+    step = KbAgentRunStep(
+        "n1", "Agent执行", "agent_run",
+        {"prompt": "请总结：{{doc_summary}}", "instructions": "只输出结论",
+         "agent_name": "我的Agent", "skill": "市场监管法规", "kb_id": "{{kb_id}}",
+         "model": "deepseek-v4-pro"},
+    )
+    ctx = TapeRuntimeContext({"doc_summary": "文档内容", "kb_id": "kb-1"})
+    resp = step.handle(ctx)
+    assert resp.success
+    assert ctx.bindings["agent_out"] == "agent 输出结果"
+    assert resp.body == {"set:agent_out": "agent 输出结果", "runs_ms": 123}
+    # payload 组装：模板已渲染、脚本/权限字段透传
+    p = captured["payload"]
+    assert p["input"] == "请总结：文档内容"
+    assert p["instructions"] == "只输出结论"
+    assert p["agent_name"] == "我的Agent"
+    assert p["config"]["kb_id"] == "kb-1"
+    assert p["config"]["skill"] == "市场监管法规"
+    assert p["config"]["model"] == "deepseek-v4-pro"
+
+
+def test_agent_run_model_literal_guard(monkeypatch) -> None:
+    """model 配置残留 {{...}} 字面量（bindings 缺键）→ 视为未配置，不传模型。"""
+    from api.services.orchestration_engine import KbAgentRunStep
+
+    captured: dict = {}
+
+    def fake_run_agent_sync(payload, task_id=None):
+        captured["payload"] = payload
+        return {"success": True, "output": "ok"}
+
+    _stub_agent_runtime(monkeypatch, fake_run_agent_sync)
+    step = KbAgentRunStep(
+        "n1", "Agent执行", "agent_run",
+        {"prompt": "hi", "model": "{{summary_model_id}}"},  # bindings 无此键
+    )
+    resp = step.handle(TapeRuntimeContext({}))
+    assert resp.success
+    assert "model" not in captured["payload"]["config"]
+
+
+def test_agent_run_enqueue_and_wait(monkeypatch) -> None:
+    """非 agent worker（SDK import 失败）→ 投递 agent 队列 + 同步等待结果写 bindings。"""
+    import sys
+
+    from api.services.orchestration_engine import KbAgentRunStep
+
+    # 确保 runtime 不可 import（不 stub → 真实环境 SDK 缺失 → ImportError）
+    monkeypatch.setitem(sys.modules, "worker.agent.runtime", None)
+    monkeypatch.delitem(sys.modules, "worker.agent.runtime", raising=False)
+
+    sent: dict = {}
+
+    def fake_send_task(name, args=None, task_id=None, queue=None):
+        sent["name"] = name
+        sent["args"] = args
+        sent["task_id"] = task_id
+        sent["queue"] = queue
+        assert queue == "agent", "agent_run 必须投递 agent 队列（agent-worker 执行）"
+        return _fake_async_result({"success": True, "output": "编排里的agent结果", "runs_ms": 456})
+
+    import types
+
+    fake_celery = types.ModuleType("worker.celery_app")
+    setattr(fake_celery, "celery_app", types.SimpleNamespace(send_task=fake_send_task))
+    monkeypatch.setitem(sys.modules, "worker.celery_app", fake_celery)
+
+    step = KbAgentRunStep(
+        "n1", "Agent执行", "agent_run",
+        {"prompt": "请回答问题 A", "output_var": "agent_res", "kb_id": "{{kb_id}}"},
+    )
+    ctx = TapeRuntimeContext({"kb_id": "kb-9"})
+    resp = step.handle(ctx)
+    assert resp.success
+    assert ctx.bindings["agent_res"] == "编排里的agent结果"
+    # 投递契约：任务名 / agent 队列 / payload
+    assert sent["name"] == "worker.tasks.agent_worker.run_agent_inline"
+    assert sent["args"][0]["input"] == "请回答问题 A"
+    assert sent["args"][0]["config"]["kb_id"] == "kb-9"
+    assert sent["task_id"].startswith("agent_run_")
+    assert resp.body["runs_ms"] == 456
+
+
+def test_agent_run_failure_propagates(monkeypatch) -> None:
+    """agent 结果失败/异常 → 节点 failed，错误透传。"""
+    from api.services.orchestration_engine import KbAgentRunStep
+
+    def fake_run_agent_sync(payload, task_id=None):
+        return {"success": False, "error": "MaxTurnsExceeded: 60 轮工具调用上限"}
+
+    _stub_agent_runtime(monkeypatch, fake_run_agent_sync)
+    step = KbAgentRunStep("n1", "Agent执行", "agent_run", {"prompt": "do it"})
+    resp = step.handle(TapeRuntimeContext({}))
+    assert not resp.success
+    assert "MaxTurnsExceeded" in resp.error
+
+
+def test_agent_run_enqueue_timeout_fails(monkeypatch) -> None:
+    """投递后等待超时（AsyncResult.get 抛超时）→ 节点 failed。"""
+    import sys
+    import types
+
+    from api.services.orchestration_engine import KbAgentRunStep
+
+    monkeypatch.setitem(sys.modules, "worker.agent.runtime", None)
+    monkeypatch.delitem(sys.modules, "worker.agent.runtime", raising=False)
+
+    class _TimeoutRes:
+        def get(self, timeout=None):
+            raise TimeoutError(f"任务等待超过 {timeout}s")
+
+    fake_celery = types.ModuleType("worker.celery_app")
+    setattr(
+        fake_celery, "celery_app",
+        types.SimpleNamespace(
+            send_task=lambda name, args=None, task_id=None, queue=None: _TimeoutRes()
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "worker.celery_app", fake_celery)
+
+    step = KbAgentRunStep(
+        "n1", "Agent执行", "agent_run",
+        {"prompt": "do it", "timeout_sec": 10},
+    )
+    resp = step.handle(TapeRuntimeContext({}))
+    assert not resp.success
+    assert "超" in resp.error or "Agent 执行失败" in resp.error

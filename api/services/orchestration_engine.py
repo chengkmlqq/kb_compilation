@@ -527,6 +527,101 @@ class KbLlmChatStep(BaseStep):
         return StepResponse.success({f"set:{output_var}": raw or ""})
 
 
+class KbAgentRunStep(BaseStep):
+    """'agent_run' Agent 执行（2026-10-15 基础原子）。
+
+    把一次 agent 循环（openai-agents SDK：思考 + 技能工具 + MCP 工具）投递到
+    **agent 队列**（kb-celery-agent-worker）执行，参与服务编排。节点所在 worker
+    若本身即 agent worker（进程内可 import SDK）则直接内联执行（零跨进程等待），
+    否则 send_task 到 agent 队列并同步等待结果（AsyncResult.get）。
+
+    支持配置提示词/系统指令/技能/MCP/模型：
+      - prompt: 任务输入（支持 {{ }} 模板；agent 据此自主调用工具完成任务）
+      - instructions: agent 系统提示词（可选；角色/输出纪律约束）
+      - agent_name: agent 名（默认 kb-agent-worker）
+      - skill: 技能名（内置技能或 kb_skill 表技能；留空=不挂技能工具）
+      - kb_id: 知识库 ID（技能/MCP 可见性按库创建者个人/团队权限解析）
+      - model: 覆盖模型（留空=agent worker 环境默认，WIKI_LLM_* 链）
+      - output_var: 输出变量名（默认 agent_out）
+      - timeout_sec: 等待超时秒（默认 1800）
+      - skip_empty: prompt 渲染为空时跳过（不失败）
+    """
+
+    def _run_agent(self, payload: dict, timeout_sec: float) -> dict:
+        """执行一次 agent 循环：agent worker 进程内内联优先，否则投递 agent 队列等待。
+
+        内联判断：worker.agent.runtime 依赖 openai-agents SDK（只装在 agent worker
+        镜像，pyproject 刻意不引入）——import 成功说明当前 worker 就是 agent
+        worker（节点配 queue=agent 时 handle 在其进程内执行）。
+        """
+        import uuid as _uuid
+
+        try:
+            from worker.agent.runtime import run_agent_sync
+        except ImportError:  # SDK 未装 → 非 agent worker
+            run_agent_sync = None
+        if run_agent_sync is not None:
+            return run_agent_sync(payload, task_id=f"orch_agent_{_uuid.uuid4().hex[:12]}")
+
+        # 回退路径：投递 agent 队列，由 kb-celery-agent-worker 执行并回传结果。
+        from worker.celery_app import celery_app
+
+        task_id = f"agent_run_{_uuid.uuid4().hex[:12]}"
+        res = celery_app.send_task(
+            "worker.tasks.agent_worker.run_agent_inline",
+            args=[payload, task_id],
+            task_id=task_id,
+            queue="agent",
+        )
+        return res.get(timeout=timeout_sec)
+
+    def handle(self, context: TapeRuntimeContext) -> StepResponse:
+        prompt = str(context.render(self.config.get("prompt") or "")).strip()
+        output_var = str(self.config.get("output_var") or "agent_out")
+        skip_empty = bool(self.config.get("skip_empty"))
+        if not prompt:
+            if skip_empty:
+                return StepResponse.success({"skipped": True, "reason": "empty prompt (skip_empty)"})
+            return StepResponse.fail("agent_run 缺 prompt")
+        timeout_sec = float(self.config.get("timeout_sec") or 1800)
+
+        # 模板渲染 + 字面量兜底（bindings 缺键时 _template_replace 原样返回
+        # {{...}}——视为未配置，与 KbLlmChatStep 的 model 处理同语义）
+        instructions = str(context.render(self.config.get("instructions") or "")).strip()
+        agent_name = str(context.render(self.config.get("agent_name") or "kb-agent-worker")).strip()
+        kb_id = str(context.render(self.config.get("kb_id") or "")).strip()
+        model = str(context.render(self.config.get("model") or "")).strip()
+        if "{{" in model or not model:
+            model = ""
+        skill = str(context.render(self.config.get("skill") or "")).strip()
+
+        cfg: dict = {}
+        if kb_id:
+            cfg["kb_id"] = kb_id
+        if model:
+            cfg["model"] = model
+        if skill:
+            cfg["skill"] = skill
+        payload: dict = {"input": prompt, "config": cfg}
+        if instructions:
+            payload["instructions"] = instructions
+        if agent_name:
+            payload["agent_name"] = agent_name
+
+        try:
+            result = self._run_agent(payload, timeout_sec)
+        except Exception as e:  # noqa: BLE001 — 含 AsyncResult 超时/投递失败
+            return StepResponse.fail(f"Agent 执行失败: {e}")
+        if not result.get("success"):
+            err = str(result.get("error") or "未知错误")
+            return StepResponse.fail(f"Agent 执行失败: {err}")
+        out = result.get("output") or ""
+        context.bindings[output_var] = out
+        return StepResponse.success(
+            {f"set:{output_var}": out, "runs_ms": result.get("runs_ms")}
+        )
+
+
 class WikiUpsertPageStep(BaseStep):
     """'wiki_upsert_page' 单页幂等写入（2026-10-12 基础原子）。
 
@@ -935,6 +1030,9 @@ ATOM_MAP: Dict[str, Callable[[str, str, str, Optional[dict]], BaseStep]] = {
     "kb_read_doc": KbReadDocStep,
     "kb_read_table": KbReadTableStep,
     "kb_llm_chat": KbLlmChatStep,
+    # 2026-10-15：Agent 执行（agent_run）——投递 agent 队列由 kb-celery-agent-worker
+    # 跑 openai-agents 循环（技能/MCP 工具），结果写 bindings。
+    "agent_run": KbAgentRunStep,
     "wiki_upsert_page": WikiUpsertPageStep,
     "kb_write_doc_summary": KbWriteDocSummaryStep,
     "wiki_rebuild_links": WikiRebuildLinksStep,

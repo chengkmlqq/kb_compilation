@@ -369,6 +369,28 @@ ORCH_STEP_DEFINES: list[tuple[str, str, str, str, str, list[dict], int]] = [
       {"name": "model", "label": "模型(可选)", "type": "input", "required": False, "placeholder": ""},
       {"name": "dry_run", "label": "只统计不写过滤文件", "type": "boolean", "required": False},
       {"name": "timeout_sec", "label": "超时(秒)", "type": "input", "required": False, "placeholder": "1800"}], 16),
+    # ── Agent 执行（2026-10-15）：投递 agent 队列由 kb-celery-agent-worker
+    #    跑 openai-agents 循环（自主规划 + 技能工具 + MCP 工具）
+    ("agent_run", "Agent执行", "Agent", "RobotOutlined",
+     "把一次 agent 循环投递到 agent-worker 执行（支持配置提示词/系统指令/技能/MCP/模型）："
+     "agent 自主规划并调用技能与 MCP 工具完成任务，输出写入运行变量供下游节点使用",
+     [{"name": "prompt", "label": "任务提示词(支持{{}}模板)", "type": "textarea", "required": True,
+       "placeholder": "请查阅知识库并总结以下内容：{{doc_summary}}", "props": {"rows": 4}},
+      {"name": "instructions", "label": "系统指令(可选)", "type": "textarea", "required": False,
+       "placeholder": "你是知识库问答助手，只输出结论，不要复述问题", "props": {"rows": 3}},
+      {"name": "agent_name", "label": "Agent名称", "type": "input", "required": False,
+       "placeholder": "kb-agent-worker（默认）"},
+      {"name": "skill", "label": "技能名(可选)", "type": "input", "required": False,
+       "placeholder": "留空=不挂技能；技能按知识库创建者权限解析"},
+      {"name": "kb_id", "label": "知识库ID(技能/MCP权限基准)", "type": "input", "required": False,
+       "placeholder": "{{kb_id}}"},
+      {"name": "model", "label": "模型(留空=agent默认)", "type": "input", "required": False,
+       "placeholder": "deepseek-v4-pro"},
+      {"name": "output_var", "label": "输出变量名", "type": "input", "required": False,
+       "placeholder": "agent_out（默认）"},
+      {"name": "timeout_sec", "label": "等待超时(秒)", "type": "input", "required": False,
+       "placeholder": "1800"},
+      {"name": "skip_empty", "label": "空Prompt时跳过(不失败)", "type": "boolean", "required": False}], 17),
 ]
 
 
