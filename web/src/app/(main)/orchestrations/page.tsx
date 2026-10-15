@@ -71,7 +71,7 @@ export default function OrchestrationsPage() {
   // 左侧分类树（2026-10-13：编排管理页左右结构，参照编排模板页）
   const [selectedCategory, setSelectedCategory] = useState("");
   const [categories, setCategories] = useState<TapeCategory[]>([]);
-  // 2026-10-14 两级树：一级分类展开集合（默认收起，点一级即展开并过滤）
+  // 多级树：展开集合（2026-10-15 默认全部展开；点节点/箭头可收起）
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -226,7 +226,12 @@ export default function OrchestrationsPage() {
 
   const loadCategories = useCallback(async () => {
     const res = await apiListTapeCategories();
-    if (res.success) setCategories(res.data || []);
+    if (res.success) {
+      const list = res.data || [];
+      setCategories(list);
+      // 默认全部展开：初始展开所有带子级的分类（一级根目录 + 企业领域）
+      setExpandedCats(new Set(list.filter((c) => c.parent_id).map((c) => c.parent_id as string)));
+    }
   }, []);
 
   useEffect(() => {

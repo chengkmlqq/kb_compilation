@@ -41,6 +41,7 @@ import {
   AppstoreOutlined,
   ExperimentOutlined,
   EyeOutlined,
+  FileTextOutlined,
   FolderOutlined,
 } from "@ant-design/icons";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
@@ -100,6 +101,8 @@ export default function TapeTemplatesPage() {
   // 左树：当前选中分类（"" = 全部）
   const [selectedCategory, setSelectedCategory] = useState("");
   const [categories, setCategories] = useState<TapeTemplateCategory[]>([]);
+  // 多级树：展开集合（2026-10-15 默认全部展开；点节点/箭头可收起）
+  const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<TapeTemplateItem | null>(null);
@@ -166,7 +169,12 @@ export default function TapeTemplatesPage() {
 
   const loadCategories = useCallback(async () => {
     const res = await apiListTapeTemplateCategories();
-    if (res.success) setCategories(res.data || []);
+    if (res.success) {
+      const list = res.data || [];
+      setCategories(list);
+      // 默认全部展开：初始展开所有带子级的分类
+      setExpandedCats(new Set(list.filter((c) => c.parent_id).map((c) => c.parent_id as string)));
+    }
   }, []);
 
   useEffect(() => {
@@ -191,7 +199,76 @@ export default function TapeTemplatesPage() {
     setSelectedCategory(cat);
     setPage(1);
     setApplied((prev) => ({ ...prev, category: cat || undefined }));
+    if (cat) {
+      setExpandedCats((prev) => {
+        const next = new Set(prev);
+        next.add(cat);
+        return next;
+      });
+    }
   };
+
+  // 多级树：按 parent_id 分组（一级 = 无父级，逐层挂子级；2026-10-15 对齐编排管理页）
+  const topCategories = useMemo(
+    () => categories.filter((c) => !c.parent_id),
+    [categories],
+  );
+  const childByParent = useMemo(() => {
+    const m = new Map<string, TapeTemplateCategory[]>();
+    for (const c of categories) {
+      if (!c.parent_id) continue;
+      const arr = m.get(c.parent_id) || [];
+      arr.push(c);
+      m.set(c.parent_id, arr);
+    }
+    return m;
+  }, [categories]);
+
+  /** 递归渲染分类节点（有子级的行带 ▸/▾ 展开箭头；默认全部展开） */
+  const renderCatNode = useCallback(
+    (c: TapeTemplateCategory, depth: number): ReactNode => {
+      const kids = childByParent.get(c.category) || [];
+      const expanded = expandedCats.has(c.category);
+      return (
+        <div key={c.category}>
+          <div
+            className={`kb-tpl-cat-item${depth > 0 ? " kb-tpl-cat-item--child" : ""}${selectedCategory === c.category ? " active" : ""}`}
+            onClick={() => selectCategory(c.category)}
+            style={{ paddingLeft: 8 + depth * 26, cursor: "pointer" }}
+          >
+            {kids.length > 0 ? (
+              <span
+                className="kb-tpl-cat-caret"
+                style={{ width: 14, display: "inline-flex", justifyContent: "center", fontSize: 10, color: "#999", marginRight: 2 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpandedCats((prev) => {
+                    const next = new Set(prev);
+                    if (expanded) next.delete(c.category);
+                    else next.add(c.category);
+                    return next;
+                  });
+                }}
+              >
+                {expanded ? "▾" : "▸"}
+              </span>
+            ) : null}
+            {depth >= 2 ? (
+              <FileTextOutlined style={{ fontSize: 12 }} />
+            ) : (
+              <FolderOutlined style={{ fontSize: 14 }} />
+            )}
+            <span className="kb-tpl-cat-name">{c.label || c.category}</span>
+            <Tooltip title={`启用 ${c.effective} 个`}>
+              <span className="kb-tpl-cat-count">{c.total}</span>
+            </Tooltip>
+          </div>
+          {expanded && kids.map((kid) => renderCatNode(kid, depth + 1))}
+        </div>
+      );
+    },
+    [childByParent, expandedCats, selectedCategory, selectCategory],
+  );
 
   const openCreate = () => {
     setEditing(null);
@@ -441,19 +518,7 @@ export default function TapeTemplatesPage() {
             <span className="kb-tpl-cat-name">全部模板</span>
             <span className="kb-tpl-cat-count">{allTotal}</span>
           </div>
-          {categories.map((c) => (
-            <div
-              key={c.category}
-              className={`kb-tpl-cat-item${selectedCategory === c.category ? " active" : ""}`}
-              onClick={() => selectCategory(c.category)}
-            >
-              <FolderOutlined style={{ fontSize: 14 }} />
-              <span className="kb-tpl-cat-name">{c.label || c.category}</span>
-              <Tooltip title={`启用 ${c.effective} 个`}>
-                <span className="kb-tpl-cat-count">{c.total}</span>
-              </Tooltip>
-            </div>
-          ))}
+          {topCategories.map((c) => renderCatNode(c, 0))}
         </div>
       </aside>
 
