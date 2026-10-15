@@ -194,6 +194,10 @@ def test_enqueue_build_engine_task_writes_job(chain_env) -> None:
         "kb_id": "kb-1",
         "document_id": "doc-1",
         "doc_id": "doc-1",  # 兼容存量编排的 doc_id 变量名
+        # 2026-10-15 编排输入契约（wiki构建-* 领域编排读 kid/doc_name/source_file）
+        "kid": "doc-1",
+        "doc_name": "",  # fixture 无 KbDocument 行 → file_name 空
+        "source_file": "",
         "x_next_identity": "",  # 未传身份时为空串（上传链会带操作者 cookie）
         "limit": "",  # context 组装兜底：编排 def/print 可能引用的变量
         "only_codes": "",
