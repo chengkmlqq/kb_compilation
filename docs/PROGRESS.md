@@ -2,7 +2,19 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-16（未选构建引擎时摘要驱动自动领域构建）
+最后更新：2026-10-17（编排种子数据与线上编排管理全量同步）
+
+## 21. 当前状态（2026-10-17 用编排管理全部编排数据更新系统种子数据）
+
+- **需求**：把线上「服务编排」页维护的全部编排数据（kb_tape + 执行层 kb_tape_step）固化到仓库种子数据，使新建环境开箱即得与线上一致的 26 条编排
+- **线上现状（API 全量拉取实锤）**：共 26 条编排、全部 effective：20 个领域 wiki构建-* + 表构建Wiki-基础原子版 + 摘要三模式（Stuff/MR/Refine）+ 题材分析-领域判定 + 质量评估-QA；kb_tape_template 0 行、kb_step_define 18 个 effective。**线上没有「wiki构建-基础原子版」**（种子旧版独有，本次同步后不再播种）
+- **关键坑（实测）**：线上三个摘要编排的**画布 nodes 仍是远古版**（LLM 节点无 system/thinking、script 无 META 清洗、writer 是 wiki_upsert_page），而**执行层 kb_tape_step 是修复版**（§17/§20 的 apply 脚本改的）——API export 端点只给画布，直接导出会倒退种子。故摘要三模式的种子由「种子常量（post-f813cea：kb_write_doc_summary + model）+ 两个质量补丁」合成：LLM 节点 system + thinking=disabled（apply_*_summary_fixes 同款文案）、script 清洗收敛为窄 META（apply_fix_summary_cleanup_meta 同款正则）；其余 23 条用线上 API 导出
+- **代码改动**：
+  1. `scripts/seed_framework_db.py`：`_seed_domain_wiki_tapes` → `_seed_tapes_from_exports`（统一读 seed_tape_data/*.json，恢复 category/status/tape_type 三个字段；支持 draft.steps 执行层原样还原；题材分析编排建完自动把 DOMAIN_RESOLVE_TAPE 参数指向新 id）；main() 原 6 个逐编排播种调用（含 wiki构建-基础原子版）合并为 1 个，旧播种函数保留供查阅
+  2. 新增 `scripts/export_orchestrations_to_seed.py`（DB 直连导出工具：kb_tape + kb_tape_step → seed_tape_data/*.json，含执行层 steps；改线上编排后重跑即再同步；用法 docker cp 进 kb-api-server 跑）
+- **种子数据（seed_tape_data/ 26 个 JSON，2026-10-17 固化）**：旧 20 个领域 JSON 删除，新 26 个按 tape_name 命名；status 全 effective（线上真值）、category 用线上真值、tape_type 按功能标签（wiki构建-*/表构建Wiki → kb_build、摘要-* → summary、其余 general；**线上库 tape_type 曾全 general，种子按产品功能标签保留**）
+- **验证**：py_compile 两脚本 OK；26 文件解析 + 字段形态全过（题材分析 n2 保留 thinking/system；摘要三模式 LLM 节点 thinking=disabled、writer=kb_write_doc_summary、无旧宽正则残留）；未跑 pytest（terminal 被用户拒，测试不覆盖种子模块，静态验证已尽）
+- **部署注意**：种子改动仅影响**新建环境**（幂等按 tape_name skip，不动存量库）；旧函数停用不影响现有环境；线上如需重跑种子导出，用 export_orchestrations_to_seed.py（能拿到执行层 steps，比本次 API 路径更保真）
 
 ## 20. 当前状态（2026-10-16 题材分析编排：自动选择领域构建编排）
 

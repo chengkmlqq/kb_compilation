@@ -1,12 +1,12 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-15T01:47:57.180355",
+ "exportedAt": "2026-10-15T13:54:21.179659",
  "draft": {
   "tapeName": "wiki构建-行业监管与公共政策",
   "tapeLabel": "行业监管与公共政策文档转wiki（编排化全链路）",
   "tapeDescr": "行业监管与公共政策领域文档→wiki 全链路服务编排（参照监管制度编排）：切片清洗→门禁→目录树→摘要→长句→关键词→实体/规则→图谱→合并→链接。本体类别/抽取/摘要/术语配置运行期读「行业监管与公共政策」本体Schema，文档类型模式读 kb_doc_type_config。输入：kid/doc_name/source_file/kb_id/doc_type。",
-  "tapeType": "general",
+  "tapeType": "kb_build",
   "nodes": [
    {
     "id": "n01",
@@ -488,6 +488,8 @@
     "paramLabel": "跳过全库合并+链接(批次末统一)",
     "defaultValue": "false"
    }
-  ]
+  ],
+  "category": "行业监管与公共政策",
+  "status": "effective"
  }
 }

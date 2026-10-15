@@ -1,0 +1,131 @@
+{
+ "type": "kb.orchestration.draft",
+ "schemaVersion": 1,
+ "exportedAt": "2026-10-15T13:54:21.014462",
+ "draft": {
+  "tapeName": "表构建Wiki-基础原子版",
+  "tapeLabel": "表→wiki 构建（基础原子编排，替代 table_ingest 表主页黑盒）",
+  "tapeDescr": "用细粒度基础原子组装表 wiki 构建流程：kb_read_table 取数 → script 构列定义/样例 markdown → kb_llm_chat 生成表用途说明 → script 拼 wiki 正文 → wiki_upsert_page 写表主页(page_type=table) → wiki_rebuild_links 重建互链。输入 bindings：kb_id / document_id（表源文档）。",
+  "tapeType": "kb_build",
+  "nodes": [
+   {
+    "id": "n1",
+    "data": {
+     "label": "读表源数据",
+     "config": {
+      "output_var": "table_data",
+      "document_id": "{{document_id}}"
+     },
+     "stepInst": "kb_read_table"
+    },
+    "type": "custom"
+   },
+   {
+    "id": "n2",
+    "data": {
+     "label": "构建表元数据Markdown",
+     "config": {
+      "code": "import json\ntd = bindings.get('table_data') or {}\ncolumns = td.get('columns') or []\ncol_comments = td.get('col_comments') or {}\ncol_types = td.get('col_types') or {}\ntable_name = td.get('table_name') or td.get('table_name') or ''\ntable_comment = td.get('table_comment') or ''\nschema = td.get('schema') or ''\nds_name = td.get('ds_name') or ''\nrow_count = len(td.get('rows') or [])\nlines = ['# %s' % (table_name or '表')]\nif table_comment:\n    lines.append('> 表注释：%s' % table_comment)\nsrc = ds_name + ('.' + schema if schema else '')\nlines.append('> 数据来源：数据源 %s · 表 %s' % (src or '-', table_name or '-'))\nlines.append('> 行数：%s · 列数：%s' % (row_count, len(columns)))\nif columns:\n    lines.append('\\\\n## 列定义\\\\n')\n    lines.append('| 列名 | 类型 | 注释 |')\n    lines.append('|------|------|------|')\n    for c in columns:\n        cmt = (col_comments.get(c) or '').strip()\n        lines.append('| %s | %s | %s |' % (c, col_types.get(c, '-'), cmt))\nbindings['meta_md'] = '\\\\n'.join(lines)\nbindings['row_count'] = row_count\n"
+     },
+     "stepInst": "script"
+    },
+    "type": "custom"
+   },
+   {
+    "id": "n3",
+    "data": {
+     "label": "构建样例数据Markdown",
+     "config": {
+      "code": "td = bindings.get('table_data') or {}\nrows = td.get('rows') or []\nif not rows:\n    bindings['sample_md'] = ''\nelse:\n    cols = list(rows[0].keys())\n    lines = ['\\\\n## 样例数据（前 %d 行）\\\\n' % len(rows)]\n    lines.append('| ' + ' | '.join(cols) + ' |')\n    lines.append('|' + '|'.join('---' for _ in cols) + '|')\n    for r in rows:\n        cells = []\n        for c in cols:\n            v = r.get(c)\n            cells.append('' if v is None else str(v).replace('|', '\\\\\\\\|')[:80])\n        lines.append('| ' + ' | '.join(cells) + ' |')\n    bindings['sample_md'] = '\\\\n'.join(lines)\n"
+     },
+     "stepInst": "script"
+    },
+    "type": "custom"
+   },
+   {
+    "id": "n4",
+    "data": {
+     "label": "LLM生成表用途说明",
+     "config": {
+      "model": "{{table_data.summary_model_id}}",
+      "prompt": "你是数据分析师。请基于下面这张表的真实元数据，写一段中文「表用途说明」。\\n内容要求：1) 这是一张什么维度的表；2) 这张表在什么场景下使用（如作为报表分组维度、指标口径解释依据等，按列名和注释合理推断）；3) 关键字段说明（3-5 个代表性列及其含义）。\\n严格约束：只能依据给出的元数据客观描述，不要编造表中不存在的信息，不要臆测具体业务场景细节。总字数 150~300 字，用 2-3 个自然段输出，不要输出列表或标题。\\n\\n{{meta_md}}",
+      "max_tokens": "800",
+      "output_var": "table_usage",
+      "temperature": "0.3"
+     },
+     "stepInst": "kb_llm_chat"
+    },
+    "type": "custom"
+   },
+   {
+    "id": "n5",
+    "data": {
+     "label": "拼Wiki正文",
+     "config": {
+      "code": "import hashlib\ntd = bindings.get('table_data') or {}\nparts = [bindings.get('meta_md') or '']\nsample = bindings.get('sample_md') or ''\nif sample:\n    parts.append(sample)\nusage = bindings.get('table_usage') or ''\nif usage:\n    parts.append('\\\\n## 表用途说明\\\\n\\\\n' + usage)\nsummary = td.get('summary') or ''\nif summary:\n    parts.append('\\\\n## 摘要\\\\n\\\\n' + summary)\ncontent = '\\\\n'.join([p for p in parts if p and p.strip()])\ntable_name = td.get('table_name') or '表'\nif not content.strip():\n    content = '# %s' % table_name\nschema = td.get('schema') or ''\nslug = ('table-%s-%s' % (schema, table_name)) if schema else ('table-%s' % table_name)\nbindings['wiki_title'] = table_name\nbindings['wiki_content'] = content\nbindings['wiki_slug'] = slug\n"
+     },
+     "stepInst": "script"
+    },
+    "type": "custom"
+   },
+   {
+    "id": "n6",
+    "data": {
+     "label": "写表主页Wiki页",
+     "config": {
+      "slug": "{{wiki_slug}}",
+      "kb_id": "{{kb_id}}",
+      "title": "{{wiki_title}}",
+      "content": "{{wiki_content}}",
+      "page_type": "table"
+     },
+     "stepInst": "wiki_upsert_page"
+    },
+    "type": "custom"
+   },
+   {
+    "id": "n7",
+    "data": {
+     "label": "重建互链",
+     "config": {
+      "kb_id": "{{kb_id}}"
+     },
+     "stepInst": "wiki_rebuild_links"
+    },
+    "type": "custom"
+   }
+  ],
+  "edges": [
+   {
+    "source": "n1",
+    "target": "n2"
+   },
+   {
+    "source": "n2",
+    "target": "n3"
+   },
+   {
+    "source": "n3",
+    "target": "n4"
+   },
+   {
+    "source": "n4",
+    "target": "n5"
+   },
+   {
+    "source": "n5",
+    "target": "n6"
+   },
+   {
+    "source": "n6",
+    "target": "n7"
+   }
+  ],
+  "execParams": {
+   "kb_id": "",
+   "document_id": ""
+  },
+  "category": "通用",
+  "status": "effective"
+ }
+}

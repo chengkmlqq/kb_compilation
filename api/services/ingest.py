@@ -17,9 +17,11 @@ sessions — this module takes explicit db handles (no globals).
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, insert, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from api.models.knowledge import DocChunk, KbDocument
@@ -121,7 +123,7 @@ def replace_document_chunks(
     store.delete_by_chunks(stale_ids)
 
     base_meta = meta or {}
-    row_count = 0
+    rows: list[dict] = []
     for (seq, text), vec in zip(chunks, vectors):
         chunk_id = _doc_id()
         row_meta = dict(base_meta)
@@ -130,20 +132,24 @@ def replace_document_chunks(
             row_meta["parent_seq"] = pseq
             if parent_texts and pseq in parent_texts:
                 row_meta["parent_content"] = parent_texts[pseq]
-        db.add(
-            DocChunk(
-                id=chunk_id,
-                kb_id=kb_id,
-                document_id=document_id,
-                seq=seq,
-                content=text,
-                meta=row_meta,
-                enabled=True,
-            )
+        rows.append(
+            {
+                "id": chunk_id,
+                "kb_id": kb_id,
+                "document_id": document_id,
+                "seq": seq,
+                "content": text,
+                "meta": row_meta,
+                "enabled": True,
+            }
         )
         store.upsert(kb_id, chunk_id, vec)
-        row_count += 1
-    return row_count
+    # 2026-10-16: 批量 INSERT 替代逐条 db.add——单条语句一次拿齐全部行锁，
+    # 缩短事务持锁窗口，降低并发 ingest 时的 MySQL 1213 死锁概率
+    # （此前逐条 add 的二级索引间隙锁竞争是死锁根因之一）。seq 与向量逐一对应，语义不变。
+    if rows:
+        db.execute(insert(DocChunk), rows)
+    return len(rows)
 
 
 def update_document_state(
@@ -366,12 +372,42 @@ def ingest_document(
         return result
 
     # 4. store
+    # MySQL 1213 死锁是瞬态错误（官方建议重启事务重试）：并发 ingest 时多个事务
+    # 同时对 doc_chunk 二级索引加 gap/next-key 锁，MySQL 随机选一个受害者回滚。
+    # 这里重试最多 3 次（含首跑），每次重试前 rollback 已失效事务；非死锁或重试
+    # 耗尽则显式回写 parse_state=FAILED（对齐 parse/embed 两段的兜底，防止文档
+    # 卡在 EMBEDDING 残留——历史坑：store 段无兜底导致「任务失败仍显示向量化中」）。
     meta = {"source_file": document.file_name, "parse_engine": used_engine}
-    written = replace_document_chunks(
-        kb_db, document.kb_id, document.id, chunks, vectors, meta,
-        parent_seq_by_child=parent_seq_by_child if chunk_cfg.enable_parent_child else None,
-        parent_texts=parent_texts if chunk_cfg.enable_parent_child else None,
-    )
+    written = 0
+    for attempt in range(3):
+        try:
+            written = replace_document_chunks(
+                kb_db, document.kb_id, document.id, chunks, vectors, meta,
+                parent_seq_by_child=parent_seq_by_child if chunk_cfg.enable_parent_child else None,
+                parent_texts=parent_texts if chunk_cfg.enable_parent_child else None,
+            )
+            break
+        except Exception as e:  # noqa: BLE001
+            orig = getattr(e, "orig", None)
+            is_deadlock = (
+                isinstance(e, OperationalError)
+                and orig is not None
+                and getattr(orig, "args", None)
+                and orig.args[0] == 1213
+            )
+            kb_db.rollback()  # 异常后事务已失效，先回滚才能继续
+            if not is_deadlock or attempt == 2:
+                logger.exception("store failed for document %s", document.id)
+                update_document_state(kb_db, document.id, "FAILED", error=f"store: {e}")
+                kb_db.commit()
+                result["error"] = str(e)
+                result["success"] = False
+                return result
+            logger.warning(
+                "deadlock(1213) writing chunks for document %s, retry %d/2",
+                document.id, attempt + 1,
+            )
+            time.sleep(0.3 * (attempt + 1))
     update_document_state(kb_db, document.id, "READY", chunk_count=written)
     kb_db.commit()
 

@@ -1,12 +1,12 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-15T01:47:57.469250",
+ "exportedAt": "2026-10-15T13:54:21.191208",
  "draft": {
-  "tapeName": "wiki构建-人力资源与组织管理",
-  "tapeLabel": "人力资源与组织管理文档转wiki（编排化全链路）",
-  "tapeDescr": "人力资源与组织管理领域文档→wiki 全链路服务编排（参照监管制度编排）：切片清洗→门禁→目录树→摘要→长句→关键词→实体/规则→图谱→合并→链接。本体类别/抽取/摘要/术语配置运行期读「人力资源与组织管理」本体Schema，文档类型模式读 kb_doc_type_config。输入：kid/doc_name/source_file/kb_id/doc_type。",
-  "tapeType": "general",
+  "tapeName": "wiki构建-财务与会计",
+  "tapeLabel": "财务与会计文档转wiki（编排化全链路）",
+  "tapeDescr": "财务与会计领域文档→wiki 全链路服务编排（参照监管制度编排）：切片清洗→门禁→目录树→摘要→长句→关键词→实体/规则→图谱→合并→链接。本体类别/抽取/摘要/术语配置运行期读「财务与会计」本体Schema，文档类型模式读 kb_doc_type_config。输入：kid/doc_name/source_file/kb_id/doc_type。",
+  "tapeType": "kb_build",
   "nodes": [
    {
     "id": "n01",
@@ -16,7 +16,7 @@
      "label": "输入定义",
      "config": {
       "queue": "build",
-      "assignments": "[{\"variable\": \"kid\", \"expression\": \"bindings.get('kid', '')\"}, {\"variable\": \"doc_name\", \"expression\": \"bindings.get('doc_name', '')\"}, {\"variable\": \"source_file\", \"expression\": \"bindings.get('source_file', '')\"}, {\"variable\": \"kb_id\", \"expression\": \"bindings.get('kb_id', '')\"}, {\"variable\": \"skip_final\", \"expression\": \"bindings.get('skip_final', 'false')\"}, {\"variable\": \"domain\", \"expression\": \"bindings.get('domain', '人力资源与组织管理')\"}, {\"variable\": \"doc_type\", \"expression\": \"bindings.get('doc_type', '')\"}]"
+      "assignments": "[{\"variable\": \"kid\", \"expression\": \"bindings.get('kid', '')\"}, {\"variable\": \"doc_name\", \"expression\": \"bindings.get('doc_name', '')\"}, {\"variable\": \"source_file\", \"expression\": \"bindings.get('source_file', '')\"}, {\"variable\": \"kb_id\", \"expression\": \"bindings.get('kb_id', '')\"}, {\"variable\": \"skip_final\", \"expression\": \"bindings.get('skip_final', 'false')\"}, {\"variable\": \"domain\", \"expression\": \"bindings.get('domain', '财务与会计')\"}, {\"variable\": \"doc_type\", \"expression\": \"bindings.get('doc_type', '')\"}]"
      },
      "stepInst": "def"
     },
@@ -480,7 +480,7 @@
     "paramName": "domain",
     "paramType": "input",
     "paramLabel": "领域(本体Schema)",
-    "defaultValue": "人力资源与组织管理"
+    "defaultValue": "财务与会计"
    },
    {
     "paramName": "skip_final",
@@ -488,6 +488,8 @@
     "paramLabel": "跳过全库合并+链接(批次末统一)",
     "defaultValue": "false"
    }
-  ]
+  ],
+  "category": "财务与会计",
+  "status": "effective"
  }
 }

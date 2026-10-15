@@ -1,0 +1,69 @@
+{
+ "type": "kb.orchestration.draft",
+ "schemaVersion": 1,
+ "exportedAt": "2026-10-15T13:54:21.243229",
+ "draft": {
+  "tapeName": "题材分析-领域判定",
+  "tapeLabel": "题材分析（自动选择领域构建编排）",
+  "tapeDescr": "根据文档摘要与平台已有领域构建编排的划分，自动判定该文档应使用哪个编排进行后续 wiki 构建。产物：resolved_tape_id。",
+  "tapeType": "general",
+  "nodes": [
+   {
+    "id": "n1",
+    "data": {
+     "label": "读取领域编排清单",
+     "config": {
+      "code": "# 题材分析-第一步：读平台已有的领域知识构建编排（kb_tape 按 category 去重）与文档摘要，拼领域判定 prompt\nfrom api.db import get_sessionmaker as _gsm\nfrom api.models.orchestration import Tape as _Tape\nfrom api.models.knowledge import KbDocument as _KbDoc\nfrom sqlalchemy import or_ as _or, select as _select\ndoc_id = str(bindings.get('document_id') or bindings.get('doc_id') or '')\n_db = _gsm()()\ntry:\n    _rows = _db.execute(_select(_Tape.id, _Tape.tape_name, _Tape.category).where(\n        _Tape.status != 'offline', _or(_Tape.tape_type == 'kb_build', _Tape.tape_name.like('wiki构建-%'))\n    ).order_by(_Tape.tape_name)).all()\nfinally:\n    _db.close()\n_by_cat = {}\nfor _tid, _tname, _cat in _rows:\n    _cat = (_cat or '通用').strip()\n    if _cat and _cat not in _by_cat:\n        _by_cat[_cat] = {'tape_id': _tid, 'tape_name': _tname}\nbindings['domain_cats'] = sorted(_by_cat)\nbindings['domain_map'] = _by_cat\nbindings['doc_summary'] = ''\nif doc_id:\n    _db2 = _gsm()()\n    try:\n        _sum = _db2.execute(_select(_KbDoc.summary).where(_KbDoc.id == doc_id)).scalar()\n        bindings['doc_summary'] = (_sum or '').strip()\n    finally:\n        _db2.close()\nif not _by_cat:\n    bindings['domain_ready'] = False\n    bindings['domain_prompt'] = ''\nelse:\n    _lines = ['%s（对应编排：%s）' % (c, _by_cat[c]['tape_name'])\n              for c in sorted(_by_cat)]\n    bindings['domain_prompt'] = (\n        '以下是知识库平台已有的全部领域构建编排分类，请判断文档属于哪个领域：\\n'\n        + '\\n'.join('- ' + l for l in _lines)\n        + '\\n\\n只输出一个领域名称，必须原样取自上面列表，不要输出任何其它内容。\\n'\n        + '文档摘要：\\n' + (bindings.get('doc_summary') or '（无摘要）')\n    )\n    bindings['domain_ready'] = True\n"
+     },
+     "stepInst": "script"
+    },
+    "type": "custom"
+   },
+   {
+    "id": "n2",
+    "data": {
+     "label": "LLM领域判定",
+     "config": {
+      "model": "{{summary_model_id}}",
+      "prompt": "{{domain_prompt}}",
+      "system": "你是文档题材分类专家。只输出领域名称本身，禁止输出解释、序号、引号、标点或任何多余文字。",
+      "thinking": "disabled",
+      "max_tokens": "128",
+      "output_var": "domain_raw",
+      "skip_empty": true,
+      "temperature": "0.2"
+     },
+     "stepInst": "kb_llm_chat"
+    },
+    "type": "custom"
+   },
+   {
+    "id": "n3",
+    "data": {
+     "label": "映射为构建编排",
+     "config": {
+      "code": "import re as _re\nraw = str(bindings.get('domain_raw') or '').strip()\nraw = _re.sub(r'[\\\"\\'。、，《》（）\\[\\]\\n\\s]', '', raw).strip()\ncats = bindings.get('domain_cats') or []\ndmap = bindings.get('domain_map') or {}\nchosen = ''\nfor c in cats:\n    if raw == c or (raw and (raw in c or c in raw)):\n        chosen = c\n        break\nif not chosen:\n    # 兜底：部分领域名含连接词（与/和），去掉后子串匹配\n    for c in cats:\n        _key = c.replace('与', '').replace('和', '')\n        if _key and _key in raw:\n            chosen = c\n            break\nif chosen and chosen in dmap:\n    bindings['domain'] = chosen\n    bindings['resolved_tape_id'] = dmap[chosen]['tape_id']\n    bindings['resolved_tape_name'] = dmap[chosen]['tape_name']\nelse:\n    bindings['domain'] = ''\n    bindings['resolved_tape_id'] = ''\n    bindings['resolved_tape_name'] = ''\n"
+     },
+     "stepInst": "script"
+    },
+    "type": "custom"
+   }
+  ],
+  "edges": [
+   {
+    "source": "n1",
+    "target": "n2"
+   },
+   {
+    "source": "n2",
+    "target": "n3"
+   }
+  ],
+  "execParams": {
+   "kb_id": "",
+   "document_id": ""
+  },
+  "category": "通用",
+  "status": "effective"
+ }
+}

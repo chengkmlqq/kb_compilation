@@ -1,0 +1,134 @@
+{
+ "type": "kb.orchestration.draft",
+ "schemaVersion": 1,
+ "exportedAt": "2026-10-17T00:00:00.000000",
+ "draft": {
+  "tapeName": "摘要-Refine（增量修订）",
+  "tapeLabel": "文档摘要（Refine：摘要随批次滚动更新，适合大文档）",
+  "tapeDescr": "业界经典模式三：摘要草稿随每批新内容滚动修订（先基于第一批生成初始摘要，之后每批 带着已有摘要 + 新内容更新），每批只读一次，输出持续累积。产物=wiki 摘要页 + bindings.final_summary。",
+  "tapeType": "summary",
+  "category": "通用",
+  "status": "effective",
+  "nodes": [
+   {
+    "id": "n1",
+    "type": "custom",
+    "data": {
+     "label": "读文档切片",
+     "stepInst": "kb_read_doc",
+     "config": {
+      "document_id": "{{document_id}}",
+      "output_var": "chunks"
+     }
+    }
+   },
+   {
+    "id": "n2",
+    "type": "custom",
+    "data": {
+     "label": "分批+初始化",
+     "stepInst": "script",
+     "config": {
+      "code": "chunks = bindings.get('chunks') or []\nbatch_size = int(bindings.get('batch_size') or 3)\ncap = int(bindings.get('chunk_cap') or 3000)\nbatches = []\nfor i in range(0, len(chunks), batch_size):\n    texts = []\n    for c in chunks[i:i + batch_size]:\n        t = (c.get('content') or '').strip()\n        if len(t) > cap:\n            t = t[:cap] + '…'\n        if t:\n            texts.append(t)\n    if texts:\n        batches.append({'idx': len(batches), 'text': '\\n\\n'.join(texts)})\nbindings['batches'] = batches\nbindings['_total'] = len(batches)\nbindings['running_summary'] = ''\n"
+     }
+    }
+   },
+   {
+    "id": "n3",
+    "type": "custom",
+    "data": {
+     "label": "逐批循环",
+     "stepInst": "loop",
+     "config": {
+      "item_var": "batch",
+      "collection": "bindings.get('batches') or []"
+     }
+    }
+   },
+   {
+    "id": "n4",
+    "type": "custom",
+    "data": {
+     "label": "拼增量Prompt",
+     "stepInst": "script",
+     "config": {
+      "code": "batch = bindings.get('batch') or {}\nidx = int(batch.get('idx') or 0)\ntotal = int(bindings.get('_total') or 1)\nbindings['is_last'] = (idx >= total - 1)\nprev = str(bindings.get('running_summary') or '').strip()\ncur = str(batch.get('text') or '')\nif prev:\n    bindings['refine_prompt'] = (\n        '已有摘要：\\n' + prev +\n        '\\n\\n新内容（第 %d/%d 片段）：\\n' % (idx + 1, total) + cur +\n        '\\n\\n请基于「已有摘要 + 新内容」输出更新后的完整文档摘要'\n        '（150~250 字，保留已有要点并融入新要点，'\n        '不要输出任何标题（不要以# 文档摘要或《文档名》文档摘要开头），'\n        '只输出摘要正文）：')\nelse:\n    bindings['refine_prompt'] = (\n        '根据以下文档内容生成中文摘要（150~250 字，先一句话概括主题，'\n        '再分点列出核心要点，不要输出任何标题'\n        '（不要以# 文档摘要或《文档名》文档摘要开头），只输出摘要正文）：\\n\\n' + cur)\n"
+     }
+    }
+   },
+   {
+    "id": "n5",
+    "type": "custom",
+    "data": {
+     "label": "LLM更新摘要",
+     "stepInst": "kb_llm_chat",
+     "config": {
+      "prompt": "{{refine_prompt}}",
+      "output_var": "new_summary",
+      "model": "{{summary_model_id}}",
+      "temperature": "0.3",
+      "max_tokens": "1024",
+      "system": "你是资深中文文档摘要专家。直接输出最终摘要正文，禁止输出任何思考过程、分析草稿、字数统计、修改计划、对指令的复述或任何解释性文字。",
+      "thinking": "disabled"
+     }
+    }
+   },
+   {
+    "id": "n6",
+    "type": "custom",
+    "data": {
+     "label": "回写+摘要整理",
+     "stepInst": "script",
+     "config": {
+      "code": "import re as _re\ns = str(bindings.get('new_summary') or '').strip()\nMETA = _re.compile(r'(我们|计数|草稿|数一下|内心|复述|只输出|字数|字符|chars|chinese|we\\s|need|bullets?|theme|^\\s*(先一[句.]|再分点|输出最终)|^#{1,6}\\s|《[^》]{1,80}》\\s*文档摘要)', _re.I)\nlines = []\nfor _ln in s.split('\\\\n'):\n    t = _ln.strip().lstrip('。').strip()\n    if not t:\n        continue\n    if META.search(t):\n        continue\n    lines.append(t)\ns = '\\\\n'.join(lines).strip()\nbindings['running_summary'] = s\nif bindings.get('is_last'):\n    bindings['final_summary'] = s\nelse:\n    bindings['final_summary'] = ''\n"
+     }
+    }
+   },
+   {
+    "id": "n7",
+    "type": "custom",
+    "data": {
+     "label": "写文档摘要",
+     "stepInst": "kb_write_doc_summary",
+     "config": {
+      "document_id": "{{document_id}}",
+      "summary_var": "final_summary",
+      "skip_empty": true
+     }
+    }
+   }
+  ],
+  "edges": [
+   {
+    "source": "n1",
+    "target": "n2"
+   },
+   {
+    "source": "n2",
+    "target": "n3"
+   },
+   {
+    "source": "n3",
+    "target": "n4"
+   },
+   {
+    "source": "n4",
+    "target": "n5"
+   },
+   {
+    "source": "n5",
+    "target": "n6"
+   },
+   {
+    "source": "n6",
+    "target": "n7"
+   }
+  ],
+  "execParams": {
+   "kb_id": "",
+   "document_id": "",
+   "batch_size": "3",
+   "chunk_cap": "3000"
+  }
+ }
+}
