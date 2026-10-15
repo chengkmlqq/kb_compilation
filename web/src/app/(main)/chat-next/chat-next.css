@@ -1,5 +1,0 @@
-/* 新版智能问答页（assistant-ui 官方形态）：零平台 UI，仅页面容器高度链 */
-.cn-app {
-  height: 100%;
-  min-height: 0;
-}

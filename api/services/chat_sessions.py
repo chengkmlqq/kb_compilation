@@ -472,16 +472,14 @@ def recommended_questions(
 def follow_up_suggestions(
     db: Session,
     user_id: str,
-    session_id: str | None = None,
+    session_id: str,
     last_answer: str = "",
     count: int = 3,
     *,
     model_ctx: dict | None = None,
 ) -> list[str]:
-    """根据最近一条回答生成追问建议（FollowUp questions）。session 可选（无会话问答）。"""
-    if session_id:
-        # 归属校验：仅在会话模式下要求会话存在（chat-next 无会话模式不传 session_id）
-        get_session(db, user_id, session_id)
+    """根据最近一条回答生成追问建议（FollowUp questions）。"""
+    get_session(db, user_id, session_id)
     if not last_answer:
         return []
     prompt = (

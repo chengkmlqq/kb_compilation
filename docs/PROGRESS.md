@@ -429,21 +429,11 @@ cd web && bun run build && bun run type-check  # 前端构建（web/ 下；type-
 - 上传文件校验（扩展名白名单 / 病毒扫描 / 去重）
 - 菜单管理增强：菜单 icon 下拉选择（当前手填组件名）、菜单 ext-conf 可视化编辑（当前仅基本字段 + JSON）
 
-### 8.4 assistant-ui 试验问答页（2026-10-14 新增，与现有问答页并存）
-- 新页面 `/wiki/chat-next`（`web/src/app/(main)/chat-next/`，page.tsx + chat-next.css），依赖 `@assistant-ui/react ^0.15.28`（React 19 兼容）
-- 形态：`useExternalStoreRuntime` 接现有后端 `POST /api/v1/qa/stream`（自定义 SSE：stream_meta/context/thinking/delta/stage/done/error），**无会话模式**（前端组 history 传参，不建 ChatSession 不留库）——**页面交互/布局/视觉完全遵循 assistant-ui 官方 elements 体系**，**零平台 UI**（2026-10-14 二次改造：先替代首版 primitives+自绘 css 为官方全套；再按用户要求去掉全部平台适配）
-- **零平台 UI**（2026-10-14）：无顶部工具栏（知识库固定取第一个 + 默认模型）、无引用弹窗、无参考资料区；context 事件 hits 忽略；正文 `<kb doc=.../>` 标签在 delta/thinking 累积全文上整体正则清洗（流式切片跨事件，逐事件清洗无效）；删掉 globals.css 的 `.cn-app *` border 兼容块（unlayered 规则会压过官方 border utility）
-- **开放更多官方组件**（2026-10-14 晚）：① 空态推荐问题（adapter `suggestions` 喂固定引导语，官方 ThreadSuggestions 渲染）② 回答后推荐追问（done 后调后端 follow-up 更新 suggestions，官方 FollowupSuggestions 渲染；后端 `FollowUpRequest.session_id` / `follow_up_suggestions()` 放宽为可选——仅会话模式做 get_session 归属校验）③ 消息编辑（adapter `onEdit`：替换 sourceId 消息文本 + 截断后续 + 用新文本重生成，官方 Pencil → EditComposer）④ 错误官方形态（失败时消息 status `{type:"incomplete", reason:"error", error}` → 官方 MessagePrimitive.Error 红卡片，替代原 toast+移除占位）⑤ 模型下拉（composer 左下 ModelSelector + context 注入，透传 model_id）
-- 未开放及原因：反馈点赞/踩（后端 feedback 端点强绑 session_id+message_id，无会话模式需契约设计）、附件上传（端点绑 session + 存储表绑会话）、语音听写（Web Speech 依赖 Google 在线服务，内网不可用）、实时语音对话（后端无实时语音）、消息分支（无会话无分支）、工具调用群组/Generative UI（后端无工具数据）
-- 官方 elements 全套落地：`web/src/components/assistant-ui/elements/`（thread.aui/composer/reasoning.aui/tool-group.aui/attachment.aui/markdown-text 等 ~25 文件，从 GitHub main 拉取）+ `web/src/components/ui/`（button/skeleton/dialog/tooltip/avatar/textarea，Base UI 版）+ `web/src/lib/utils.ts`（cn）+ `web/src/hooks/`（use-copy-to-clipboard 等）+ Tailwind v4 分层导入（theme.css + utilities.css，**跳过 preflight**，@source 限定 assistant-ui 目录与 chat-next 页面，不影响现有 antd 页面）+ postcss.config.mjs
-- 依赖（bun）：@assistant-ui/react-markdown / @base-ui/react / class-variance-authority / clsx / tailwind-merge / lucide-react / tailwindcss@4 + @tailwindcss/postcss + postcss + tw-animate-css（dev）
-- **组件形态**：直接用官方 `Thread`（`elements/thread.aui.tsx`，含官方 composer/message/reasoning 折叠/工具组/追问/markdown，action bar 复制/反馈/重试/导出）；零平台 UI 后不注册任何 data part 渲染器（context 事件 hits 忽略），引用信息不呈现
-- 已验证：tsc --noEmit ✓、next build ✓（/chat-next 路由注册）、**playwright 实机验证 ✓**（2026-10-14：官方 Thread/composer 渲染、发送后流式回答渲染、思考折叠、回答文本无 `<kb>` 标签残留、零平台 UI 无残留——本机 build + 流式反代打线上后端；此前"未验证浏览器交互"已闭环）；线上部署后浏览器打开「新版问答」即可体验
-- 菜单三处同步（2026-10-14 方案J）：① 种子 KB_MENUS 新增 `chat_next`（新版问答 /chat-next，顶级 sort_num=2，kbs/agents/grp_ops/grp_config/system/grp_debug 顶级 +1 顺延）② 线上 modo_menu + modo_role_menu_rela 按 menu_id 精准 INSERT（勿 --reset-menus）③ 前端兜底 FALLBACK_MENUS 在 grp_ai 下加 chat_next（agents/websearch 顺延）——**兜底与种子结构本就漂移**（兜底 grp_ai 分组式、种子顶级页面式），各自保持内部一致即可
-- 坑位：
-  - 本地起 next start 验证须带 basePath：`/wiki/chat-next`；API 走 nginx 80（docker kb-api-server 未映射主机端口）
-  - web/node_modules 存在 root 所有的 `@codemirror.bak` 残留 → npm install reify EACCES；已改名 `_rescued_codemirror_bak` 避让（不能 rm，root 所有；需 sudo 清理）
-  - 3100 端口被旧的 next-server 占用（跑旧 build，/chat-next 404）；本地验证用 `next start -p 3211`
+### 8.4 assistant-ui 试验问答页（已移除 2026-10-15）
+- ~~/chat-next（web/src/app/(main)/chat-next/ + components/assistant-ui + components/ui + hooks + lib/utils.ts + postcss.config.mjs）~~ **已全量删除**（含依赖 @assistant-ui/react、@assistant-ui/react-markdown、@base-ui/react、class-variance-authority、clsx、lucide-react、tailwind-merge、tailwindcss@4、@tailwindcss/postcss、postcss、tw-animate-css；globals.css tailwind 段回退）
+- 后端 0783426 的 `FollowUpRequest.session_id` / `follow_up_suggestions()` 放宽（chat-next 无会话模式专用）已回退为必填
+- 菜单三处同步已还原：种子 KB_MENUS 移除 chat_next（顶级 sort_num 顺延还原）、线上 modo_menu / modo_role_menu_rela 待清理、前端兜底 FALLBACK_MENUS 移除 chat_next
+- 旧版 /chat 智能问答页面不受影响（不依赖上述任何文件/依赖）
 
 ## 9. 开工检查单（新会话）
 
