@@ -5,7 +5,7 @@
  * Card + inline 筛选（关键词/状态）+ antd Table + ModoPagination；
  * 操作：设计(动态选项卡打开 React Flow 画布) / 编辑 / 发布 / 下线 / 执行(逐步日志弹窗) / 删除。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -260,7 +260,7 @@ export default function OrchestrationsPage() {
     }
   };
 
-  // 2026-10-14 两级树：按 parent_id 分组（一级 = 无父级，二级挂在父级下）
+  // 2026-10-15 多级树：按 parent_id 分组（一级 = 无父级，逐层挂子级）
   const topCategories = useMemo(
     () => categories.filter((c) => !c.parent_id),
     [categories],
@@ -275,6 +275,54 @@ export default function OrchestrationsPage() {
     }
     return m;
   }, [categories]);
+
+  /** 递归渲染分类节点（领域 → 企业领域 → 文档类型 三级；有子级的行带 ▸/▾ 展开箭头） */
+  const renderCatNode = useCallback(
+    (c: TapeCategory, depth: number): ReactNode => {
+      const kids = childByParent.get(c.category) || [];
+      const expanded = expandedCats.has(c.category);
+      return (
+        <div key={c.category}>
+          <div
+            className={`kb-tpl-cat-item${depth > 0 ? " kb-tpl-cat-item--child" : ""}${selectedCategory === c.category ? " active" : ""}`}
+            onClick={() => selectCategory(c.category)}
+            style={{ paddingLeft: 8 + depth * 26, cursor: "pointer" }}
+          >
+            {kids.length > 0 ? (
+              <span
+                className="kb-tpl-cat-caret"
+                style={{ width: 14, display: "inline-flex", justifyContent: "center", fontSize: 10, color: "#999", marginRight: 2 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpandedCats((prev) => {
+                    const next = new Set(prev);
+                    if (expanded) next.delete(c.category);
+                    else next.add(c.category);
+                    return next;
+                  });
+                }}
+              >
+                {expanded ? "▾" : "▸"}
+              </span>
+            ) : null}
+            {depth >= 2 ? (
+              <FileTextOutlined style={{ fontSize: 12 }} />
+            ) : (
+              <FolderOutlined style={{ fontSize: 14 }} />
+            )}
+            <Tooltip title={c.descr || undefined}>
+              <span className="kb-tpl-cat-name">{c.label || c.category}</span>
+            </Tooltip>
+            <Tooltip title={`启用 ${c.effective} 个`}>
+              <span className="kb-tpl-cat-count">{c.total}</span>
+            </Tooltip>
+          </div>
+          {expanded && kids.map((kid) => renderCatNode(kid, depth + 1))}
+        </div>
+      );
+    },
+    [childByParent, expandedCats, selectedCategory, selectCategory],
+  );
 
   const openCreate = () => {
     setEditing(null);
@@ -500,61 +548,7 @@ export default function OrchestrationsPage() {
             <span className="kb-tpl-cat-name">全部编排</span>
             <span className="kb-tpl-cat-count">{allTotal}</span>
           </div>
-          {topCategories.map((c) => {
-            const kids = childByParent.get(c.category) || [];
-            const expanded = expandedCats.has(c.category);
-            return (
-              <div key={c.category}>
-                <div
-                  className={`kb-tpl-cat-item${selectedCategory === c.category ? " active" : ""}`}
-                  onClick={() => selectCategory(c.category)}
-                  style={{ cursor: "pointer" }}
-                >
-                  {kids.length > 0 ? (
-                    <span
-                      className="kb-tpl-cat-caret"
-                      style={{ width: 14, display: "inline-flex", justifyContent: "center", fontSize: 10, color: "#999", marginRight: 2 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setExpandedCats((prev) => {
-                          const next = new Set(prev);
-                          if (expanded) next.delete(c.category);
-                          else next.add(c.category);
-                          return next;
-                        });
-                      }}
-                    >
-                      {expanded ? "▾" : "▸"}
-                    </span>
-                  ) : null}
-                  <FolderOutlined style={{ fontSize: 14 }} />
-                  <Tooltip title={c.descr || undefined}>
-                    <span className="kb-tpl-cat-name">{c.label || c.category}</span>
-                  </Tooltip>
-                  <Tooltip title={`启用 ${c.effective} 个`}>
-                    <span className="kb-tpl-cat-count">{c.total}</span>
-                  </Tooltip>
-                </div>
-                {expanded &&
-                  kids.map((kid) => (
-                    <div
-                      key={kid.category}
-                      className={`kb-tpl-cat-item kb-tpl-cat-item--child${selectedCategory === kid.category ? " active" : ""}`}
-                      onClick={() => selectCategory(kid.category)}
-                      style={{ paddingLeft: 34, cursor: "pointer" }}
-                    >
-                      <FileTextOutlined style={{ fontSize: 12 }} />
-                      <Tooltip title={kid.descr || undefined}>
-                        <span className="kb-tpl-cat-name">{kid.label || kid.category}</span>
-                      </Tooltip>
-                      <Tooltip title={`启用 ${kid.effective} 个`}>
-                        <span className="kb-tpl-cat-count">{kid.total}</span>
-                      </Tooltip>
-                    </div>
-                  ))}
-              </div>
-            );
-          })}
+          {topCategories.map((c) => renderCatNode(c, 0))}
         </div>
       </aside>
 

@@ -196,3 +196,38 @@ def test_list_tapes_filters_by_top_category_including_children(db) -> None:
     # 点二级分类只过滤自身
     r2 = svc.list_tapes(db, category="工作报告")
     assert r2["total"] == 1
+
+
+def test_three_level_tree_counts_rollup(db) -> None:
+    """多级树（领域 → 企业领域 → 文档类型）：根目录计数 = 全部后代递归上卷。"""
+    db.add(om.TapeCategory(id="c1", category="领域", cat_type="tape", sort_num=0, state="1"))
+    db.add(om.TapeCategory(id="c2", category="通用办公", parent_id="领域", cat_type="tape", sort_num=1, state="1"))
+    db.add(om.TapeCategory(id="c3", category="工作报告", parent_id="通用办公", cat_type="tape", sort_num=2, state="1"))
+    db.add(om.TapeCategory(id="c4", category="会议纪要", parent_id="通用办公", cat_type="tape", sort_num=3, state="1"))
+    db.add(om.Tape(id="t1", tape_name="a", category="工作报告", status="effective"))
+    db.add(om.Tape(id="t2", tape_name="b", category="会议纪要", status="draft"))
+    db.add(om.Tape(id="t3", tape_name="c", category="通用办公", status="draft"))
+    db.commit()
+    cats = {c["category"]: c for c in svc.list_tape_categories(db)}
+    assert cats["领域"]["total"] == 3  # 根目录 = 企业领域 + 其下文档类型全量
+    assert cats["领域"]["effective"] == 1
+    assert cats["通用办公"]["total"] == 3  # 二级 = 自身 + 三级
+    assert cats["工作报告"]["total"] == 1  # 叶子只看自身
+    assert cats["通用办公"]["parent_id"] == "领域"
+
+
+def test_list_tapes_filters_root_category_includes_all_descendants(db) -> None:
+    """点击根目录「领域」= 过滤到全部后代分类（含三级文档类型）下的编排。"""
+    db.add(om.TapeCategory(id="c1", category="领域", cat_type="tape", sort_num=0, state="1"))
+    db.add(om.TapeCategory(id="c2", category="通用办公", parent_id="领域", cat_type="tape", sort_num=1, state="1"))
+    db.add(om.TapeCategory(id="c3", category="工作报告", parent_id="通用办公", cat_type="tape", sort_num=2, state="1"))
+    db.add(om.TapeCategory(id="c4", category="医疗健康", parent_id="领域", cat_type="tape", sort_num=3, state="1"))
+    db.add(om.Tape(id="t1", tape_name="挂在三级", category="工作报告", status="draft"))
+    db.add(om.Tape(id="t2", tape_name="挂在二级", category="通用办公", status="draft"))
+    db.add(om.Tape(id="t3", tape_name="另一领域", category="医疗健康", status="draft"))
+    db.commit()
+    r = svc.list_tapes(db, category="领域")
+    assert r["total"] == 3  # 根目录下全部后代
+    # 点三级叶子只过滤自身
+    r2 = svc.list_tapes(db, category="工作报告")
+    assert r2["total"] == 1

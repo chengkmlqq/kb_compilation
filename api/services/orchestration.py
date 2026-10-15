@@ -145,14 +145,25 @@ def list_tapes(db, page=1, page_size=20, keyword="", status="", category=""):
 
 
 def _category_with_children(db, category: str) -> list[str]:
-    """取分类名 + 其二级子分类名（两级树聚合过滤用）。"""
+    """取分类名 + 其全部后代子分类名（多级树聚合过滤用，BFS 按 parent_id 逐层展开）。
+
+    点击根目录（如「领域」）= 该目录 + 所有后代分类名集合；点叶子 = 仅自身。
+    """
     names = [category]
-    rows = (
-        db.query(TapeCategory.category)
-        .filter(TapeCategory.parent_id == category, TapeCategory.state == "1")
-        .all()
-    )
-    names += [r[0] for r in rows]
+    frontier = [category]
+    while frontier:
+        nxt: list[str] = []
+        for parent in frontier:
+            rows = (
+                db.query(TapeCategory.category)
+                .filter(TapeCategory.parent_id == parent, TapeCategory.state == "1")
+                .all()
+            )
+            for (child,) in rows:
+                if child not in names:
+                    names.append(child)
+                    nxt.append(child)
+        frontier = nxt
     return names
 
 
@@ -256,13 +267,30 @@ def _list_categories(db, model, cat_type: str, default_name: str):
             "category": c.category,
             "label": c.label or c.category,
             "descr": c.descr or "",
-            "parent_id": c.parent_id,  # 0021 两级树
+            "parent_id": c.parent_id,  # 0021 起多级树
             "total": counts.get(c.category, {"total": 0})["total"],
             "effective": counts.get(c.category, {"effective": 0})["effective"],
         }
+    # 多级树聚合：节点计数 = 自身 + 其下全部后代计数；按层级从深到浅逐级上卷
+    depths: dict[str, int] = {}
+
+    def _depth(name: str, seen: set[str]) -> int:
+        if name in depths:
+            return depths[name]
+        if name in seen:
+            return 0  # 环保护（理论上不会发生）
+        seen.add(name)
+        pid = by_name[name].get("parent_id")
+        d = 0 if not pid or pid not in by_name else _depth(pid, seen) + 1
+        depths[name] = d
+        return d
+
     for c in cats:
-        if c.parent_id and c.parent_id in by_name:
-            p = by_name[c.parent_id]
+        _depth(c.category, set())
+    for c in sorted(cats, key=lambda x: depths[x.category], reverse=True):
+        pid = c.parent_id
+        if pid and pid in by_name:
+            p = by_name[pid]
             p["total"] += by_name[c.category]["total"]
             p["effective"] += by_name[c.category]["effective"]
 
