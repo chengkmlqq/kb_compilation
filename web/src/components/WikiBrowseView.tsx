@@ -173,7 +173,7 @@ function renderWikiLinks(content: string, kbId: string): string {
 
 /** 扁平化的树行（目录 / 页面），带深度用于缩进 */
 type TreeRow =
-  | { kind: "directory"; key: string; folderId: string; label: string; count: number; pageCount: number; depth: number; hasChildren: boolean }
+  | { kind: "directory"; key: string; folderId: string; label: string; count: number; pageCount: number; pageTotal: number; depth: number; hasChildren: boolean }
   | { kind: "page"; key: string; page: WikiPageItem; depth: number };
 
 interface BranchData {
@@ -325,6 +325,7 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
           label: f.name,
           count: f.child_count ?? 0,
           pageCount: f.page_count ?? 0,
+          pageTotal: f.page_total ?? f.page_count ?? 0,
           depth,
           hasChildren: (f.child_count ?? 0) > 0,
         });
@@ -511,7 +512,7 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
           <DownOutlined className={`kb-wiki-directory-toggle${expanded ? " kb-wiki-directory-toggle--expanded" : ""}`} />
           <span className="kb-wiki-directory-title">{row.label}</span>
           <div className="kb-wiki-tree-trailing">
-            <span className="kb-wiki-directory-count">{row.pageCount}</span>
+            <span className="kb-wiki-directory-count">{row.pageTotal}</span>
           </div>
         </div>
       );

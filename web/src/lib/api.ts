@@ -319,6 +319,8 @@ export interface DocFolderItem {
   name: string;
   parent_id: string;
   child_count: number;
+  /** 子树文档总数（含子孙目录，2026-10-15 左侧树数量统计用） */
+  doc_total?: number;
 }
 
 export function apiListDocuments(
@@ -532,6 +534,8 @@ export interface WikiFolderNode {
   parent_id: string;
   child_count?: number;
   page_count?: number;
+  /** 子树 wiki 页总数（含子孙目录，2026-10-15 左侧树数量统计用） */
+  page_total?: number;
 }
 
 export interface WikiBranchData {

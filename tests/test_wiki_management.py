@@ -44,7 +44,8 @@ class FakeKb:
 
 
 def _make_page(
-    db: Session, kb_id: str, slug: str, title: str, content: str = "# t\n", page_type: str = "entity"
+    db: Session, kb_id: str, slug: str, title: str, content: str = "# t\n",
+    page_type: str = "entity", folder_id: str = "",
 ) -> WikiPage:
     p = WikiPage(
         id=slug,  # 用 slug 当 id 简化链接关联（真实是 uuid，这里便于断言）
@@ -53,12 +54,102 @@ def _make_page(
         title=title,
         page_type=page_type,
         content=content,
-        folder_id="",
+        folder_id=folder_id,
         status="active",
     )
     db.add(p)
     db.commit()
     return p
+
+
+def test_wiki_branch_page_total_subtree(db: Session) -> None:
+    """2026-10-15：左侧树节点数量统计 = 子树 wiki 页总数（直属 + 全部子孙目录，不含目录本身）。
+
+    目录树：f1 → f11 → f111；另 f12（f1 的另一个子目录）。
+    页面分布：f1(2) / f11(1) / f111(3) / f12(1)，根级散页 1。
+      - f111.page_total = 3
+      - f11.page_total  = 1 + 3 = 4
+      - f12.page_total  = 1
+      - f1.page_total   = 2 + 4 + 1 = 7
+    """
+    kb_id = "kb-subtree"
+    folders = ["f1", "f11", "f111", "f12"]
+    parents = {"f1": "", "f11": "f1", "f111": "f11", "f12": "f1"}
+    for fid in folders:
+        db.add(WikiFolder(id=fid, kb_id=kb_id, name=f"目录{fid}", parent_id=parents[fid]))
+    pages = {  # folder_id -> [slug]
+        "": ["root-page"],
+        "f1": ["p-f1-a", "p-f1-b"],
+        "f11": ["p-f11-a"],
+        "f111": ["p-f111-a", "p-f111-b", "p-f111-c"],
+        "f12": ["p-f12-a"],
+    }
+    for fid, slugs in pages.items():
+        for s in slugs:
+            _make_page(db, kb_id, s, s, folder_id=fid)
+    db.commit()
+
+    # 懒加载分支：根级只返回直属目录（仅 f1；f12 是 f1 的子目录），深层需逐级展开
+    branch = kb_admin.wiki_branch(db, kb_id)
+    by_id = {f["id"]: f for f in branch["folders"]}
+    assert set(by_id.keys()) == {"f1"}
+    assert by_id["f1"]["page_total"] == 7, f"f1 子树页数应 7，实际 {by_id['f1']['page_total']}"
+    sub = kb_admin.wiki_branch(db, kb_id, folder_id="f1")
+    sub_by_id = {f["id"]: f for f in sub["folders"]}
+    assert set(sub_by_id.keys()) == {"f11", "f12"}
+    assert sub_by_id["f11"]["page_total"] == 4
+    assert sub_by_id["f12"]["page_total"] == 1
+    sub2 = kb_admin.wiki_branch(db, kb_id, folder_id="f11")
+    assert {f["id"] for f in sub2["folders"]} == {"f111"}
+    assert next(f for f in sub2["folders"] if f["id"] == "f111")["page_total"] == 3
+    # 语义不变：child_count 仍是「直属子项数」（展开箭头用，= 子目录 2 + 直属页 2），
+    # page_count 仍是直属页数
+    assert by_id["f1"]["child_count"] == 4
+    assert by_id["f1"]["page_count"] == 2
+
+    # 全量接口同样带 page_total（管理面板/深链定位复用）
+    tree = kb_admin.wiki_tree(db, kb_id)
+    tree_by_id = {f["id"]: f for f in tree["folders"]}
+    assert tree_by_id["f1"]["page_total"] == 7
+    folders_full = kb_admin.wiki_folders(db, kb_id)
+    full_by_id = {f["id"]: f for f in folders_full}
+    assert full_by_id["f11"]["page_total"] == 4
+
+
+def test_doc_branch_doc_total_subtree(db: Session) -> None:
+    """2026-10-15：文档目录树节点 = 子树文档总数（含子孙目录）。"""
+    from api.models.knowledge import DocFolder
+
+    kb_id = "kb-doc-subtree"
+    db.add(DocFolder(id="d1", kb_id=kb_id, name="根目录", parent_id=""))
+    db.add(DocFolder(id="d11", kb_id=kb_id, name="子目录", parent_id="d1"))
+    db.add(DocFolder(id="d12", kb_id=kb_id, name="子目录2", parent_id="d1"))
+    db.commit()
+    for fid, slugs in {"": ["doc-root"], "d1": ["doc-1", "doc-2"], "d11": ["doc-11"],
+                       "d12": ["doc-12a", "doc-12b"]}.items():
+        for s in slugs:
+            db.add(KbDocument(id=s, kb_id=kb_id, file_name=f"{s}.docx", folder_id=fid))
+    db.commit()
+
+    folders = kb_admin.doc_folders(db, kb_id)
+    by_id = {f["id"]: f for f in folders}
+    assert by_id["d1"]["doc_total"] == 5, f"d1 子树文档数应 5（2 直属 + 1 + 2），实际 {by_id['d1']['doc_total']}"
+    assert by_id["d11"]["doc_total"] == 1
+    assert by_id["d12"]["doc_total"] == 2
+
+
+def test_subtree_totals_cycle_safe(db: Session) -> None:
+    """parent_id 成环（脏数据）不挂死：memo 占位防递归死循环。"""
+    from api.services.kb_admin import _subtree_file_totals
+
+    kb_id = "kb-cycle"
+    db.add(WikiFolder(id="c1", kb_id=kb_id, name="环1", parent_id="c2"))
+    db.add(WikiFolder(id="c2", kb_id=kb_id, name="环2", parent_id="c1"))
+    db.commit()
+    totals = _subtree_file_totals(db, kb_id, WikiFolder, {"c1": 2, "c2": 1})
+    # 不抛异常；c1 = 直属2 + (c2 直属1 + c1[已占位0]) = 3
+    assert totals["c1"] == 3
+    assert totals["c2"] == 1
 
 
 def test_wiki_stats(db: Session) -> None:

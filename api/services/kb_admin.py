@@ -884,12 +884,14 @@ def doc_folders(db: Session, kb_id: str) -> list[dict]:
         select(DocFolder).where(DocFolder.kb_id == kb_id).order_by(DocFolder.created_at)
     ).scalars().all()
     counts = _doc_child_counts(db, kb_id)
+    totals = _subtree_file_totals(db, kb_id, DocFolder, _doc_direct_counts(db, kb_id))
     return [
         {
             "id": f.id,
             "name": f.name,
             "parent_id": f.parent_id or "",
             "child_count": counts.get(f.id, 0),
+            "doc_total": totals.get(f.id, 0),
         }
         for f in folders
     ]
@@ -911,6 +913,48 @@ def _doc_child_counts(db: Session, kb_id: str) -> dict[str, int]:
     for fid, n in list(sub_folders) + list(sub_docs):
         counts[fid or ""] = counts.get(fid or "", 0) + int(n)
     return counts
+
+
+def _doc_direct_counts(db: Session, kb_id: str) -> dict[str, int]:
+    """每个 folder 的直属文档数（不含子目录），子树文件总数计算的直接层。"""
+    rows = db.execute(
+        select(func.coalesce(KbDocument.folder_id, ""), func.count())
+        .where(KbDocument.kb_id == kb_id)
+        .group_by(func.coalesce(KbDocument.folder_id, ""))
+    ).all()
+    return {str(fid or ""): int(n) for fid, n in rows}
+
+
+def _subtree_file_totals(
+    db: Session, kb_id: str, folder_cls: type, direct: dict[str, int]
+) -> dict[str, int]:
+    """每个 folder 的子树文件总数（直属文件 + 全部子孙目录下的文件，递归求和，不含目录本身）。
+
+    2026-10-15：左侧树节点数量统计从「直属子项数/直属文件数」改为「子树文件总数」——
+    用户在知识库详情左侧树上期望看到该目录（含子孙）下的全部文件数。folder_cls 传
+    DocFolder / WikiFolder；direct 为每个 folder 的直属文件计数。memo 进入时先占位
+    防 parent_id 成环死循环（环结构本身非法，结果不精确但不会挂）。
+    """
+    rows = db.execute(
+        select(folder_cls.id, func.coalesce(folder_cls.parent_id, ""))
+        .where(folder_cls.kb_id == kb_id)
+    ).all()
+    children: dict[str, list[str]] = {}
+    for fid, pid in rows:
+        children.setdefault(str(pid or ""), []).append(str(fid))
+    totals: dict[str, int] = {}
+
+    def _sum(fid: str) -> int:
+        if fid in totals:
+            return totals[fid]
+        totals[fid] = 0  # 防环占位
+        v = direct.get(fid, 0) + sum(_sum(c) for c in children.get(fid, []))
+        totals[fid] = v
+        return v
+
+    for fid, _ in rows:
+        _sum(str(fid))
+    return totals
 
 
 def doc_branch(
@@ -937,6 +981,7 @@ def doc_branch(
         .limit(page_size)
     ).scalars().all()
     counts = _doc_child_counts(db, kb_id)
+    totals = _subtree_file_totals(db, kb_id, DocFolder, _doc_direct_counts(db, kb_id))
     return {
         "kb_id": kb_id,
         "folder_id": fid,
@@ -946,6 +991,7 @@ def doc_branch(
                 "name": f.name,
                 "parent_id": f.parent_id or "",
                 "child_count": counts.get(f.id, 0),
+                "doc_total": totals.get(f.id, 0),
             }
             for f in folders
         ],
@@ -1120,12 +1166,14 @@ def wiki_tree(db: Session, kb_id: str) -> dict:
     pages = db.execute(
         select(WikiPage).where(WikiPage.kb_id == kb_id, WikiPage.status == "active")
     ).scalars().all()
+    totals = _subtree_file_totals(db, kb_id, WikiFolder, _wiki_page_counts(db, kb_id))
     folder_items = [
         {
             "id": f.id,
             "name": f.name,
             "parent_id": f.parent_id or "",
             "page_count": sum(1 for p in pages if (p.folder_id or "") == f.id),
+            "page_total": totals.get(f.id, 0),
         }
         for f in folders
     ]
@@ -1197,6 +1245,7 @@ def wiki_branch(
     ).scalars().all()
     counts = _wiki_child_counts(db, kb_id)
     page_counts = _wiki_page_counts(db, kb_id)
+    totals = _subtree_file_totals(db, kb_id, WikiFolder, page_counts)
     return {
         "kb_id": kb_id,
         "folder_id": fid,
@@ -1207,6 +1256,7 @@ def wiki_branch(
                 "parent_id": f.parent_id or "",
                 "child_count": counts.get(f.id, 0),
                 "page_count": page_counts.get(f.id, 0),
+                "page_total": totals.get(f.id, 0),
             }
             for f in folders
         ],
@@ -1236,6 +1286,7 @@ def wiki_folders(db: Session, kb_id: str) -> list[dict]:
     ).scalars().all()
     counts = _wiki_child_counts(db, kb_id)
     page_counts = _wiki_page_counts(db, kb_id)
+    totals = _subtree_file_totals(db, kb_id, WikiFolder, page_counts)
     return [
         {
             "id": f.id,
@@ -1243,6 +1294,7 @@ def wiki_folders(db: Session, kb_id: str) -> list[dict]:
             "parent_id": f.parent_id or "",
             "child_count": counts.get(f.id, 0),
             "page_count": page_counts.get(f.id, 0),
+            "page_total": totals.get(f.id, 0),
         }
         for f in folders
     ]

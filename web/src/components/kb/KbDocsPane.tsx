@@ -212,7 +212,7 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
             <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {f.name}
             </span>
-            <span style={{ color: "#999", fontSize: 11 }}>{f.child_count || 0}</span>
+            <span style={{ color: "#999", fontSize: 11 }}>{f.doc_total ?? 0}</span>
             <span className="kb-doc-folder-actions" style={{ display: "none", gap: 2 }}>
               <Tooltip title="新建子目录">
                 <FolderAddOutlined style={{ fontSize: 12 }} onClick={(e) => { e.stopPropagation(); createFolder(f.id); }} />
