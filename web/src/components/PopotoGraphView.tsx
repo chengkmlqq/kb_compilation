@@ -264,7 +264,13 @@ export default function PopotoGraphView({ kbId, height = 640 }: PopotoGraphViewP
         // 内部自增数字 id），于是画布节点全是数字和 id，长文本还把节点包围盒撑大。
         // 正确做法：把 getTextValue 注册到 label 级 provider，由 getProperty 优先命中；
         // 节点属性挂载在 node.attributes（Neo4j 属性），不是 node.properties。
-        const readProps = (v: any): any => (v && typeof v === "object" ? v.attributes ?? v : v);
+        // 节点属性可能在 attributes（popoto 内部规范）或 properties（/api/v1/cypher
+        // 原生 Neo4j 结构 {id,labels,properties}），两层都兼容——否则 pickName 取不到
+        // name → 回退 node.id，画布节点显示数字/复合 id（2026-10-14 实测）。
+        const readProps = (v: any): any => {
+          if (!v || typeof v !== "object") return v;
+          return v.attributes ?? v.properties ?? v;
+        };
         const pickName = (p: any): string => {
           const flat = readProps(p);
           const v = flat?.name ?? flat?.entity_type ?? flat?.description;
