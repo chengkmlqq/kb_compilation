@@ -74,6 +74,8 @@ KNOWLEDGE_BUSINESS_TABLES = {
     # 质量评估（迁移 0018）随 5f52ff0 引入，2026-10-14 补白名单。
     "kb_quality_run",
     "kb_quality_report",
+    # 文档类型构建模式表（本体 Schema 补丁 8373e36 引入），2026-10-15 补白名单。
+    "kb_doc_type_config",
 }
 
 # Chat conversation persistence (chat_session / chat_message / chat_attachment) — framework store.
