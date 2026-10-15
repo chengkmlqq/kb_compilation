@@ -38,6 +38,7 @@ import {
   TapeRunDetail,
   TapeTemplateItem,
 } from "@/lib/api";
+import { tapeFuncMeta } from "@/lib/tape-func";
 
 const { Text } = Typography;
 
@@ -484,6 +485,16 @@ export default function OrchestrationsPage() {
       render: (v?: string) => <Tag>{v || "通用"}</Tag>,
     },
     {
+      // 2026-10-15 功能标签：摘要（summary）/ 知识构建（kb_build）/ 其他（general）
+      title: "功能",
+      dataIndex: "tape_type",
+      width: 100,
+      render: (v?: string) => {
+        const m = tapeFuncMeta(v);
+        return <Tag color={m.color}>{m.label}</Tag>;
+      },
+    },
+    {
       title: "描述",
       dataIndex: "tape_descr",
       ellipsis: true,
@@ -684,7 +695,8 @@ export default function OrchestrationsPage() {
             <ModoSelect
               options={[
                 { label: "通用编排", value: "general" },
-                { label: "数据合成", value: "data_synthesis" },
+                { label: "摘要", value: "summary" },
+                { label: "知识构建", value: "kb_build" },
               ]}
             />
           </Form.Item>

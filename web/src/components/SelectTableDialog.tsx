@@ -21,6 +21,7 @@ import {
   DatagridDsItem,
   TableCandidateItem,
 } from "@/lib/api";
+import { groupBuildEngineOptions } from "@/lib/tape-func";
 
 const { Text } = Typography;
 
@@ -191,10 +192,7 @@ export default function SelectTableDialog({
           placeholder={defaultBuildTapeId ? "跟随知识库默认（已选）" : "跟随知识库默认（未设置）"}
           value={buildEngine || undefined}
           onChange={setBuildEngine}
-          options={buildEngines.map((t) => ({
-            label: t.tape_label || t.tape_name,
-            value: t.id,
-          }))}
+          options={groupBuildEngineOptions(buildEngines)}
         />
         <span style={{ fontSize: 12, color: "rgba(0,0,0,.45)" }}>
           选择后绑定表构建 Wiki 走该编排，留空跟随知识库默认

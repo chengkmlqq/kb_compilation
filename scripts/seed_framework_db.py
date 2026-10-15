@@ -805,7 +805,7 @@ def _seed_wiki_build_tape(db) -> None:
             "loop 逐实体写页 → wiki_rebuild_links 重建互链。"
             "输入 bindings：kb_id / document_id。"
         ),
-        tape_type="general",
+        tape_type="kb_build",  # 2026-10-15 功能标签：知识构建
         status="draft",
         nodes=list(WIKI_BUILD_TAPE["nodes"]),
         edges=list(WIKI_BUILD_TAPE["edges"]),
@@ -1084,7 +1084,7 @@ def _seed_table_wiki_tape(db) -> None:
             "wiki_upsert_page 写表主页(page_type=table) → wiki_rebuild_links 重建互链。"
             "输入 bindings：kb_id / document_id（表源文档）。"
         ),
-        tape_type="general",
+        tape_type="kb_build",  # 2026-10-15 功能标签：知识构建
         status="draft",
         nodes=list(TABLE_WIKI_TAPE["nodes"]),
         edges=list(TABLE_WIKI_TAPE["edges"]),
@@ -1599,7 +1599,7 @@ def _seed_summary_tapes(db) -> None:
             tape_name=name,
             tape_label=label,
             tape_descr=descr,
-            tape_type="general",
+            tape_type="summary",  # 2026-10-15 功能标签：摘要（本循环三个均为文档摘要编排）
             status="draft",
             nodes=list(tape_dict["nodes"]),
             edges=list(tape_dict["edges"]),
@@ -1654,7 +1654,7 @@ def _seed_domain_wiki_tapes(db) -> None:
             tape_name=name,
             tape_label=str(d.get("tapeLabel") or name),
             tape_descr=str(d.get("tapeDescr") or ""),
-            tape_type=str(d.get("tapeType") or "general") or "general",
+            tape_type="kb_build",  # 2026-10-15 功能标签：领域 wiki 构建统一「知识构建」（JSON tapeType 恒 general）
             category=category,
             status="draft",
             nodes=list(d.get("nodes") or []),

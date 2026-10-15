@@ -19,6 +19,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Col, Collapse, Form, InputNumber, Modal, Row, Select, Space, Switch, Typography } from "antd";
 import { DeleteOutlined, FileTextOutlined, LinkOutlined, PlusOutlined } from "@ant-design/icons";
 import { apiListParserEngines, BuildEngineItem, ParserEngineItem } from "@/lib/api";
+import { groupBuildEngineOptions } from "@/lib/tape-func";
 
 const { Text } = Typography;
 
@@ -475,7 +476,7 @@ export default function UploadConfirmDialog({
                         placeholder="跟随知识库默认"
                         value={buildEngine || undefined}
                         onChange={setBuildEngine}
-                        options={buildEngines.map((t) => ({ label: t.tape_label || t.tape_name, value: t.id }))}
+                        options={groupBuildEngineOptions(buildEngines)}
                       />
                     </Form.Item>
                     <Text type="secondary" style={{ fontSize: 12 }}>仅对本次上传的文件生效，不修改知识库默认配置</Text>

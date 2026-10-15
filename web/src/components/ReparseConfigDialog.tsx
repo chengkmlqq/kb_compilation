@@ -18,6 +18,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { App, Button, Col, Collapse, Form, InputNumber, Modal, Row, Select, Space, Switch, Typography } from "antd";
 import { apiListParserEngines, BuildEngineItem, ParserEngineItem } from "@/lib/api";
+import { groupBuildEngineOptions } from "@/lib/tape-func";
 import {
   DEFAULT_CHUNKING,
   FILE_TYPE_OPTIONS,
@@ -346,7 +347,7 @@ export default function ReparseConfigDialog({
                     placeholder="沿用文档/KB 默认"
                     value={buildEngine || undefined}
                     onChange={setBuildEngine}
-                    options={buildEngines.map((t) => ({ label: t.tape_label || t.tape_name, value: t.id }))}
+                    options={groupBuildEngineOptions(buildEngines)}
                   />
                 </Form.Item>
                 <Text type="secondary" style={{ fontSize: 12 }}>仅对本次重新解析生效，不修改知识库默认配置</Text>

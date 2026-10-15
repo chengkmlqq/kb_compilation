@@ -274,6 +274,8 @@ export interface BuildEngineItem {
   tape_name: string;
   tape_label?: string;
   tape_descr?: string;
+  /** 2026-10-15 功能标签：summary（摘要）/ kb_build（知识构建）/ general（其他） */
+  tape_type?: string;
 }
 
 export function apiListBuildEngines() {

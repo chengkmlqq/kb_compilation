@@ -44,6 +44,7 @@ import {
   KbItem,
   ModelItem,
 } from "@/lib/api";
+import { groupBuildEngineOptions } from "@/lib/tape-func";
 import ModoPagination from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 import KBConfigModal from "@/components/KBConfigModal";
@@ -672,10 +673,7 @@ export default function KbsPage() {
                       <Select
                         allowClear
                         placeholder={buildEngines.length ? "选择构建引擎" : "暂无已发布的编排，请先到服务编排发布"}
-                        options={buildEngines.map((t) => ({
-                          label: `${t.tape_label || t.tape_name}${t.tape_descr ? `（${t.tape_descr}）` : ""}`,
-                          value: t.id,
-                        }))}
+                        options={groupBuildEngineOptions(buildEngines)}
                       />
                     </Form.Item>
                     <Form.Item
