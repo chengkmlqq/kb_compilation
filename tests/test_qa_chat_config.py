@@ -1,7 +1,7 @@
 """智能问答页联网搜索按钮显隐参数（PLATFORM_CONFIG.CHAT_WEB_SEARCH_ENABLED）测试。
 
 - validate_platform_value 对 bool 型参数规范化 1/0 并拒绝非法值；
-- GET /api/v1/qa/config 返回 web_search_enabled：DB 参数 > 默认值（默认显示）。
+- GET /api/v1/qa/config 返回 web_search_enabled：DB 参数 > 默认值（默认隐藏）。
 """
 from __future__ import annotations
 
@@ -69,12 +69,12 @@ def test_validate_bool_param_normalizes() -> None:
         validate_platform_value("CHAT_WEB_SEARCH_ENABLED", "banana")
 
 
-def test_chat_config_default_shows_websearch(qa_client) -> None:
-    """未配置参数时默认显示联网搜索按钮（保持原有行为）。"""
+def test_chat_config_default_hides_websearch(qa_client) -> None:
+    """未配置参数时默认隐藏联网搜索按钮。"""
     client, _ = qa_client
     r = client.get("/api/v1/qa/config")
     assert r.status_code == 200
-    assert r.json()["data"]["web_search_enabled"] is True
+    assert r.json()["data"]["web_search_enabled"] is False
 
 
 def test_chat_config_param_hides_websearch(qa_client) -> None:

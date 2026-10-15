@@ -369,10 +369,10 @@ PLATFORM_CONFIG_FIELDS: dict[str, tuple[str, str, str, list[str], str]] = {
     "CHAT_WEB_SEARCH_ENABLED": (
         "智能问答联网搜索按钮",
         "bool",
-        "1",
+        "0",
         [],
-        "控制智能问答页面是否显示「联网搜索」开关按钮：1=显示，0=隐藏"
-        "（隐藏仅去掉入口，agent 模式自身的 web_search 工具不受影响）",
+        "控制智能问答页面是否显示「联网搜索」开关按钮：1=显示，0=隐藏，"
+        "默认隐藏（隐藏仅去掉入口，agent 模式自身的 web_search 工具不受影响）",
     ),
 }
 

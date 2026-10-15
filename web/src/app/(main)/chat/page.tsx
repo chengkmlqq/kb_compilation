@@ -128,8 +128,8 @@ export default function ChatPage() {
   const MAX_IMAGES = 5;
   // 2026-10-12 对齐 WeKnora：整文件拖放上传（拖入时输入卡片高亮）
   const [dragActive, setDragActive] = useState(false);
-  // 2026-10-15 联网搜索按钮显隐由参数表控制（PLATFORM_CONFIG.CHAT_WEB_SEARCH_ENABLED，默认显示）
-  const [webSearchVisible, setWebSearchVisible] = useState(true);
+  // 2026-10-15 联网搜索按钮显隐由参数表控制（PLATFORM_CONFIG.CHAT_WEB_SEARCH_ENABLED，默认隐藏）
+  const [webSearchVisible, setWebSearchVisible] = useState(false);
   // 2026-10-12 对齐 WeKnora 输入区联网搜索开关（普通问答/agent 模式通用，请求级生效）
   const [webSearch, setWebSearch] = useState(false);
   // 2026-10-12 对齐 WeKnora embeddedMode：iframe 嵌入 / ?embed=1 / ?noframe=1 时
@@ -1495,11 +1495,6 @@ export default function ChatPage() {
                 )}
               </div>
             ))}
-            </div>
-          )}
-          {streaming && (
-            <div className="kb-global-wait" role="status" aria-label="思考中">
-              <span className="kb-global-wait__spinner" aria-hidden="true" />
             </div>
           )}
           {showScrollBtn && (
