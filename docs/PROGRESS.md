@@ -14,6 +14,7 @@
 - **库内数据（已应用）**：docker cp 进 kb-api-server 执行 → 新建 211 / 修正 20（20 个存量领域补 descr）；验证：20 一级 + 211 二级（二级全部挂在 20 领域下）、descr 231/231 全填
 - **验证**：tests/test_tape_category.py 19 passed；web tsc --noEmit exit 0
 - **部署**：前端 Tooltip 改动需 CI 重建 kb-web + pull（数据层改动即时生效，左树已见两级展开）；脚本改动走 CI 固化
+- **二轮（同日 2026-10-15，commit 65b8fd5）目录结构改为多级**：根目录分「领域」「通用」——cates.md 全部 20 个企业领域挂到「领域」下（三级 = 文档类型），6 个通用编排（wiki构建-基础原子版/表构建/摘要三模式/质量评估-QA，kb_tape.category=通用）归「通用」。配套：后端 `_list_categories` 计数按层级从深到浅递归上卷（根目录=全部后代）、`_category_with_children` 改 BFS 后代收集（点根目录过滤全部后代）；前端左树递归渲染任意层级（有子级带 ▸/▾）；种子脚本加 FIXED_CATEGORIES（领域=1/通用=2/摘要=3）+ 领域统一 parent_id=领域。线上已应用（种子新建1/修正22，服务层 cp+restart），接口实测 领域=20、通用=6；tests/test_tape_category.py 21 passed（+2 三级用例）
 
 ## 18. 当前状态（2026-10-14 任务监控页摘要任务层级修复）
 
