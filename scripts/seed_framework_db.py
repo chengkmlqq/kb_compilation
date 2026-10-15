@@ -702,6 +702,9 @@ def main(argv: list[str] | None = None) -> None:
         #    文档构建质量评估：切片/wiki/图数据三维度检查 + 规则归因汇总落库。
         _seed_quality_tape(db)
 
+        # 14) 种子编排：20 个领域 wiki 构建（2026-10-15 固化，数据 seed_tape_data/*.json）
+        _seed_domain_wiki_tapes(db)
+
         print("\nDONE — 登录: " + SEED_USER_ID + "/" + SEED_PASSWORD + "（编排内置组件 " + str(len(ORCH_STEP_DEFINES)) + " 个）")
     finally:
         db.close()
@@ -1533,6 +1536,64 @@ def _seed_summary_tapes(db) -> None:
         db.commit()
         save_tape_design(db, tape.id, tape_dict["nodes"], tape_dict["edges"], tape_dict.get("exec_params") or {})
         print(f"[{i}/12] 种子编排「{name}」OK: id={tape.id[:12]}… 节点 {len(tape_dict['nodes'])} 边 {len(tape_dict['edges'])}（status=draft，页面点执行即可用）")
+
+
+def _seed_domain_wiki_tapes(db) -> None:
+    """幂等建 20 个领域 wiki 构建编排（数据在 scripts/seed_tape_data/*.json，2026-10-15 固化）。
+
+    每个 JSON 为导出草稿（type=kb.orchestration.draft, draft.tapeName/nodes/edges/execParams），
+    category 由 tapeName 推导（wiki构建-<领域> → <领域>，自动落一级分类挂载树）。
+    存在则 skip；改内容需删 Tape+TapeStep 行重建（与其它种子编排同语义）。
+    """
+    import json
+    from pathlib import Path
+
+    from api.models.orchestration import Tape
+    from api.services.orchestration import ensure_tape_category, save_tape_design
+
+    data_dir = Path(__file__).resolve().parent / "seed_tape_data"
+    if not data_dir.is_dir():
+        print("[seed-domain] 无 seed_tape_data/ 目录，跳过领域编排种子")
+        return
+    files = sorted(data_dir.glob("*.json"))
+    created = skipped = 0
+    for fp in files:
+        try:
+            draft = json.loads(fp.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            print(f"[seed-domain] 读取失败 {fp.name}: {e}")
+            continue
+        d = draft.get("draft") or draft
+        name = str(d.get("tapeName") or "").strip()
+        if not name:
+            print(f"[seed-domain] 无 tapeName: {fp.name}")
+            continue
+        existing = db.execute(select(Tape).where(Tape.tape_name == name)).scalars().first()
+        if existing:
+            skipped += 1
+            print(f"[seed-domain] 编排「{name}」已存在 (skip)")
+            continue
+        category = name.replace("wiki构建-", "", 1) or "通用"
+        ensure_tape_category(db, category, cat_type="tape")
+        tape = Tape(
+            id=uuid.uuid4().hex[:32],
+            tape_name=name,
+            tape_label=str(d.get("tapeLabel") or name),
+            tape_descr=str(d.get("tapeDescr") or ""),
+            tape_type=str(d.get("tapeType") or "general") or "general",
+            category=category,
+            status="draft",
+            nodes=list(d.get("nodes") or []),
+            edges=list(d.get("edges") or []),
+            exec_params=d.get("execParams") or {},
+            create_user=None,
+        )
+        db.add(tape)
+        db.commit()
+        save_tape_design(db, tape.id, d.get("nodes") or [], d.get("edges") or [], d.get("execParams") or {})
+        created += 1
+        print(f"[seed-domain] 编排「{name}」OK: id={tape.id[:12]}… 分类「{category}」 节点 {len(d.get('nodes') or [])}")
+    print(f"[seed-domain] 完成: 新建 {created} / 跳过 {skipped}")
 
 
 if __name__ == "__main__":
