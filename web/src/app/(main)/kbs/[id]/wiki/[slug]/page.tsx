@@ -42,7 +42,8 @@ function renderWikiLinks(content: string, kbId: string): string {
   if (!content) return content;
   const wikiLinkRe = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
   return content.replace(wikiLinkRe, (_m, slug: string, alias?: string) => {
-    const clean = (slug || "").trim();
+    // 命名空间形态 slug（WeKnora 风格 longSENTENCE/xxx）→ 库内扁平 slug（longsentence-xxx）
+    const clean = (slug || "").trim().replace(/\//g, "-");
     if (!clean) return _m;
     const label = (alias || "").trim() || clean;
     const href = `/kbs/${encodeURIComponent(kbId)}/wiki/${encodeURIComponent(clean)}`;
@@ -226,7 +227,24 @@ export default function WikiPageDetailPage() {
           )}
           <hr />
           <div className="kb-markdown">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                a: ({ href, children }) => (
+                  <a
+                    href={href}
+                    onClick={(e) => {
+                      if (href && href.startsWith("/kbs/")) {
+                        e.preventDefault();
+                        void router.push(href);
+                      }
+                    }}
+                  >
+                    {children}
+                  </a>
+                ),
+              }}
+            >
               {renderWikiLinks(page.content || "", id)}
             </ReactMarkdown>
           </div>
