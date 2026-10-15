@@ -127,6 +127,10 @@ function parentLabel(record: ParentJobItem): string {
     const tapeName = ((record.params || {}).tape_name as string) || "";
     return tapeName ? `编排「${tapeName}」` : "编排执行";
   }
+  // 2026-10-15：优先显示文档文件名（后端已按 documentId 解析并附 doc_name）；
+  // 文档已删/查不到时回退原 document_id 前 16 位展示
+  const docName = (record as { doc_name?: string }).doc_name || "";
+  if (docName) return `${tc} · 文档 ${docName}`;
   const docId = ((record.params || {}).documentId as string) || ((record.params || {}).document_id as string) || "";
   return docId ? `${tc} · 文档 ${docId.slice(0, 16)}` : tc;
 }

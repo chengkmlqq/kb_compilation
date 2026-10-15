@@ -13,7 +13,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -73,6 +73,38 @@ def _parent_job_to_dict(job: Job, child_count: int, child_states: dict) -> dict:
     d["child_count"] = child_count
     d["child_states"] = child_states
     return d
+
+
+def _job_doc_names(db: Session, jobs: Sequence[Job]) -> dict[str, str]:
+    """{job_id: 文档文件名}——task_params.documentId/document_id → kb_document.file_name。
+
+    2026-10-15：任务监控首屏主任务名由「文档 <document_id 前 16 位>」改为显示文件名
+    （用户反馈 UUID 不可读）。批量查一次避免 N+1；文档已删/查不到则不入映射，
+    前端自动回退原 document_id 展示。
+    """
+    from api.models.knowledge import KbDocument
+
+    job_doc: dict[str, str] = {}
+    for j in jobs:
+        try:
+            params = json.loads(j.task_params or "{}") or {}
+        except (TypeError, json.JSONDecodeError):
+            continue
+        did = str(params.get("documentId") or params.get("document_id") or "")
+        if did:
+            job_doc[j.id] = did
+    if not job_doc:
+        return {}
+    rows = (
+        db.execute(
+            select(KbDocument.id, KbDocument.file_name).where(
+                KbDocument.id.in_(set(job_doc.values()))
+            )
+        )
+        .all()
+    )
+    names = {str(did): str(fname or "") for did, fname in rows if fname}
+    return {jid: names[did] for jid, did in job_doc.items() if did in names}
 
 
 # ── 2026-10-12 父子任务视图 ─────────────────────────────────────────
@@ -193,19 +225,21 @@ def list_parent_jobs(
     runs_by_id = {r.id: r for r in runs}
 
     agg = _child_agg(db, job_ids)
+    doc_names = _job_doc_names(db, jobs)  # 2026-10-15：主任务名显示文档文件名
     items: list[dict] = []
     for rid, _ts, kind in page_merged:
         if kind == "job":
             j = jobs_by_id.get(rid)
             if not j:
                 continue
-            items.append(
-                _parent_job_to_dict(
-                    j,
-                    child_count=agg.get(j.id, {}).get("count", 0),
-                    child_states=agg.get(j.id, {}).get("states", {}),
-                )
+            item = _parent_job_to_dict(
+                j,
+                child_count=agg.get(j.id, {}).get("count", 0),
+                child_states=agg.get(j.id, {}).get("states", {}),
             )
+            if j.id in doc_names:
+                item["doc_name"] = doc_names[j.id]
+            items.append(item)
         else:
             r = runs_by_id.get(rid)
             if r:

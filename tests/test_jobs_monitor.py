@@ -833,3 +833,33 @@ def test_parents_run_state_filter_mapping_and_mixed_paging(monkeypatch) -> None:
         assert r.status_code == 400
     finally:
         app.dependency_overrides.clear()
+
+
+def test_parents_include_doc_name(monkeypatch) -> None:
+    """2026-10-15：主任务名显示文档文件名——parents 列表按 documentId 解析 file_name 附 doc_name。"""
+    from api.models.knowledge import KbDocument
+
+    db = _make_session()
+    db.query(Job).delete()
+    db.commit()
+    db.add(Job(id="DOC_doc1", task_id="doc1", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"kbId": "kb1", "documentId": "doc1"}),
+               trigger_type="API", state="SUCCESS"))
+    # 无 documentId 的父任务（无文档可解析）
+    db.add(Job(id="DOC_doc2", task_id="doc2", task_class="KbDocumentEmbedTask",
+               queue_name="default", task_params=json.dumps({"kbId": "kb2"}),
+               trigger_type="API", state="SUCCESS"))
+    db.add(KbDocument(id="doc1", kb_id="kb1", file_name="监管制度汇编.docx"))
+    db.commit()
+
+    app.dependency_overrides[get_db] = lambda: db
+    client = _jobs_client(db, monkeypatch)
+    try:
+        r = client.get("/api/v1/jobs/parents")
+        assert r.status_code == 200
+        by_id = {it["id"]: it for it in r.json()["data"]["items"]}
+        assert by_id["DOC_doc1"]["doc_name"] == "监管制度汇编.docx"
+        # 无 documentId / 文档不存在 → 不附 doc_name（前端回退 document_id）
+        assert "doc_name" not in by_id["DOC_doc2"]
+    finally:
+        app.dependency_overrides.clear()

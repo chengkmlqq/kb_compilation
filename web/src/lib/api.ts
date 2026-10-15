@@ -2507,6 +2507,8 @@ export interface ParentJobItem extends JobItem {
   child_count?: number;
   /** 子任务状态聚合：{SUCCESS: 2, RUNNING: 1} */
   child_states?: Record<string, number>;
+  /** 文档文件名（链头任务按 task_params.documentId 解析，主任务名显示用） */
+  doc_name?: string;
 }
 
 export interface JobChildrenResponse {
