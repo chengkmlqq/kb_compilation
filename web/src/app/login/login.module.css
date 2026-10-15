@@ -102,12 +102,18 @@
   margin-top: 50px;
 }
 
-/* 输入框改为下划线样式（对齐 data_supply_base 登录表单） */
+/* 输入框改为下划线样式（对齐 data_supply_base 登录表单）：
+   原版 Arco：label line-height 1（16px 高）、输入框 padding 5px 0 高约 32px、
+   表单项间距 20px（antd 默认 24px，需覆盖） */
+.loginForm :global(.ant-form-item) {
+  margin-bottom: 20px;
+}
+
 .loginForm :global(.ant-form-item-label > label) {
   font-size: 16px;
   color: #1d2129;
-  height: 28px;
-  line-height: 28px;
+  height: 16px !important;
+  line-height: 1 !important;
 }
 
 .loginForm :global(.ant-input),
@@ -115,7 +121,8 @@
   border: none !important;
   background-color: transparent !important;
   border-bottom: 1px solid #dadfe6 !important;
-  padding: 8px 0px !important;
+  padding: 5px 0px !important;
+  height: 32px !important;
   border-radius: 0px !important;
   box-shadow: none !important;
 }
@@ -152,9 +159,13 @@
   background-color: #3261ce;
 }
 
+.loginForm :global(.ant-form-item-label > label::before) {
+  display: none !important;
+}
+
 .itemRemember {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }

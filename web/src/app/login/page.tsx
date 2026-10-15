@@ -123,7 +123,6 @@ export default function LoginPage() {
               className={styles.loginForm}
               onFinish={onFinish}
               layout="vertical"
-              size="large"
             >
               <Form.Item
                 label="账号名称"
