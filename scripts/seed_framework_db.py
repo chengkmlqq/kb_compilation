@@ -83,6 +83,10 @@ SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 #   全量删除，恢复方案J 引入前的菜单（chat_next 已从 KB_MENUS 移除，顶级 sort_num 顺延还原）
 # 默认隐藏菜单（state=0，菜单管理页可恢复启用）；chat_next 已随页面删除退出该集合
 HIDDEN_MENUS: set[str] = set()
+# 已下架菜单（2026-10-15 移除「新版问答」/chat-next 页面及其组件）：
+# KB_MENUS 是幂等 upsert 语义——只增改不删，seed 里删掉条目不会动旧库残留行；
+# 故 main() 里按此集合显式清理 modo_menu + modo_role_menu_rela（新库同样幂等无操作）。
+REMOVED_MENUS: set[str] = {"chat_next"}
 # 结构：Header 顶级 = 知识库管理/文件管理/切片核对/智能问答/智能体配置/联网搜索/
 #         数据源/数据查询/运维监控(目录)/配置管理(目录)/系统管理。
 #   - route 留空 = 纯目录分组（只展开不跳转）
@@ -665,6 +669,29 @@ def main(argv: list[str] | None = None) -> None:
                     )
                     granted += 1
         db.commit()
+
+        # 废弃菜单清理（REMOVED_MENUS，2026-10-15 下架「新版问答」chat_next）：
+        # 菜单行与角色-菜单授权一并删除；KB_MENUS 是 upsert 不删旧行，
+        # 旧库残留的 chat_next 必须显式清理才真正下架（新库幂等无操作）。
+        removed_menus = removed_menu_rels = 0
+        for mid in REMOVED_MENUS:
+            rows = db.execute(select(Menu).where(Menu.menu_id == mid)).scalars().all()
+            rels = db.execute(
+                select(RoleMenuRela).where(RoleMenuRela.menu_id == mid)
+            ).scalars().all()
+            for rel in rels:
+                db.delete(rel)
+            for mrow in rows:
+                db.delete(mrow)
+            removed_menus += len(rows)
+            removed_menu_rels += len(rels)
+        db.commit()
+        if removed_menus or removed_menu_rels:
+            print(
+                f"[5/6] 废弃菜单清理 OK: 删除菜单 {removed_menus} 行 / 角色授权 {removed_menu_rels} 行"
+                f"（{', '.join(sorted(REMOVED_MENUS))}）"
+            )
+
         print(
             f"[5/6] KB 菜单树种子 OK: 共 {len(KB_MENUS)} 项 "
             f"(顶级分组 {sum(1 for _, _, _, _, p, *_ in KB_MENUS if not p)} 个 + 页面 {sum(1 for _, _, _, _, p, *_ in KB_MENUS if p)} 个) "

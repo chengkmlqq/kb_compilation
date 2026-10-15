@@ -328,7 +328,9 @@ export default function ChatPage() {
         setMsgs(
           (res.data?.items || []).map((m) => ({ ...m, agent: !!s?.agent_id })) as UiMessage[],
         );
-        if (s?.kb_id) setKbId(s.kb_id);
+        // 2026-10-15 纯对话模式：会话未绑定知识库时清空选择
+        // （不沿袭上一会话/默认的知识库；st 存在时其 kb_id 覆盖此值）
+        setKbId(s?.kb_id || undefined);
         if (s?.agent_id) {
           setAgentMode(s.agent_id);
         } else {
@@ -336,9 +338,10 @@ export default function ChatPage() {
         }
         // 2026-10-12 对齐 WeKnora last_request_state：恢复会话级输入态
         // （agent/kb/模型/联网开关/@目标；kb_id 由会话绑定覆盖）
+        // 2026-10-15 纯对话模式：会话未绑定知识库时清空选择（不沿袭上一会话/默认的知识库）
         const st = s?.last_request_state;
         if (st) {
-          if (st.kb_id) setKbId(st.kb_id);
+          setKbId(st.kb_id || undefined);
           if (st.agent_id) setAgentMode(st.agent_id);
           if (st.model_id) setModelId(st.model_id);
           if (st.web_search_enabled != null) setWebSearch(!!st.web_search_enabled);
@@ -564,10 +567,7 @@ export default function ChatPage() {
     // @提及：本条消息级目标覆盖（kb / agent），未提及则沿用顶部选择
     const effectiveKbId = atTarget?.kind === "kb" ? atTarget.id : kbId;
     const effectiveAgent = atTarget?.kind === "agent" ? atTarget.id : agentMode;
-    if (!effectiveKbId && !effectiveAgent) {
-      toast.warning("请先选择知识库");
-      return;
-    }
+    // 2026-10-15 纯对话模式：知识库与智能体都未选择时直接走纯 LLM 对话（不再拦截）
     const userMsg: UiMessage = {
       id: `local-user-${Date.now()}`,
       role: "user",
@@ -1261,7 +1261,15 @@ export default function ChatPage() {
         }}
       >
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${token.colorSplit}`, display: "flex", alignItems: "center", gap: 12, flexShrink: 0, background: "#fff" }}>
-          <Text strong>智能问答（RAG）</Text>
+          <Text strong>智能问答</Text>
+          {/* 2026-10-15 纯对话模式：未选知识库时显示模式标识 */}
+          {kbId ? (
+            <Tag color="blue" icon={<DatabaseOutlined />} style={{ marginInlineEnd: 0 }}>
+              {kbs.find((k) => k.id === kbId)?.name || "知识库问答"}
+            </Tag>
+          ) : (
+            <Tag color="green" style={{ marginInlineEnd: 0 }}>纯对话（未选知识库）</Tag>
+          )}
           {streaming && (
             <Button size="small" danger icon={<StopOutlined />} onClick={stopGenerating}>
               停止
@@ -1697,6 +1705,16 @@ export default function ChatPage() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+            {/* 2026-10-15 纯对话模式：知识库选择（allowClear，清空=不检索直接对话） */}
+            <Select
+              value={kbId || undefined}
+              onChange={(v) => setKbId(v || undefined)}
+              placeholder="不选=直接对话"
+              allowClear
+              style={{ minWidth: 150, marginRight: 6 }}
+              suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
+              options={kbs.map((k) => ({ value: k.id, label: k.name }))}
+            />
             {/* 左下角：智能体选择（对齐 WeKnora agent-mode-btn） */}
             <Select
               value={agentMode || undefined}
@@ -1790,7 +1808,6 @@ export default function ChatPage() {
                 shape="circle"
                 size="small"
                 icon={<SendOutlined />}
-                disabled={!kbId && !agentMode}
                 onClick={() => void send()}
                 style={{ width: 30, height: 30 }}
               />

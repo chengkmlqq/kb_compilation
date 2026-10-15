@@ -196,7 +196,9 @@ def build_messages(
             + "\n\n".join(parts)
         )
     else:
-        system = agent_prompt or "你是一个知识库问答助手。若检索片段不足以回答，请明确说明。"
+        # 2026-10-15 纯对话模式（未选知识库 / 检索零命中）：不注入检索片段，
+        # 用通用助手人设自由回答；信息不足时明确说明，避免编造。
+        system = agent_prompt or "你是一个智能问答助手。请直接、准确地回答用户的问题；信息不足时请明确说明，不要编造。"
     messages = [ChatMessage(role="system", content=system)]
     messages.extend(history or [])
     messages.append(
@@ -494,7 +496,7 @@ def _chunk_document_images(hits: list, limit: int = 4) -> list[str]:
 
 def answer_question(
     kb_db: Session,
-    kb: Any,
+    kb: Any | None,
     question: str,
     query_embedding: list[float] | None,
     retrieval_overrides: dict | None = None,
@@ -511,6 +513,9 @@ def answer_question(
     max_tool_iterations: int = 3,
 ) -> Iterator[dict]:
     """Full RAG QA stream: retrieve -> build messages -> stream deltas.
+
+    kb=None 时为纯对话模式（前端未选择知识库）：跳过检索，hits 为空，
+    直接以通用助手人设走 LLM 流式回答（2026-10-15）。
 
     Yields dicts: {"type": "context", "hits": [...]} first, then
     {"type": "delta", "text": "..."} per chunk. history accepts either
@@ -531,23 +536,36 @@ def answer_question(
     """
     from api.services.retrieval import config_from_kb, hybrid_search
 
-    yield {"type": "stage", "stage": "retrieval", "status": "running", "title": "正在检索知识库…"}
-    cfg = config_from_kb(kb, retrieval_overrides)
-    hits = hybrid_search(kb_db, kb.id, question, query_embedding, cfg)
+    # 2026-10-15 纯对话模式：kb=None（前端未选知识库）→ 跳过检索，
+    # hits 为空直接走 LLM 对话（build_messages 空上下文即自由回答）。
     if chat_cfg is None:
         chat_cfg = load_chat_config(
             kb_db, user_id=user_id or "", team_name=team_name or "", is_sys_admin=is_sys_admin
         )
-
-    yield {
-        "type": "stage",
-        "stage": "retrieval",
-        "status": "done",
-        "title": "检索完成",
-        "summary": f"命中 {len(hits)} 篇相关片段",
-        "hits_count": len(hits),
-    }
-    yield {"type": "context", "hits": [h.__dict__ for h in hits]}
+    if kb is None:
+        hits: list = []
+        yield {
+            "type": "stage",
+            "stage": "retrieval",
+            "status": "done",
+            "title": "未选择知识库，直接问答",
+            "summary": "纯对话模式",
+            "hits_count": 0,
+        }
+        yield {"type": "context", "hits": []}
+    else:
+        yield {"type": "stage", "stage": "retrieval", "status": "running", "title": "正在检索知识库…"}
+        cfg = config_from_kb(kb, retrieval_overrides)
+        hits = hybrid_search(kb_db, kb.id, question, query_embedding, cfg)
+        yield {
+            "type": "stage",
+            "stage": "retrieval",
+            "status": "done",
+            "title": "检索完成",
+            "summary": f"命中 {len(hits)} 篇相关片段",
+            "hits_count": len(hits),
+        }
+        yield {"type": "context", "hits": [h.__dict__ for h in hits]}
 
     if history:
         normalized: list[ChatMessage] = [

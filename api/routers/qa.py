@@ -90,12 +90,16 @@ def _run_generation(
     logger = logging.getLogger(__name__)
     db = get_sessionmaker()()
     try:
-        kb = db.execute(
-            select(KbDatasource).where(KbDatasource.id == req.kb_id)
-        ).scalars().first()
-        if not kb:
-            _fail(stream_id, f"知识库不存在: {req.kb_id}")
-            return
+        # 2026-10-15 纯对话模式：kb_id 为空（未选择知识库）→ 跳过知识库校验与检索，
+        # 直接走 LLM 对话；kb_id 非空则校验知识库必须真实存在。
+        kb = None
+        if req.kb_id:
+            kb = db.execute(
+                select(KbDatasource).where(KbDatasource.id == req.kb_id)
+            ).scalars().first()
+            if not kb:
+                _fail(stream_id, f"知识库不存在: {req.kb_id}")
+                return
 
         identity = decode_identity_cookie(x_next_identity or "")
         ctx_user_id = identity.user_id if identity else ""
@@ -156,7 +160,8 @@ def _run_generation(
                 logger.warning("persist user msg failed: %s", e)
 
         query_embedding = None
-        if req.embed_query:
+        # 纯对话模式（未选知识库）不检索，无需生成查询向量
+        if req.embed_query and kb is not None:
             try:
                 from api.services.embedding import get_embedding_client
 
