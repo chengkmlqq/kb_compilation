@@ -421,16 +421,21 @@ export default function KbsPage() {
   // 根容器用 height:100% 对齐模型管理页——外层 .ant-tabs-content 非 flex 容器，
   // flex:1 对 block 父无效会退回内容高度，导致卡片区撑不开、分页不钉底（贴在卡片下方而非页面底部）
   const listPane = (
-    <div
-      style={{
-        height: "100%",
-        minHeight: 0,
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        padding: "12px 16px 0",
-      }}
-    >
+    // 对齐智能体/模型管理页：外层 flex column，内容用白底 Card 包裹，分页在 Card 外钉底
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <Card
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
+      >
         {/* 筛选表单（对齐用户管理页：查询/重置 显式触发） */}
         <Form
           form={searchForm}
@@ -556,6 +561,7 @@ export default function KbsPage() {
             </Row>
           )}
         </div>
+      </Card>
 
         {/* 分页常驻底栏 */}
         <div style={{ flexShrink: 0, marginTop: "auto" }}>
@@ -742,8 +748,7 @@ export default function KbsPage() {
     <div
       className="kbs-page"
       style={{
-        padding: 0,
-        background: "#fff",
+        padding: 8,
         height: "calc(100vh - var(--app-header-h, 45px))",
         display: "flex",
         flexDirection: "column",
