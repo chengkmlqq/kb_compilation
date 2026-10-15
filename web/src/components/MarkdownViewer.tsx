@@ -288,10 +288,19 @@ function renderBlock(
     const tbl = line.match(/^\|.+\|$/);
     if (tbl && lines[i + 1]?.match(/^\|[\s\-:|]+\|$/)) {
       flushList(`list-${i}`);
-      const header = line.slice(1, -1).split("|").map((c) => c.trim());
-      const body = lines[i + 2]?.match(/^\|.+\|$/)
-        ? lines[i + 2].slice(1, -1).split("|").map((c) => c.trim())
-        : null;
+      /** 去掉首尾竖线后按 | 拆列 */
+      const parseRow = (ln: string) => ln.slice(1, -1).split("|").map((c) => c.trim());
+      const header = parseRow(line);
+      // 数据行：分隔线之后连续的所有表格行（修复：原实现只取首行，
+      // 其余行被当普通段落渲染成带竖线的原始文本）
+      const bodyRows: string[][] = [];
+      let j = i + 2;
+      while (j < lines.length) {
+        const rowLine = lines[j];
+        if (!rowLine || !rowLine.match(/^\|.+\|$/)) break;
+        bodyRows.push(parseRow(rowLine));
+        j += 1;
+      }
       out.push(
         <table key={`tbl${i}`} className="kb-chat-md-table">
           <thead>
@@ -301,18 +310,20 @@ function renderBlock(
               ))}
             </tr>
           </thead>
-          {body && (
+          {bodyRows.length > 0 && (
             <tbody>
-              <tr>
-                {body.map((c, n) => (
-                  <td key={n}>{inline(c, `td${n}`, snippets, refs, onCitationClick, onHoverChange)}</td>
-                ))}
-              </tr>
+              {bodyRows.map((cells, r) => (
+                <tr key={r}>
+                  {cells.map((c, n) => (
+                    <td key={n}>{inline(c, `td${r}-${n}`, snippets, refs, onCitationClick, onHoverChange)}</td>
+                  ))}
+                </tr>
+              ))}
             </tbody>
           )}
         </table>
       );
-      i += body ? 2 : 1;
+      i = j - 1; // 循环再 i++ → 指向表格后第一行，避免数据行当段落重复渲染
       continue;
     }
     flushList(`list-${i}`);
