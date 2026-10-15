@@ -17,6 +17,7 @@ import io
 import json
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -284,6 +285,8 @@ def build_engines(
                     "tape_name": t.tape_name,
                     "tape_label": t.tape_label or "",
                     "tape_descr": t.tape_descr or "",
+                    # 2026-10-15 功能标签：summary（摘要）/ kb_build（知识构建）/ general（其他）
+                    "tape_type": t.tape_type or "general",
                 }
                 for t in rows
             ],
@@ -708,7 +711,12 @@ async def upload_document(
     }
 
 
-def _enqueue_document_process(kb_id: str, document_id: str, caller_identity: str = "") -> None:
+def _enqueue_document_process(
+    kb_id: str,
+    document_id: str,
+    caller_identity: str = "",
+    fresh_chain: bool = False,
+) -> None:
     """Create-or-reset a modo_job row (trigger=API) and send the Celery task.
 
     Runs on the framework session (modo_job lives on the shared store);
@@ -717,13 +725,21 @@ def _enqueue_document_process(kb_id: str, document_id: str, caller_identity: str
     caller_identity: 上传操作者的 x-next-identity cookie 原值，随任务参数
     透传给下游（编排脚本经 weknora_rpc 调平台 API 需登录身份，2026-10-12）。
 
-    幂等：job_id 固定为 DOC_{document_id}，重新解析时该行已存在 → 直接
-    insert 会撞主键(IntegrityError 1062)导致入队失败。改为先查后改——
+    幂等：job_id 固定为 DOC_{document_id}，重复入队（上传重试）时该行已存在
+    → 直接 insert 会撞主键(IntegrityError 1062)导致入队失败。改为先查后改——
     存在则重置为 PENDING 并清空上一轮执行痕迹，不存在则新建。
+
+    fresh_chain=True（2026-10-15 重新解析专用）：不复用旧链头行，而是新建
+    轮次链头（DOC_{id} 首次；重解析 DOC_{id}_R2/_R3...），使新一轮解析触发的
+    摘要/构建编排子任务挂到新链头下，任务监控页每轮独立、不混入历史链头的
+    旧子任务。旧链头行保留原状态作为历史。
     """
     from worker.celery_app import celery_app
 
-    job_id = f"DOC_{document_id}"
+    if fresh_chain:
+        job_id = _next_chain_job_id(document_id)
+    else:
+        job_id = f"DOC_{document_id}"
     task_class = "KbDocumentProcessTask"
     task_params = json.dumps(
         {"kbId": kb_id, "documentId": document_id, "cookie": caller_identity},
@@ -770,6 +786,34 @@ def _enqueue_document_process(kb_id: str, document_id: str, caller_identity: str
         task_id=job_id,
         queue="default",
     )
+
+
+def _next_chain_job_id(document_id: str) -> str:
+    """重新解析的新链头 job_id：DOC_{id} 已存在则顺延轮次 DOC_{id}_R2/_R3...。
+
+    首次（无任何 DOC_{id} 前缀行）返回 DOC_{id}；已有则取现有最大轮次 +1。
+    并发极端场景下若仍撞主键（两次 reparse 同时触发），insert 会抛
+    IntegrityError，reparse 端点已有 502 回滚处理，用户重试即得新轮次。
+    """
+    from api.db import get_sessionmaker
+
+    base = f"DOC_{document_id}"
+    framework_db = get_sessionmaker()()
+    try:
+        rows = framework_db.execute(
+            select(Job.id).where(Job.id.like(f"{base}%"))
+        ).scalars().all()
+    finally:
+        framework_db.close()
+    if not rows:
+        return base
+    max_round = 1
+    for rid in rows:
+        # 形态：DOC_{id} / DOC_{id}_R{n}
+        m = re.match(rf"^{re.escape(base)}_R(\d+)$", str(rid))
+        if m:
+            max_round = max(max_round, int(m.group(1)))
+    return f"{base}_R{max_round + 1}"
 
 
 @router.delete("/{kb_id}/documents/{document_id}")
@@ -849,10 +893,13 @@ def document_processing_timeline(kb_id: str, document_id: str, db: Session = Dep
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
-    # ---- 解析任务（DOC_<doc_id>，任务链上唯一的解析+嵌入任务） ----
+    # ---- 解析任务（DOC_<doc_id>[_R{n}]，任务链上唯一的解析+嵌入任务；
+    #      2026-10-15 重新解析会新建轮次链头 → 取最新一条） ----
     parse_job = db.execute(
-        select(Job.state, Job.duration_ms, Job.error_message, Job.start_time, Job.end_time)
-        .where(Job.id == f"DOC_{document_id}")
+        select(Job.id, Job.state, Job.duration_ms, Job.error_message, Job.start_time, Job.end_time)
+        .where(Job.id.like(f"DOC_{document_id}%"))
+        .order_by(Job.create_time.desc())
+        .limit(1)
     ).fetchone()
 
     # ---- wiki 构建任务（WIKI_SKILL_*，task_params.config.knowledge_id 关联） ----
@@ -925,10 +972,11 @@ def document_processing_timeline(kb_id: str, document_id: str, db: Session = Dep
     )
     stages = [
         {
-            "key": "parse", "label": "文档解析", "job_id": f"DOC_{document_id}",
-            "state": parse_job[0] if parse_job else "NONE",
-            "duration_ms": parse_job[1] if parse_job else None,
-            "error": parse_job[2] if parse_job else None,
+            "key": "parse", "label": "文档解析",
+            "job_id": parse_job[0] if parse_job else f"DOC_{document_id}",
+            "state": parse_job[1] if parse_job else "NONE",
+            "duration_ms": parse_job[2] if parse_job else None,
+            "error": parse_job[3] if parse_job else None,
             "detail": f"{chunk_total} 分块" if chunk_total else "",
         },
         {
@@ -1650,7 +1698,9 @@ def reparse_document(
     doc.chunk_count = 0
     db.commit()
     try:
-        _enqueue_document_process(kb_id, document_id)
+        # 2026-10-15 重新解析建新链头（DOC_{id}_R{n}），避免新一轮
+        # 摘要/构建编排子任务挂到旧链头下、新旧混在一起。
+        _enqueue_document_process(kb_id, document_id, fresh_chain=True)
     except Exception as exc:  # noqa: BLE001
         # 入队失败不裸 500：回滚文档状态（已清 chunks + 置 PENDING），
         # 返回明确错误供前端提示，文档可再次重试。

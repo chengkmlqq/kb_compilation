@@ -1,8 +1,12 @@
-"""重新解析（reparse）入队幂等性回归测试。
+"""重新解析（reparse）入队回归测试。
 
-回归背景：`_enqueue_document_process` 用固定 job_id=DOC_{document_id} 直接
+回归背景1：`_enqueue_document_process` 用固定 job_id=DOC_{document_id} 直接
 insert modo_job，首次上传已有该行 → 重新解析时撞主键 IntegrityError(1062)，
 入队失败且 Celery send_task 未执行。修复为「先查后改」的 upsert。
+
+2026-10-15 优化：重新解析改为 fresh_chain=True 新建轮次链头
+（DOC_{id}_R2/_R3...），不复用旧行——新一轮摘要/构建编排子任务挂到新链头下，
+任务监控页每轮独立，旧链头保留历史。默认路径（上传）仍保持幂等 upsert。
 """
 
 from __future__ import annotations
@@ -56,8 +60,9 @@ def test_enqueue_creates_job_first_time(job_db) -> None:
     assert len(sent) == 1 and sent[0][1] == f"DOC_{doc_id}"
 
 
-def test_enqueue_is_idempotent_on_reparse(job_db) -> None:
-    """核心回归：同一 document_id 重复入队不撞主键，重置为 PENDING 且只有一行。"""
+def test_enqueue_is_idempotent_on_upload_retry(job_db) -> None:
+    """默认路径（上传/重复入队）仍幂等：同一 document_id 重复入队不撞主键，
+    重置为 PENDING 且只有一行。"""
     from api.routers.kbs import _enqueue_document_process
 
     Session, sent = job_db
@@ -76,7 +81,7 @@ def test_enqueue_is_idempotent_on_reparse(job_db) -> None:
     db.commit()
     db.close()
 
-    # 重新解析再次入队 —— 修复前这里抛 IntegrityError(1062)
+    # 重复入队（上传重试）—— 修复前这里抛 IntegrityError(1062)
     _enqueue_document_process("kb1", doc_id)
 
     db = Session()
@@ -87,3 +92,47 @@ def test_enqueue_is_idempotent_on_reparse(job_db) -> None:
     assert row.duration_ms is None  # 上一轮痕迹已清
     assert row.error_message is None
     assert len(sent) == 2  # 两次都成功投递 Celery
+
+
+def test_reparse_fresh_chain_creates_round_job(job_db) -> None:
+    """重新解析（fresh_chain=True）不复用旧行：新建 DOC_{id}_R{n} 轮次链头，
+    旧链头保留原状态，新一轮子任务挂到新链头下。"""
+    from api.routers.kbs import _enqueue_document_process
+
+    Session, sent = job_db
+    doc_id = "doc-round"
+    base_id = f"DOC_{doc_id}"
+
+    # 首次上传入队 → DOC_{id}
+    _enqueue_document_process("kb1", doc_id)
+    db = Session()
+    row = db.get(Job, base_id)
+    row.state = "SUCCESS"
+    db.commit()
+    db.close()
+    assert len(sent) == 1 and sent[0][1] == base_id
+
+    # 第一次重新解析 → DOC_{id}_R2（新链头，旧行不动）
+    _enqueue_document_process("kb1", doc_id, fresh_chain=True)
+    db = Session()
+    old = db.get(Job, base_id)
+    assert old is not None
+    assert old.state == "SUCCESS"  # 旧链头保留历史状态
+
+    round2 = db.get(Job, f"{base_id}_R2")
+    assert round2 is not None
+    assert round2.state == "PENDING"
+    assert round2.task_id == doc_id
+    assert round2.trigger_type == "API"
+    assert round2.parent_id is None  # 仍是顶层链头
+    db.close()
+    assert len(sent) == 2 and sent[1][1] == f"{base_id}_R2"
+
+    # 第二次重新解析 → DOC_{id}_R3（轮次递增）
+    _enqueue_document_process("kb1", doc_id, fresh_chain=True)
+    db = Session()
+    round3 = db.get(Job, f"{base_id}_R3")
+    assert round3 is not None
+    assert round3.state == "PENDING"
+    db.close()
+    assert len(sent) == 3 and sent[2][1] == f"{base_id}_R3"
