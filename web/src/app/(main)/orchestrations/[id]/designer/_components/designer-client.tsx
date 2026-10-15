@@ -14,7 +14,6 @@ import type { Edge, Connection, Viewport } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { App, Button, Input, Modal, Select, Spin, Tag, Tooltip } from 'antd';
 import {
-  ArrowLeftOutlined,
   SaveOutlined,
   RocketOutlined,
   PlayCircleOutlined,
@@ -481,14 +480,6 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
     [tape, tapeId, nodes, edges, message],
   );
 
-  const handleBack = useCallback(() => {
-    if (onBack) {
-      onBack();
-      return;
-    }
-    router.push('/orchestrations');
-  }, [router, onBack]);
-
   /** 存为模板：先静默保存当前草稿，再把骨架存为模板 */
   const openTplModal = async () => {
     setTplName(tape?.tape_label || tape?.tape_name || '');
@@ -656,10 +647,6 @@ export function DesignerClient({ tapeId, onBack, onDirtyChange }: DesignerClient
           flexShrink: 0,
         }}
       >
-        <Tooltip title="返回列表">
-          <Button type="text" icon={<ArrowLeftOutlined />} onClick={handleBack} style={{ color: '#4e5969' }} />
-        </Tooltip>
-
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0, flex: 1 }}>
           <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: '#242e43', fontFamily: 'PingFang SC, sans-serif', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {tape?.tape_label || tape?.tape_name || '未命名编排'}
