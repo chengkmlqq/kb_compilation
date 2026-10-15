@@ -48,10 +48,8 @@ import {
   FolderAddOutlined,
   LinkOutlined,
   MessageOutlined,
-  ProfileOutlined,
   ShareAltOutlined,
   TagOutlined,
-  UnorderedListOutlined,
 } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
@@ -200,11 +198,9 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
   const [loading, setLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
 
-  // 视图模式（树 / 列表）与搜索（对齐 WeKnora sidebarViewMode + searchQuery）
-  const [viewMode, setViewMode] = useState<"tree" | "list">("tree");
+  // 搜索（对齐 WeKnora searchQuery）；2026-10-15 列表视图切换已移除，仅保留树视图
   const [searchText, setSearchText] = useState("");
   const [searchResults, setSearchResults] = useState<WikiSearchItem[] | null>(null);
-  const [flatPages, setFlatPages] = useState<WikiPageItem[] | null>(null);
 
   // 页面栈（返回导航）
   const [navStack, setNavStack] = useState<string[]>([]);
@@ -338,25 +334,6 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
     walk("", 0);
     return rows;
   }, [branches, expandedKeys]);
-
-  /** 列表模式：递归收集所有已加载分支的页面（并按需补拉未加载目录） */
-  const loadFlatPages = useCallback(async () => {
-    const collected: WikiPageItem[] = [];
-    const visited = new Set<string>();
-    const walk = async (folderId: string) => {
-      if (visited.has(folderId)) return;
-      visited.add(folderId);
-      let branch = branches[folderId];
-      if (!branch) {
-        branch = await fetchBranch(folderId);
-        setBranches((prev) => ({ ...prev, [folderId]: branch as BranchData }));
-      }
-      collected.push(...branch.pages);
-      for (const f of branch.folders) await walk(f.id);
-    };
-    await walk("");
-    setFlatPages(collected);
-  }, [branches, fetchBranch]);
 
   const onToggleDirectory = useCallback((folderId: string) => {
     setExpandedKeys((prev) => {
@@ -571,34 +548,6 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
                 setSearchResults(null);
               }}
             />
-            <div className="kb-wiki-view-toggle" role="group">
-              <Tooltip title="树视图" placement="top">
-                <button
-                  type="button"
-                  className={`kb-wiki-view-toggle-btn${viewMode === "tree" ? " active" : ""}`}
-                  aria-pressed={viewMode === "tree"}
-                  onClick={() => {
-                    setViewMode("tree");
-                    setFlatPages(null);
-                  }}
-                >
-                  <ProfileOutlined />
-                </button>
-              </Tooltip>
-              <Tooltip title="列表视图" placement="top">
-                <button
-                  type="button"
-                  className={`kb-wiki-view-toggle-btn${viewMode === "list" ? " active" : ""}`}
-                  aria-pressed={viewMode === "list"}
-                  onClick={() => {
-                    setViewMode("list");
-                    void loadFlatPages();
-                  }}
-                >
-                  <UnorderedListOutlined />
-                </button>
-              </Tooltip>
-            </div>
           </div>
         </div>
 
@@ -613,16 +562,11 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
                 </div>
               )}
             </>
-          ) : viewMode === "tree" ? (
+          ) : (
+            // 2026-10-15：仅保留树视图（列表视图切换已移除）
             <div className="kb-wiki-tree-panel">
               <div className="kb-wiki-tree-list">{treeRows.map(renderSidebarRow)}</div>
             </div>
-          ) : flatPages === null ? (
-            <div className="kb-wiki-group-loading">
-              <Spin size="small" />
-            </div>
-          ) : (
-            flatPages.map((p) => renderListItem(p))
           )}
 
           {/* 空状态 */}
@@ -651,15 +595,7 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
             </div>
           ) : (
             <>
-              {/* 返回导航 */}
-              {navStack.length > 0 && (
-                <div className="kb-wiki-nav-bar">
-                  <a className="kb-wiki-nav-back" onClick={goBack}>
-                    <DownOutlined style={{ transform: "rotate(90deg)", fontSize: 14 }} />
-                    <span>返回</span>
-                  </a>
-                </div>
-              )}
+              {/* 2026-10-15：页面详情顶部返回按钮已移除（左树可直接导航） */}
 
               {/* 页面 header */}
               <div className="kb-wiki-reader-header">

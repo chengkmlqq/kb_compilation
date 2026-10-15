@@ -189,7 +189,6 @@ export default function WikiPageDetailPage() {
       <Breadcrumb
         items={[
           { title: <a onClick={() => router.push("/kbs")}>知识库</a> },
-          { title: <a onClick={() => router.push(`/kbs/${id}`)}>返回</a> },
           { title: page.title },
         ]}
       />
