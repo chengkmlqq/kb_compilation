@@ -11,7 +11,6 @@ import {
   Empty,
   Form,
   Input,
-  Radio,
   Row,
   Select,
   Space,
@@ -56,7 +55,6 @@ import DocDetailPanel from "@/components/DocDetailPanel";
 
 // 新建抽屉分区导航（对齐智能体编辑器 AgentEditorModal 与配置弹窗 KBConfigModal）
 const CREATE_SECTIONS = [
-  { key: "parse", label: "文档解析", icon: <FileTextOutlined /> },
   { key: "wiki", label: "Wiki 构建", icon: <BookOutlined /> },
   { key: "retrieval", label: "检索配置", icon: <SearchOutlined /> },
 ];
@@ -103,7 +101,7 @@ export default function KbsPage() {
   const [configKb, setConfigKb] = useState<KbItem | null>(null);
   const [form] = Form.useForm();
   const [searchForm] = Form.useForm<{ keyword: string }>();
-  const [createSection, setCreateSection] = useState("parse");
+  const [createSection, setCreateSection] = useState("wiki");
 
   // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
   // 首个 tab「知识库管理」= 页面标题 + 列表，不可关闭；后续把知识库的
@@ -632,21 +630,6 @@ export default function KbsPage() {
 
               {/* 右侧分区内容 */}
               <div style={{ flex: 1, overflowY: "auto", maxHeight: 480 }}>
-                {createSection === "parse" && (
-                  <>
-                    <Form.Item
-                      name="type"
-                      label="知识库类型"
-                      initialValue="document"
-                    >
-                      <Radio.Group optionType="button" buttonStyle="solid">
-                        <Radio.Button value="document">文档型</Radio.Button>
-                        <Radio.Button value="faq">问答对型</Radio.Button>
-                      </Radio.Group>
-                    </Form.Item>
-                  </>
-                )}
-
                 {createSection === "wiki" && (
                   <>
                     <Form.Item
