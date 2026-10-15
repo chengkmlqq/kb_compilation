@@ -528,7 +528,9 @@ export default function OrchestrationsPage() {
                     </span>
                   ) : null}
                   <FolderOutlined style={{ fontSize: 14 }} />
-                  <span className="kb-tpl-cat-name">{c.label || c.category}</span>
+                  <Tooltip title={c.descr || undefined}>
+                    <span className="kb-tpl-cat-name">{c.label || c.category}</span>
+                  </Tooltip>
                   <Tooltip title={`启用 ${c.effective} 个`}>
                     <span className="kb-tpl-cat-count">{c.total}</span>
                   </Tooltip>
@@ -542,7 +544,9 @@ export default function OrchestrationsPage() {
                       style={{ paddingLeft: 34, cursor: "pointer" }}
                     >
                       <FileTextOutlined style={{ fontSize: 12 }} />
-                      <span className="kb-tpl-cat-name">{kid.label || kid.category}</span>
+                      <Tooltip title={kid.descr || undefined}>
+                        <span className="kb-tpl-cat-name">{kid.label || kid.category}</span>
+                      </Tooltip>
                       <Tooltip title={`启用 ${kid.effective} 个`}>
                         <span className="kb-tpl-cat-count">{kid.total}</span>
                       </Tooltip>
