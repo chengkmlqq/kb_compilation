@@ -81,6 +81,8 @@ SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 #   （解析引擎开关/存储类型/向量库类型/系统信息 页面下架；后端 /api/v1/system/* 接口保留）
 # 2026-10-14 调整（方案J）：新增「新版问答」页面（/chat-next，assistant-ui 试验页，
 #   与现有「智能问答」/chat 并存；顶级 sort_num 顺延）
+# 2026-10-15 调整：新版问答菜单默认隐藏（HIDDEN_MENUS，state=0；菜单管理页可恢复启用）
+HIDDEN_MENUS = {"chat_next"}
 # 结构：Header 顶级 = 知识库管理/文件管理/切片核对/智能问答/智能体配置/联网搜索/
 #         数据源/数据查询/运维监控(目录)/配置管理(目录)/系统管理。
 #   - route 留空 = 纯目录分组（只展开不跳转）
@@ -594,7 +596,7 @@ def main(argv: list[str] | None = None) -> None:
                         parent_id=parent,
                         menu_icon=icon,
                         sort_num=sort,
-                        state="1",
+                        state="0" if mid in HIDDEN_MENUS else "1",
                     )
                 )
                 created += 1
@@ -608,7 +610,7 @@ def main(argv: list[str] | None = None) -> None:
                     ("parent_id", parent),
                     ("menu_icon", icon),
                     ("sort_num", sort),
-                    ("state", "1"),
+                    ("state", "0" if mid in HIDDEN_MENUS else "1"),
                 ):
                     if getattr(existing, field) != value:
                         setattr(existing, field, value)
