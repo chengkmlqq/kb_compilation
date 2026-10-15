@@ -145,8 +145,8 @@ function childProgress(record: ParentJobItem): string {
 /** 展开行：子任务列表（文档链子任务 或 编排节点） */
 /** 编排节点明细列（模块级，一级展开的子任务表与二级展开的节点明细表共用）。 */
 const ORCH_STEP_COLS: ColumnsType<Record<string, unknown>> = [
-  { title: "节点", dataIndex: "step_label", width: 180, render: (v, r) => v || String((r as Record<string, unknown>).step_id || "") },
-  { title: "指令", dataIndex: "step_inst", width: 160, render: (v) => <Text code>{v || "-"}</Text> },
+  { title: "节点", dataIndex: "step_label", width: 150, ellipsis: true, render: (v, r) => <Tooltip title={String(v || (r as Record<string, unknown>).step_id || "")}>{v || String((r as Record<string, unknown>).step_id || "")}</Tooltip> },
+  { title: "指令", dataIndex: "step_inst", width: 140, ellipsis: true, render: (v) => <Tooltip title={String(v || "")}><Text code>{v || "-"}</Text></Tooltip> },
   { title: "状态", dataIndex: "status", width: 110, render: (v) => renderStateTag(String(v || "")) },
   { title: "耗时", dataIndex: "duration_ms", width: 100, render: (v) => fmtDur(v as number | null) },
   { title: "信息", dataIndex: "error", ellipsis: true, render: (v, r) => v ? <Text type="danger">{String(v).slice(0, 80)}</Text> : <Text type="secondary">{((r as Record<string, unknown>).stdout_tail as string) || "-"}</Text> },
@@ -172,6 +172,7 @@ function OrchStepsTable({ row }: { row: Record<string, unknown> }) {
         dataSource={steps}
         columns={ORCH_STEP_COLS}
         pagination={false}
+        tableLayout="fixed"
         scroll={{ x: "100%" }}
         locale={{ emptyText: "暂无节点明细" }}
       />
@@ -201,11 +202,11 @@ function ChildTable({ parent }: { parent: ParentJobItem }) {
   // 编排节点：step_results 结构 {step_id, step_inst, step_label, status, duration_ms, error}
   const isOrch = parent.task_class === "OrchestrationRun";
   const jobCols: ColumnsType<Record<string, unknown>> = [
-    { title: "子任务ID", dataIndex: "id", width: 200, render: (v) => <Text style={{ fontFamily: "monospace", fontSize: 12 }}>{String(v)}</Text> },
-    { title: "任务类", dataIndex: "task_class", width: 150, render: (v) => taskClassLabel(String(v || "")) },
+    { title: "子任务ID", dataIndex: "id", ellipsis: true, render: (v) => <Tooltip title={String(v)}><Text style={{ fontFamily: "monospace", fontSize: 12 }}>{String(v).slice(0, 12)}</Text></Tooltip> },
+    { title: "任务类", dataIndex: "task_class", ellipsis: true, render: (v) => taskClassLabel(String(v || "")) },
     { title: "状态", dataIndex: "state", width: 110, render: (v) => renderStateTag(String(v || "")) },
-    { title: "开始时间", dataIndex: "start_time", width: 175, render: (v) => fmtTime(String(v || "")) },
-    { title: "耗时", dataIndex: "duration_ms", width: 100, render: (v) => fmtDur(v as number | null) },
+    { title: "开始时间", dataIndex: "start_time", width: 150, render: (v) => fmtTime(String(v || "")) },
+    { title: "耗时", dataIndex: "duration_ms", width: 90, render: (v) => fmtDur(v as number | null) },
     {
       title: "信息 / 错误",
       dataIndex: "error_message",
@@ -245,6 +246,9 @@ function ChildTable({ parent }: { parent: ParentJobItem }) {
         dataSource={rows}
         columns={isOrch ? ORCH_STEP_COLS : jobCols}
         pagination={false}
+        // 2026-10-15: tableLayout fixed——子表宽度锁 100% 展开区，列宽固定、多余空间由
+        // 省略号列吸收；此前子表按内容最小宽度撑开，窄视口下溢出展开区域。
+        tableLayout="fixed"
         scroll={{ x: "100%" }}
         locale={{ emptyText: "暂无子任务" }}
         // 2026-10-14 二级展开：编排子任务（KbOrchestrationRunTask）行带 step_results 时可再展开看节点明细
