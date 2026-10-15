@@ -118,6 +118,11 @@ export default function ChatPage() {
   }, [msgs]);
   const [renameTarget, setRenameTarget] = useState<ChatSessionItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  // 2026-10-16 DSB 门户对齐：侧边栏折叠 + 当前会话标题（header 居中显示）
+  const [siderCollapsed, setSiderCollapsed] = useState(false);
+  const [activeSessionTitle, setActiveSessionTitle] = useState("");
+  // 2026-10-16 DSB 门户对齐：反思模式开关（开启 = 走 agent 问答流）
+  const [reflectMode, setReflectMode] = useState(false);
   // L3：Agent 模式 + 附件 + 消息搜索
   const [agents, setAgents] = useState<{ id: string; name: string; config?: Record<string, unknown> }[]>([]);
   const [agentMode, setAgentMode] = useState<string>(); // 选中的 agent id
@@ -322,6 +327,7 @@ export default function ChatPage() {
       try {
         const res = await apiLoadSessionMessages(sessionId);
         const s = sessions.find((x) => x.id === sessionId);
+        if (s?.title) setActiveSessionTitle(s.title);
         // 2026-10-13 对齐 WeKnora：智能体会话的历史消息标记 agent=true（隐藏思考大块）
         setMsgs(
           (res.data?.items || []).map((m) => ({ ...m, agent: !!s?.agent_id })) as UiMessage[],
@@ -526,6 +532,7 @@ export default function ChatPage() {
     const res = await apiCreateSession(kbId);
     if (res.success && res.data) {
       setActiveSession(res.data.id);
+      setActiveSessionTitle("新对话");
       setMsgs([]);
       setRecommendations([]);
       await loadSessions();
@@ -564,7 +571,16 @@ export default function ChatPage() {
     if (!question || streaming) return;
     // @提及：本条消息级目标覆盖（kb / agent），未提及则沿用顶部选择
     const effectiveKbId = atTarget?.kind === "kb" ? atTarget.id : kbId;
-    const effectiveAgent = atTarget?.kind === "agent" ? atTarget.id : agentMode;
+    // 2026-10-16 DSB 门户对齐：反思模式开启时强制走 agent 问答流（无显式 agent 则用第一个）
+    let effectiveAgent = atTarget?.kind === "agent" ? atTarget.id : agentMode;
+    if (!effectiveAgent && reflectMode) {
+      effectiveAgent = agents[0]?.id || "";
+    }
+    // 2026-10-16 DSB 门户对齐：反思模式需至少一个知识集或智能体（对齐「反思模式需要至少选择一个知识集或上传文档附件」）
+    if (reflectMode && !effectiveAgent && !effectiveKbId) {
+      toast.warning("反思模式需要至少选择一个知识集或智能体");
+      return;
+    }
     // 2026-10-15 纯对话模式：知识库与智能体都未选择时直接走纯 LLM 对话（不再拦截）
     const userMsg: UiMessage = {
       id: `local-user-${Date.now()}`,
@@ -1101,159 +1117,116 @@ export default function ChatPage() {
   return (
     // 2026-10-08: 对齐任务监控页「固定视口高度 + 统一 8px 边距」——外层锁定 视口 − 顶栏(45px)，
     // 左右两栏吃满剩余高度、各自内部滚动，页面本身不出现滚动条。
-    <div
-      className="chat-page"
-      style={{
-        display: "flex",
-        height: "calc(100vh - var(--app-header-h, 45px))",
-        gap: 8,
-        padding: 8,
-        minHeight: 0,
-        overflow: "hidden",
-        background: "#fff",
-      }}
-    >
+    <div className="kb-chat-page">
       {/* 左：会话列表（2026-10-12 embeddedMode 时隐藏，问答区满宽沉浸式） */}
-      {!embeddedMode && (
-      <Card
-        style={{
-          width: 280,
-          flexShrink: 0,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          minHeight: 0,
-          background: "#f9fbfd",
-          borderRight: "1px solid #e3e9ef",
-        }}
-        styles={{
-          body: {
-            padding: 12,
-            flex: 1,
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            background: "#f9fbfd",
-          },
-        }}
-        title={
-          <Space style={{ width: "100%", justifyContent: "space-between" }}>
-            <span>会话</span>
-            <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => void newSession()}>
-              新会话
-            </Button>
-          </Space>
-        }
-      >
-        {/* 工具条（固定，不随列表滚动） */}
-        <div style={{ flexShrink: 0 }}>
-        <Input
-          allowClear
-          placeholder="搜索会话"
-          prefix={<SearchOutlined style={{ color: token.colorTextTertiary }} />}
-          style={{ marginBottom: 8 }}
-          value={sessionSearch}
-          onChange={(e) => setSessionSearch(e.target.value)}
-        />
+      {!embeddedMode && !siderCollapsed && (
+      <div className="kb-chat-sider">
+        <div className="kb-chat-sider-header">
+          <Button
+            className="kb-chat-new-btn"
+            type="primary"
+            shape="round"
+            icon={<PlusOutlined />}
+            onClick={() => void newSession()}
+          >
+            新对话
+          </Button>
+          <Tooltip title="收起侧边栏">
+            <Button type="text" size="small" icon={<DownOutlined style={{ color: "rgba(77,94,125,1)", fontSize: 14 }} />} onClick={() => setSiderCollapsed(true)} />
+          </Tooltip>
         </div>
-        {/* 会话列表：占满剩余高度，超高时内部滚动（对齐任务监控页表格区） */}
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        <div className="kb-chat-sider-search">
+          <Input
+            allowClear
+            placeholder="搜索会话"
+            prefix={<SearchOutlined style={{ color: token.colorTextTertiary }} />}
+            value={sessionSearch}
+            onChange={(e) => setSessionSearch(e.target.value)}
+          />
+        </div>
+        {/* 会话列表：占满剩余高度，超高时内部滚动 */}
+        <div className="kb-chat-sider-list">
         {groupedSessions.length === 0 ? (
-          <Empty description="暂无会话" />
+          <div style={{ padding: "40px 0", textAlign: "center" }}>
+            <Empty description="暂无会话" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          </div>
         ) : (
           groupedSessions.map((g) => (
             <div key={g.key}>
-              <Text type="secondary" style={{ fontSize: 12, display: "block", margin: "8px 0 4px" }}>
-                {g.label}
-              </Text>
-              <List<ChatSessionItem>
-                dataSource={g.items}
-                locale={{ emptyText: null }}
-                renderItem={(s) => {
+              <div className="kb-chat-sider-group-title">{g.label}</div>
+              <div>
+                {g.items.map((s) => {
+                  const active = activeSession === s.id;
                   return (
-                    <List.Item
-                      style={{
-                        padding: "6px 8px",
-                        borderRadius: 6,
-                        cursor: "pointer",
-                        background: activeSession === s.id ? token.controlItemBgActive : "transparent",
-                      }}
+                    <div
+                      key={s.id}
+                      className={`kb-chat-sider-item${active ? " active" : ""}`}
                       onClick={() => void openSession(s.id)}
-                      actions={[
-                        <Tooltip key="rename" title="重命名">
+                      title={s.title}
+                    >
+                      <div className="kb-chat-sider-item-label">{s.title}</div>
+                      <div className="kb-chat-sider-item-oper">
+                        <Tooltip title="重命名">
                           <EditOutlined
-                            style={{ color: token.colorTextTertiary }}
+                            style={{ fontSize: 13, color: active ? "rgba(50,97,206,1)" : token.colorTextTertiary }}
                             onClick={(e) => {
                               e.stopPropagation();
                               setRenameTarget(s);
                               setRenameValue(s.title);
                             }}
                           />
-                        </Tooltip>,
+                        </Tooltip>
                         <Popconfirm
-                          key="del"
                           title="删除该会话？"
                           onConfirm={(e) => {
                             e?.stopPropagation();
                             void deleteSession(s.id);
                           }}
                         >
-                          <DeleteOutlined style={{ color: token.colorError }} onClick={(e) => e.stopPropagation()} />
-                        </Popconfirm>,
-                      ].filter(Boolean)}
-                    >
-                      <List.Item.Meta
-                        title={<Text ellipsis style={{ maxWidth: 140 }}>{s.title}</Text>}
-                        description={<Text type="secondary" style={{ fontSize: 12 }}>{s.updated_at.slice(5, 16).replace("T", " ")}</Text>}
-                      />
-                    </List.Item>
+                          <DeleteOutlined
+                            style={{ fontSize: 13, color: active ? "rgba(50,97,206,1)" : token.colorTextTertiary }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </Popconfirm>
+                      </div>
+                    </div>
                   );
-                }}
-              />
+                })}
+              </div>
             </div>
           ))
         )}
         </div>
-      </Card>
+      </div>
       )}
 
       {/* 右：对话区 */}
-      <Card
-        style={{
-          flex: 1,
-          minWidth: 0,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          minHeight: 0,
-        }}
-        styles={{
-          body: {
-            flex: 1,
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            padding: 0,
-            background: "#f5f7fa",
-          },
-        }}
-      >
-        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${token.colorSplit}`, display: "flex", alignItems: "center", gap: 12, flexShrink: 0, background: "#fff" }}>
-          <Text strong>智能问答</Text>
-          {/* 2026-10-15 纯对话模式：未选知识库时显示模式标识 */}
-          {kbId ? (
-            <Tag color="blue" icon={<DatabaseOutlined />} style={{ marginInlineEnd: 0 }}>
-              {kbs.find((k) => k.id === kbId)?.name || "知识库问答"}
-            </Tag>
-          ) : (
-            <Tag color="green" style={{ marginInlineEnd: 0 }}>纯对话（未选知识库）</Tag>
-          )}
-          {streaming && (
-            <Button size="small" danger icon={<StopOutlined />} onClick={stopGenerating}>
-              停止
-            </Button>
-          )}
+      <div className="kb-chat-main">
+        <div className="kb-chat-header">
+          <div className="kb-chat-header-actions">
+            <Tooltip title="打开侧边栏">
+              <span className="kb-chat-header-icon" onClick={() => setSiderCollapsed(false)}>
+                <DownOutlined style={{ color: "rgba(77,94,125,1)", fontSize: 18 }} />
+              </span>
+            </Tooltip>
+            <Tooltip title="新对话">
+              <span className="kb-chat-header-icon" onClick={() => void newSession()}>
+                <PlusOutlined style={{ color: "rgba(77,94,125,1)", fontSize: 16 }} />
+              </span>
+            </Tooltip>
+          </div>
+          <div className="kb-chat-header-title">
+            {activeSessionTitle || "智能问答"}
+          </div>
+          <div className="kb-chat-header-actions kb-chat-header-actions-right">
+            {streaming && (
+              <Tooltip title="停止生成">
+                <span className="kb-chat-header-icon" onClick={stopGenerating}>
+                  <StopOutlined style={{ color: "rgba(77,94,125,1)", fontSize: 16 }} />
+                </span>
+              </Tooltip>
+            )}
+          </div>
         </div>
 
         <div
@@ -1263,7 +1236,7 @@ export default function ChatPage() {
             const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
             setShowScrollBtn(!atBottom);
           }}
-          style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16, position: "relative" }}
+          style={{ flex: 1, minHeight: 0, overflow: "auto", position: "relative" }}
         >
           {loadingMsgs ? (
             <div className="kb-chat-skeleton-list">
@@ -1283,86 +1256,76 @@ export default function ChatPage() {
               </div>
             </div>
           ) : msgs.length === 0 ? (
-            <div className="kb-sq-container" style={{ textAlign: "center", padding: 32 }}>
-              {(recommendations.length > 0 || recommendLoading) && (
-                <div className="kb-sq-inner" style={{ maxWidth: CONTENT_MAX_WIDTH, marginLeft: "auto", marginRight: "auto" }}>
-                  <div className="kb-sq-title-row">
-                    <p className="kb-sq-caption">
-                      <BulbOutlined />
-                      <span>推荐问题</span>
-                    </p>
-                    <button
-                      type="button"
-                      className="kb-sq-refresh"
-                      disabled={recommendLoading}
-                      title="换一批"
-                      onClick={async () => {
-                        setRecommendLoading(true);
-                        try {
-                          const rec = await apiRecommendQuestions(kbId);
-                          if (rec.success) setRecommendations(rec.data?.questions || []);
-                        } finally {
-                          setRecommendLoading(false);
-                        }
-                      }}
-                    >
-                      <ReloadOutlined className={recommendLoading ? "kb-sq-refresh-spin" : ""} />
-                    </button>
-                  </div>
-                  <div className="kb-sq-grid">
+            <div className="kb-chat-home">
+              <div className="kb-chat-home-main">
+                <div className="kb-chat-home-content">
+                  <div className="kb-chat-home-title">智能问答</div>
+                  <div className="kb-chat-home-descr">输入你的需求，或者直接点击下方推荐问题开始对话。</div>
+                </div>
+                {(recommendations.length > 0 || recommendLoading) && (
+                  <div className="kb-chat-home-recommend">
+                    <div className="kb-chat-home-recommend-title">你可以这样问我：</div>
                     {recommendLoading && recommendations.length === 0
-                      ? Array.from({ length: 6 }).map((_, i) => (
-                          <div className="kb-sq-card kb-sq-skeleton" key={`sq-skel-${i}`}>
-                            <div className="kb-sq-skeleton-bar" style={{ width: "100%" }} />
-                          </div>
+                      ? Array.from({ length: 3 }).map((_, i) => (
+                          <div className="kb-chat-home-rela-item" key={`rela-skel-${i}`} style={{ opacity: 0.5 }}>加载中…</div>
                         ))
                       : recommendations.map((q, i) => (
-                          <div className="kb-sq-card" key={i} onClick={() => void send(q)}>
-                            <span className="kb-sq-badge">FAQ</span>
-                            <span className="kb-sq-text">{q}</span>
+                          <div className="kb-chat-home-rela-item" key={i} onClick={() => void send(q)}>
+                            <span style={{ flex: 1, minWidth: 0 }}>{q}</span>
+                            <span style={{ color: "rgba(50,97,206,1)" }}>›</span>
                           </div>
                         ))}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           ) : (
-                      <div
-            className="kb-chat-msgs"
-            style={{ maxWidth: CONTENT_MAX_WIDTH, marginLeft: "auto", marginRight: "auto" }}
-          >
+          <div className="kb-chat-ai-list">
                       {msgs.map((m, idx) => (
-              <div key={m.id}>
-                {/* 对齐 WeKnora：AI 全宽无气泡（.bot_msg max-width:100%），用户 76% 圆角气泡（.user_msg） */}
-                <div
-                  className={`kb-chat-msg ${m.role === "user" ? "kb-chat-msg--user" : "kb-chat-msg--bot"}`}
-                >
-                    {/* 2026-10-16 移除 RAG 步骤树展示（检索完成/命中N篇相关片段/回答完成） */}
-                    {m.role === "assistant" && (
-                      <AgentToolCalls events={m.toolEvents || []} />
-                    )}
-                    {/* 2026-10-13 对齐 WeKnora：智能体模式隐藏思考大块，思考折叠进工具步骤区 */}
-                    {m.role === "assistant" && m.thinking && m.agent && (
-                      <AgentThinkingRow thinking={m.thinking} streaming={!!m.streaming} />
-                    )}
-                    {m.role === "assistant" && m.thinking && !m.agent && (
-                      <ThinkingBlock thinking={m.thinking} streaming={!!m.streaming} />
-                    )}
-                    {m.error ? (
-                      <div>
-                        <Text type="danger">回答失败，请重试</Text>
-                        <Button
-                          size="small"
-                          type="primary"
-                          danger
-                          style={{ marginTop: 8, display: "block" }}
-                          onClick={() => regenerate(msgs, idx)}
-                        >
-                          重试
-                        </Button>
+              <div key={m.id} className={`kb-chat-item ${m.role === "user" ? "user" : "assistant"}`}>
+                {m.role === "user" ? (
+                  <div className="kb-chat-user-bubble">
+                    <div>{m.content}</div>
+                    {m.images && m.images.length > 0 && (
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", maxWidth: 360, marginTop: 6 }}>
+                        {m.images.map((img) =>
+                          img.url ? (
+                            <img
+                              key={img.id}
+                              src={img.url}
+                              alt={img.file_name || "图片"}
+                              style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 6, border: "1px solid rgba(0,0,0,0.08)" }}
+                            />
+                          ) : (
+                            <span key={img.id} style={{ fontSize: 11, color: "rgba(0,0,0,0.45)", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 6, padding: "4px 8px" }}>
+                              📷 {img.file_name || "图片"}
+                            </span>
+                          ),
+                        )}
                       </div>
-                    ) : m.role === "assistant" ? (
-                      <div>
+                    )}
+                  </div>
+                ) : (
+                <div className="kb-chat-assistant">
+                    {/* 2026-10-16 DSB 对齐：RAG 步骤树/工具卡移除，思考折叠为 think-btn + think-view */}
+                    {m.thinking ? (
+                      <AssistantThink
+                        thinking={m.thinking}
+                        streaming={!!m.streaming}
+                        answer={m.content}
+                        refs={m.refs}
+                        answerStreaming={!!m.streaming}
+                        onCitationClick={(payload) =>
+                          setRefDrawer({
+                            open: true,
+                            refs: m.refs || [],
+                            answer: m.content,
+                            activeChunk: payload.chunkId,
+                          })
+                        }
+                      />
+                    ) : (
+                      <div className="kb-chat-answer">
                         {m.content ? (
                           <TypewriterText
                             text={m.content}
@@ -1378,61 +1341,33 @@ export default function ChatPage() {
                             }
                           />
                         ) : m.streaming ? (
-                          "思考中…"
+                          <span style={{ color: "rgba(121,135,156,1)", fontSize: 14 }}>思考中…</span>
                         ) : (
                           ""
                         )}
-                        {m.streaming && m.content && (
-                          <span style={{ display: "inline-block", marginLeft: 2 }}>
-                            <span style={{ animation: "kb-blink 1s infinite" }}>▋</span>
-                          </span>
-                        )}
                       </div>
-                    ) : (
-                      <span style={{ whiteSpace: "pre-wrap" }}>{m.content}</span>
+                    )}
+                    {m.error ? (
+                      <div>
+                        <Text type="danger">回答失败，请重试</Text>
+                        <Button
+                          size="small"
+                          type="primary"
+                          danger
+                          style={{ marginTop: 8, display: "block" }}
+                          onClick={() => regenerate(msgs, idx)}
+                        >
+                          重试
+                        </Button>
+                      </div>
+                    ) : null}
+                    {/* 引用文档列表（对齐 DSB resource-list「引用N篇文档作为参考」） */}
+                    {!m.streaming && m.role === "assistant" && m.refs && m.refs.length > 0 && (
+                      <AssistantRefs refs={m.refs} onChunkClick={(r) =>
+                        setRefDrawer({ open: true, refs: m.refs || [], answer: m.content, activeChunk: r.chunk_id })
+                      } />
                     )}
                 </div>
-                {/* 对齐 WeKnora usermsg：用户消息图片缩略图展示 */}
-                {m.role === "user" && m.images && m.images.length > 0 && (
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 6,
-                      flexWrap: "wrap",
-                      maxWidth: 360,
-                      marginBottom: 6,
-                    }}
-                  >
-                    {m.images.map((img) =>
-                      img.url ? (
-                        <img
-                          key={img.id}
-                          src={img.url}
-                          alt={img.file_name || "图片"}
-                          style={{
-                            width: 72,
-                            height: 72,
-                            objectFit: "cover",
-                            borderRadius: 6,
-                            border: "1px solid rgba(0,0,0,0.08)",
-                          }}
-                        />
-                      ) : (
-                        <span
-                          key={img.id}
-                          style={{
-                            fontSize: 11,
-                            color: "rgba(0,0,0,0.45)",
-                            border: "1px solid rgba(0,0,0,0.08)",
-                            borderRadius: 6,
-                            padding: "4px 8px",
-                          }}
-                        >
-                          📷 {img.file_name || "图片"}
-                        </span>
-                      ),
-                    )}
-                  </div>
                 )}
                 {/* 答案工具栏：重新生成 + 复制 + 喜欢/不喜欢反馈，全部图标（2026-10-15） */}
                 {m.role === "assistant" && !m.streaming && m.content && (
@@ -1626,7 +1561,17 @@ export default function ChatPage() {
             marginTop: 4,
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {/* 2026-10-16 DSB 门户对齐：反思模式开关（开启 = 走 agent 问答流，答案带思考过程） */}
+            <button
+              type="button"
+              className={`kb-reflect-btn${reflectMode ? " active" : ""}`}
+              onClick={() => setReflectMode((v) => !v)}
+              title={reflectMode ? "关闭反思模式" : "反思模式：多步思考后作答"}
+            >
+              <BulbOutlined style={{ fontSize: 13 }} />
+              {reflectMode ? "关闭反思模式" : "反思模式"}
+            </button>
             {/* 2026-10-15 纯对话模式：知识库选择（allowClear，清空=不检索直接对话） */}
             <Select
               value={kbId || undefined}
@@ -1862,10 +1807,10 @@ export default function ChatPage() {
               </Button>
             </div>
           </Modal>
-        </div>
-      </Card>
+                  </div>
+                </div>
 
-      {/* 重命名弹窗 */}
+                {/* 重命名弹窗 */}
       <Modal
         title="重命名会话"
         open={!!renameTarget}
@@ -1966,6 +1911,120 @@ export default function ChatPage() {
       <style jsx global>{`
         @keyframes kb-blink { 0%,100% { opacity: 1 } 50% { opacity: 0 } }
       `}</style>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DSB 门户对齐：思考折叠 + 答案 + 引用文档列表（2026-10-16）
+// 基准：data_supply_base DataSupplyPortalRecordNew ChatMessageItem
+// ---------------------------------------------------------------------------
+
+/** AI 回答块：think-btn（已完成思考/思考中）+ think-view 左竖线 + 答案正文 */
+function AssistantThink({
+  thinking,
+  streaming,
+  answer,
+  refs,
+  answerStreaming,
+  onCitationClick,
+}: {
+  thinking: string;
+  streaming?: boolean;
+  answer?: string;
+  refs?: ChatRefItem[];
+  answerStreaming?: boolean;
+  onCitationClick?: (payload: { chunkId: string }) => void;
+}) {
+  const [thinkVisible, setThinkVisible] = useState(true);
+  const [thinkEnded, setThinkEnded] = useState(false);
+  // DSB：isThinkEnd 变 true（agent_message 开始）自动收起思考区
+  useEffect(() => {
+    if (!streaming && !thinkEnded) setThinkEnded(true);
+  }, [streaming, thinkEnded]);
+  useEffect(() => {
+    if (thinkEnded && thinkVisible) setThinkVisible(false);
+  }, [thinkEnded]);
+
+  return (
+    <div className="kb-chat-answer">
+      <button
+        type="button"
+        className={`kb-chat-think-btn${streaming ? " thinking" : ""}`}
+        onClick={() => setThinkVisible((v) => !v)}
+      >
+        <span>{streaming ? "思考中…" : thinkEnded ? "已完成思考" : "思考过程"}</span>
+        <span style={{ fontSize: 12 }}>{thinkVisible ? "▾" : "▸"}</span>
+      </button>
+      {thinkVisible && (
+        <div className={`kb-chat-think-view${thinkVisible ? "" : " think-hide"}`}>
+          <div className="kb-chat-think-md">{thinking}</div>
+        </div>
+      )}
+      <div className={`kb-chat-content-view${thinkVisible ? " think-hide" : ""}`}>
+        {answer ? (
+          <TypewriterText
+            text={answer}
+            refs={refs}
+            active={!!answerStreaming}
+            onCitationClick={onCitationClick}
+          />
+        ) : answerStreaming ? (
+          <span style={{ color: "rgba(121,135,156,1)" }}>思考中…</span>
+        ) : (
+          ""
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 引用文档列表（对齐 DSB resource-list「引用N篇文档作为参考」） */
+function AssistantRefs({
+  refs,
+  onChunkClick,
+}: {
+  refs: ChatRefItem[];
+  onChunkClick?: (ref: ChatRefItem) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  // 按文档分组去重
+  const groups = useMemo(() => {
+    const map = new Map<string, ChatRefItem[]>();
+    for (const r of refs) {
+      const title = r.document_title || r.meta?.source_file || "其他";
+      const arr = map.get(title) || [];
+      arr.push(r);
+      map.set(title, arr);
+    }
+    return Array.from(map.entries()).map(([title, chunks]) => ({ title, chunks }));
+  }, [refs]);
+
+  if (!refs || refs.length === 0) return null;
+  return (
+    <div className="kb-chat-resource">
+      <div className="kb-chat-resource-oper" onClick={() => setOpen((v) => !v)}>
+        <div className="kb-chat-resource-oper-title">引用{refs.length}篇文档作为参考</div>
+        <span style={{ color: "rgba(121,135,156,1)", fontSize: 12 }}>{open ? "▾" : "▸"}</span>
+      </div>
+      {open && (
+        <div className="kb-chat-resource-list">
+          {groups.map((g) => (
+            <div
+              key={g.title}
+              className="kb-chat-resource-item"
+              onClick={() => onChunkClick?.(g.chunks[0])}
+              title={g.title}
+            >
+              <FileTextOutlined style={{ color: "rgba(50,97,206,1)", fontSize: 13, flexShrink: 0 }} />
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {g.title}
+              </span>
+              <span style={{ flexShrink: 0, color: "rgba(121,135,156,1)", fontSize: 12 }}>{g.chunks.length}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
