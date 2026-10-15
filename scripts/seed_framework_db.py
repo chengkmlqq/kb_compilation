@@ -674,6 +674,27 @@ def main(argv: list[str] | None = None) -> None:
             db.commit()
             print("[6/6] 日志清理 cron 种子 OK: 每天 03:00, 保留 90 天")
 
+        # 6a) 兼容修正（2026-10-15）：历史遗留的 LogCleanupTask（无 Kb 前缀）在
+        #     TASK_CLASS_REGISTRY 未注册 handler，每天触发必然 FAILED
+        #     （no handler registered for LogCleanupTask，实测 2026-10-14 cleanLog
+        #     cron 00:00 稳定失败）。种子统一停用（state=0，保留配置痕迹），
+        #     正式清理任务以 KbLogCleanupTask 为准。幂等：已停用/不存在则跳过。
+        legacy_crons = db.execute(
+            select(CronTask).where(
+                CronTask.task_class == "LogCleanupTask", CronTask.state == "1"
+            )
+        ).scalars().all()
+        if legacy_crons:
+            for c in legacy_crons:
+                c.state = "0"
+            db.commit()
+            print(
+                f"[6/6] 日志清理 cron 兼容修正: 停用遗留 LogCleanupTask {len(legacy_crons)} 条"
+                " (handler 未注册, 以 KbLogCleanupTask 为准)"
+            )
+        else:
+            print("[6/6] 日志清理 cron 兼容检查: 无遗留 LogCleanupTask")
+
         # 6b) 系统参数种子（modo_dim SYSTEM_CONFIG，幂等：缺失才建，不覆盖已有值）
         dims_created = _seed_system_config_dims(db)
         print(
