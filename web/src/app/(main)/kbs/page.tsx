@@ -418,10 +418,12 @@ export default function KbsPage() {
   };
 
   // 列表区（首个选项卡内容）：筛选 + 卡片视图 + 钉底分页 + 新建弹窗/配置弹窗
+  // 根容器用 height:100% 对齐模型管理页——外层 .ant-tabs-content 非 flex 容器，
+  // flex:1 对 block 父无效会退回内容高度，导致卡片区撑不开、分页不钉底（贴在卡片下方而非页面底部）
   const listPane = (
     <div
       style={{
-        flex: 1,
+        height: "100%",
         minHeight: 0,
         display: "flex",
         flexDirection: "column",
