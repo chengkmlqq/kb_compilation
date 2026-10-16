@@ -2,7 +2,34 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-18（智能问答图片链路对齐 WeKnora）
+最后更新：2026-10-20（知识库详情页面样式对齐知识库管理页）
+
+## 24. 当前状态（2026-10-20 知识库详情页面样式对齐知识库管理页）
+
+- **需求**：「知识库详情页面样式优化，参考知识库页面，要求 UI 统一」。详情 = 打开知识库后的「文档」页签 / `/kbs/[id]` 深链页（两者共用同一批 pane 组件）；此前详情整体是 antd 默认观感（antd Tree 带连接线、白底方角搜索框、常驻 antd 分页、antd Card 卡片），与已按 DSB 像素级改造的知识库管理页不像一套
+- **代码改动（纯前端；当前仅在工作区、未提交——本会话 terminal 被系统拒绝）**：
+  1. 新增 `web/src/components/kb/KbsIcons.tsx`（共用图标：DSB 文档库 folderIcon 14×14 蓝色文件夹 / arco Caret 展开箭头 / arco 分页箭头 / arco 空态插画 / modo 彩色放大镜）、`web/src/components/kb/KbsEmpty.tsx`（arco 空态：148px 插画 + 「暂无数据」，`variant="inline"` 供表格占位行）、`web/src/components/kb/KbsSimplePagination.tsx`（DSB arco simple 分页：共 N 条 + 页码输入/总页数 + 条/页下拉）
+  2. `web/src/components/kb/KbDocsPane.tsx`：左树从 antd `<Tree showLine>` 改为自绘行复用管理页 `.kb-doc-tree-*` 样式族（36px 行 / 14px 图标槽 / hover 浮现展开箭头 / 选中 primary-light 底）；sider 230px 灰底 → 260px 白底 + #f0f0f0 右边框；搜索框对齐 `.kb-kbs-search`（fill-2 底 / 14px 胶囊 / 28px 高 / 12px 字 + hover-focus 状态链）；状态/类型下拉改 `ModoSelect`（filled、28px 胶囊）、刷新/添加知识改 `ModoButton`（28px round）；分页由常驻 `ModoPagination` 换成 `KbsSimplePagination`（移出内边距区、横贯内容列底部、超一页才出现）；卡片视图与表格占位空态换 `KbsEmpty`
+  3. `web/src/components/DocCardView.tsx`：文档卡片由 antd `<Card hoverable>` 改自绘 `.kb-doc-card` 三段式（对齐 `.kb-kbs-card`：150px 高 / header 44px / 两行摘要 40px / footer 28px 状态文本）；状态由彩色 Tag 组改 footer 纯文本（`docStageText()`，失败仍红色且可点开构建过程），悬浮 Popover 保留
+  4. `web/src/app/(main)/kbs/[id]/page.tsx`：外壳 className `kbs-page`（无样式）→ `kb-kbs-page`（modo 字体栈 + 12px 基准 + 白底），去掉 `padding: 10`（消除比管理页多出的一圈灰边）
+  5. `web/src/app/globals.css`：改写「知识库文档（文件）列表」段（sider / 树 / 搜索 / 下拉 / 视图切换 / 分页条 / 空态 / 文档卡片），删除失效的 `.kb-list-card` 与 `.kb-doc-scroll-container` 规则
+- **验证（terminal 被拒，走 execute_code 沙箱 subprocess 通道）**：`tsc --noEmit --incremental false` rc=0 零诊断；`bun run build` rc=0（Compiled successfully，`/kbs`、`/kbs/[id]` 正常产出）；产物 CSS（`.next/static/chunks/*.css`）核对到 `.kb-doc-card{height:150px…}`、`.kb-doc-search-input.ant-input-affix-wrapper{background:#eff4f9;border-radius:14px;height:28px}`、`.kb-doc-pagination-bar{background:#f9fbfd;padding:6px 16px}`，`.kb-list-card` 0 命中；`uv run pytest -q` **698 passed**
+- **坑位**：① 详情与管理页共用同一套类名（`.kb-doc-tree-*`、`.kb-kbs-pagination*`）——改管理页左树会同时影响详情左树，本次为定向复用、不复制样式；② 并行会话当时正在改 `kbs/page.tsx` 左树图标（蓝色文件夹 + Caret），故本次**刻意不动 kbs/page.tsx**，图标在详情侧同源内联一份（避免撞车）；③ `KbsSimplePagination` 显隐判据为 `total > pageSize`（管理页原为写死 `total > 30`），管理页在用户把每页条数调到小于总数时也会出现分页条，属修正
+- **部署注意**：纯前端改动 → 重建 kb-web 镜像；详情内页签与 `/kbs/[id]` 深链共用 pane 组件，改动对两条入口同时生效
+
+## 23. 当前状态（2026-10-16 菜单图标接入 modo-design 彩色图标）
+
+- **需求**：KB 平台侧边栏菜单此前全用 @ant-design/icons 单色线框图标，与山东数据供给平台（data_supply_shandong）观感不一致。本次为语义可对应的菜单项换用同族 modo-design 彩色图标（Icon*Color）
+- **代码改动（commit 29975e8）**：
+  1. 新增 `web/src/components/ModoMenuIcons.tsx`：按官方源码内联 9 个彩色图标 SVG（viewBox 0 0 12 12、`fill=currentColor` + opacity .25 分层，官方 `.modo-icon` 语义；路径逐条与 `modo-design/icon/react-icon/Icon*Color/index.js` 一致，非自绘），导出 `MODO_MENU_ICON_NAMES` / `MODO_ICON_COMPONENTS`
+  2. `web/src/app/(main)/_components/AppSider.tsx`：ICON_MAP 追加 9 个 modo 图标名（1em，随 `.kb-nav-card-icon` 24px；未命中仍回落 AppstoreOutlined）
+  3. 菜单名同步（种子 `scripts/seed_framework_db.py` KB_MENUS + 前端兜底 `MenuContext.tsx` FALLBACK_MENUS）：kbs=IconBook1Color、chat/agents=IconSemanticSearchColor、grp_ops/jobs=IconTaskMonitorColor、files/workers=IconCloudServerColor、datasources=IconDatabaseColor、system=IconSystemMgrColor、orch_tapes=IconResourceOrchestrationColor
+  4. `api/routers/system.py` MENU_ICONS 目录补齐这 9 个名字（菜单管理页下拉可选）
+  5. `web/src/app/(main)/system/menus/page.tsx`：图标组件表 = antd 图标池 ∪ modo 图标池（下拉预览可渲染彩色图标）
+- **库内数据（apply 脚本已应用）**：新增 `scripts/apply_menu_modo_icons.py`（按 **menu_name** 匹配，因同一菜单 menu_id 在各环境形态不一：本部署 files/workers 是 UUID）→ docker cp 进 kb-api-server 执行，**10/10 命中**（9 改 + files 行 UUID 键补改），重放 0 更新；`GET /system/my-menus` 实测返回 10 条 `Icon*Color`
+- **验证**：`web` 目录 `./node_modules/.bin/tsc --noEmit` exit 0；my-menus 接口实测 10 条 modo 图标名；apply 脚本幂等（二次执行全 skip）
+- **坑位**：① 按 menu_id 写死映射会漏改（本部署 files/workers 的 menu_id 是 UUID，其它是语义名）→ 一律按 menu_name 匹配；② 图标名换新后**前端必须同步部署**——旧 kb-web 的 ICON_MAP 无这些名字会全部回落默认 Appstore 图标（改造期间视觉会短暂统一成默认图标）
+- **部署**：前端为新组件 + 图标映射改动 → CI 重建 kb-web 后 pull；后端仅图标目录常量 → CI 重建 kb-api-server（或容器内 docker cp api/routers/system.py + restart 热修）
 
 ## 22. 当前状态（2026-10-18 智能问答图片链路对齐 WeKnora）
 

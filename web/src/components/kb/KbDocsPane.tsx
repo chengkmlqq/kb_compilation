@@ -13,7 +13,6 @@ import {
   Button,
   Card,
   Dropdown,
-  Empty,
   Input,
   Modal,
   Select,
@@ -21,7 +20,6 @@ import {
   Spin,
   Tag,
   Tooltip,
-  Tree,
   Typography,
 } from "antd";
 import {
@@ -37,7 +35,6 @@ import {
   ProfileOutlined,
   RedoOutlined,
   ReloadOutlined,
-  SearchOutlined,
   TableOutlined,
   UnorderedListOutlined,
 } from "@ant-design/icons";
@@ -47,7 +44,11 @@ import DocCardView, {
   fileTypeIcon,
 } from "@/components/DocCardView";
 import ModoTable from "@/components/biz/modo-table";
-import ModoPagination from "@/components/biz/modo-pagination";
+import ModoButton from "@/components/biz/modo-button";
+import ModoSelect from "@/components/biz/modo-select";
+import KbsSimplePagination from "@/components/kb/KbsSimplePagination";
+import KbsEmpty from "@/components/kb/KbsEmpty";
+import { CaretDownIcon, CaretRightIcon, FolderIcon, SearchColorIcon } from "@/components/kb/KbsIcons";
 import UploadConfirmDialog, { UploadProcessConfig } from "@/components/UploadConfirmDialog";
 import SelectTableDialog from "@/components/SelectTableDialog";
 import DocBuildProcessDrawer from "@/components/DocBuildProcessDrawer";
@@ -194,41 +195,86 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
     setFolderExpandedKeys((prev) => [...prev, ...roots.map((f) => f.id)]);
   }, [docFolders]);
 
-  // 树形数据（antd Tree 用）：节点 = 目录，title 带文档数 + 操作按钮
-  const folderTreeData = (() => {
-    const byParent = new Map<string, DocFolderItem[]>();
-    for (const f of docFolders) {
-      const key = f.parent_id || "";
-      if (!byParent.has(key)) byParent.set(key, []);
-      byParent.get(key)!.push(f);
-    }
-    const build = (parentId: string): { key: string; title: ReactNode; children?: unknown[] }[] =>
-      (byParent.get(parentId) || []).map((f) => ({
-        key: f.id,
-        title: (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%" }}>
-            <FolderOutlined style={{ color: "#faad14", fontSize: 13 }} />
-            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {f.name}
-            </span>
-            <span style={{ color: "#999", fontSize: 11 }}>{f.doc_total ?? 0}</span>
-            <span className="kb-doc-folder-actions" style={{ display: "none", gap: 2 }}>
-              <Tooltip title="新建子目录">
-                <FolderAddOutlined style={{ fontSize: 12 }} onClick={(e) => { e.stopPropagation(); createFolder(f.id); }} />
-              </Tooltip>
-              <Tooltip title="重命名">
-                <EditOutlined style={{ fontSize: 12 }} onClick={(e) => { e.stopPropagation(); renameFolder(f); }} />
-              </Tooltip>
-              <Tooltip title="删除">
-                <DeleteOutlined style={{ fontSize: 12, color: "#ff4d4f" }} onClick={(e) => { e.stopPropagation(); deleteFolder(f); }} />
-              </Tooltip>
-            </span>
+  // 目录树渲染（对齐知识库管理页 left tree：36px 行 / 12px 字 / 14px 图标槽，
+  // hover 时文件夹图标让位给展开箭头、叶子节点图标常显），支持多级递归 + 逐层展开。
+  // 原为 antd <Tree> + showLine（观感与知识库管理页不一致），改为自绘行复用 kb-doc-tree-* 样式族。
+  const toggleFolderExpanded = (id: string) => {
+    setFolderExpandedKeys((prev) =>
+      prev.includes(id) ? prev.filter((k) => k !== id) : [...prev, id],
+    );
+  };
+
+  const renderFolderNodes = (parentId: string, depth: number): ReactNode =>
+    docFolders
+      .filter((f) => (f.parent_id || "") === parentId)
+      .map((f) => {
+        const children = docFolders.filter((x) => x.parent_id === f.id);
+        const expanded = folderExpandedKeys.includes(f.id);
+        const isLeaf = children.length === 0;
+        return (
+          <div key={f.id}>
+            <div
+              className={`kb-doc-tree-row${docFolderId === f.id ? " active" : ""}`}
+              style={{ paddingLeft: 8 + depth * 12, paddingRight: 4 }}
+              title={f.name}
+              onClick={() => {
+                setDocFolderId(f.id);
+                setDocPage(1);
+              }}
+            >
+              {/* 图标槽 14px：文件夹图标默认显示，hover 时由展开箭头接替（DSB .icon-container 同款） */}
+              <span className="kb-doc-tree-icon">
+                <span
+                  className={`kb-doc-tree-node-icon${isLeaf ? " kb-doc-tree-node-icon--visible" : ""}`}
+                >
+                  <FolderIcon />
+                </span>
+                {!isLeaf && (
+                  <span
+                    className="kb-doc-tree-expand-icon"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFolderExpanded(f.id);
+                    }}
+                  >
+                    {expanded ? <CaretDownIcon /> : <CaretRightIcon />}
+                  </span>
+                )}
+              </span>
+              <span className="kb-doc-tree-title">{f.name}</span>
+              {(f.doc_total ?? 0) > 0 && <span className="kb-doc-tree-count">{f.doc_total}</span>}
+              <span className="kb-doc-folder-actions">
+                <Tooltip title="新建子目录">
+                  <FolderAddOutlined
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      createFolder(f.id);
+                    }}
+                  />
+                </Tooltip>
+                <Tooltip title="重命名">
+                  <EditOutlined
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      renameFolder(f);
+                    }}
+                  />
+                </Tooltip>
+                <Tooltip title="删除">
+                  <DeleteOutlined
+                    style={{ color: "#ff4d4f" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteFolder(f);
+                    }}
+                  />
+                </Tooltip>
+              </span>
+            </div>
+            {expanded && renderFolderNodes(f.id, depth + 1)}
           </div>
-        ),
-        children: build(f.id),
-      }));
-    return build("");
-  })();
+        );
+      });
 
   useEffect(() => {
     void loadKb();
@@ -755,68 +801,40 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         styles={{ body: { flex: 1, minHeight: 0, display: "flex", overflow: "hidden", padding: 0 } }}
       >
-      {/* 左侧：文档目录树（多级，点选递归筛选） */}
-      <div
-        className="kb-doc-folder-sidebar"
-        style={{
-          width: 230,
-          flex: "0 0 auto",
-          borderRight: "1px solid var(--color-gray-3, #e3e9ef)",
-          display: "flex",
-          flexDirection: "column",
-          minHeight: 0,
-          padding: "12px 8px",
-          boxSizing: "border-box",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, padding: "0 4px" }}>
-          <span style={{ fontWeight: 600, fontSize: 13 }}>文档目录</span>
+      {/* 左侧：文档目录树（多级，点选递归筛选）
+          样式对齐知识库管理页左树：复用 kb-doc-tree-* 样式族（36px 行 / 14px 图标槽 /
+          Hover 展开箭头 / 选中 primary-light 底），宽度与右边框同管理页 sider */}
+      <div className="kb-doc-folder-sidebar">
+        <div className="kb-doc-folder-header">
+          <span className="kb-doc-folder-header-title">文档目录</span>
           <Space size={4}>
             <Tooltip title="新建根目录">
               <Button size="small" type="text" icon={<PlusOutlined />} onClick={() => createFolder("")} />
             </Tooltip>
           </Space>
         </div>
-        <div className="kb-doc-folder-tree" style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
-          {/* 全部文档（根层级） */}
+        <div className="kb-doc-folder-tree">
+          {/* 全部文档（根层级，对齐知识库管理页「全部」一级节点） */}
           <div
-            className="kb-doc-folder-root"
+            className={`kb-doc-tree-row kb-doc-tree-row--root${docFolderId === "" ? " active" : ""}`}
+            style={{ paddingLeft: 8 }}
+            title="全部文档"
             onClick={() => {
               setDocFolderId("");
               setDocPage(1);
             }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "5px 6px",
-              borderRadius: 4,
-              cursor: "pointer",
-              background: docFolderId === "" ? "var(--kb-primary-light, rgba(22,119,255,0.1))" : undefined,
-              color: docFolderId === "" ? "#1677ff" : undefined,
-            }}
           >
-            <FolderOutlined style={{ color: "#faad14" }} />
-            <span style={{ fontSize: 13 }}>全部文档</span>
+            <span className="kb-doc-tree-icon">
+              <span className="kb-doc-tree-node-icon kb-doc-tree-node-icon--visible">
+                <FolderIcon />
+              </span>
+            </span>
+            <span className="kb-doc-tree-title">全部文档</span>
           </div>
           {docFolders.length === 0 ? (
-            <div style={{ padding: "12px 8px", color: "#999", fontSize: 12 }}>
-              暂无目录，点击右上角 + 新建
-            </div>
+            <div className="kb-doc-folder-empty">暂无目录，点击右上角 + 新建</div>
           ) : (
-            <Tree
-              blockNode
-              showLine={{ showLeafIcon: false }}
-              selectedKeys={docFolderId ? [docFolderId] : []}
-              expandedKeys={folderExpandedKeys}
-              onExpand={(keys) => setFolderExpandedKeys(keys as string[])}
-              onSelect={(keys) => {
-                const key = keys[0] as string | undefined;
-                setDocFolderId(key || "");
-                setDocPage(1);
-              }}
-              treeData={folderTreeData as any}
-            />
+            renderFolderNodes("", 0)
           )}
         </div>
       </div>
@@ -829,7 +847,7 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
             className="kb-doc-search-input"
             allowClear
             placeholder="搜索文档"
-            prefix={<SearchOutlined style={{ color: "#bfbfbf" }} />}
+            prefix={<SearchColorIcon size={14} />}
             value={docKeyword}
             onChange={(e) => {
               setDocKeyword(e.target.value);
@@ -840,13 +858,12 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
           {/* 解析状态 / 文件类型 过滤紧跟搜索框之后（宽屏 flex 行按 DOM 顺序排列） */}
           <div className="kb-doc-filter-fields">
             <div className="kb-doc-filter-field">
-              <Select
+              <ModoSelect
                 className="kb-doc-filter-control"
-                allowClear
                 placeholder="解析状态"
                 value={docStatus || undefined}
                 onChange={(v) => {
-                  setDocStatus(v || "");
+                  setDocStatus((v as string) || "");
                   setDocPage(1);
                   void load();
                 }}
@@ -857,13 +874,12 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
               />
             </div>
             <div className="kb-doc-filter-field">
-              <Select
+              <ModoSelect
                 className="kb-doc-filter-control"
-                allowClear
                 placeholder="文件类型"
                 value={docType || undefined}
                 onChange={(v) => {
-                  setDocType(v || "");
+                  setDocType((v as string) || "");
                   setDocPage(1);
                   void load();
                 }}
@@ -898,9 +914,9 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                 </button>
               </Tooltip>
             </div>
-            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+            <ModoButton icon={<ReloadOutlined />} onClick={() => void load()}>
               刷新
-            </Button>
+            </ModoButton>
             <Dropdown
               menu={{
                 items: [
@@ -925,10 +941,10 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                 ],
               }}
             >
-              <Button type="primary" icon={<CloudUploadOutlined />}>
+              <ModoButton type="primary" icon={<CloudUploadOutlined />}>
                 添加知识
                 <DownOutlined style={{ fontSize: 10, marginLeft: 2 }} />
-              </Button>
+              </ModoButton>
             </Dropdown>
             {/* 隐藏的文件选择触发器（本地上传） */}
             <input
@@ -993,17 +1009,7 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                 onTrace={onViewTrace}
               />
             </div>
-            {/* 卡片视图分页(与列表视图同源 docPage/docPageSize)，统一用 ModoPagination 对齐展示 */}
-            <ModoPagination
-              current={docPage}
-              pageSize={docPageSize}
-              total={docTotal}
-              showTotal={(t) => `共 ${t} 个文档`}
-              onChange={(p, ps) => {
-                setDocPage(p);
-                setDocPageSize(ps);
-              }}
-            />
+            {/* 卡片视图分页：统一由内容列底部的 DSB simple 分页条承担（见 kb-doc-pagination-bar） */}
           </>
         ) : (
           <>
@@ -1022,7 +1028,14 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                 onChange: (keys) => setSelectedDocs(new Set(keys as string[])),
               }}
               onRow={(doc) => ({ onClick: () => onOpenDoc(doc) })}
-              locale={{ emptyText: <Empty description="暂无文档，拖拽文件到右上角上传" /> }}
+              locale={{
+                emptyText: (
+                  <KbsEmpty
+                    variant="inline"
+                    description="暂无文档，拖拽文件到右上角上传"
+                  />
+                ),
+              }}
               columns={[
                 {
                   title: "文件名",
@@ -1096,19 +1109,23 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                 },
               ]}
             />
-            <ModoPagination
-              current={docPage}
-              pageSize={docPageSize}
-              total={docTotal}
-              showTotal={(t) => `共 ${t} 个文档`}
-              onChange={(p, ps) => {
-                setDocPage(p);
-                setDocPageSize(ps);
-              }}
-            />
+            {/* 表格视图分页：统一由内容列底部的 DSB simple 分页条承担（见 kb-doc-pagination-bar） */}
           </>
         )}
       </div>
+      {/* 分页条：与知识库管理页同款 DSB simple 分页（共 N 个文档 + 页码输入 + 条/页），
+          仅当总数超过一页时渲染；置于内容区内边距之外，横贯内容列底部 */}
+      <KbsSimplePagination
+        containerClassName="kb-doc-pagination-bar"
+        current={docPage}
+        pageSize={docPageSize}
+        total={docTotal}
+        showTotal={(t) => `共 ${t} 个文档`}
+        onChange={(p, ps) => {
+          setDocPage(p);
+          setDocPageSize(ps);
+        }}
+      />
       </div>
       {/* 右侧内容区结束: 上面的 </div> 闭合 kb-doc-area, 这句闭合右侧 flex wrapper */}
       </Card>
