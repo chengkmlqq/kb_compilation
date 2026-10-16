@@ -2,7 +2,26 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-17（编排种子数据与线上编排管理全量同步）
+最后更新：2026-10-18（智能问答图片链路对齐 WeKnora）
+
+## 22. 当前状态（2026-10-18 智能问答图片链路对齐 WeKnora）
+
+- **需求**：对比 kb 与 WeKnora 的图片问答实现逻辑后对齐——kb 此前只认 `supports_vision`（不支持就报错）、图片是**会话级**每轮重发、OIP 协议下图片被静默丢弃、agent 配置里的 `vlm_model_id/attachment_image_understanding` 是**空开关**（只有配置层无消费点）
+- **对齐后的图片处理顺序**（与 WeKnora handler/session + chat_pipeline 一致）：
+  1. 模型能看图（`supports_vision` 且协议非 OIP）→ 图片按 content-array 直传（vision）
+  2. 不能看图 → 用视觉模型（agent 配置 `vlm_model_id` 优先，否则平台可见的支持视觉 chat 模型）逐图生成描述，以「[用户上传图片内容]」注入 prompt（describe）；描述回写附件 `caption`，历史轮次按 caption 回带（对齐 WeKnora `extractImageCaptions`）
+  3. 都没有 → 明确报错（沿用原文案「当前对话模型不支持图片输入…」）
+- **代码改动**：
+  1. 新增 `api/services/image_qa.py`：`plan_image_input()`（vision/describe/reject 三态 + OIP 判定）、`describe_images()`（逐图 VLM 描述，失败不阻断）、`resolve_vision_config()`、`build_image_analysis_prompt()`（WeKnora 同款提示词）；**两个问答端点共用一份判断**（此前 qa.py/agents.py 各写一份，已出现 agents 漏持久化图片 id 的漂移）
+  2. `api/services/models.py`：抽出 `_model_to_config()`（含 `supports_vision`）+ 新增 `resolve_vision_model_config()`（显式 model_id > 作用域默认 chat 模型若支持视觉 > 作用域内首个支持视觉的 chat 模型）
+  3. `api/services/chat.py`：`ChatConfig.supports_vision`、`build_messages(image_description=)`（拼「[用户上传图片内容]」）、`answer_question(image_description=, include_doc_images=)`——describe 路径下**用户图与命中片段的文档图都不直传**（否则非视觉模型收到 image part 直接报错）
+  4. **当轮图片注入**（A2）：`qa.py`/`agents.py` 请求新增 `image_attachment_ids`（None=旧客户端回落会话级；[]=本轮无图），只注入本轮图片；前端 `chat/page.tsx` 发送时带上本轮上传返回的附件 id
+  5. **图片落对象存储**（B1，迁移 **0025** 加 `chat_attachment.object_key`/`caption`）：MinIO 已配置时图片写 `chat_images/<session>/<att>.<ext>`、DB 只留 key（未配置/失败回落 file_data）；读图统一走 `_attachment_image_bytes()`（object_key 优先）；删附件/删会话顺带清理对象（会话删除此前还会残留附件行，一并修）
+  6. agent 链路补上用户消息的图片附件 id 持久化（此前漏传 → agent 会话历史消息看不到图片）
+- **验证**：全量 `.venv/bin/python -m pytest tests/ -q` → **672 passed**（含 tests/test_chat_image_qa.py 新增 18 例：当轮 id 注入、caption 历史回带、对象存储读写与上传落 key、vision/describe/reject/OIP 四态、agent「附件图片理解」门禁、describe 下不直传任何图片）；`cd web && ./node_modules/.bin/tsc --noEmit` exit 0
+- **配置语义（用户侧）**：智能体配置「图片上传」= 允许传图；「附件图片理解」= 允许在对话模型看不了图时用视觉模型生成描述（未勾选且未配视觉模型 → 传图仍会提示换支持视觉的模型）；模型配置页「支持多模态（图片输入）」标记决定是否直传
+- **部署注意**：api/worker 改动 → CI 重建 kb-api-server/kb-worker；前端 chat/page.tsx 改动需重建 kb-web；迁移 0025 由 api-server 启动时自动执行（幂等）；本机容器热修可 docker cp，正式走 CI
+- **本次未做（另行确认）**：B2 文档图片对齐 WeKnora（命中片段里的 `kb-image://` 图片改为「markdown 引用留在 context + system prompt 要求原样输出」，替换现在读回对象存储喂视觉模型的做法）
 
 ## 21. 当前状态（2026-10-17 用编排管理全部编排数据更新系统种子数据）
 

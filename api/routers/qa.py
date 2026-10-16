@@ -26,10 +26,12 @@ from api.services import qa_stream_store as store
 from api.services.chat_sessions import (
     append_message,
     attachment_contents,
+    attachment_image_data_urls,
     attachment_image_ids,
     attachment_images,
     get_context_messages,
     get_session,
+    set_attachment_caption,
 )
 from api.services.identity import decode_identity_cookie
 
@@ -69,6 +71,9 @@ class QARequest(BaseModel):
     model_id: str | None = None
     # 2026-10-12 对齐 WeKnora 输入区联网开关：请求级开启联网搜索（注入 web_search 工具）
     web_search_enabled: bool = False
+    # 2026-10-18 对齐 WeKnora「图片仅随当轮请求注入」：本轮上传的图片附件 id。
+    # None（旧客户端未传）= 回落会话级全部图片；[]= 本轮无图。
+    image_attachment_ids: list[str] | None = None
 
 
 def _sse(event: dict) -> str:
@@ -140,6 +145,9 @@ def _run_generation(
         user_message_id = ""
         attachment_ctx = ""
         image_urls: list[str] = []
+        # 本轮图片附件 id（对齐 WeKnora attachment_ids）：仅当轮注入；None=旧客户端
+        turn_image_ids: list[str] = []
+        images_scoped = req.image_attachment_ids is not None
         history: list[dict] = []
         if req.session_id:
             if not identity or not identity.user_id:
@@ -151,16 +159,23 @@ def _run_generation(
             except Exception as e:  # noqa: BLE001
                 _fail(stream_id, str(e))
                 return
+            # 历史图片轮次只回带视觉描述文本（WeKnora extractImageCaptions 同款）
             history = [
                 {"role": m["role"], "content": m["content"]}
-                for m in get_context_messages(db, req.session_id, limit=20)
+                for m in get_context_messages(
+                    db, req.session_id, limit=20, with_image_captions=True
+                )
             ]
             try:
                 attachment_ctx = attachment_contents(db, req.session_id)
             except Exception:  # noqa: BLE001
                 attachment_ctx = ""
             try:
-                image_urls = attachment_images(db, req.session_id)
+                if images_scoped:
+                    turn_image_ids = [str(i) for i in (req.image_attachment_ids or [])]
+                    image_urls = attachment_image_data_urls(db, req.session_id, turn_image_ids)
+                else:
+                    image_urls = attachment_images(db, req.session_id)
             except Exception:  # noqa: BLE001
                 image_urls = []
         else:
@@ -172,7 +187,11 @@ def _run_generation(
 
         if session and user_id and req.session_id:
             try:
-                image_ids = attachment_image_ids(db, req.session_id)
+                image_ids = (
+                    turn_image_ids
+                    if images_scoped
+                    else attachment_image_ids(db, req.session_id)
+                )
                 persisted = append_message(
                     db, user_id, req.session_id, "user", req.question, images=image_ids or None
                 )
@@ -205,6 +224,9 @@ def _run_generation(
         answer_parts: list[str] = []
         thinking_parts: list[str] = []
         refs: list[dict] = []
+        image_description = ""
+        plan_images: list[str] = image_urls
+        include_doc_images = True
         try:
             requested_cfg = None
             if req.model_id:
@@ -221,11 +243,13 @@ def _run_generation(
                     )
                 except Exception:  # noqa: BLE001
                     requested_cfg = None
+            # 2026-10-18 图片问答对齐 WeKnora：模型能看图则直传（vision），不能看则用
+            # 视觉模型产出图片描述注入文本（describe），两者都不行才明确拒绝（reject）。
+            # OIP 协议无多模态绑定，同样走 describe/reject（此前图片被静默丢弃）。
             if image_urls:
-                # 图片问答要求对话模型支持视觉（supports_vision）
                 try:
-                    from api.models.model import KbModel
                     from api.services.chat import load_chat_config
+                    from api.services.image_qa import plan_image_input
 
                     chat_cfg = requested_cfg or load_chat_config(
                         db,
@@ -233,14 +257,40 @@ def _run_generation(
                         team_name=ctx_team_name,
                         is_sys_admin=ctx_is_admin,
                     )
-                    mrow = db.execute(
-                        select(KbModel).where(KbModel.name == chat_cfg.model)
-                    ).scalars().first()
-                    if mrow and not mrow.supports_vision:
-                        _fail(stream_id, "当前对话模型不支持图片输入，请在模型配置中选用支持视觉的对话模型")
+                    plan = plan_image_input(
+                        db,
+                        image_urls=image_urls,
+                        question=req.question,
+                        chat_cfg=chat_cfg,
+                        user_id=ctx_user_id,
+                        team_name=ctx_team_name,
+                        is_sys_admin=ctx_is_admin,
+                    )
+                    if plan.mode == "reject":
+                        _fail(stream_id, plan.error)
                         return
-                except Exception:  # noqa: BLE001
-                    pass
+                    if plan.mode == "vision":
+                        plan_images = plan.images
+                    elif plan.mode == "describe":
+                        # 描述回写附件，供历史轮次回带（WeKnora caption 同款）
+                        plan_images = []
+                        image_description = plan.description
+                        include_doc_images = False
+                        caption_ids = turn_image_ids
+                        if not caption_ids and req.session_id:
+                            # 旧客户端（会话级图片）：按上传顺序取附件 id 对齐描述
+                            try:
+                                caption_ids = attachment_image_ids(db, req.session_id)
+                            except Exception:  # noqa: BLE001
+                                caption_ids = []
+                        for aid, cap in zip(caption_ids, plan.captions):
+                            try:
+                                set_attachment_caption(db, aid, cap)
+                            except Exception:  # noqa: BLE001
+                                logger.warning("persist image caption failed: %s", aid)
+                except Exception:  # noqa: BLE001 — 计划解析失败不阻断问答（保持旧行为）
+                    logger.exception("image input planning failed; passing images through")
+                    plan_images = image_urls
             # 2026-10-12 对齐 WeKnora 输入区联网开关：请求级开启时注入 web_search 工具，
             # 装配失败不阻断问答（回落纯 RAG 单轮流式）
             ws_tools: list[dict] = []
@@ -267,7 +317,9 @@ def _run_generation(
                 retrieval_overrides=overrides,
                 history=history,
                 extra_context=attachment_ctx,
-                image_urls=image_urls,
+                image_urls=plan_images,
+                image_description=image_description,
+                include_doc_images=include_doc_images,
                 user_id=ctx_user_id,
                 team_name=ctx_team_name,
                 is_sys_admin=ctx_is_admin,

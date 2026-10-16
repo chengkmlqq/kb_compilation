@@ -143,11 +143,35 @@ def update_session(
     return _session_dict(s)
 
 
+def _purge_attachments(db: Session, session_ids: list[str]) -> None:
+    """删除会话下的附件行，并尽力清理其对象存储（图片落存储后不能只删行）。"""
+    if not session_ids:
+        return
+    rows = (
+        db.execute(
+            select(ChatAttachment).where(ChatAttachment.session_id.in_(session_ids))
+        )
+        .scalars()
+        .all()
+    )
+    keys = [a.object_key for a in rows if a.object_key]
+    db.execute(delete(ChatAttachment).where(ChatAttachment.session_id.in_(session_ids)))
+    db.commit()
+    for key in keys:
+        try:
+            from api.services.storage import delete as storage_delete
+
+            storage_delete(key)
+        except Exception:  # noqa: BLE001 — 对象清理失败不影响会话删除
+            logger.warning("purge attachment object failed: %s", key, exc_info=True)
+
+
 def delete_session(db: Session, user_id: str, session_id: str) -> None:
     s = get_session(db, user_id, session_id)
     db.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
     db.delete(s)
     db.commit()
+    _purge_attachments(db, [session_id])
 
 
 def batch_delete_sessions(db: Session, user_id: str, session_ids: list[str]) -> int:
@@ -160,6 +184,7 @@ def batch_delete_sessions(db: Session, user_id: str, session_ids: list[str]) -> 
         )
     )
     db.commit()
+    _purge_attachments(db, list(session_ids))
     return result.rowcount or 0
 
 
@@ -210,7 +235,6 @@ def _message_images(db: Session, m: ChatMessage) -> list[dict]:
         return []
     if not ids:
         return []
-    from sqlalchemy import select
     import base64
 
     rows = (
@@ -226,8 +250,11 @@ def _message_images(db: Session, m: ChatMessage) -> list[dict]:
         if not att or att.media_type != "image":
             continue
         item: dict = {"id": att.id, "file_name": att.file_name or "图片", "file_size": att.file_size or 0}
-        if att.file_data and (att.file_size or 0) <= 300 * 1024:
-            item["url"] = "data:image/jpeg;base64," + base64.b64encode(att.file_data).decode()
+        if (att.file_size or 0) <= 300 * 1024:
+            raw = _attachment_image_bytes(att)
+            if raw:
+                mime = IMAGE_MIME.get((att.file_ext or "").lower(), "image/png")
+                item["url"] = f"data:{mime};base64," + base64.b64encode(raw).decode()
         out.append(item)
     return out
 
@@ -320,8 +347,20 @@ def append_message(
     return _message_dict(db, msg)
 
 
-def get_context_messages(db: Session, session_id: str, limit: int = 20) -> list[dict]:
-    """最近 N 条消息作为多轮对话上下文（用户+助手交替，按时间序）。"""
+def get_context_messages(
+    db: Session,
+    session_id: str,
+    limit: int = 20,
+    *,
+    with_image_captions: bool = False,
+) -> list[dict]:
+    """最近 N 条消息作为多轮对话上下文（用户+助手交替，按时间序）。
+
+    with_image_captions=True：历史 user 消息若带图片附件，把其视觉描述以
+    「[用户上传图片内容]」拼进 content（对齐 WeKnora
+    chat_pipeline/common.go loadAndProcessHistory + extractImageCaptions）——
+    历史轮次不回传图片本体，只回传描述文本。仅在内存中拼接，不回写库。
+    """
     rows = (
         db.execute(
             select(ChatMessage)
@@ -332,7 +371,28 @@ def get_context_messages(db: Session, session_id: str, limit: int = 20) -> list[
         .scalars()
         .all()
     )
-    return [_message_dict(db, m) for m in reversed(rows)]
+    from api.services.chat import IMAGE_CONTENT_PREFIX
+
+    out: list[dict] = []
+    for m in reversed(rows):
+        if with_image_captions and m.role == "user" and m.images:
+            try:
+                ids = json.loads(m.images) or []
+            except (TypeError, json.JSONDecodeError):
+                ids = []
+            caps = image_caption_map(db, ids)
+            desc = "\n".join(c for c in (caps.get(str(i), "") for i in ids) if c)
+            if desc:
+                out.append(
+                    {
+                        "role": m.role,
+                        "content": (m.content or "") + IMAGE_CONTENT_PREFIX + desc,
+                        "images": [],
+                    }
+                )
+                continue
+        out.append(_message_dict(db, m))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -550,6 +610,113 @@ def is_image_ext(ext: str) -> bool:
     return (ext or "").lower() in IMAGE_EXTS
 
 
+def image_mime(ext: str) -> str:
+    return IMAGE_MIME.get((ext or "").lower(), "image/png")
+
+
+def _attachment_image_bytes(att: ChatAttachment) -> bytes:
+    """读图片字节：优先对象存储（object_key），回落 DB 列（file_data）。
+
+    2026-10-18 图片落对象存储：历史行仍在 file_data，两种来源都要能读。
+    """
+    if att.object_key:
+        try:
+            from api.services.storage import get_bytes
+
+            data = get_bytes(att.object_key)
+            if data:
+                return data
+        except Exception:  # noqa: BLE001 — 存储不可用回落 DB 列
+            logger.warning("read image from storage failed: %s", att.object_key, exc_info=True)
+    return att.file_data or b""
+
+
+def store_attachment_image(rel_dir: str, attachment_id: str, data: bytes, ext: str) -> str:
+    """图片写对象存储，返回 storage_path（minio://… 或本地绝对路径）。
+
+    仅在 MinIO 已配置时启用；未配置/写入失败返回 ""，由调用方回落 DB 列
+    （对齐 WeKnora 图片落存储，但保留无对象存储环境的可用性）。
+    """
+    from api.services.storage import put_bytes, remote_enabled, resolve_new_path
+
+    if not remote_enabled():
+        return ""
+    key = f"chat_images/{rel_dir}/{attachment_id}{ext or '.png'}"
+    try:
+        path = resolve_new_path(key)
+        put_bytes(path, data, content_type=image_mime(ext))
+        return path
+    except Exception:  # noqa: BLE001 — 落存储失败不阻断上传
+        logger.warning("store attachment image failed: %s", key, exc_info=True)
+        return ""
+
+
+def attachment_image_data_urls(
+    db: Session, session_id: str, image_ids: list[str]
+) -> list[str]:
+    """当轮图片附件（按给定 id，保序）转 data URL 列表。
+
+    对齐 WeKnora「图片仅随当轮请求注入」：只取本轮发送的图片，不再把会话内
+    历史图片全部重发（旧行为见 attachment_images）。
+    """
+    if not image_ids:
+        return []
+    import base64
+
+    rows = (
+        db.execute(
+            select(ChatAttachment).where(
+                ChatAttachment.id.in_(list(image_ids)),
+                ChatAttachment.session_id == session_id,
+                ChatAttachment.media_type == "image",
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_id = {a.id: a for a in rows}
+    out: list[str] = []
+    for aid in image_ids:
+        att = by_id.get(aid)
+        if att is None:
+            continue
+        raw = _attachment_image_bytes(att)
+        if raw:
+            out.append(f"data:{image_mime(att.file_ext)};base64," + base64.b64encode(raw).decode("ascii"))
+    return out
+
+
+def image_caption_map(db: Session, image_ids: list[str]) -> dict[str, str]:
+    """image_id → 视觉描述（历史轮次回带「用户上传图片内容」用）。"""
+    if not image_ids:
+        return {}
+    rows = (
+        db.execute(
+            select(ChatAttachment.id, ChatAttachment.caption).where(
+                ChatAttachment.id.in_(list(image_ids))
+            )
+        )
+        .all()
+    )
+    return {str(r[0]): (r[1] or "") for r in rows if (r[1] or "").strip()}
+
+
+def set_attachment_caption(db: Session, attachment_id: str, caption: str) -> None:
+    """写入图片视觉描述（非视觉模型回退路径产出的 caption）。"""
+    cap = (caption or "").strip()
+    if not cap:
+        return
+    att = (
+        db.execute(select(ChatAttachment).where(ChatAttachment.id == attachment_id))
+        .scalars()
+        .first()
+    )
+    if att is None:
+        return
+    att.caption = cap
+    db.commit()
+
+
 def _attachment_dict(a: ChatAttachment) -> dict:
     return {
         "id": a.id,
@@ -572,10 +739,13 @@ def create_attachment(
     content: str,
     media_type: str = "text",
     file_data: bytes | None = None,
+    object_key: str | None = None,
+    caption: str | None = None,
+    attach_id: str | None = None,
 ) -> dict:
     get_session(db, user_id, session_id)
     att = ChatAttachment(
-        id=new_attachment_id(),
+        id=attach_id or new_attachment_id(),
         session_id=session_id,
         user_id=user_id,
         file_name=file_name,
@@ -584,6 +754,8 @@ def create_attachment(
         media_type=media_type,
         content=content,
         file_data=file_data,
+        object_key=object_key,
+        caption=caption,
     )
     db.add(att)
     db.commit()
@@ -613,8 +785,17 @@ def delete_attachment(db: Session, user_id: str, session_id: str, attachment_id:
     ).scalars().first()
     if not a:
         raise HTTPException(status_code=404, detail=f"附件不存在: {attachment_id}")
+    object_key = a.object_key
     db.delete(a)
     db.commit()
+    if object_key:
+        # 顺带清理对象存储（尽力而为，失败不影响删除结果）
+        try:
+            from api.services.storage import delete as storage_delete
+
+            storage_delete(object_key)
+        except Exception:  # noqa: BLE001
+            logger.warning("delete attachment object failed: %s", object_key, exc_info=True)
 
 
 def attachment_contents(db: Session, session_id: str, max_chars: int = 6000) -> str:
@@ -664,8 +845,8 @@ def attachment_image_ids(db: Session, session_id: str) -> list[str]:
 def attachment_images(db: Session, session_id: str) -> list[str]:
     """图片附件转 data URL 列表（QA 时挂 user 消息 images，按上传顺序）。
 
-    与 WeKnora 「图片仅随当轮请求注入」的差异：kb 附件是会话级，图片
-    每轮随当前 user 消息重发，删除附件后不再携带。历史消息不含图片。
+    会话级兜底：仅用于未携带 image_attachment_ids 的旧客户端请求；新链路按当轮图片
+    （attachment_image_data_urls）注入，不再重发会话内历史图片。
     """
     rows = (
         db.execute(
@@ -679,15 +860,14 @@ def attachment_images(db: Session, session_id: str) -> list[str]:
         .scalars()
         .all()
     )
+    import base64
+
     out = []
     for a in rows:
-        if not a.file_data:
+        raw = _attachment_image_bytes(a)
+        if not raw:
             continue
-        mime = IMAGE_MIME.get((a.file_ext or "").lower(), "image/png")
-        import base64
-
-        b64 = base64.b64encode(a.file_data).decode("ascii")
-        out.append(f"data:{mime};base64,{b64}")
+        out.append(f"data:{image_mime(a.file_ext)};base64,{base64.b64encode(raw).decode('ascii')}")
     return out
 
 

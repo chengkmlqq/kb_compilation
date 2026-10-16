@@ -36,6 +36,12 @@ class ChatConfig:
     custom_headers: dict | None = None  # extra request headers (model-scoped)
     # 接口协议：openai（OpenAI 兼容 /v1，流式）| oip（KServe OIP /v2 非流式）
     interface_type: str = "openai"
+    # 模型登记表里的视觉能力标记（None=未知/未登记，不做门禁）
+    supports_vision: bool | None = None
+
+
+# 非视觉模型的图片描述注入前缀（WeKnora into_chat_message.go 同款文案）
+IMAGE_CONTENT_PREFIX = "\n\n[用户上传图片内容]\n"
 
 
 @dataclass
@@ -86,6 +92,7 @@ def load_chat_config(
                     model=resolved.get("model") or "",
                     custom_headers=resolved.get("custom_headers") or None,
                     interface_type=(resolved.get("interface_type") or "openai"),
+                    supports_vision=resolved.get("supports_vision"),
                 )
         except Exception:
             logger.warning("failed to resolve scoped chat model; using legacy config", exc_info=True)
@@ -168,6 +175,7 @@ def build_messages(
     extra_context: str = "",
     agent_prompt: str = "",
     image_urls: list[str] | None = None,
+    image_description: str = "",
 ) -> list[ChatMessage]:
     """Build the message list: system (with context) + history + user question.
 
@@ -176,6 +184,8 @@ def build_messages(
     agent_prompt overrides the default system prompt (agent persona).
     image_urls (session image attachments, data URLs) are attached to the
     user message as OpenAI content-array image parts (multimodal QA).
+    image_description: 非视觉模型路径的图像文本描述，以「[用户上传图片内容]」拼进
+    user 消息（对齐 WeKnora into_chat_message.go）。
     """
     context = serialize_context(hits)
     if context or extra_context:
@@ -201,8 +211,12 @@ def build_messages(
         system = agent_prompt or "你是一个智能问答助手。请直接、准确地回答用户的问题；信息不足时请明确说明，不要编造。"
     messages = [ChatMessage(role="system", content=system)]
     messages.extend(history or [])
+    user_content = question
+    if image_description:
+        # 图片文本描述：模型看不了图时（非视觉模型 / OIP 协议）注入（WeKnora 同款）
+        user_content = question + IMAGE_CONTENT_PREFIX + image_description
     messages.append(
-        ChatMessage(role="user", content=question, images=image_urls or None)
+        ChatMessage(role="user", content=user_content, images=image_urls or None)
     )
     return messages
 
@@ -506,6 +520,8 @@ def answer_question(
     extra_context: str = "",
     agent_prompt: str = "",
     image_urls: list[str] | None = None,
+    image_description: str = "",
+    include_doc_images: bool = True,
     user_id: str = "",
     team_name: str = "",
     is_sys_admin: bool = False,
@@ -606,11 +622,14 @@ def answer_question(
         normalized = []
     # 2026-10-07: 文档图片注入——命中 chunk 里的 kb-image:// 引用读回 data URL，
     # 与附件图片合并后随 user 消息走视觉模型（文档图片可理解/问答）
-    doc_images = _chunk_document_images(hits)
+    # include_doc_images=False：本轮走「非视觉模型 + 图片描述」路径，命中片段里的
+    # 文档图片同样不能直传（否则非视觉模型收到 image_url part 直接报错）。
+    doc_images = _chunk_document_images(hits) if include_doc_images else []
     images = list(image_urls or []) + doc_images
     messages = build_messages(
         question, hits, normalized,
         extra_context=extra_context, agent_prompt=agent_prompt, image_urls=images,
+        image_description=image_description,
     )
     client = ChatClient(chat_cfg)
     # 无工具：与接入前逐字一致的单轮流式

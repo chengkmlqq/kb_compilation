@@ -337,6 +337,8 @@ async def api_upload_attachment(
     from api.services.chat_sessions import (
         create_attachment,
         is_image_ext,
+        new_attachment_id,
+        store_attachment_image,
     )
     from api.services.ingest import parse_document
 
@@ -368,9 +370,16 @@ async def api_upload_attachment(
                 status_code=400,
                 detail=f"智能体「{agent.name if agent else '未知'}」未开启图片上传，请在智能体配置中打开",
             )
+        # 图片落对象存储（对齐 WeKnora：图片存 chat-images 前缀下，DB 只留 key）；
+        # 未配置 MinIO / 写入失败时回落把字节存进 file_data 列。
+        att_id = new_attachment_id()
+        object_key = store_attachment_image(session_id, att_id, data, ext)
         att = create_attachment(
             db, user_id, session_id, file_name, ext, len(data), "",
-            media_type="image", file_data=data,
+            media_type="image",
+            file_data=None if object_key else data,
+            object_key=object_key or None,
+            attach_id=att_id,
         )
         return {"success": True, "data": att}
 

@@ -57,12 +57,18 @@ class ChatAttachment(Base):
     media_type: Mapped[str] = mapped_column(String(16), default="text")
     # 解析后的 markdown 全文（docreader 产出）
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # 图片原始字节（media_type=image 时）
+    # 图片原始字节（media_type=image 时；对象存储不可用时回落）
     # 图片上限 MAX_ATTACHMENT_BYTES=20MB > MySQL BLOB 64KB → LONGBLOB
     # （2026-10-15: 真实截图 >64KB 触 1406 Data too long → 500）
     file_data: Mapped[bytes | None] = mapped_column(
         LargeBinary(length=32 * 1024 * 1024), nullable=True
     )
+    # 图片对象存储路径（minio://bucket/chat_images/<session>/<att>.<ext>，对齐
+    # WeKnora 图片落存储；为空表示字节存在 file_data 列）
+    object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # 图片视觉描述（非视觉模型的文本回退；对齐 WeKnora message.Images[].Caption，
+    # 历史轮次按此回带「用户上传图片内容」）
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32), default=_now_iso)
 
 

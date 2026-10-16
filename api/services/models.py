@@ -573,6 +573,21 @@ def resolve_default_model(
     return None
 
 
+def _model_to_config(m) -> dict:
+    """Model row → runtime config dict (shared by chat/vision resolution)."""
+    return {
+        "base_url": m.base_url or "",
+        "api_key": decrypt_secret(m.api_key),
+        "model": m.name,
+        "dimension": m.dimension,
+        "model_id": m.id,
+        "scope": m.scope,
+        "custom_headers": m.custom_headers or {},
+        "interface_type": m.interface_type or "openai",
+        "supports_vision": bool(m.supports_vision),
+    }
+
+
 def resolve_model_config(
     db: Session,
     model_type: str,
@@ -602,16 +617,68 @@ def resolve_model_config(
         )
     if not m:
         return None
-    return {
-        "base_url": m.base_url or "",
-        "api_key": decrypt_secret(m.api_key),
-        "model": m.name,
-        "dimension": m.dimension,
-        "model_id": m.id,
-        "scope": m.scope,
-        "custom_headers": m.custom_headers or {},
-        "interface_type": m.interface_type or "openai",
-    }
+    return _model_to_config(m)
+
+
+def resolve_vision_model_config(
+    db: Session,
+    *,
+    caller_user_id: str = "",
+    caller_team_name: str = "",
+    is_sys_admin: bool = False,
+    model_id: str = "",
+) -> dict | None:
+    """Resolve a vision-capable chat model (图片问答回退用，对齐 WeKnora VLM 侧)。
+
+    优先级：显式 model_id（须支持视觉）> 作用域内默认 chat 模型（若其支持视觉）
+    > 作用域内第一个支持视觉的 chat 模型。无可用视觉模型返回 None。
+    """
+    if model_id:
+        m = get_model(db, model_id)
+        if not m or m.state != "1" or m.type != "chat" or not m.supports_vision:
+            return None
+        return _model_to_config(m)
+
+    default = resolve_default_model(
+        db,
+        "chat",
+        caller_user_id=caller_user_id,
+        caller_team_name=caller_team_name,
+        is_sys_admin=is_sys_admin,
+    )
+    if default is not None and default.supports_vision:
+        return _model_to_config(default)
+
+    # 可见作用域内挑第一个支持视觉的 chat 模型（个人 > 团队 > 系统[管理员/无身份调用方]）
+    scopes: list[str] = []
+    if caller_user_id:
+        scopes.append("personal")
+    if caller_team_name:
+        scopes.append("team")
+    if is_sys_admin or not caller_user_id:
+        scopes.append("system")
+    for scope in scopes:
+        stmt = select(KbModel).where(
+            and_(
+                KbModel.state == "1",
+                KbModel.scope == scope,
+                KbModel.type == "chat",
+                KbModel.supports_vision.is_(True),
+                (
+                    (KbModel.owner_user_id == caller_user_id)
+                    if scope == "personal"
+                    else (
+                        (KbModel.owner_team_name == caller_team_name)
+                        if scope == "team"
+                        else KbModel.scope == "system"
+                    )
+                ),
+            )
+        ).order_by(KbModel.is_default.desc())
+        row = db.execute(stmt).scalars().first()
+        if row is not None:
+            return _model_to_config(row)
+    return None
 
 
 __all__ = [
@@ -628,6 +695,7 @@ __all__ = [
     "delete_model",
     "set_default",
     "resolve_model_config",
+    "resolve_vision_model_config",
     "resolve_default_model",
     "mask_api_key",
     "decrypt_secret",
