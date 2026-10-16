@@ -30,6 +30,17 @@ import {
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useMenuContext, MenuTreeNode } from "./MenuContext";
 import { SysMenuItem } from "@/lib/api";
+import {
+  ModoIconBook1,
+  ModoIconCloudAdd,
+  ModoIconCloudServer,
+  ModoIconDatabase,
+  ModoIconHome,
+  ModoIconResourceOrchestration,
+  ModoIconSemanticSearch,
+  ModoIconSystemMgr,
+  ModoIconTaskMonitor,
+} from "@/components/ModoMenuIcons";
 
 const { Sider } = Layout;
 
@@ -55,6 +66,16 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   ProfileOutlined: <ProfileOutlined />,
   TeamOutlined: <TeamOutlined />,
   BellOutlined: <BellOutlined />,
+  // 2026-10-16 补充：shandong 数据供给平台菜单实际使用的 modo 彩色图标（ModoMenuIcons.tsx 内联）
+  IconBook1Color: <ModoIconBook1 />,
+  IconCloudAddColor: <ModoIconCloudAdd />,
+  IconCloudServerColor: <ModoIconCloudServer />,
+  IconDatabaseColor: <ModoIconDatabase />,
+  IconHomeColor: <ModoIconHome />,
+  IconResourceOrchestrationColor: <ModoIconResourceOrchestration />,
+  IconSemanticSearchColor: <ModoIconSemanticSearch />,
+  IconSystemMgrColor: <ModoIconSystemMgr />,
+  IconTaskMonitorColor: <ModoIconTaskMonitor />,
 };
 const DEFAULT_ICON = <AppstoreOutlined />;
 

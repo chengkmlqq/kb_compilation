@@ -93,14 +93,14 @@ REMOVED_MENUS: set[str] = {"chat_next"}
 #   - route 有值且带子级 = 分组兼页面（点击自身跳该路由）
 KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     # ---- 顶级页面 ----
-    ("chat", "chat", "智能问答", "/chat", None, "CommentOutlined", 1),
-    ("kbs", "kbs", "知识库", "/kbs", None, "AppstoreOutlined", 2),
-    ("agents", "agents", "智能体", "/agents", None, "RobotOutlined", 3),
+    ("chat", "chat", "智能问答", "/chat", None, "IconSemanticSearchColor", 1),
+    ("kbs", "kbs", "知识库", "/kbs", None, "IconBook1Color", 2),
+    ("agents", "agents", "智能体", "/agents", None, "IconSemanticSearchColor", 3),
     # ---- 运维监控（顶级目录：任务监控/任务管理/主机监控/操作日志/切片核对/元数据采集） ----
-    ("grp_ops", "grp_ops", "运维监控", None, None, "FundOutlined", 4),
-    ("jobs", "jobs", "任务监控", "/jobs", "grp_ops", "DashboardOutlined", 1),
+    ("grp_ops", "grp_ops", "运维监控", None, None, "IconTaskMonitorColor", 4),
+    ("jobs", "jobs", "任务监控", "/jobs", "grp_ops", "IconTaskMonitorColor", 1),
     ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_ops", "ScheduleOutlined", 2),
-    ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_ops", "CloudServerOutlined", 3),
+    ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_ops", "IconCloudServerColor", 3),
     ("sys_logs", "sys_logs", "操作日志", "/system/logs", "grp_ops", "ProfileOutlined", 4),
     ("chunk_verify", "chunk_verify", "切片核对", "/chunk-verify", "grp_ops", "SafetyOutlined", 5),
     (
@@ -123,14 +123,14 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ),
     # ---- 配置管理（顶级目录：数据源管理/模型/MCP/技能/参数/联网搜索） ----
     ("grp_config", "grp_config", "配置管理", None, None, "ToolOutlined", 5),
-    ("datasources", "datasources", "数据源管理", "/datasources", "grp_config", "DatabaseOutlined", 1),
+    ("datasources", "datasources", "数据源管理", "/datasources", "grp_config", "IconDatabaseColor", 1),
     ("models", "models", "模型配置", "/models", "grp_config", "CloudServerOutlined", 2),
     ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "grp_config", "ApiOutlined", 3),
     ("256b44596e6e43f5a847e0c3ae7b2ba0", "skills", "技能管理", "/skills", "grp_config", "ToolOutlined", 4),
     ("sys_dims", "sys_dims", "参数管理", "/system/dims", "grp_config", "DatabaseOutlined", 5),
     ("d83aee0d1d8a4fce8a6bd121b6efc5fa", "websearch", "联网搜索", "/websearch", "grp_config", "SearchOutlined", 6),
     # ---- 系统管理（分组兼页面，顶级：点击自身跳 /system → 重定向到 /system/users） ----
-    ("system", "system", "系统管理", "/system", None, "SettingOutlined", 6),
+    ("system", "system", "系统管理", "/system", None, "IconSystemMgrColor", 6),
     ("sys_users", "sys_users", "用户管理", "/system/users", "system", "TeamOutlined", 1),
     ("sys_roles", "sys_roles", "角色管理", "/system/roles", "system", "SafetyOutlined", 2),
     ("sys_teams", "sys_teams", "团队管理", "/system/teams", "system", "PartitionOutlined", 3),
@@ -147,10 +147,10 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
         2,
     ),
     # 方案H：编排管理/编排模板 从顶级移入调试工具（与编排组件相邻）
-    ("orch_tapes", "orch_tapes", "编排管理", "/orchestrations", "grp_debug", "ApartmentOutlined", 3),
+    ("orch_tapes", "orch_tapes", "编排管理", "/orchestrations", "grp_debug", "IconResourceOrchestrationColor", 3),
     ("orch_templates", "orch_templates", "编排模板", "/tape-templates", "grp_debug", "AppstoreOutlined", 4),
     ("orch_defines", "orch_defines", "编排组件", "/orchestrations/steps", "grp_debug", "BlockOutlined", 5),
-    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_debug", "FileOutlined", 6),
+    ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_debug", "IconCloudServerColor", 6),
     ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_debug", "TableOutlined", 7),
     ("quality", "quality", "质量评估", "/quality", "grp_debug", "CheckCircleOutlined", 8),
 ]

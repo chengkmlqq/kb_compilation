@@ -42,6 +42,7 @@ import {
   PlusOutlined,
 } from "@ant-design/icons";
 import * as AntdIcons from "@ant-design/icons";
+import { MODO_ICON_COMPONENTS } from "@/components/ModoMenuIcons";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoDrawer } from "@/components/biz/modo-drawer";
@@ -73,11 +74,11 @@ interface MenuItemExt extends SysMenuItem {
 
 const API_METHOD_OPTIONS = ["GET", "POST", "PUT", "DELETE", "PATCH", "*"];
 
-/** @ant-design/icons 动态取组件（图标名目录来自 apiListMenuIcons） */
-const ICON_COMPONENTS = AntdIcons as unknown as Record<
-  string,
-  React.ComponentType<{ style?: React.CSSProperties }>
->;
+/** 图标名目录来自 apiListMenuIcons：@ant-design/icons 动态取 + modo 彩色图标（shandong 菜单同款，ModoMenuIcons.tsx 内联） */
+const ICON_COMPONENTS: Record<string, React.ComponentType<{ style?: React.CSSProperties }>> = {
+  ...(AntdIcons as unknown as Record<string, React.ComponentType<{ style?: React.CSSProperties }>>),
+  ...MODO_ICON_COMPONENTS,
+};
 
 /** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
 type MenuTab = { key: string; title: string; children: ReactNode };

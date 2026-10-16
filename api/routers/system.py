@@ -62,6 +62,8 @@ from api.services.system_admin import (
 router = APIRouter(prefix="/system", tags=["system"])
 
 # 菜单图标目录（对齐 data-synth ICON_MAP 可用图标；前端 Select 用）
+# 2026-10-16 补充：shandong 数据供给平台菜单实际使用的 modo-design 彩色图标
+# （kb 前端 web/src/components/ModoMenuIcons.tsx 内联渲染，与 antd 图标同池可选）
 MENU_ICONS: list[str] = [
     "AppstoreOutlined",
     "BookOutlined",
@@ -73,6 +75,15 @@ MENU_ICONS: list[str] = [
     "DashboardOutlined",
     "FileOutlined",
     "FolderOutlined",
+    "IconBook1Color",
+    "IconCloudAddColor",
+    "IconCloudServerColor",
+    "IconDatabaseColor",
+    "IconHomeColor",
+    "IconResourceOrchestrationColor",
+    "IconSemanticSearchColor",
+    "IconSystemMgrColor",
+    "IconTaskMonitorColor",
 ]
 
 
