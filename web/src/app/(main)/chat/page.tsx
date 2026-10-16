@@ -90,8 +90,6 @@ const QA_RESUME_KEY = (sid: string) => `qa-resume:${sid}`;
 // 服务端没有对应记录——按此类 id 调反馈/删除接口会返回 404「消息不存在」。
 const LOCAL_MSG_ID_RE = /^(local|resume)-/;
 
-// 内容区统一宽度基准：消息列表 / 输入卡片 / 推荐问题共用，保证左右边缘对齐
-const CONTENT_MAX_WIDTH = 960;
 
 export default function ChatPage() {
   const { message: toast } = App.useApp();
@@ -1080,13 +1078,8 @@ export default function ChatPage() {
     await loadSessions();
   };
 
-  const [sessionSearch, setSessionSearch] = useState("");
-
-  const filteredSessions = useMemo(() => {
-    const q = sessionSearch.trim().toLowerCase();
-    if (!q) return sessions;
-    return sessions.filter((s) => s.title.toLowerCase().includes(q));
-  }, [sessions, sessionSearch]);
+  // 2026-10-16 DSB 对齐：左栏无搜索框（DSB ChatSider 无），会话列表直接按日期分组
+  const filteredSessions = sessions;
 
   // 2026-10-07 对齐 WeKnora：会话按日期分组（今天 / 昨天 / 7 天内 / 更早）
   const groupedSessions = useMemo(() => {
@@ -1132,17 +1125,10 @@ export default function ChatPage() {
             新对话
           </Button>
           <Tooltip title="收起侧边栏">
-            <Button type="text" size="small" icon={<DownOutlined style={{ color: "rgba(77,94,125,1)", fontSize: 14 }} />} onClick={() => setSiderCollapsed(true)} />
+            <span className="kb-chat-sider-collapse" onClick={() => setSiderCollapsed(true)}>
+              <DownOutlined style={{ color: "rgba(77,94,125,1)", fontSize: 18 }} />
+            </span>
           </Tooltip>
-        </div>
-        <div className="kb-chat-sider-search">
-          <Input
-            allowClear
-            placeholder="搜索会话"
-            prefix={<SearchOutlined style={{ color: token.colorTextTertiary }} />}
-            value={sessionSearch}
-            onChange={(e) => setSessionSearch(e.target.value)}
-          />
         </div>
         {/* 会话列表：占满剩余高度，超高时内部滚动 */}
         <div className="kb-chat-sider-list">
@@ -1152,9 +1138,9 @@ export default function ChatPage() {
           </div>
         ) : (
           groupedSessions.map((g) => (
-            <div key={g.key}>
+            <div key={g.key} className="kb-chat-sider-group-outer">
               <div className="kb-chat-sider-group-title">{g.label}</div>
-              <div>
+              <div className="kb-chat-sider-group-content">
                 {g.items.map((s) => {
                   const active = activeSession === s.id;
                   return (
@@ -1231,12 +1217,13 @@ export default function ChatPage() {
 
         <div
           ref={scrollRef}
+          className="kb-chat-content"
           onScroll={(e) => {
             const el = e.currentTarget;
             const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
             setShowScrollBtn(!atBottom);
           }}
-          style={{ flex: 1, minHeight: 0, overflow: "auto", position: "relative" }}
+          style={{ position: "relative" }}
         >
           {loadingMsgs ? (
             <div className="kb-chat-skeleton-list">
@@ -1272,7 +1259,7 @@ export default function ChatPage() {
                       : recommendations.map((q, i) => (
                           <div className="kb-chat-home-rela-item" key={i} onClick={() => void send(q)}>
                             <span style={{ flex: 1, minWidth: 0 }}>{q}</span>
-                            <span style={{ color: "rgba(50,97,206,1)" }}>›</span>
+                            <span className="kb-chat-home-rela-arrow">›</span>
                           </div>
                         ))}
                   </div>
@@ -1285,7 +1272,7 @@ export default function ChatPage() {
               <div key={m.id} className={`kb-chat-item ${m.role === "user" ? "user" : "assistant"}`}>
                 {m.role === "user" ? (
                   <div className="kb-chat-user-bubble">
-                    <div>{m.content}</div>
+                    <span className="user-content-html">{m.content}</span>
                     {m.images && m.images.length > 0 && (
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", maxWidth: 360, marginTop: 6 }}>
                         {m.images.map((img) =>
@@ -1437,9 +1424,9 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </div>
 
-        <div style={{ padding: "12px 16px", borderTop: `1px solid ${token.colorSplit}`, flexShrink: 0 }}>
-          {/* 底部内容统一居中列：输入卡片与消息列表同宽；模型/智能体选择收敛进卡片控制栏（对齐 WeKnora Input-field） */}
-          <div style={{ maxWidth: CONTENT_MAX_WIDTH, margin: "0 auto" }}>
+        <div className="kb-chat-footer">
+          {/* 底部内容统一居中列：输入卡片与消息列表同宽；模型/智能体选择收敛进卡片控制栏（对齐 DSB .chat-footer / Sender） */}
+          <div className="kb-chat-footer-inner">
           {/* 附件区（会话级已上传附件） */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
         {attachments.map((a) => (
@@ -1471,13 +1458,13 @@ export default function ChatPage() {
         }}
         onDrop={handleChatDrop}
         style={{
-          border: `1px solid ${dragActive ? token.colorPrimary : token.colorBorderSecondary}`,
-          borderRadius: 8,
-          boxShadow: dragActive ? `0 0 0 2px ${token.colorPrimaryBorder}` : token.boxShadowTertiary,
-          background: dragActive ? token.colorPrimaryBg : token.colorBgContainer,
-          padding: "10px 14px 6px",
-          transition: "border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease",
-        }}
+                  border: `1px solid ${dragActive ? token.colorPrimary : token.colorBorderSecondary}`,
+                  borderRadius: 12,
+                  boxShadow: dragActive ? `0 0 0 2px ${token.colorPrimaryBorder}` : "none",
+                  background: dragActive ? token.colorPrimaryBg : token.colorBgContainer,
+                  padding: "10px 14px 6px",
+                  transition: "border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease",
+                }}
       >
         {/* 图片预览条（发送前本地预览） */}
         {imagePreviews.length > 0 && (
@@ -1547,7 +1534,7 @@ export default function ChatPage() {
               void send();
             }
           }}
-          style={{ padding: "8px 18px", background: "#fff", borderRadius: 24, resize: "none", overflow: "auto" }}
+          style={{ padding: "8px 20px", background: "#fff", border: "1px solid rgba(227,233,239,1)", borderRadius: 24, resize: "none", overflow: "auto" }}
         />
         {/* 控制栏：左 智能体选择 + 工具按钮 / 右 模型选择 + 发送·停止（对齐 WeKnora Input-field 布局） */}
         <div
@@ -1987,7 +1974,7 @@ function AssistantRefs({
   refs: ChatRefItem[];
   onChunkClick?: (ref: ChatRefItem) => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   // 按文档分组去重
   const groups = useMemo(() => {
     const map = new Map<string, ChatRefItem[]>();
@@ -2005,10 +1992,10 @@ function AssistantRefs({
     <div className="kb-chat-resource">
       <div className="kb-chat-resource-oper" onClick={() => setOpen((v) => !v)}>
         <div className="kb-chat-resource-oper-title">引用{refs.length}篇文档作为参考</div>
-        <span style={{ color: "rgba(121,135,156,1)", fontSize: 12 }}>{open ? "▾" : "▸"}</span>
+        <span className="kb-chat-resource-oper-arrow">{open ? "▾" : "▸"}</span>
       </div>
       {open && (
-        <div className="kb-chat-resource-list">
+        <div className="kb-chat-resource-list active">
           {groups.map((g) => (
             <div
               key={g.title}
@@ -2016,11 +2003,13 @@ function AssistantRefs({
               onClick={() => onChunkClick?.(g.chunks[0])}
               title={g.title}
             >
-              <FileTextOutlined style={{ color: "rgba(50,97,206,1)", fontSize: 13, flexShrink: 0 }} />
-              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <span className="kb-chat-resource-item-icon">
+                <FileTextOutlined style={{ color: "rgba(50,97,206,1)", fontSize: 13 }} />
+              </span>
+              <span className="kb-chat-resource-item-label">
                 {g.title}
               </span>
-              <span style={{ flexShrink: 0, color: "rgba(121,135,156,1)", fontSize: 12 }}>{g.chunks.length}</span>
+              <span className="kb-chat-resource-cut">{g.chunks.length}</span>
             </div>
           ))}
         </div>

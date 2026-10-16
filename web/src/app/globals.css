@@ -2772,7 +2772,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
   background: #fff;
 }
 
-/* ── 左侧会话列表（对齐 ChatSider）── */
+/* ── 左侧会话列表（对齐 DSB ChatSider .chat-sider-container / .ai-search-chat-list）── */
 .kb-chat-sider {
   flex: 0 0 228px;
   display: flex;
@@ -2787,39 +2787,72 @@ html[data-theme="dark"] .kb-citation-web:hover {
   flex: 0 0 48px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   padding: 0 12px;
   border-bottom: 1px solid rgba(239, 244, 249, 1);
 }
+/* DSB .content：新对话渐变按钮(flex:1) + 折叠按钮(32px) */
 .kb-chat-sider-header .kb-chat-new-btn {
-  padding: 0 32px;
-  border-radius: 999px;
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 12px;
+  border: 0 !important;
+  border-radius: 16px !important;
+  background: linear-gradient(90deg, #517ed8 0%, #53d4c7 100%) !important;
+  color: #fff !important;
+  font-size: 14px;
+  box-shadow: none !important;
 }
-.kb-chat-sider-search {
-  padding: 8px 12px;
-  flex-shrink: 0;
+.kb-chat-sider-header .kb-chat-new-btn:hover {
+  opacity: 0.9;
+}
+.kb-chat-sider-collapse {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  color: rgba(77, 94, 125, 1);
+  border-radius: 0;
+  cursor: pointer;
+}
+.kb-chat-sider-collapse:hover {
+  background: #edf2f7;
 }
 .kb-chat-sider-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-bottom: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  row-gap: 8px;
+}
+.kb-chat-sider-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 .kb-chat-sider-group-title {
-  padding: 12px 16px 4px;
-  font-size: 12px;
   color: rgba(121, 135, 156, 1);
+  font-size: 12px;
   line-height: 20px;
+  padding: 8px 4px 4px;
+}
+.kb-chat-sider-group-outer {
+  display: flex;
+  flex-direction: column;
+  row-gap: 8px;
 }
 .kb-chat-sider-item {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 40px;
-  padding: 0 12px;
-  margin: 0 8px;
-  border-radius: 6px;
+  column-gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 14px;
   line-height: 22px;
@@ -2827,12 +2860,12 @@ html[data-theme="dark"] .kb-citation-web:hover {
   overflow: hidden;
 }
 .kb-chat-sider-item:hover {
-  background: rgba(227, 233, 239, 0.5);
+  background: rgba(239, 244, 249, 1);
 }
 .kb-chat-sider-item.active {
-  background: rgba(227, 233, 239, 0.9);
+  background: rgba(239, 244, 249, 1);
   color: rgba(50, 97, 206, 1);
-  font-weight: 500;
+  font-weight: 600;
 }
 .kb-chat-sider-item-label {
   flex: 1;
@@ -2897,73 +2930,90 @@ html[data-theme="dark"] .kb-citation-web:hover {
   justify-content: flex-end;
 }
 .kb-chat-header-icon {
-  color: rgba(77, 94, 125, 1);
-  font-size: 18px;
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: rgba(77, 94, 125, 1);
+  background: transparent;
+  border: 0 !important;
+  border-radius: 0 !important;
   cursor: pointer;
 }
 .kb-chat-header-icon:hover {
-  background: rgba(239, 244, 249, 0.8);
+  background: #edf2f7;
+  border: 0 !important;
+  border-radius: 0 !important;
 }
 
-/* ── chat-home 欢迎页（对齐 .chat-home：标题+描述+推荐问题）── */
+/* ── chat-home 欢迎页（对齐 DSB .chat-home：标题胶囊 + descr + 推荐 rela-item）── */
 .kb-chat-home {
   flex: 1 1 auto;
   min-height: 0;
   padding: 20px;
   overflow: auto;
+  box-sizing: border-box;
 }
 .kb-chat-home-main {
   display: flex;
   flex-direction: column;
   row-gap: 16px;
-  padding: 0 15%;
+}
+.kb-chat-home-content {
+  display: flex;
+  flex-direction: column;
+  row-gap: 8px;
 }
 .kb-chat-home-title {
-  font-size: 20px;
-  font-weight: 600;
-  line-height: 28px;
+  width: fit-content;
+  padding: 10px 12px;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
   color: rgba(36, 46, 67, 1);
+  text-overflow: ellipsis;
+  background: #fff;
+  border-radius: 8px;
 }
 .kb-chat-home-descr {
   font-size: 14px;
   line-height: 22px;
-  color: rgba(77, 94, 125, 1);
+  color: rgba(36, 46, 67, 1);
 }
 .kb-chat-home-recommend {
   display: flex;
   flex-direction: column;
   row-gap: 8px;
-  margin-top: 8px;
 }
 .kb-chat-home-recommend-title {
-  font-size: 14px;
-  line-height: 22px;
-  color: rgba(77, 94, 125, 1);
+  line-height: 20px;
+  color: rgba(121, 135, 156, 1);
 }
 .kb-chat-home-rela-item {
   display: flex;
   align-items: center;
-  gap: 4px;
+  column-gap: 12px;
   width: fit-content;
+  max-width: 100%;
   padding: 6px 12px;
   font-size: 14px;
   line-height: 22px;
   cursor: pointer;
-  background: rgba(249, 251, 253, 1);
-  border: 1px solid rgba(227, 233, 239, 1);
-  border-radius: 12px;
+  background: #fff;
+  border-radius: 8px;
   color: rgba(36, 46, 67, 1);
-  transition: border-color 0.2s ease, color 0.2s ease;
 }
 .kb-chat-home-rela-item:hover {
-  border-color: rgba(50, 97, 206, 1);
-  color: rgba(50, 97, 206, 1);
+  background: rgba(239, 244, 249, 1);
+}
+.kb-chat-home-rela-item .kb-chat-home-rela-arrow {
+  flex: 0 0 14px;
+  width: 14px;
+  color: rgba(77, 94, 125, 1);
+  font-size: 14px;
 }
 
 /* ── 消息区（对齐 .chat-content：padding 20px 15%、row-gap 30px）── */
@@ -2999,7 +3049,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
   width: max-content;
   max-width: 100%;
   padding: 8px 20px;
-  font-size: 14px;
+  font-size: 16px;
   line-height: 24px;
   text-align: left;
   background: rgba(239, 244, 249, 1);
@@ -3007,8 +3057,23 @@ html[data-theme="dark"] .kb-citation-web:hover {
   word-break: break-word;
   white-space: pre-wrap;
 }
+.kb-chat-user-bubble > span,
+.kb-chat-user-bubble .user-content-html {
+  font-size: 14px;
+  color: rgba(36, 46, 67, 1);
+  max-width: 100%;
+  overflow: hidden;
+  word-break: break-word;
+}
+.kb-chat-user-bubble img {
+  max-width: 300px;
+  height: auto;
+  display: block;
+  margin: 8px 0;
+  border-radius: 8px;
+}
 
-/* AI 消息：无气泡全宽（对齐 .item-assistant-ai / .answer-content） */
+/* AI 消息：无气泡全宽（对齐 DSB .item-assistant / .assistant-main / .answer-content） */
 .kb-chat-assistant {
   width: 100%;
   max-width: 100%;
@@ -3017,11 +3082,19 @@ html[data-theme="dark"] .kb-citation-web:hover {
   row-gap: 20px;
   align-items: flex-start;
 }
+.kb-chat-assistant-main {
+  display: flex;
+  column-gap: 20px;
+  align-items: flex-start;
+  width: fit-content;
+  max-width: 100%;
+}
 .kb-chat-answer {
   box-sizing: border-box;
   background: #fff;
-  border-radius: 12px;
+  border-radius: 8px;
   width: 100%;
+  min-height: 36px;
 }
 .kb-chat-answer img {
   max-width: 100%;
@@ -3046,7 +3119,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
   color: rgba(50, 97, 206, 1);
 }
 .kb-chat-think-btn.thinking {
-  color: rgba(200, 130, 10, 1);
+  color: rgba(77, 94, 125, 1);
 }
 
 /* think-view：思考内容左竖线块（对齐 .think-view：padding-left 12px、border-left） */
@@ -3089,66 +3162,98 @@ html[data-theme="dark"] .kb-citation-web:hover {
   display: none;
 }
 
-/* ── 引用文档列表（对齐 .resource-content「引用N篇文档作为参考」）── */
+/* ── 引用文档列表（对齐 DSB .resource-content：oper-title 14/600、item 链接色、默认收起）── */
 .kb-chat-resource {
   width: 100%;
-  margin-top: 4px;
+  margin: 10px 0;
 }
 .kb-chat-resource-oper {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  background: rgba(249, 251, 253, 1);
-  border: 1px solid rgba(227, 233, 239, 1);
-  border-radius: 8px;
+  column-gap: 4px;
   cursor: pointer;
+  user-select: none;
 }
 .kb-chat-resource-oper-title {
+  display: inline-flex;
+  align-items: center;
+  column-gap: 4px;
   font-size: 14px;
+  font-weight: 600;
   line-height: 22px;
-  color: rgba(36, 46, 67, 1);
+  color: rgba(77, 94, 125, 1);
+}
+.kb-chat-resource-oper-arrow {
+  display: inline-flex;
+  align-items: center;
+  color: rgba(77, 94, 125, 1);
+  font-size: 12px;
+  padding: 0 6px;
 }
 .kb-chat-resource-list {
-  display: flex;
+  display: none;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
+  row-gap: 10px;
+  margin-top: 4px;
+}
+.kb-chat-resource-list.active {
+  display: flex;
 }
 .kb-chat-resource-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  font-size: 13px;
-  line-height: 20px;
-  color: rgba(36, 46, 67, 1);
-  background: rgba(249, 251, 253, 1);
-  border: 1px solid rgba(227, 233, 239, 1);
-  border-radius: 6px;
+  column-gap: 4px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 22px;
+  color: rgba(50, 97, 206, 1);
   cursor: pointer;
+  overflow: hidden;
+}
+.kb-chat-resource-item:hover {
+  text-decoration: underline;
+}
+.kb-chat-resource-item .kb-chat-resource-item-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+.kb-chat-resource-item .kb-chat-resource-item-label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.kb-chat-resource-item:hover {
-  border-color: rgba(50, 97, 206, 1);
-  color: rgba(50, 97, 206, 1);
+.kb-chat-resource-item .kb-chat-resource-cut {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  margin-left: 4px;
+  line-height: 20px;
+  color: #4d5e7d;
+  background: #e3e9ef;
+  border-radius: 10px;
+  font-size: 12px;
 }
 
 /* ── 反思模式开关按钮（对齐 .reflect-mode-switch-btn 圆角）── */
 .kb-reflect-btn {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 0 12px;
-  height: 28px;
+  padding: 0 8px;
+  min-height: 28px;
   border-radius: 999px;
   border: 1px solid rgba(227, 233, 239, 1);
   background: #fff;
   color: rgba(36, 46, 67, 1);
-  font-size: 13px;
-  line-height: 28px;
+  font-size: 14px;
+  line-height: 22px;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.2s ease;
@@ -3158,21 +3263,28 @@ html[data-theme="dark"] .kb-citation-web:hover {
 }
 .kb-reflect-btn.active {
   border-color: rgba(50, 97, 206, 1);
-  background: rgba(232, 241, 255, 0.7);
+  background: rgba(232, 241, 255, 1);
   color: rgba(50, 97, 206, 1);
   font-weight: 600;
 }
 
-/* 输入区（对齐 Sender：白底圆角输入卡） */
+/* 输入区（对齐 DSB .chat-footer：padding 16px 15%、无 border-top、白底；高度自适应 Sender 内容） */
 .kb-chat-footer {
+  display: flex;
   flex: 0 0 auto;
-  padding: 12px 16px;
-  border-top: 1px solid rgba(239, 244, 249, 1);
+  min-height: 172px;
+  column-gap: 4px;
+  align-items: center;
+  padding: 16px 15%;
+  box-sizing: border-box;
   background: #fff;
 }
 .kb-chat-footer-inner {
-  max-width: 70%;
-  margin: 0 auto;
+  flex: 1 1 auto;
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
