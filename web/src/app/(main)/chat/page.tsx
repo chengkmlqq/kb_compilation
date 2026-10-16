@@ -40,7 +40,6 @@ import {
   DsbIconChevronDown,
   DsbIconChevronUp,
   DsbIconCopy,
-  DsbIconDataGovernance,
   DsbIconDisagree,
   DsbIconLayout3,
   DsbIconLink,
@@ -129,8 +128,6 @@ export default function ChatPage() {
   // 2026-10-16 DSB 门户对齐：侧边栏折叠 + 当前会话标题（header 居中显示）
   const [siderCollapsed, setSiderCollapsed] = useState(false);
   const [activeSessionTitle, setActiveSessionTitle] = useState("");
-  // 2026-10-16 DSB 门户对齐：反思模式开关（开启 = 走 agent 问答流）
-  const [reflectMode, setReflectMode] = useState(false);
   // L3：Agent 模式 + 附件 + 消息搜索
   const [agents, setAgents] = useState<{ id: string; name: string; config?: Record<string, unknown> }[]>([]);
   const [agentMode, setAgentMode] = useState<string>(); // 选中的 agent id
@@ -579,16 +576,7 @@ export default function ChatPage() {
     if (!question || streaming) return;
     // @提及：本条消息级目标覆盖（kb / agent），未提及则沿用顶部选择
     const effectiveKbId = atTarget?.kind === "kb" ? atTarget.id : kbId;
-    // 2026-10-16 DSB 门户对齐：反思模式开启时强制走 agent 问答流（无显式 agent 则用第一个）
-    let effectiveAgent = atTarget?.kind === "agent" ? atTarget.id : agentMode;
-    if (!effectiveAgent && reflectMode) {
-      effectiveAgent = agents[0]?.id || "";
-    }
-    // 2026-10-16 DSB 门户对齐：反思模式需至少一个知识集或智能体（对齐「反思模式需要至少选择一个知识集或上传文档附件」）
-    if (reflectMode && !effectiveAgent && !effectiveKbId) {
-      toast.warning("反思模式需要至少选择一个知识集或智能体");
-      return;
-    }
+    const effectiveAgent = atTarget?.kind === "agent" ? atTarget.id : agentMode;
     // 2026-10-15 纯对话模式：知识库与智能体都未选择时直接走纯 LLM 对话（不再拦截）
     const userMsg: UiMessage = {
       id: `local-user-${Date.now()}`,
@@ -1558,19 +1546,9 @@ export default function ChatPage() {
         />
         </div>
         {/* 控制栏：对齐 DSB Sender .ant-sender-footer > .sender-footer-main
-            （左 .footer-left：反思模式 / 知识库 / 智能体 / 工具按钮；右 .footer-right：模型 + 发送·停止） */}
+            （左 .footer-left：知识库 / 智能体 / 工具按钮；右 .footer-right：模型 + 发送·停止） */}
         <div className="kb-chat-input-actions">
           <div className="kb-chat-input-actions-left">
-            {/* 2026-10-16 DSB 门户对齐：反思模式开关（开启 = 走 agent 问答流，答案带思考过程） */}
-            <button
-              type="button"
-              className={`kb-reflect-btn${reflectMode ? " active" : ""}`}
-              onClick={() => setReflectMode((v) => !v)}
-              title={reflectMode ? "关闭反思模式" : "反思模式：多步思考后作答"}
-            >
-              <DsbIconDataGovernance size={14} />
-              {reflectMode ? "关闭反思模式" : "反思模式"}
-            </button>
             {/* 2026-10-15 纯对话模式：知识库选择（allowClear，清空=不检索直接对话） */}
             <Select
               className="kb-chat-aux-select"

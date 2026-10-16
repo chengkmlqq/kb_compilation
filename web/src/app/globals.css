@@ -46,7 +46,13 @@ html,
 body {
   margin: 0;
   padding: 0;
-  background: #f5f7fa;
+  background: #eff4f9;
+  /* 对齐 data_supply_base 的全局字体（7001 实测 body: 12px/18px=1.5 + Inter 栈） */
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "noto sans", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 html[data-theme="dark"] body {
@@ -66,7 +72,7 @@ html[data-theme="dark"] body {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - var(--app-header-h, 45px));
+  min-height: calc(100vh - var(--app-header-h, 48px));
 }
 .modo-page > .ant-card,
 .modo-page-body {
@@ -3417,39 +3423,6 @@ html[data-theme="dark"] .kb-citation-web:hover {
   background: #e3e9ef;
   border-radius: 10px;
   font-size: 12px;
-}
-
-/* ── 反思模式开关（对齐 DSB .reflect-mode-switch-btn：arco 圆形描边按钮，32px 高、padding 0 8px）── */
-.kb-reflect-btn {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 8px;
-  border-radius: 16px;
-  border: 1px solid rgba(227, 233, 239, 1);
-  background: #fff;
-  color: rgba(36, 46, 67, 1);
-  font-size: 14px;
-  line-height: 22px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all 0.2s ease;
-}
-.kb-reflect-btn .dsb-icon {
-  font-size: 14px;
-}
-.kb-reflect-btn:hover {
-  border-color: rgba(81, 126, 216, 1);
-  color: rgba(50, 97, 206, 1);
-}
-/* DSB .reflect-mode-switch-btn.arco-btn-primary：primary-light-1 底 + link-6 字 + 600 */
-.kb-reflect-btn.active {
-  border-color: rgba(50, 97, 206, 1);
-  background: rgba(232, 243, 255, 1);
-  color: rgba(50, 97, 206, 1);
-  font-weight: 600;
 }
 
 /* 输入区：对齐 DSB .chat-footer（flex 0 0 172px / height 172px / padding 16px 15% / column-gap 4px） */
