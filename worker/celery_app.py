@@ -74,6 +74,7 @@ try:
         metadata_collect,
         orch_runner,
         orphan_recovery,
+        reg_cache_cleanup,
         table_ingest,
         wiki_build,
         wiki_graph,
