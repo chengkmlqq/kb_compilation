@@ -279,50 +279,111 @@ html[data-theme="dark"] body {
   margin-bottom: 0;
 }
 
-/* 侧边菜单：一级加粗 600 高 44、选中/悬浮 #EFF4F9、圆角 4（对齐 data-synth side-menu CSS module） */
-.side-menu-kb .ant-layout-sider-children {
-  overflow: hidden auto;
+/* ═══════════════════════════════════════════════════════════════
+   左侧导航：对齐 data_supply_base narrow 菜单（2026-10-19 实测几何）
+   第一列 80px 方块卡片（图标 24px 上 + 文字 12px 下、60px 高、radius 8、
+   fill-1 底、hover/选中 fill-2 + 选中图标主色 #3261CE + 文字 600）
+   + 第二列 160px 子菜单（白底、项 36px/radius 4/间距 8、选中 fill-2 + 主色）
+   ═══════════════════════════════════════════════════════════════ */
+.kb-nav {
+  display: flex;
+  height: 100%;
+  min-width: 0;
 }
-.side-menu-kb .ant-menu-inline .ant-menu-item,
-.side-menu-kb .ant-menu-inline .ant-menu-submenu-title {
-  font-weight: 400 !important;
-  margin-top: 0 !important;
-  margin-bottom: 4px !important;
-  margin-left: 8px !important;
-  margin-right: 8px !important;
-  width: calc(100% - 16px) !important;
-  border-radius: 4px !important;
+.kb-nav-rail {
+  width: 80px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #f9fbfd;
+  border-right: 1px solid #e3e9ef;
 }
-.side-menu-kb .ant-menu-inline .ant-menu-submenu {
-  margin-top: 0 !important;
-  margin-bottom: 4px !important;
+.kb-nav-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 60px;
+  padding: 8px 4px;
+  row-gap: 4px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  background: #f9fbfd;
+  border-radius: 8px;
+  transition: background 0.2s ease;
 }
-.side-menu-kb .root-menu-item {
-  height: auto !important;
-  font-weight: 600 !important;
+.kb-nav-card:hover {
+  background: #eff4f9;
 }
-.side-menu-kb .root-menu-item.ant-menu-item,
-.side-menu-kb .root-menu-item > .ant-menu-submenu-title {
-  height: 44px !important;
-  line-height: 44px !important;
-  font-weight: 600 !important;
+.kb-nav-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  font-size: 24px;
+  line-height: 24px;
+  color: #4d5e7d;
 }
-.side-menu-kb .root-menu-item .ant-menu-title-content {
-  margin-left: 16px !important;
+.kb-nav-card-label {
+  width: 100%;
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+  color: #4d5e7d;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.side-menu-kb .ant-menu-sub .ant-menu-item,
-.side-menu-kb .ant-menu-sub .ant-menu-submenu-title {
-  padding-left: 37px !important;
-  padding-right: 12px !important;
-  border-radius: 4px !important;
+.kb-nav-card.is-active {
+  background: #eff4f9;
 }
-.side-menu-kb .ant-menu-sub .ant-menu-item .anticon,
-.side-menu-kb .ant-menu-sub .ant-menu-submenu-title .anticon {
-  display: none !important;
+.kb-nav-card.is-active .kb-nav-card-icon {
+  color: #3261ce;
 }
-.side-menu-kb .ant-menu-sub .ant-menu-item .ant-menu-title-content,
-.side-menu-kb .ant-menu-sub .ant-menu-submenu-title .ant-menu-title-content {
-  margin-left: 0 !important;
+.kb-nav-card.is-active .kb-nav-card-label {
+  color: #4d5e7d;
+  font-weight: 600;
+}
+.kb-nav-sub {
+  width: 160px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  padding: 10px 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #fff;
+  border-right: 1px solid #e3e9ef;
+}
+.kb-nav-sub-item {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 7px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 36px;
+  color: #242e43;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.kb-nav-sub-item:hover {
+  background: #eff4f9;
+  color: #242e43;
+}
+.kb-nav-sub-item.is-active {
+  background: #eff4f9;
+  color: #3261ce;
 }
 
 /* Wiki page markdown rendering */

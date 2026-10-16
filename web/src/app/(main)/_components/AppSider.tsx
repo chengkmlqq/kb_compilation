@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from "react";
-import { Layout, Menu, ConfigProvider } from "antd";
-import type { MenuProps } from "antd";
+import React, { useState, useMemo } from "react";
+import { Layout } from "antd";
 import {
   ApiOutlined,
   AppstoreOutlined,
@@ -59,37 +58,6 @@ const ICON_MAP: Record<string, React.ReactNode> = {
 };
 const DEFAULT_ICON = <AppstoreOutlined />;
 
-/** Sider 局部菜单主题（对齐 data-synth SideMenu menuTheme） */
-const menuTheme = {
-  components: {
-    Menu: {
-      subMenuItemBg: "transparent",
-      itemHeight: 36,
-      itemColor: "#4D5E7D",
-      itemSelectedBg: "#EFF4F9",
-      itemHoverBg: "#EFF4F9",
-      borderRadius: 4,
-      borderRadiusLG: 4,
-    },
-  },
-};
-
-function convertToMenuItems(menus: SysMenuItem[], level = 0): MenuProps["items"] {
-  return menus.map((menu) => {
-    const item: any = {
-      key: menu.menu_id,
-      icon: ICON_MAP[menu.menu_icon || ""] || DEFAULT_ICON,
-      label: menu.menu_label || menu.menu_name || menu.route || "",
-      className: level === 0 ? "root-menu-item" : undefined,
-    };
-    const children = (menu as MenuTreeNode).children;
-    if (children && children.length > 0) {
-      item.children = convertToMenuItems(children, level + 1);
-    }
-    return item;
-  });
-}
-
 /**
  * 按当前 URL 找菜单 id。
  *
@@ -138,17 +106,7 @@ function findParentKeys(menus: SysMenuItem[], targetId: string, parents: string[
   return [];
 }
 
-function findRoute(menus: SysMenuItem[], menuId: string): string | null {
-  for (const menu of menus) {
-    if (menu.menu_id === menuId) return menu.route || null;
-    const kids = (menu as MenuTreeNode).children;
-    if (kids) {
-      const r = findRoute(kids, menuId);
-      if (r) return r;
-    }
-  }
-  return null;
-}
+const iconOf = (menu: SysMenuItem) => ICON_MAP[menu.menu_icon || ""] || DEFAULT_ICON;
 
 export const AppSider: React.FC = () => {
   const router = useRouter();
@@ -156,7 +114,8 @@ export const AppSider: React.FC = () => {
   const searchParams = useSearchParams();
   const { siderMenus } = useMenuContext();
   const [collapsed, setCollapsed] = useState(false);
-  const [openKeys, setOpenKeys] = useState<string[]>([]);
+  // 用户手动点选的一级分组（默认跟随当前路由所在分组）
+  const [groupOverride, setGroupOverride] = useState<string | null>(null);
 
   // 带 query 的当前路由（如 /system?tab=roles），用于菜单高亮
   const routeKey = useMemo(() => {
@@ -164,23 +123,43 @@ export const AppSider: React.FC = () => {
     return qs ? `${pathname}?${qs}` : pathname;
   }, [pathname, searchParams]);
 
-  const menuItems = useMemo(() => convertToMenuItems(siderMenus), [siderMenus]);
+  // 当前路由命中的菜单（二级页面项）
   const activeKey = useMemo(
     () => findMenuIdByPath(siderMenus, pathname, routeKey),
     [siderMenus, pathname, routeKey],
   );
 
-  // 自动展开当前页面的父级菜单
-  useEffect(() => {
-    if (activeKey) {
-      const parents = findParentKeys(siderMenus, activeKey);
-      setOpenKeys((prev) => Array.from(new Set([...prev, ...parents])));
-    }
+  // 当前路由所属的一级分组（无命中时默认第一组）
+  const activeGroupId = useMemo(() => {
+    if (!activeKey) return siderMenus[0]?.menu_id ?? null;
+    const isTop = siderMenus.some((m) => m.menu_id === activeKey);
+    if (isTop) return activeKey;
+    const parents = findParentKeys(siderMenus, activeKey);
+    return parents[0] ?? siderMenus[0]?.menu_id ?? null;
   }, [siderMenus, activeKey]);
 
-  const handleMenuClick: MenuProps["onClick"] = (e) => {
-    const route = findRoute(siderMenus, e.key);
-    if (route) router.push(route);
+  const groupId = groupOverride ?? activeGroupId;
+  const currentGroup = siderMenus.find((m) => m.menu_id === groupId) as MenuTreeNode | undefined;
+  // 第二列子菜单：分组有 children 用 children；叶子一级（如线上智能问答/知识库/智能体直接置顶）
+  // 兜底显示其自身（高亮当前页），避免第二列空白。
+  const subItems = currentGroup?.children?.length
+    ? currentGroup.children
+    : currentGroup
+      ? [currentGroup]
+      : [];
+
+  // 一级卡片点击：有子菜单 → 展开第二列；无子菜单且有路由 → 直接跳转
+  const handleGroupClick = (menu: MenuTreeNode) => {
+    const hasChildren = (menu.children?.length ?? 0) > 0;
+    if (hasChildren) {
+      setGroupOverride(menu.menu_id as string);
+    } else if (menu.route) {
+      router.push(menu.route);
+    }
+  };
+
+  const handleSubClick = (menu: SysMenuItem) => {
+    if (menu.route) router.push(menu.route);
   };
 
   return (
@@ -189,38 +168,58 @@ export const AppSider: React.FC = () => {
       collapsed={collapsed}
       onCollapse={setCollapsed}
       theme="light"
-      width={200}
-      collapsedWidth={45}
+      width={240}
+      collapsedWidth={80}
       trigger={null}
       className="side-menu-kb"
       style={{
-        background: "#F9FBFD",
-        borderRight: "1px solid #E3E9EF",
+        background: "transparent",
         height: "calc(100vh - var(--app-header-h, 48px))",
         position: "sticky",
         top: 48,
         left: 0,
       }}
     >
-      <ConfigProvider theme={menuTheme}>
-        <Menu
-          mode="inline"
-          selectedKeys={activeKey ? [activeKey] : []}
-          openKeys={openKeys}
-          onOpenChange={setOpenKeys}
-          items={menuItems}
-          onClick={handleMenuClick}
-          style={{
-            height: "100%",
-            overflowY: "auto",
-            overflowX: "hidden",
-            borderRight: 0,
-            paddingBlockStart: 8,
-            paddingBlockEnd: 48,
-            background: "transparent",
-          }}
-        />
-      </ConfigProvider>
+      {/* 左侧导航（对齐 data_supply_base narrow 菜单：第一列 80px 方块卡片(图标上文字下) + 第二列 160px 子菜单） */}
+      <div className="kb-nav">
+        {/* 第一列：一级菜单方块卡片 */}
+        <div className="kb-nav-rail">
+          {siderMenus.map((m) => {
+            const node = m as MenuTreeNode;
+            const sel = m.menu_id === (groupId ?? activeGroupId);
+            return (
+              <div
+                key={m.menu_id}
+                className={`kb-nav-card${sel ? " is-active" : ""}`}
+                title={m.menu_label || m.menu_name}
+                onClick={() => handleGroupClick(node)}
+              >
+                <span className="kb-nav-card-icon">{iconOf(m)}</span>
+                <span className="kb-nav-card-label">{m.menu_label || m.menu_name || ""}</span>
+              </div>
+            );
+          })}
+        </div>
+        {/* 第二列：当前一级分组下的子菜单 */}
+        {!collapsed && (
+          <div className="kb-nav-sub">
+            {subItems.map((c) => {
+              const sel = c.menu_id === activeKey;
+              return (
+                <div
+                  key={c.menu_id}
+                  className={`kb-nav-sub-item${sel ? " is-active" : ""}`}
+                  title={c.menu_label || c.menu_name}
+                  onClick={() => handleSubClick(c)}
+                >
+                  {c.menu_label || c.menu_name || ""}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* 右下角悬浮折叠按钮（对齐 data-synth SideMenu） */}
       <div
         onClick={() => setCollapsed(!collapsed)}
