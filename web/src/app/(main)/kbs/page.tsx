@@ -743,8 +743,7 @@ export default function KbsPage() {
                           )}
                         </div>
                         <div className="kb-kbs-card-meta">
-                          {kb.doc_count ?? 0}个文件 · 更新于
-                          {kb.created_at ? kb.created_at.slice(5, 10).replace("-", "/") : "-"}
+                          {kb.doc_count ?? 0}个文件 · {kb.page_count ?? 0}个Wiki
                         </div>
                       </div>
                     </div>
