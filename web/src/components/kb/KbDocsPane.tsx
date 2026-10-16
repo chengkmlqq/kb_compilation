@@ -70,6 +70,10 @@ import {
   KbItem,
 } from "@/lib/api";
 import { emitUploadTask, makeUploadTaskId, setFileDropTarget } from "@/lib/upload-bus";
+import { collectDirFiles, isDirectoryUpload, relativePathOf } from "@/lib/upload-dir";
+
+/** 目录上传文件数超过该值时先二次确认（避免误选巨型目录后批量入队解析） */
+const DIR_UPLOAD_CONFIRM_THRESHOLD = 200;
 
 export interface KbDocsPaneProps {
   kbId: string;
@@ -86,6 +90,8 @@ export interface KbDocsPaneProps {
 export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange, onDocRemoved }: KbDocsPaneProps) {
   const { message, modal } = App.useApp();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // 目录上传（webkitdirectory）隐藏选择器
+  const dirInputRef = useRef<HTMLInputElement | null>(null);
   // 所在页签可见性：antd Tabs 默认不销毁隐藏 pane，隐藏时应暂停轮询/摘要，
   // 否则多开页签会各自在后台持续打接口（文档解析中每 3s 一轮）。
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -504,6 +510,67 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
     }
   };
 
+  /**
+   * 单文件上传（Promise 版）：进度上报到上传任务浮层，返回是否成功。
+   * 目录上传需要按文件串行 await 并复用同一套进度/重试语义，故从 startDocUpload 拆出。
+   */
+  const uploadSingleDoc = async (
+    file: File,
+    taskId: string,
+    folderId: string,
+    processConfig?: UploadProcessConfig | null,
+    buildTapeId?: string,
+    opts: { silent?: boolean } = {},
+  ): Promise<boolean> => {
+    emitUploadTask({
+      id: taskId,
+      name: file.name,
+      size: file.size,
+      status: "uploading",
+      progress: 0,
+      retry: () => void uploadSingleDoc(file, taskId, folderId, processConfig, buildTapeId, opts),
+    });
+    try {
+      const res = await apiUploadDocumentWithProgress(
+        kbId,
+        file,
+        (pct) => {
+          emitUploadTask({ id: taskId, name: file.name, size: file.size, status: "uploading", progress: pct });
+        },
+        folderId || undefined,
+        processConfig as Record<string, unknown> | null | undefined,
+        buildTapeId,
+      );
+      if (res.success) {
+        emitUploadTask({ id: taskId, name: file.name, size: file.size, status: "success", progress: 100 });
+        if (!opts.silent) message.success(`「${file.name}」已上传，后台解析中`);
+        return true;
+      }
+      emitUploadTask({
+        id: taskId,
+        name: file.name,
+        size: file.size,
+        status: "error",
+        progress: 100,
+        error: res.message || "上传失败",
+      });
+      if (!opts.silent) message.error(res.message || `「${file.name}」上传失败`);
+      return false;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "上传失败";
+      emitUploadTask({
+        id: taskId,
+        name: file.name,
+        size: file.size,
+        status: "error",
+        progress: 100,
+        error: msg,
+      });
+      if (!opts.silent) message.error(`「${file.name}」上传失败`);
+      return false;
+    }
+  };
+
   // 带进度上报的知识库文档上传（本地上传 & 全局拖放复用；经 uploadTask 事件驱动任务浮层）
   const startDocUpload = (
     file: File,
@@ -513,55 +580,159 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
     buildTapeId?: string,
   ) => {
     const id = taskId ?? makeUploadTaskId("kb-upload");
-    emitUploadTask({
-      id,
-      name: file.name,
-      size: file.size,
-      status: "uploading",
-      progress: 0,
-      retry: () => startDocUpload(file, id),
-    });
     void (async () => {
-      try {
-        const res = await apiUploadDocumentWithProgress(
-          kbId,
-          file,
-          (pct) => {
-            emitUploadTask({ id, name: file.name, size: file.size, status: "uploading", progress: pct });
-          },
-          folderId || undefined,
-          processConfig as Record<string, unknown> | null | undefined,
-          buildTapeId,
-        );
-        if (res.success) {
-          emitUploadTask({ id, name: file.name, size: file.size, status: "success", progress: 100 });
-          message.success(`「${file.name}」已上传，后台解析中`);
-          // 上传成功后回到第一页并重新查询列表，立即展示新文档
-          setDocPage(1);
-          void load();
-        } else {
-          emitUploadTask({
-            id,
-            name: file.name,
-            size: file.size,
-            status: "error",
-            progress: 100,
-            error: res.message || "上传失败",
-          });
-          message.error(res.message || `「${file.name}」上传失败`);
-        }
-      } catch (e) {
-        emitUploadTask({
-          id,
-          name: file.name,
-          size: file.size,
-          status: "error",
-          progress: 100,
-          error: e instanceof Error ? e.message : "上传失败",
-        });
-        message.error(`「${file.name}」上传失败`);
+      const ok = await uploadSingleDoc(file, id, folderId, processConfig, buildTapeId);
+      if (ok) {
+        // 上传成功后回到第一页并重新查询列表，立即展示新文档
+        setDocPage(1);
+        void load();
       }
     })();
+  };
+
+  /**
+   * 目录上传：取出目录及子孙目录中的文件落库（2026-10-17）。
+   *
+   * - mirror=true：按相对路径在知识库内创建/复用文档目录，再把文件传到对应目录；
+   *   对齐 WeKnora，**顶层所选目录本身不单独建目录**（"制度/2024/a.pdf" → 目录「2024」）。
+   * - mirror=false：全部文件直接传到当前所选目录。
+   * 逐个串行上传（大目录并发会把存储与解析队列同时打满），聚合进度用同 key 的
+   * message 就地更新，单文件明细仍进上传任务浮层。
+   */
+  const uploadDirectoryBatch = async (
+    files: File[],
+    options: { processConfig?: UploadProcessConfig | null; buildEngine?: string; mirror: boolean },
+  ) => {
+    const { entries, hiddenSkipped, emptySkipped } = collectDirFiles(files);
+    if (entries.length === 0) {
+      message.warning("所选目录内没有可上传的文件");
+      return;
+    }
+    const skipped = hiddenSkipped + emptySkipped;
+    const baseFolderId = docFolderId;
+    const progressKey = "kb-dir-upload";
+    // 目录映射：相对路径 key（"" = 基准目录）→ 目录 id；parentId+name → 目录 id（同级同名复用）
+    const folderIdByPath = new Map<string, string>([["", baseFolderId]]);
+    const folderIdByParentName = new Map<string, string>();
+
+    if (options.mirror) {
+      const res = await apiListDocFolders(kbId).catch(() => null);
+      const data = res?.success ? (res.data as unknown) : null;
+      const folders = Array.isArray(data)
+        ? (data as DocFolderItem[])
+        : (data as { folders?: DocFolderItem[] })?.folders || [];
+      for (const f of folders) folderIdByParentName.set(`${f.parent_id || ""}\u0000${f.name}`, f.id);
+    }
+
+    /** 逐级确保目录存在，返回末级目录 id（同级同名复用，缺失的依次创建） */
+    const ensureFolder = async (dirs: string[]): Promise<string> => {
+      let parent = baseFolderId;
+      let key = "";
+      for (const seg of dirs) {
+        key = key ? `${key}/${seg}` : seg;
+        const cached = folderIdByPath.get(key);
+        if (cached) {
+          parent = cached;
+          continue;
+        }
+        const scoped = `${parent}\u0000${seg}`;
+        let id = folderIdByParentName.get(scoped);
+        if (!id) {
+          const created = await apiCreateDocFolder(kbId, { name: seg, parent_id: parent || undefined });
+          if (!created.success || !created.data?.id) {
+            throw new Error(created.message || `创建目录「${seg}」失败`);
+          }
+          id = created.data.id;
+          folderIdByParentName.set(scoped, id);
+        }
+        folderIdByPath.set(key, id);
+        parent = id;
+      }
+      return parent;
+    };
+
+    const total = entries.length;
+    let ok = 0;
+    let fail = 0;
+    let folderFail = 0;
+    message.open({
+      key: progressKey,
+      type: "loading",
+      content: `正在上传目录内 ${total} 个文件…`,
+      duration: 0,
+    });
+    for (let i = 0; i < total; i += 1) {
+      const { file, dirs } = entries[i];
+      let targetFolderId = baseFolderId;
+      if (options.mirror && dirs.length > 0) {
+        try {
+          targetFolderId = await ensureFolder(dirs);
+        } catch (e) {
+          folderFail += 1;
+          console.error("ensure doc folder failed", e);
+          continue;
+        }
+      }
+      message.open({
+        key: progressKey,
+        type: "loading",
+        content: `正在上传 ${i + 1}/${total}：${relativePathOf(file) || file.name}`,
+        duration: 0,
+      });
+      const done = await uploadSingleDoc(
+        file,
+        makeUploadTaskId("kb-dir"),
+        targetFolderId,
+        options.processConfig,
+        options.buildEngine,
+        { silent: true },
+      );
+      if (done) ok += 1;
+      else fail += 1;
+    }
+
+    const parts: string[] = [];
+    if (ok > 0) parts.push(`成功 ${ok} 个`);
+    if (fail > 0) parts.push(`失败 ${fail} 个`);
+    if (folderFail > 0) parts.push(`目录创建失败未上传 ${folderFail} 个`);
+    if (skipped > 0) parts.push(`跳过隐藏/空文件 ${skipped} 个`);
+    message.open({
+      key: progressKey,
+      type: ok > 0 && fail === 0 && folderFail === 0 ? "success" : "warning",
+      content: `目录上传完成：${parts.join("，") || "无文件"}`,
+      duration: 5,
+    });
+    if (ok > 0) {
+      setDocPage(1);
+      await loadDocFolders();
+      void load();
+    }
+  };
+
+  /** 目录选择（webkitdirectory）回调：分拣文件后进上传确认弹窗 */
+  const handleDirPicked = (files: File[]) => {
+    if (files.length === 0) return;
+    const { entries, hiddenSkipped, emptySkipped } = collectDirFiles(files);
+    if (entries.length === 0) {
+      message.warning("所选目录内没有可上传的文件（隐藏文件与空文件已跳过）");
+      return;
+    }
+    const skipped = hiddenSkipped + emptySkipped;
+    const open = () => {
+      setPendingUploadFiles(entries.map((e) => e.file));
+      setUploadConfirmOpen(true);
+    };
+    if (entries.length > DIR_UPLOAD_CONFIRM_THRESHOLD) {
+      modal.confirm({
+        title: `所选目录包含 ${entries.length} 个文件`,
+        content: `将按目录结构逐个上传并解析${skipped > 0 ? `（另有 ${skipped} 个隐藏/空文件已跳过）` : ""}，是否继续？`,
+        okText: "继续上传",
+        onOk: open,
+      });
+      return;
+    }
+    if (skipped > 0) message.warning(`已跳过 ${skipped} 个隐藏/空文件`);
+    open();
   };
 
   // 注册为全局拖放目标：drop 时由 GlobalDropZone 直接上传到本 KB，完成后刷新列表
@@ -740,6 +911,12 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                     onClick: () => fileInputRef.current?.click(),
                   },
                   {
+                    key: "upload-folder",
+                    icon: <FolderAddOutlined />,
+                    label: "上传文件夹",
+                    onClick: () => dirInputRef.current?.click(),
+                  },
+                  {
                     key: "table",
                     icon: <TableOutlined />,
                     label: "添加表",
@@ -767,6 +944,20 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                   setUploadConfirmOpen(true);
                 }
                 e.target.value = "";
+              }}
+            />
+            {/* 隐藏的目录选择触发器（上传文件夹：取出目录及子孙目录中的全部文件）
+                webkitdirectory 不在 @types/react 的 input 属性里，用展开传原生属性 */}
+            <input
+              ref={dirInputRef}
+              type="file"
+              multiple
+              {...{ webkitdirectory: "" }}
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const files = e.target.files ? Array.from(e.target.files) : [];
+                e.target.value = "";
+                handleDirPicked(files);
               }}
             />
           </div>
@@ -932,9 +1123,18 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
           setUploadConfirmOpen(false);
           setPendingUploadFiles([]);
         }}
-        onConfirm={({ files: filesToUpload, processConfig, buildEngine }) => {
+        onConfirm={({ files: filesToUpload, processConfig, buildEngine, mirrorFolders }) => {
           setUploadConfirmOpen(false);
           setPendingUploadFiles([]);
+          // 目录上传（files 带 webkitRelativePath）：按子目录结构串行落库
+          if (isDirectoryUpload(filesToUpload)) {
+            void uploadDirectoryBatch(filesToUpload, {
+              processConfig,
+              buildEngine,
+              mirror: mirrorFolders !== false,
+            });
+            return;
+          }
           for (const f of filesToUpload) {
             startDocUpload(f, undefined, docFolderId, processConfig, buildEngine);
           }

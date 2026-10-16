@@ -46,6 +46,7 @@ from api.services.kb_admin import (
     doc_branch,
     doc_create_folder,
     doc_delete_folder,
+    doc_folder_exists,
     doc_folders,
     doc_move_documents,
     doc_update_folder,
@@ -619,6 +620,12 @@ async def upload_document(
     覆盖知识库默认构建引擎；留空 = 用 KB 默认。
     """
     _kb_manage(kb_id, caller, db)
+
+    # 目录归属校验（folder_id 走 query 参数，见前端 apiUploadDocumentWithProgress）：
+    # 非法/跨库目录直接拒绝，避免落出「不属于任何目录」的孤儿文档。
+    folder_id = (folder_id or "").strip()
+    if not doc_folder_exists(db, kb_id, folder_id):
+        raise HTTPException(status_code=400, detail=f"目录不存在: {folder_id}")
 
     if url.strip():
         # URL 导入模式

@@ -1030,6 +1030,20 @@ def _doc_subtree_ids(db: Session, kb_id: str, folder_id: str) -> list[str]:
     return ids
 
 
+def doc_folder_exists(db: Session, kb_id: str, folder_id: str) -> bool:
+    """目录是否属于该 KB（上传等写入路径的归属校验；空 folder_id = 根层级，视为合法）。"""
+    if not folder_id:
+        return True
+    return (
+        db.execute(
+            select(DocFolder.id).where(
+                DocFolder.kb_id == kb_id, DocFolder.id == folder_id
+            )
+        ).scalars().first()
+        is not None
+    )
+
+
 def doc_create_folder(
     db: Session, kb_id: str, data: dict, user_id: str | None = None
 ) -> dict:

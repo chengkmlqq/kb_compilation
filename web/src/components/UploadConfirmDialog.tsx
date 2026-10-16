@@ -17,9 +17,10 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Col, Collapse, Form, InputNumber, Modal, Row, Select, Space, Switch, Typography } from "antd";
-import { DeleteOutlined, FileTextOutlined, LinkOutlined, PlusOutlined } from "@ant-design/icons";
+import { DeleteOutlined, FileTextOutlined, FolderOutlined, LinkOutlined, PlusOutlined } from "@ant-design/icons";
 import { apiListParserEngines, BuildEngineItem, ParserEngineItem } from "@/lib/api";
 import { groupBuildEngineOptions } from "@/lib/tape-func";
+import { isDirectoryUpload, relativePathOf } from "@/lib/upload-dir";
 
 const { Text } = Typography;
 
@@ -37,6 +38,11 @@ export interface UploadConfirmResult {
   buildEngine?: string;
   /** 文档级摘要生成策略（重选覆盖 KB 默认 summary_strategy；空 = 跟随知识库默认） */
   summaryStrategy?: string;
+  /**
+   * 目录上传专用：是否按子目录结构在知识库内创建文档目录（默认 true）。
+   * 仅当 files 带 webkitRelativePath（来自「上传文件夹」）时有意义。
+   */
+  mirrorFolders?: boolean;
 }
 
 interface Props {
@@ -116,6 +122,8 @@ export default function UploadConfirmDialog({
   const [showParser, setShowParser] = useState(false);
   const [buildEngine, setBuildEngine] = useState<string>("");
   const [summaryStrategy, setSummaryStrategy] = useState<string>("");
+  // 目录上传：按子目录结构在知识库内创建文档目录（默认开）
+  const [mirrorFolders, setMirrorFolders] = useState<boolean>(true);
   // 「继续添加」按钮点击不到隐藏 input（label 包裹 button 时 antd Button 会阻止
   // label 默认激活）——改用 ref 显式 click，见文件末尾 input。
   const addInputRef = useRef<HTMLInputElement | null>(null);
@@ -126,6 +134,7 @@ export default function UploadConfirmDialog({
     setFiles([...initialFiles]);
     setBuildEngine(""); // 每次打开重置为「跟随知识库默认」
     setSummaryStrategy(""); // 每次打开重置为「跟随知识库默认」
+    setMirrorFolders(true); // 每次打开重置为「保留子目录结构」
     void apiListParserEngines()
       .then((res) => {
         if (res.success && Array.isArray(res.data)) setEngines(res.data);
@@ -143,6 +152,14 @@ export default function UploadConfirmDialog({
     }
     return [...set];
   }, [files]);
+
+  // 目录上传（files 带 webkitRelativePath）：显示子目录 + 提供「保留目录结构」开关。
+  // 打开首帧 files 尚未被 effect 同步（destroyOnClose 每次重挂载），回退用 initialFiles
+  // 判定，避免标题/开关闪一下。
+  const dirUpload = useMemo(
+    () => isDirectoryUpload(files.length > 0 ? files : initialFiles),
+    [files, initialFiles],
+  );
 
   const addFiles = (list: File[]) => {
     setFiles((prev) => [...prev, ...list]);
@@ -204,6 +221,7 @@ export default function UploadConfirmDialog({
       processConfig: hasChunkingDiff || !!summaryStrategy ? pc : null,
       buildEngine: buildEngine || undefined,
       summaryStrategy: summaryStrategy || undefined,
+      mirrorFolders: dirUpload ? mirrorFolders : undefined,
     });
   };
 
@@ -250,7 +268,7 @@ export default function UploadConfirmDialog({
       open={open}
       onCancel={onCancel}
       width={920}
-      title="上传文件"
+      title={dirUpload ? "上传文件夹" : "上传文件"}
       footer={
         <Space>
           <Button onClick={onCancel}>取消</Button>
@@ -292,6 +310,16 @@ export default function UploadConfirmDialog({
                   <div style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.name}>
                     {f.name}
                   </div>
+                  {/* 目录上传：展示所选目录内的相对路径（含子目录），便于核对层级 */}
+                  {relativePathOf(f) && (
+                    <div
+                      style={{ fontSize: 11, color: "rgba(0,0,0,.45)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                      title={relativePathOf(f)}
+                    >
+                      <FolderOutlined style={{ fontSize: 10, marginRight: 2 }} />
+                      {relativePathOf(f)}
+                    </div>
+                  )}
                   <div style={{ fontSize: 11, color: "rgba(0,0,0,.45)" }}>{formatSize(f.size)}</div>
                 </div>
                 <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => removeFile(i)} style={{ padding: 0 }} />
@@ -303,6 +331,18 @@ export default function UploadConfirmDialog({
               </div>
             )}
           </div>
+          {/* 目录上传：按子目录结构落库（避免整棵目录的文件平铺到同一个目录） */}
+          {dirUpload && (
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #f0f0f0" }}>
+              <Space size={8} align="center">
+                <Switch size="small" checked={mirrorFolders} onChange={setMirrorFolders} />
+                <Text style={{ fontSize: 12 }}>保留子目录结构</Text>
+              </Space>
+              <div style={{ fontSize: 11, color: "rgba(0,0,0,.45)", marginTop: 2 }}>
+                按子目录自动创建文档目录（所选目录本身不创建）；关闭则全部上传到当前所选目录
+              </div>
+            </div>
+          )}
           <Button
             block
             icon={<PlusOutlined />}

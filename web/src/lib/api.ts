@@ -407,7 +407,13 @@ export function apiUploadDocument(kbId: string, file: File) {
   });
 }
 
-/** 带进度回调的 KB 文档上传（全局拖放/上传任务面板使用，端点与 apiUploadDocument 相同） */
+/**
+ * 带进度回调的 KB 文档上传（全局拖放/上传任务面板/目录上传复用，端点与 apiUploadDocument 相同）。
+ *
+ * ⚠️ folder_id 必须走 **query 参数**：后端 upload_document 把它声明为 Query(...)，
+ * multipart 表单里的同名字段会被静默忽略（folder_id 恒为 ""，文档落到库根层级）。
+ * 2026-10-17 实测：FormData 字段 → folder_id=""；?folder_id=xxx → 正常落目录。
+ */
 export function apiUploadDocumentWithProgress(
   kbId: string,
   file: File,
@@ -418,7 +424,6 @@ export function apiUploadDocumentWithProgress(
 ) {
   const form = new FormData();
   form.append("file", file);
-  if (folderId) form.append("folder_id", folderId);
   // 文件级处理配置（对齐 WeKnora upload process_config：上传确认弹窗选定的
   // 切片/解析引擎配置，JSON 字符串覆盖 KB 默认）
   if (processConfig && Object.keys(processConfig).length > 0) {
@@ -426,7 +431,14 @@ export function apiUploadDocumentWithProgress(
   }
   // 文档级构建引擎（上传确认弹窗重选；留空 = 用 KB 默认构建引擎）
   if (buildTapeId) form.append("build_tape_id", buildTapeId);
-  return requestUpload<DocItem>(`/api/v1/kbs/${kbId}/documents/upload`, form, onProgress);
+  const params = new URLSearchParams();
+  if (folderId) params.set("folder_id", folderId);
+  const qs = params.toString();
+  return requestUpload<DocItem>(
+    `/api/v1/kbs/${kbId}/documents/upload${qs ? `?${qs}` : ""}`,
+    form,
+    onProgress,
+  );
 }
 
 export function apiUploadDocumentByUrl(kbId: string, url: string, fileName?: string, folderId?: string) {
