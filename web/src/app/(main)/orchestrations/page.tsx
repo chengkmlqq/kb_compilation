@@ -553,7 +553,8 @@ export default function OrchestrationsPage() {
       {/* ── 左栏：编排分类树（参照编排模板页 kb-tpl-sidebar） ── */}
       <aside className="kb-tpl-sidebar">
         <div className="kb-tpl-sidebar-header">
-          <span className="kb-tpl-sidebar-title">编排分类</span>
+          {/* 2026-10-19 「编排分类」→「领域分类」（与列表「领域分类」列、领域概念对齐） */}
+          <span className="kb-tpl-sidebar-title">领域分类</span>
         </div>
         <div className="kb-tpl-cat-list">
           <div
