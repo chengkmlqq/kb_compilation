@@ -479,14 +479,14 @@ export default function OrchestrationsPage() {
     },
     { title: "标签", dataIndex: "tape_label", width: 160, ellipsis: true, render: (v?: string) => v || "-" },
     {
-      title: "分类",
+      title: "领域分类",
       dataIndex: "category",
       width: 110,
       render: (v?: string) => <Tag>{v || "通用"}</Tag>,
     },
     {
-      // 2026-10-15 功能标签：摘要（summary）/ 知识构建（kb_build）/ 其他（general）
-      title: "功能",
+      // 2026-10-15 编排类型标签：摘要（summary）/ 知识构建（kb_build）/ 其他（general）
+      title: "编排类型",
       dataIndex: "tape_type",
       width: 100,
       render: (v?: string) => {
