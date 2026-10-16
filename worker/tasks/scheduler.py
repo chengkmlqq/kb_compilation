@@ -263,12 +263,18 @@ def _update_duration(db: Session, job: Job) -> None:
     MySQL DATETIME columns round-trip as NAIVE datetimes, while we write UTC
     aware values — so strip tzinfo before subtracting (assume both came from
     the same wall-clock source).
+
+    ⚠️ 2026-10-16 修复：modo_job.start_time/end_time 是秒精度 timestamp 列，
+    start_time 落库后被四舍五入（如 09:32:30.55 → 09:32:31），而 end_time
+    在此处仍是内存中的微秒级 aware 值——亚秒级任务（如编排投递 09:32:30.65）
+    会出现 end - start = -350ms 的伪负耗时（任务监控页显示「耗时 -350ms」）。
+    钳制到 0：真实任务耗时不可能为负，宁可显示 0 也不误导。
     """
     if job.start_time and job.end_time:
         start = job.start_time.replace(tzinfo=None)
         end = job.end_time.replace(tzinfo=None)
         delta = end - start
-        job.duration_ms = int(delta.total_seconds() * 1000)
+        job.duration_ms = max(0, int(delta.total_seconds() * 1000))
 
 
 def _job_log_path(job_id: str) -> str:

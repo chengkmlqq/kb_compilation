@@ -161,3 +161,51 @@ def test_next_fire_time_serialization_roundtrip() -> None:
     parsed = scheduler._parse_next_fire_time(text)
     assert parsed is not None
     assert parsed.astimezone(dt.timezone.utc) == when
+
+
+def test_update_duration_clamps_negative_delta(sched_db) -> None:
+    """亚秒级任务的伪负耗时（秒精度 timestamp 列把 start 四舍五入进位、
+    end 仍是内存微秒值时 end - start < 0）钳制为 0，不落负数。"""
+    Session, _ = sched_db
+    db = Session()
+    try:
+        job = Job(
+            id="SUMMARY_RUN_neg_test",
+            task_id="SUMMARY_RUN_neg_test",
+            task_class="KbOrchestrationRunTask",
+            state="SUCCESS",
+            # start 落库四舍五入成整秒(09:32:31)，end 内存微秒值更早(09:32:30.65)
+            start_time=dt.datetime(2026, 10, 16, 9, 32, 31),
+            end_time=dt.datetime(2026, 10, 16, 9, 32, 30, 650000),
+        )
+        db.add(job)
+        db.commit()
+        scheduler._update_duration(db, job)
+        assert job.duration_ms == 0
+        db.commit()
+        row = db.execute(select(Job).where(Job.id == "SUMMARY_RUN_neg_test")).scalars().first()
+        assert row is not None and row.duration_ms == 0
+    finally:
+        db.close()
+
+
+def test_update_duration_normal_positive(sched_db) -> None:
+    """正常耗时仍按 end - start 计算（毫秒精度保留）。"""
+    Session, _ = sched_db
+    db = Session()
+    try:
+        job = Job(
+            id="DOC_pos_test",
+            task_id="DOC_pos_test",
+            task_class="KbDocumentProcessTask",
+            state="SUCCESS",
+            start_time=dt.datetime(2026, 10, 16, 9, 32, 24, 500000),
+            end_time=dt.datetime(2026, 10, 16, 9, 33, 59, 200000),
+        )
+        db.add(job)
+        db.commit()
+        scheduler._update_duration(db, job)
+        # 94700ms 附近（94.7s）
+        assert job.duration_ms == 94700
+    finally:
+        db.close()
