@@ -1638,7 +1638,7 @@ export default function ChatPage() {
                 }}
               >
                 <button type="button" className="kb-chat-model-btn" title="选择模型">
-                  <DsbIconModelMgr size={14} />
+                  <DsbIconModelMgr size={12} />
                   <span className="kb-chat-model-btn-label">
                     {chatModels.find((m) => m.id === modelId)?.display_name ||
                       chatModels.find((m) => m.id === modelId)?.name ||
@@ -1695,7 +1695,7 @@ export default function ChatPage() {
                     : "选择智能体"
                 }
               >
-                <RobotOutlined style={{ color: "rgba(50,97,206,1)", fontSize: 14 }} />
+                <RobotOutlined style={{ color: "rgba(50,97,206,1)", fontSize: 12 }} />
                 <span className="kb-chat-agent-btn-label">
                   {agents.find((a) => a.id === agentMode)?.name || "普通问答"}
                 </span>
@@ -1756,7 +1756,7 @@ export default function ChatPage() {
               title="上传附件"
               onClick={() => attachmentInputRef.current?.click()}
             >
-              <DsbIconLink size={16} />
+              <DsbIconLink size={12} />
               附件
             </button>
             {streaming ? (

@@ -1211,7 +1211,7 @@ html[data-theme="dark"] body {
   box-sizing: border-box;
   border-radius: 12px;
   color: var(--kb-c-text);
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -1245,7 +1245,7 @@ html[data-theme="dark"] body {
 
 /* ── 消息正文 markdown（对齐 DSB .content-view / .content-md-editor-view 实测值）── */
 .kb-chat-md {
-  font-size: 14px;
+  font-size: 12px;
   color: var(--kb-c-text);
   line-height: 1.5;
 }
@@ -3088,10 +3088,11 @@ html[data-theme="dark"] .kb-citation-web:hover {
   min-height: 0;
   overflow: hidden;
   background: #fff;
-  /* DSB body：Inter 字体栈 / line-height 1.5 / antialiased；arco body 基准字号 14px */
+  /* DSB body：Inter 字体栈 / line-height 1.5 / antialiased；modo 主题 body 实测 12px
+     （@font-size-body-3:12px + body{font-size:12px!important}，2026-10-18 编译产物实测） */
   font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
     "Noto Sans", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1.5;
   color: rgba(36, 46, 67, 1);
   -webkit-font-smoothing: antialiased;
@@ -3212,11 +3213,11 @@ html[data-theme="dark"] .kb-citation-web:hover {
   width: 0;
   height: 0;
 }
-/* DSB .ai-search-chat-list .list-title：仅 color text-3（字号随 body 14px） */
+/* DSB .list-title：仅 color text-3，字号随 body 12px（modo 实测），行高 12*1.5=18px */
 .kb-chat-sider-group-title {
   color: rgba(121, 135, 156, 1);
-  font-size: 14px;
-  line-height: 21px;
+  font-size: 12px;
+  line-height: 18px;
 }
 /* DSB .ai-search-chat-list：row-gap 8px + fill-1 底 + radius 6（分组容器） */
 .kb-chat-sider-group-outer {
@@ -3241,7 +3242,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
   padding: 8px 12px;
   border-radius: 8px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 12px;
   color: rgba(36, 46, 67, 1);
   overflow: hidden;
 }
@@ -3655,7 +3656,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
 
 /* 内容区（思考展开时隐藏 / 折叠时显示） */
 .kb-chat-content-view {
-  font-size: 14px;
+  font-size: 12px;
   line-height: 22px;
   color: rgba(36, 46, 67, 1);
 }
@@ -3801,7 +3802,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
   min-height: 0;
   padding: 0;
   overflow: auto;
-  font-size: 14px;
+  font-size: 12px;
   line-height: 22px;
   color: rgba(36, 46, 67, 1);
   background: transparent;
@@ -3847,7 +3848,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
   gap: 4px;
   height: 32px;
   padding: 0 8px;
-  font-size: 14px;
+  font-size: 12px;
   color: rgba(36, 46, 67, 1);
   background: transparent;
   border: 0;
@@ -3858,7 +3859,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
   background: rgba(239, 244, 249, 1);
 }
 .kb-chat-input-icon-btn .dsb-icon {
-  font-size: 14px;
+  font-size: 12px;
 }
 .kb-chat-input-icon-btn.active {
   color: rgba(50, 97, 206, 1);
@@ -3880,7 +3881,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
   color: #fff;
   background: rgba(50, 97, 206, 1);
   border: 1px solid rgba(50, 97, 206, 1);
-  font-size: 16px;
+  font-size: 14px;
 }
 .kb-chat-send-btn:hover {
   background: rgba(81, 126, 216, 1);
@@ -3912,7 +3913,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
   padding: 0 8px;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
   color: rgba(50, 97, 206, 1);
   background: rgba(232, 243, 255, 1);
@@ -3928,7 +3929,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
 .kb-chat-model-btn .dsb-icon,
 .kb-chat-agent-btn .dsb-icon {
   flex: 0 0 auto;
-  font-size: 14px;
+  font-size: 12px;
   color: rgba(50, 97, 206, 1);
 }
 .kb-chat-model-btn-label,
@@ -4020,7 +4021,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
   padding: 0 12px;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 12px;
   color: rgba(36, 46, 67, 1);
   background: #fff;
   border: 1px solid rgba(227, 233, 239, 1);
