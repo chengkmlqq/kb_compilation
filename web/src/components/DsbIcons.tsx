@@ -244,3 +244,20 @@ export function DsbStopLoading(props: IconProps) {
     </svg>
   );
 }
+
+/** modo IconDataCatalogMgrColor —— 知识集/知识库（DSB 知识集选择面板卡片图标，Color 变体分层 opacity） */
+export function DsbIconDataCatalog(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path
+        fill="currentColor"
+        d="M3.306 1.515h-2.26a.245.245 0 0 0-.245.245v8.498a.245.245 0 0 0 .245.245h2.26a.245.245 0 0 0 .245-.245V1.76a.245.245 0 0 0-.245-.245ZM2.8 7.39H1.55v-.75H2.8Zm0-1.5H1.55v-.75H2.8Zm0-1.5H1.55v-.75H2.8Zm3.356 1.125h-1.25v-.75h1.25Zm0 .75h-1.25v.75h1.25Z"
+      />
+      <path
+        fill="currentColor"
+        opacity=".25"
+        d="M6.532 1.497h-2a.25.25 0 0 0-.25.25v8.5a.25.25 0 0 0 .25.25h2a.25.25 0 0 0 .25-.25v-8.5a.25.25 0 0 0-.25-.25Zm-.375 5.518h-1.25v-.75h1.25Zm0-1.5h-1.25v-.75h1.25Zm5.018 4.23a.252.252 0 0 1-.205.293l-1.772.312a.252.252 0 0 1-.292-.204L7.518 2.272a.252.252 0 0 1 .204-.292l1.772-.313a.252.252 0 0 1 .293.205Z"
+      />
+    </Svg>
+  );
+}

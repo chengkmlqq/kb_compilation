@@ -1598,17 +1598,126 @@ html[data-theme="dark"] body {
    白卡叠白底 → 卡片边界完全不可辨。这里给卡片网格内的卡片补可见描边 + 投影，
    hover 时加深，明确卡片边界（只命中下列类名，不影响面板级卡片）。 */
 .kb-list-card.ant-card,
-.agent-card.ant-card {
-  border: 1px solid var(--color-gray-3, #e3e9ef) !important;
-  border-radius: 6px !important;
-  box-shadow: 0 1px 3px rgba(36, 46, 67, 0.08) !important;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.kb-list-card.ant-card:hover,
-.agent-card.ant-card:hover {
+.kb-list-card.ant-card:hover {
   border-color: #bfcddd !important;
   box-shadow: 0 4px 10px rgba(36, 46, 67, 0.1) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   智能体卡片（对齐知识库卡片 kb-kbs-card 三段式：
+   header 44px 图标+标题 / 两行描述 / footer 特征文本+操作）
+   ═══════════════════════════════════════════════════════════════ */
+.kb-agent-card {
+  box-sizing: border-box;
+  height: 150px;
+  padding: 16px 16px 12px 16px;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #e3e9ef;
+  border-radius: 6px;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.kb-agent-card:hover {
+  box-shadow: 0 4px 10px 0 rgba(36, 46, 67, 0.1);
+  border-color: #e3e9ef;
+}
+.kb-agent-card-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  height: 44px;
+  flex-shrink: 0;
+}
+.kb-agent-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  font-size: 20px;
+}
+.kb-agent-card-icon > .anticon {
+  font-size: 28px;
+}
+.kb-agent-card-detail {
+  width: calc(100% - 40px);
+  min-width: 0;
+}
+.kb-agent-card-title-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 22px;
+  color: #242e43;
+}
+.kb-agent-card-title-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-agent-card-meta {
+  width: 100%;
+  font-size: 12px;
+  line-height: 20px;
+  color: #4d5e7d;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-agent-card-description {
+  display: -webkit-box;
+  height: 40px;
+  margin-top: 10px;
+  overflow: hidden;
+  font-size: 12px;
+  color: #4d5e7d;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.kb-agent-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: auto;
+  flex-shrink: 0;
+  gap: 8px;
+}
+.kb-agent-card-footer-left {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: #4d5e7d;
+  line-height: 28px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-agent-card-footer-right {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.kb-agent-card-footer-right .ant-btn-text {
+  color: #4d5e7d;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -3448,6 +3557,8 @@ html[data-theme="dark"] .kb-citation-web:hover {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  /* 知识库选择面板（.kb-chat-kb-panel absolute）的定位参照 */
+  position: relative;
 }
 
 /* 输入卡片：对齐 @ant-design/x Sender 默认形态
@@ -3580,46 +3691,319 @@ html[data-theme="dark"] .kb-citation-web:hover {
 .kb-chat-stop-btn:hover {
   background: rgba(239, 244, 249, 1);
 }
-/* 模型选择：对齐 DSB .portal-chat-dropdown-btn
-   （min 156 / max 180、padding 0 8px、primary-light-1 底、link-6 字色、600、32px 胶囊）
-   antd v6 的 Select 根元素即 .ant-select（描边/底色/圆角都在根上），故同时覆盖根与旧版 .ant-select-selector */
-.kb-chat-model-select {
+/* ── 模型选择（对齐 DSB .portal-chat-dropdown-btn + .chat-sender-model-menu）──
+   2026-10-19 起 DSB 用「胶囊按钮 + Dropdown 菜单（模型名/描述/勾选）」，不再用 Select 组件 */
+.kb-chat-model-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-width: 156px;
   max-width: 180px;
-  height: 32px !important;
-  padding: 0 8px !important;
-  border: 1px solid rgba(50, 97, 206, 1) !important;
-  border-radius: 16px !important;
-  background: rgba(232, 243, 255, 1) !important;
-  color: rgba(50, 97, 206, 1) !important;
-  font-size: 14px !important;
+  height: 32px;
+  padding: 0 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 14px;
   font-weight: 600;
+  color: rgba(50, 97, 206, 1);
+  background: rgba(232, 243, 255, 1);
+  border: 1px solid rgba(50, 97, 206, 1);
+  border-radius: 16px;
+  cursor: pointer;
 }
-.kb-chat-model-select:hover,
-.kb-chat-model-select.ant-select-focused {
-  border-color: rgba(50, 97, 206, 1) !important;
-  background: rgba(232, 243, 255, 1) !important;
+.kb-chat-model-btn:hover {
+  border-color: rgba(81, 126, 216, 1);
+  background: rgba(232, 243, 255, 1);
 }
-.kb-chat-model-select .ant-select-selector {
-  height: 32px !important;
-  border-radius: 16px !important;
-  border-color: rgba(50, 97, 206, 1) !important;
-  background: rgba(232, 243, 255, 1) !important;
-  color: rgba(50, 97, 206, 1) !important;
-  font-weight: 600;
-}
-.kb-chat-model-select .ant-select-content,
-.kb-chat-model-select .ant-select-selection-item,
-.kb-chat-model-select .ant-select-selection-placeholder,
-.kb-chat-model-select .ant-select-suffix,
-.kb-chat-model-select .ant-select-arrow {
-  color: rgba(50, 97, 206, 1) !important;
-  line-height: 30px !important;
-  font-size: 14px !important;
-}
-.kb-chat-model-select .dsb-icon {
+.kb-chat-model-btn .dsb-icon {
+  flex: 0 0 auto;
   font-size: 14px;
   color: rgba(50, 97, 206, 1);
+}
+.kb-chat-model-btn-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.kb-chat-model-btn-arrow {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: rgba(50, 97, 206, 1);
+}
+
+/* 模型下拉菜单（对齐 .chat-sender-model-menu：max-width 350 / padding 8 / 选项 52px 高 / radius 8） */
+.kb-chat-model-menu .ant-dropdown-menu {
+  max-width: 350px;
+  padding: 8px;
+}
+.kb-chat-model-menu .ant-dropdown-menu-item {
+  display: flex;
+  align-items: center;
+  height: 52px;
+  padding: 5px 8px !important;
+  border-radius: 8px;
+}
+.kb-chat-model-item {
+  display: flex;
+  column-gap: 10px;
+  align-items: center;
+  width: 100%;
+}
+.kb-chat-model-item-left {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.kb-chat-model-name {
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 22px;
+  color: rgba(36, 46, 67, 1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-chat-model-descr {
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 20px;
+  color: rgba(121, 135, 156, 1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-chat-model-check {
+  flex: 0 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: rgba(50, 97, 206, 1);
+}
+/* 选中项（对齐 .chat-sender-model-item.active：primary-light-1 底 + 名称 link-6 + 勾选） */
+.kb-chat-model-menu .ant-dropdown-menu-item-selected,
+.kb-chat-model-menu .ant-dropdown-menu-item-selected:hover {
+  background: rgba(232, 243, 255, 1) !important;
+}
+.kb-chat-model-menu .ant-dropdown-menu-item-selected .kb-chat-model-name {
+  color: rgba(50, 97, 206, 1);
+}
+
+/* ── 知识库选择按钮（对齐 DSB .kb-select-btn：arco round 默认按钮形态）── */
+.kb-chat-kb-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  max-width: 220px;
+  padding: 0 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 14px;
+  color: rgba(36, 46, 67, 1);
+  background: #fff;
+  border: 1px solid rgba(227, 233, 239, 1);
+  border-radius: 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.kb-chat-kb-btn:hover {
+  border-color: rgba(50, 97, 206, 1);
+  color: rgba(50, 97, 206, 1);
+}
+.kb-chat-kb-btn.active {
+  border-color: rgba(50, 97, 206, 1);
+  background: rgba(232, 243, 255, 1);
+  color: rgba(50, 97, 206, 1);
+  font-weight: 600;
+}
+.kb-chat-kb-btn-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-chat-kb-btn-arrow {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+/* ── 知识库选择面板（对齐 DSB .chat-kb-list：760×338、radius 20、fill-1 底、浮层阴影）── */
+.kb-chat-kb-panel {
+  position: absolute;
+  right: 60px;
+  bottom: 40px;
+  z-index: 100;
+  width: 760px;
+  height: 0;
+  overflow: hidden;
+  background: rgba(249, 251, 253, 1);
+  border-radius: 20px;
+  transition: all 0.2s ease;
+}
+.kb-chat-kb-panel.visible {
+  height: 338px;
+  border: 1px solid rgba(239, 244, 249, 1);
+  box-shadow: 0 5px 12px 4px rgba(36, 46, 67, 0.1);
+}
+/* 顶部搜索（DSB .arco-input-group-wrapper padding 20px） */
+.kb-chat-kb-panel-search {
+  padding: 20px;
+}
+.kb-chat-kb-panel-search .ant-input-affix-wrapper {
+  height: 32px;
+  border-radius: 16px;
+  background: #fff;
+  border-color: rgba(227, 233, 239, 1);
+}
+.kb-chat-kb-panel-search .ant-input-affix-wrapper:hover,
+.kb-chat-kb-panel-search .ant-input-affix-wrapper-focused {
+  border-color: rgba(50, 97, 206, 1);
+}
+/* 左分类树 + 右列表 */
+.kb-chat-kb-selector-layout {
+  display: flex;
+  height: calc(100% - 68px);
+}
+.kb-chat-kb-selector-tree {
+  width: 240px;
+  min-width: 240px;
+  overflow-y: auto;
+  border-right: 1px solid rgba(227, 233, 239, 1);
+  background: #fff;
+  padding: 4px 0;
+}
+.kb-chat-kb-selector-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+/* 已选知识集 Tag 行（对齐 .kb-tags：label 84px + 可关闭 Tag） */
+.kb-chat-kb-tags {
+  display: flex;
+  padding: 0 20px;
+  line-height: 24px;
+}
+.kb-chat-kb-tags-label {
+  flex: 0 0 84px;
+  width: 84px;
+  color: rgba(121, 135, 156, 1);
+}
+.kb-chat-kb-tags-list {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  column-gap: 4px;
+}
+/* 卡片列表区（对齐 .kb-list：padding 12px 20px 20px、3 列） */
+.kb-chat-kb-cards-wrap {
+  width: 100%;
+  height: calc(100% - 46px);
+}
+.kb-chat-kb-cards-inner {
+  width: 100%;
+  height: 100%;
+  padding: 12px 20px 20px;
+  overflow: auto;
+}
+.kb-chat-kb-cards {
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 12px;
+  column-gap: 16px;
+  width: 100%;
+}
+/* 卡片（对齐 .custom-checkbox-card：3 列 102px 高、fill-2 底、radius 10、padding 20） */
+.kb-chat-kb-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  row-gap: 4px;
+  width: calc((100% - 32px) / 3);
+  height: 102px;
+  padding: 20px;
+  overflow: hidden;
+  background: rgba(239, 244, 249, 1);
+  border: 1px solid rgba(227, 233, 239, 1);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.kb-chat-kb-card-top {
+  display: flex;
+  column-gap: 8px;
+  align-items: flex-start;
+}
+.kb-chat-kb-card-icon {
+  flex: 0 0 20px;
+  font-size: 20px;
+  color: rgba(36, 46, 67, 1);
+}
+.kb-chat-kb-card-title {
+  display: -webkit-box;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 20px;
+  min-height: 40px;
+  font-weight: 700;
+  color: rgba(36, 46, 67, 1);
+  text-overflow: ellipsis;
+  word-break: break-word;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.kb-chat-kb-card-mask {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: 0 0 14px;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(227, 233, 239, 1);
+  border-radius: 7px;
+}
+.kb-chat-kb-card-bottom {
+  min-width: 0;
+}
+.kb-chat-kb-card-descr {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 20px;
+  color: rgba(121, 135, 156, 1);
+  text-overflow: ellipsis;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.kb-chat-kb-card:hover {
+  box-shadow: 0 2px 5px 0 rgba(36, 46, 67, 0.1);
+}
+.kb-chat-kb-card:hover .kb-chat-kb-card-title,
+.kb-chat-kb-card:hover .kb-chat-kb-card-icon {
+  color: rgba(50, 97, 206, 1);
+}
+.kb-chat-kb-card.checked {
+  background: #fff;
+  border-color: rgba(50, 97, 206, 1);
+}
+.kb-chat-kb-card.checked .kb-chat-kb-card-mask {
+  border: 4px solid rgba(50, 97, 206, 1);
+}
+.kb-chat-kb-card.checked .kb-chat-kb-card-icon {
+  color: rgba(50, 97, 206, 1);
+}
+.kb-chat-kb-empty {
+  padding: 24px;
+  text-align: center;
+  color: rgba(121, 135, 156, 1);
+  font-size: 13px;
 }
 /* 知识库 / 智能体选择：对齐 DSB 圆形描边按钮（32px / padding 0 8px / 描边 #E3E9EF / 白底） */
 .kb-chat-aux-select {

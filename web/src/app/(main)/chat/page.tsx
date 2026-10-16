@@ -22,6 +22,7 @@ import {
 } from "antd";
 import {
   BulbOutlined,
+  CheckOutlined,
   DatabaseOutlined,
   DeleteOutlined,
   DownOutlined,
@@ -40,6 +41,8 @@ import {
   DsbIconChevronDown,
   DsbIconChevronUp,
   DsbIconCopy,
+  DsbIconDataCatalog,
+  DsbIconDataGovernance,
   DsbIconDisagree,
   DsbIconLayout3,
   DsbIconLink,
@@ -59,6 +62,7 @@ import {
   apiListAgents,
   apiListAttachments,
   apiListModels,
+  apiListKbCategories,
   apiListKbs,
   apiListSessions,
   apiLoadSessionMessages,
@@ -71,6 +75,7 @@ import {
   ChatRefItem,
   QaStreamEvent,
   ChatSessionItem,
+  KbCategoryItem,
   KbItem,
   ModelItem,
   apiSubmitMessageFeedback,
@@ -139,6 +144,13 @@ export default function ChatPage() {
   const [dragActive, setDragActive] = useState(false);
   // 2026-10-15 联网搜索按钮显隐由参数表控制（PLATFORM_CONFIG.CHAT_WEB_SEARCH_ENABLED，默认隐藏）
   const [webSearchVisible, setWebSearchVisible] = useState(false);
+  // 2026-10-19 DSB 对齐：知识库选择面板（kb-select-btn 胶囊 + chat-kb-list 浮层：搜索 / 分类树 / 卡片单选）
+  const [kbPanelOpen, setKbPanelOpen] = useState(false);
+  const [kbSearch, setKbSearch] = useState("");
+  const [kbCategory, setKbCategory] = useState<string>("all");
+  const [categories, setCategories] = useState<KbCategoryItem[]>([]);
+  const kbPanelRef = useRef<HTMLDivElement | null>(null);
+  const kbBtnRef = useRef<HTMLButtonElement | null>(null);
   // 2026-10-12 对齐 WeKnora 输入区联网搜索开关（普通问答/agent 模式通用，请求级生效）
   const [webSearch, setWebSearch] = useState(false);
   // 2026-10-12 对齐 WeKnora embeddedMode：iframe 嵌入 / ?embed=1 / ?noframe=1 时
@@ -262,6 +274,30 @@ export default function ChatPage() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 2026-10-19 DSB 对齐：知识库选择面板分类树（/api/v1/kb-categories，复用 kbs 页 loadCategories）
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiListKbCategories();
+        if (res.success) setCategories(res.data?.items ?? []);
+      } catch {
+        // 分类加载失败不阻断（树回退为空）
+      }
+    })();
+  }, []);
+
+  // 知识库选择面板：点击面板 / 按钮外部时关闭（DSB handleClickOutside 同款）
+  useEffect(() => {
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (kbPanelRef.current?.contains(t) || kbBtnRef.current?.contains(t)) return;
+      setKbPanelOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
   }, []);
 
   // 加载会话列表
@@ -1085,6 +1121,23 @@ export default function ChatPage() {
   // 2026-10-16 DSB 对齐：左栏无搜索框（DSB ChatSider 无），会话列表直接按日期分组
   const filteredSessions = sessions;
 
+  // 2026-10-19 DSB 对齐：知识库选择面板过滤（分类 + 关键字；kb 后端只支持单 kb_id，面板做单选）
+  const activeKb = kbs.find((k) => k.id === kbId);
+  const panelKbs = useMemo(() => {
+    const q = kbSearch.trim().toLowerCase();
+    let list = kbs;
+    if (kbCategory !== "all") list = list.filter((k) => (k.label || "无标签") === kbCategory);
+    if (q) {
+      list = list.filter(
+        (k) =>
+          k.name.toLowerCase().includes(q) ||
+          (k.label || "").toLowerCase().includes(q) ||
+          (k.description || "").toLowerCase().includes(q),
+      );
+    }
+    return list;
+  }, [kbs, kbSearch, kbCategory]);
+
   // 2026-10-07 对齐 WeKnora：会话按日期分组（今天 / 昨天 / 7 天内 / 更早）
   const groupedSessions = useMemo(() => {
     const now = new Date();
@@ -1546,20 +1599,47 @@ export default function ChatPage() {
         />
         </div>
         {/* 控制栏：对齐 DSB Sender .ant-sender-footer > .sender-footer-main
-            （左 .footer-left：知识库 / 智能体 / 工具按钮；右 .footer-right：模型 + 发送·停止） */}
+            （左 .footer-left：模型（最左）→ 反思模式 → 智能体 / 联网 / 图片；
+             右 .footer-right：知识库 → 附件 → 发送·停止） */}
         <div className="kb-chat-input-actions">
           <div className="kb-chat-input-actions-left">
-            {/* 2026-10-15 纯对话模式：知识库选择（allowClear，清空=不检索直接对话） */}
-            <Select
-              className="kb-chat-aux-select"
-              value={kbId || undefined}
-              onChange={(v) => setKbId(v || undefined)}
-              placeholder="不选=直接对话"
-              allowClear
-              style={{ minWidth: 150 }}
-              suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
-              options={kbs.map((k) => ({ value: k.id, label: k.name }))}
-            />
+            {/* 2026-10-19 DSB 对齐：模型选择移到最左
+                （.portal-chat-dropdown-btn 胶囊按钮 + .chat-sender-model-menu 菜单：模型名/描述/勾选） */}
+            {chatModels.length > 0 && (
+              <Dropdown
+                trigger={["click"]}
+                placement="bottomLeft"
+                overlayClassName="kb-chat-model-menu"
+                menu={{
+                  items: chatModels.map((m) => ({
+                    key: m.id,
+                    label: (
+                      <div className="kb-chat-model-item">
+                        <div className="kb-chat-model-item-left">
+                          <div className="kb-chat-model-name">{m.display_name || m.name}</div>
+                          <div className="kb-chat-model-descr">{m.description || "暂无描述"}</div>
+                        </div>
+                        <div className="kb-chat-model-check">
+                          {modelId === m.id && <CheckOutlined />}
+                        </div>
+                      </div>
+                    ),
+                  })),
+                  selectable: false,
+                  onClick: ({ key }) => setModelId(key),
+                }}
+              >
+                <button type="button" className="kb-chat-model-btn" title="选择模型">
+                  <DsbIconModelMgr size={14} />
+                  <span className="kb-chat-model-btn-label">
+                    {chatModels.find((m) => m.id === modelId)?.display_name ||
+                      chatModels.find((m) => m.id === modelId)?.name ||
+                      "默认模型"}
+                  </span>
+                  <DsbIconChevronDown size={12} className="kb-chat-model-btn-arrow" />
+                </button>
+              </Dropdown>
+            )}
             {/* 左下角：智能体选择（对齐 WeKnora agent-mode-btn） */}
             <Select
               className="kb-chat-aux-select"
@@ -1610,6 +1690,27 @@ export default function ChatPage() {
                 <PictureOutlined />
               </button>
             )}
+          </div>
+          <div className="kb-chat-input-actions-right">
+            {/* 2026-10-19 DSB 对齐：知识库选择移到最右（.kb-select-btn 胶囊 + .chat-kb-list 浮层面板）
+                点击切换面板；未选时显示「知识库」（空 = 全库问答，后端语义） */}
+            <button
+              ref={kbBtnRef}
+              type="button"
+              className={`kb-chat-kb-btn${kbPanelOpen ? " active" : ""}`}
+              title="选择知识库"
+              onClick={() => setKbPanelOpen((v) => !v)}
+            >
+              <span className="kb-chat-kb-btn-label">
+                {activeKb ? activeKb.name : "知识库"}
+              </span>
+              {kbPanelOpen ? (
+                <DsbIconChevronUp size={12} className="kb-chat-kb-btn-arrow" />
+              ) : (
+                <DsbIconChevronDown size={12} className="kb-chat-kb-btn-arrow" />
+              )}
+            </button>
+            {/* 附件（对齐 DSB .file-text-btn：radius 8px / padding 4px 8px / text-1 色） */}
             <button
               type="button"
               className="kb-chat-input-icon-btn"
@@ -1619,23 +1720,6 @@ export default function ChatPage() {
               <DsbIconLink size={16} />
               附件
             </button>
-          </div>
-          <div className="kb-chat-input-actions-right">
-            {/* 右侧：模型选择（对齐 DSB .portal-chat-dropdown-btn 胶囊） */}
-            {chatModels.length > 0 && (
-              <Select
-                className="kb-chat-model-select"
-                value={modelId || undefined}
-                onChange={setModelId}
-                placeholder="默认模型"
-                allowClear
-                prefix={<DsbIconModelMgr size={14} />}
-                options={chatModels.map((m) => ({
-                  value: m.id,
-                  label: m.display_name || m.name || m.id,
-                }))}
-              />
-            )}
             {streaming ? (
               <button
                 type="button"
@@ -1655,6 +1739,101 @@ export default function ChatPage() {
                 <ArrowUpOutlined />
               </button>
             )}
+          </div>
+        </div>
+        {/* 2026-10-19 DSB 对齐：知识库选择面板（.chat-kb-list：顶部搜索 + 左分类树 + 右侧已选 Tag + 卡片单选） */}
+        <div ref={kbPanelRef} className={`kb-chat-kb-panel${kbPanelOpen ? " visible" : ""}`}>
+          <div className="kb-chat-kb-panel-search">
+            <Input
+              allowClear
+              prefix={<SearchOutlined style={{ color: "rgba(121,135,156,1)", fontSize: 14 }} />}
+              placeholder="请输入关键字"
+              value={kbSearch}
+              onChange={(e) => setKbSearch(e.target.value)}
+            />
+          </div>
+          <div className="kb-chat-kb-selector-layout">
+            <div className="kb-chat-kb-selector-tree">
+              <div
+                className="kb-kbs-tree-node"
+                onClick={() => setKbCategory("all")}
+                title="全部"
+              >
+                <span className="kb-kbs-tree-indent" aria-hidden="true" />
+                <span className="kb-kbs-tree-switcher" />
+                <span className={`kb-kbs-tree-title${kbCategory === "all" ? " active" : ""}`}>
+                  全部
+                </span>
+              </div>
+              {categories.map((c) => (
+                <div
+                  key={c.name}
+                  className="kb-kbs-tree-node"
+                  onClick={() => setKbCategory(c.name)}
+                  title={c.name}
+                >
+                  <span className="kb-kbs-tree-indent" aria-hidden="true">
+                    <span className="kb-kbs-tree-indent-block" />
+                  </span>
+                  <span className="kb-kbs-tree-switcher" />
+                  <span className={`kb-kbs-tree-title${kbCategory === c.name ? " active" : ""}`}>
+                    {c.name}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="kb-chat-kb-selector-list">
+              {/* 已选知识库 Tag 行（对齐 .kb-tags：label 84px + 可关闭 Tag） */}
+              <div className="kb-chat-kb-tags">
+                <div className="kb-chat-kb-tags-label">已选择知识库：</div>
+                <div className="kb-chat-kb-tags-list">
+                  {activeKb ? (
+                    <Tag
+                      closable
+                      onClose={(e) => {
+                        e.preventDefault();
+                        setKbId(undefined);
+                      }}
+                    >
+                      {activeKb.name}
+                    </Tag>
+                  ) : null}
+                </div>
+              </div>
+              {/* 卡片列表（对齐 .custom-checkbox-card：3 列 / fill-2 底 / 选中白底主色边框 + mask 圆点） */}
+              <div className="kb-chat-kb-cards-wrap">
+                <div className="kb-chat-kb-cards-inner">
+                  {panelKbs.length === 0 ? (
+                    <div className="kb-chat-kb-empty">暂无数据</div>
+                  ) : (
+                    <div className="kb-chat-kb-cards">
+                      {panelKbs.map((k) => {
+                        const checked = kbId === k.id;
+                        return (
+                          <div
+                            key={k.id}
+                            className={`kb-chat-kb-card${checked ? " checked" : ""}`}
+                            onClick={() => setKbId(checked ? undefined : k.id)}
+                            title={k.name}
+                          >
+                            <div className="kb-chat-kb-card-top">
+                              <DsbIconDataCatalog size={20} className="kb-chat-kb-card-icon" />
+                              <div className="kb-chat-kb-card-title">{k.name}</div>
+                              <div className="kb-chat-kb-card-mask" />
+                            </div>
+                            <div className="kb-chat-kb-card-bottom">
+                              <div className="kb-chat-kb-card-descr">
+                                {k.description || "暂无描述"}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         <input
