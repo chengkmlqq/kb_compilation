@@ -101,7 +101,7 @@ export default function TapeTemplatesPage() {
   // 左树：当前选中分类（"" = 全部）
   const [selectedCategory, setSelectedCategory] = useState("");
   const [categories, setCategories] = useState<TapeTemplateCategory[]>([]);
-  // 多级树：展开集合（2026-10-15 默认全部展开；点节点/箭头可收起）
+  // 多级树：展开集合（2026-10-15 多级树；默认展开根目录一级，点节点/箭头可展开/收起）
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -172,8 +172,8 @@ export default function TapeTemplatesPage() {
     if (res.success) {
       const list = res.data || [];
       setCategories(list);
-      // 默认全部展开：初始展开所有带子级的分类
-      setExpandedCats(new Set(list.filter((c) => c.parent_id).map((c) => c.parent_id as string)));
+      // 默认展开根目录这一级：初始只展开一级分类（无 parent_id），二级及以下默认收起
+      setExpandedCats(new Set(list.filter((c) => !c.parent_id).map((c) => c.category)));
     }
   }, []);
 
@@ -224,7 +224,7 @@ export default function TapeTemplatesPage() {
     return m;
   }, [categories]);
 
-  /** 递归渲染分类节点（有子级的行带 ▸/▾ 展开箭头；默认全部展开） */
+  /** 递归渲染分类节点（有子级的行带 ▸/▾ 展开箭头；默认展开根目录一级） */
   const renderCatNode = useCallback(
     (c: TapeTemplateCategory, depth: number): ReactNode => {
       const kids = childByParent.get(c.category) || [];
