@@ -4090,22 +4090,26 @@ html[data-theme="dark"] .kb-citation-web:hover {
   vertical-align: middle;
 }
 
-/* 搜索：360 宽 / 13px 胶囊 / fill-2 底 / 12px 字 / 彩色放大镜前缀 14px
-   （对齐 .header-search + arco inner-wrapper「padding 0 12px」+ has-prefix 文本再让 12px） */
+/* 搜索：360 宽 / 14px 胶囊 / fill-2 底 / 12px 字 / 彩色放大镜前缀 14px
+   （对齐 .header-search + arco inner-wrapper「padding 0 12px」+ has-prefix 文本再让 12px；
+   2026-10-19 改普通 Input 后 className 落在 affix-wrapper 自身 → 补自带类选择器） */
+.kb-kbs-search.ant-input-affix-wrapper,
 .kb-kbs-search .ant-input-affix-wrapper {
   width: 360px;
   height: 28px;
   padding: 0 12px;
-  border-radius: 13px;
+  border-radius: 14px;
   background: #eff4f9;
   border-color: transparent;
 }
+.kb-kbs-search.ant-input-affix-wrapper input.ant-input,
 .kb-kbs-search .ant-input-affix-wrapper input.ant-input {
   font-size: 12px;
   height: 26px;
   line-height: 26px;
   padding: 0;
 }
+.kb-kbs-search.ant-input-affix-wrapper input::placeholder,
 .kb-kbs-search .ant-input-affix-wrapper input::placeholder {
   color: #79879c;
 }
@@ -4141,24 +4145,22 @@ html[data-theme="dark"] .kb-citation-web:hover {
 .kb-kbs-category-sider {
   width: 260px;
   min-width: 260px;
-  border-right: 1px solid #e3e9ef;
+  border-right: 1px solid #f0f0f0; /* 对齐 DSB 文档库 sider */
   background: #fff;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-/* 分类搜索框（对齐 .knowledge-category-tree-toolbar：padding 12px 12px 8px、radius 16px、
-   右侧内置搜索图标 14px / text-2 色；控件高 28px 对齐 modo）；右侧 + 为新建分类入口 */
+/* 分类搜索框（对齐 DSB 文档库左树 WeknoraDocTree 的搜索：容器 padding 8px 8px 6px、
+   arco 默认输入框 = 高 28px / 圆角 2px / fill-2 底 / 右侧搜索图标 13px #9ca3af；
+   2026-10-19 移除工具栏「+ 新建分类」按钮，新建入口只留「全部」节点右键） */
 .kb-kbs-category-search {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 12px 12px 8px;
+  flex-shrink: 0;
+  padding: 8px 8px 6px;
 }
 .kb-kbs-category-search .ant-input-affix-wrapper {
-  flex: 1;
   height: 28px;
-  border-radius: 16px;
+  border-radius: 2px;
   padding: 0 12px;
   background: #eff4f9;
   border-color: transparent;
@@ -4169,18 +4171,6 @@ html[data-theme="dark"] .kb-citation-web:hover {
   line-height: 26px;
   padding: 0;
 }
-.kb-kbs-category-add.ant-btn {
-  height: 28px;
-  width: 28px;
-  flex-shrink: 0;
-  padding: 0;
-  color: #4d5e7d;
-  border-radius: 14px;
-}
-.kb-kbs-category-add.ant-btn:hover {
-  color: #3261ce;
-  background: #eff4f9;
-}
 .kb-kbs-category-search .ant-input-affix-wrapper input::placeholder {
   color: #79879c;
 }
@@ -4188,17 +4178,18 @@ html[data-theme="dark"] .kb-citation-web:hover {
   display: inline-flex;
   align-items: center;
   margin-inline-start: 0;
-  color: #4d5e7d;
-}
-.kb-kbs-category-search .ant-input-clear-icon {
-  display: none !important;
+  color: #9ca3af;
+  font-size: 13px;
 }
 /* DSB arco 输入框状态链（实测）：默认 fill-2 #eff4f9 → hover fill-3 #e3e9ef → focus 白底 + primary 边框、无 ring */
+.kb-kbs-search.ant-input-affix-wrapper:hover,
 .kb-kbs-search .ant-input-affix-wrapper:hover,
 .kb-kbs-category-search .ant-input-affix-wrapper:hover {
   background: #e3e9ef;
   border-color: transparent;
 }
+.kb-kbs-search.ant-input-affix-wrapper-focused,
+.kb-kbs-search.ant-input-affix-wrapper:focus-within,
 .kb-kbs-search .ant-input-affix-wrapper-focused,
 .kb-kbs-search .ant-input-affix-wrapper:focus-within,
 .kb-kbs-category-search .ant-input-affix-wrapper-focused,
@@ -4207,99 +4198,79 @@ html[data-theme="dark"] .kb-citation-web:hover {
   border-color: #3261ce;
   box-shadow: none;
 }
-/* 分类树主体（对齐 .knowledge-category-tree-main：padding 0 8px 12px、overflow auto） */
+/* 分类树主体（对齐 DSB 文档库左树列表容器：padding 2px 0、overflow auto） */
 .kb-kbs-category-tree-main {
   flex: 1;
   min-height: 0;
-  padding: 0 8px 12px;
+  padding: 2px 0;
   overflow: auto;
 }
 
-/* 分类树节点（逐条对齐 arco Tree + modo-design 主题覆盖后的实测几何）：
-   行 padding-left 2px；根节点标题 4.5px 0、子节点 2.5px 0；字号 12px、行高 1.5715
-   缩进块 9px + 右距 10px；切换器槽 12px + 右距 10px（根 28px 高 / 子 24px 高）
-   标题 padding 左右 4px、margin-left -4px、radius 2px；hover / 选中 = 主色 600 无底色 */
-.kb-kbs-tree-node {
-  display: flex;
-  align-items: flex-start;
-  padding-left: 2px;
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1.5715;
-  color: #242e43;
-}
-.kb-kbs-tree-indent {
-  align-self: stretch;
-  flex-shrink: 0;
-  position: relative;
-}
-.kb-kbs-tree-indent-block {
-  display: inline-block;
-  width: 9px;
-  margin-right: 10px;
-  height: 100%;
-  position: relative;
-}
-.kb-kbs-tree-switcher {
+/* 分类树节点（对齐 DSB 文档库左树 WeknoraDocTree .kb-tree-row 实测几何）：
+   行高 28px、margin 2px 4px、radius 4、12px #374151；hover 底 rgba(0,0,0,.04)；
+   选中 = #1d4ed8 + 600 + bg rgba(59,130,246,.12)；
+   展开箭头 12px #9ca3af（IconRight/IconDown 48box 描边）；文件夹图标 14px #f59e0b；
+   计数 10px #9ca3af 右侧。缩进 = 根 8px、子 8+14=22px（JSX inline paddingLeft）。 */
+.kb-doc-tree-row {
   display: flex;
   align-items: center;
-  flex-shrink: 0;
-  position: relative;
-  width: 12px;
-  height: 24px;
-  margin-right: 10px;
-  color: #4d5e7d;
-}
-.kb-kbs-tree-node--root > .kb-kbs-tree-switcher {
   height: 28px;
+  margin: 2px 4px;
+  padding-right: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #374151;
+  font-size: 12px;
+  transition: background 0.15s;
 }
-.kb-kbs-tree-switcher-icon {
-  display: inline-block;
-  position: relative;
-  margin: 0 auto;
+.kb-doc-tree-row:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.kb-doc-tree-row.active {
+  color: #1d4ed8;
+  font-weight: 600;
+  background: rgba(59, 130, 246, 0.12);
+}
+.kb-doc-tree-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  color: #9ca3af;
+}
+.kb-doc-tree-chevron svg {
   width: 12px;
   height: 12px;
-  line-height: 12px;
-  text-align: center;
-  vertical-align: middle;
-  font-size: 9px;
-  background: #eff4f9;
-  border-radius: 2px;
 }
-.kb-kbs-tree-switcher-icon svg {
-  width: 1em;
-  height: 1em;
-  vertical-align: -2px;
-  transform: rotate(-90deg);
-  transition: transform 0.2s cubic-bezier(0.34, 0.69, 0.1, 1);
+.kb-doc-tree-chevron--open svg {
+  transform: rotate(90deg);
 }
-.kb-kbs-tree-switcher-icon.expanded svg {
-  transform: rotate(0deg);
+.kb-doc-tree-folder {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-right: 6px;
+  color: #f59e0b;
 }
-.kb-kbs-tree-title {
+.kb-doc-tree-folder svg {
+  width: 14px;
+  height: 14px;
+}
+.kb-doc-tree-title {
   flex: 1;
   min-width: 0;
-  padding: 2.5px 4px;
-  margin-left: -4px;
-  border-radius: 2px;
-  font-size: 12px;
-  line-height: 1.5715;
-  color: #242e43;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.kb-kbs-tree-node--root > .kb-kbs-tree-title {
-  padding: 4.5px 4px;
-}
-.kb-kbs-tree-node:hover > .kb-kbs-tree-title,
-.kb-kbs-tree-title:hover {
-  color: #3261ce;
-  font-weight: 600;
-}
-.kb-kbs-tree-title.active {
-  color: #3261ce;
-  font-weight: 600;
+.kb-doc-tree-count {
+  flex-shrink: 0;
+  margin-right: 8px;
+  font-size: 10px;
+  color: #9ca3af;
 }
 
 /* ── 右列表：内容区定高滚动 + 分页绝对定位贴底（对齐 .knowledge-list-panel /

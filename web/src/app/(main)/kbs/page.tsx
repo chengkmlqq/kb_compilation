@@ -20,7 +20,6 @@ import {
 import {
   BookOutlined,
   DeleteOutlined,
-  PlusOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
 import {
@@ -107,17 +106,6 @@ const AddColorIcon = ({ size = 14 }: { size?: number }) => (
   </svg>
 );
 
-/** arco IconCaretDown（Tree 切换器三角：viewBox 48 / 实心 path）；容器字号 9px → 1em = 9px */
-const CaretDownIcon = () => (
-  <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" aria-hidden>
-    <path
-      fill="currentColor"
-      stroke="none"
-      d="M24.938 34.829a1.2 1.2 0 0 1-1.875 0L9.56 17.949c-.628-.785-.069-1.949.937-1.949h27.007c1.006 0 1.565 1.164.937 1.95L24.937 34.829Z"
-    />
-  </svg>
-);
-
 /** arco IconSearch（Input.Search 内置后缀图标：viewBox 48 / 描边 4），14px */
 const SearchLineIcon = () => (
   <svg
@@ -153,7 +141,14 @@ const ChevronRightIcon = () => (
   </svg>
 );
 
-// 新建知识库弹窗分区导航（对齐智能体编辑器 AgentEditorModal 与配置弹窗 KBConfigModal）
+/** arco IconFolder（48 viewBox 实心文件夹；DSB 文档库左树用 #f59e0b），14px */
+const FolderIcon = () => (
+  <svg viewBox="0 0 48 48" fill="currentColor" stroke="none" aria-hidden>
+    <path d="M42.05 9.63 26 9.54l-1.57-2.46a1.79 1.79 0 0 0-1.29-.84H6.1a1.9 1.9 0 0 0-2.1 2v15.6l40 .09v-12a2.21 2.21 0 0 0-1.95-2.3ZM5.89 22.38V18a2.44 2.44 0 0 1 2.43-2.19h31.27A2.44 2.44 0 0 1 42 18l.06 4.42-36.17-.04Z" />
+  </svg>
+);
+
+/** 新建知识库弹窗分区导航（对齐智能体编辑器 AgentEditorModal 与配置弹窗 KBConfigModal） */
 const CREATE_SECTIONS = [
   { key: "wiki", label: "Wiki 构建", icon: <BookOutlined /> },
   { key: "retrieval", label: "检索配置", icon: <SearchOutlined /> },
@@ -639,23 +634,15 @@ export default function KbsPage() {
           <div className="kb-kbs-category-search">
             <Input
               placeholder="搜索分类"
+              allowClear
               value={categoryKeyword}
               onChange={(e) => setCategoryKeyword(e.target.value)}
               suffix={<SearchLineIcon />}
             />
-            {/* 2026-10-19 分类 CRUD 入口：新建分类 */}
-            <Button
-              type="text"
-              size="small"
-              className="kb-kbs-category-add"
-              icon={<PlusOutlined />}
-              title="新建分类"
-              onClick={openCatCreate}
-            />
           </div>
           <div className="kb-kbs-category-tree-main">
-            {/* 根节点「全部」（对齐 arco Tree aria-level=0：切换器 12x12 底片 + 9px 三角）；
-                右键 = 新建分类 */}
+            {/* 根节点「全部」= 文件夹行（对齐 DSB 文档库左树 WeknoraDocTree）；
+                右键 = 新建分类（2026-10-19 移除工具栏 + 按钮，入口只留这里） */}
             <Dropdown
               trigger={["contextMenu"]}
               menu={{
@@ -663,27 +650,25 @@ export default function KbsPage() {
               }}
             >
               <div
-                className="kb-kbs-tree-node kb-kbs-tree-node--root"
+                className={`kb-doc-tree-row${selectedLabel === "all" ? " active" : ""}`}
+                style={{ paddingLeft: 8 }}
                 onClick={() => setSelectedLabel("all")}
+                title="全部"
               >
-                <span className="kb-kbs-tree-indent" aria-hidden="true" />
                 <span
-                  className="kb-kbs-tree-switcher"
+                  className={`kb-doc-tree-chevron${treeExpanded ? " kb-doc-tree-chevron--open" : ""}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     setTreeExpanded((v) => !v);
                   }}
                 >
-                  <span className={`kb-kbs-tree-switcher-icon${treeExpanded ? " expanded" : ""}`}>
-                    <CaretDownIcon />
-                  </span>
+                  <ChevronRightIcon />
                 </span>
-                <span
-                  className={`kb-kbs-tree-title${selectedLabel === "all" ? " active" : ""}`}
-                  title="全部"
-                >
-                  全部
+                <span className="kb-doc-tree-folder">
+                  <FolderIcon />
                 </span>
+                <span className="kb-doc-tree-title">全部</span>
+                {total > 0 && <span className="kb-doc-tree-count">{total}</span>}
               </div>
             </Dropdown>
             {treeExpanded &&
@@ -693,11 +678,7 @@ export default function KbsPage() {
                   trigger={["contextMenu"]}
                   menu={{
                     items: [
-                      {
-                        key: "rename",
-                        label: "重命名",
-                        onClick: () => openCatRename(c.name),
-                      },
+                      { key: "rename", label: "重命名", onClick: () => openCatRename(c.name) },
                       {
                         key: "delete",
                         label: "删除",
@@ -708,19 +689,17 @@ export default function KbsPage() {
                   }}
                 >
                   <div
-                    className="kb-kbs-tree-node"
+                    className={`kb-doc-tree-row${selectedLabel === c.name ? " active" : ""}`}
+                    style={{ paddingLeft: 22 }}
                     onClick={() => setSelectedLabel(c.name)}
                     title={c.name}
                   >
-                    <span className="kb-kbs-tree-indent" aria-hidden="true">
-                      <span className="kb-kbs-tree-indent-block" />
+                    <span className="kb-doc-tree-chevron" aria-hidden="true" />
+                    <span className="kb-doc-tree-folder">
+                      <FolderIcon />
                     </span>
-                    <span className="kb-kbs-tree-switcher" />
-                    <span
-                      className={`kb-kbs-tree-title${selectedLabel === c.name ? " active" : ""}`}
-                    >
-                      {c.name}
-                    </span>
+                    <span className="kb-doc-tree-title">{c.name}</span>
+                    {c.count > 0 && <span className="kb-doc-tree-count">{c.count}</span>}
                   </div>
                 </Dropdown>
               ))}
