@@ -8,12 +8,12 @@ import { apiMe } from "@/lib/api";
  * 全局水印（轻量版，基于 antd Watermark）
  *
  * data-synth 的水印走远程注入服务（WATERMARK_API_URL 签名调用），kb 无该
- * 服务；这里用 antd <Watermark> 做等价可见水印（用户名 + 用户 ID），由
- * config SYSTEM_CONFIG.watermark_enabled / env WATERMARK_ENABLED 控制。
+ * 服务；这里用 antd <Watermark> 做等价可见水印（用户名 + 用户 ID）。
+ * 默认关闭，仅当 NEXT_PUBLIC_WATERMARK_ENABLED=true（或 "1"）时开启。
  * 未登录时不渲染（LayoutContent 的登录守卫已挡住）。
  */
 export function GlobalWatermark({ children }: { children: React.ReactNode }) {
-  const [enabled, setEnabled] = useState(true);
+  const [enabled, setEnabled] = useState(false);
   const [text, setText] = useState("");
 
   useEffect(() => {
@@ -21,8 +21,8 @@ export function GlobalWatermark({ children }: { children: React.ReactNode }) {
     if (flag !== undefined) {
       setEnabled(flag === "true" || flag === "1");
     } else {
-      // 默认开启（内部平台防截图），可用 NEXT_PUBLIC_WATERMARK_ENABLED=false 关
-      setEnabled(true);
+      // 默认关闭；需要水印时显式设置 NEXT_PUBLIC_WATERMARK_ENABLED=true
+      setEnabled(false);
     }
     (async () => {
       try {
