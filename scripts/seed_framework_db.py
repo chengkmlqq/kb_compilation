@@ -27,7 +27,7 @@ import os
 import re
 import uuid
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 
 from api.db import get_sessionmaker
 from api.lib.crypto import aes_encrypt
@@ -648,10 +648,18 @@ def main(argv: list[str] | None = None) -> None:
         db.commit()
 
         # 授权：种子角色 + plat-mgr/normal_user（存在则一并授权）
+        # ⚠️ 2026-10-16 修复：此处原按 role_name 精确匹配，但共享库角色表
+        # role_id 为英文（plat-mgr/normal_user）而 role_name 为中文
+        # （平台管理员/普通用户），导致两个角色从未获得任何菜单授权 ——
+        # 新建用户绑定 plat-mgr/normal_user 后登录,受控接口(/api/v1/kbs、
+        # /api/v1/models、/api/v1/skills 等)全部 403「无菜单权限」。
+        # 改为 role_id 或 role_name 任一匹配。
         granted = 0
-        for role_name in dict.fromkeys(SEED_GRANT_ROLES):
+        for role_ref in dict.fromkeys(SEED_GRANT_ROLES):
             r = db.execute(
-                select(UserRole).where(UserRole.role_name == role_name)
+                select(UserRole).where(
+                    or_(UserRole.role_id == role_ref, UserRole.role_name == role_ref)
+                )
             ).scalars().first()
             if not r:
                 continue
