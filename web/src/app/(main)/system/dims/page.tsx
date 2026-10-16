@@ -346,7 +346,7 @@ export default function SystemDimsPage() {
     // 表格高度偏移 264 → 252（tab 导航 44px 取代卡片头 56px）。
     <div
       className="dims-page"
-      style={{ padding: 8, height: "calc(100vh - var(--app-header-h, 45px))", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+      style={{ padding: 10, height: "calc(100vh - var(--app-header-h, 48px))", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
     >
       <ModoTabs
         type="editable-card"

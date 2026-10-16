@@ -916,7 +916,7 @@ export default function KbsPage() {
     <div
       className="kbs-page"
       style={{
-        height: "calc(100vh - var(--app-header-h, 45px))",
+        height: "calc(100vh - var(--app-header-h, 48px))",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",

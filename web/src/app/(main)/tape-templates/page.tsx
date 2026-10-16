@@ -599,8 +599,8 @@ export default function TapeTemplatesPage() {
     <div
       className="tape-templates-page"
       style={{
-        padding: 8,
-        height: "calc(100vh - var(--app-header-h, 45px))",
+        padding: 10,
+        height: "calc(100vh - var(--app-header-h, 48px))",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",

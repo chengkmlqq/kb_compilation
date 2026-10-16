@@ -81,7 +81,7 @@ export function LayoutContent({ children }: { children: React.ReactNode }) {
           style={{
             height: "100vh",
             overflow: "hidden",
-            background: "#f5f7fa",
+            background: "#eff4f9",
             display: "flex",
             flexDirection: "column",
             ["--app-header-h" as string]: "0px",
@@ -106,7 +106,7 @@ export function LayoutContent({ children }: { children: React.ReactNode }) {
             <Layout style={{ padding: "0" }}>
               <Content
                 style={{
-                  background: "#f5f7fa",
+                  background: "#eff4f9",
                   margin: 0,
                   padding: 0,
                   overflow: "hidden",

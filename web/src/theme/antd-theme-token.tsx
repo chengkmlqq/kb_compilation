@@ -19,7 +19,7 @@ export const modoThemeToken: ThemeConfig = {
         colorLinkHover: '#517ED8', // --color-link-5
 
         // 3. 字体与圆角 (Typography & Radius)
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif",
+        fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'noto sans', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif",
         fontSize: 12, // --font-size-base
         borderRadius: 2, // --border-radius-medium (Updated to 2px)
 

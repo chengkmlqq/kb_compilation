@@ -270,11 +270,11 @@ export const AppHeader: React.FC = () => {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        background: "#F9FBFD",
-        padding: "0 24px",
-        borderBottom: "1px solid #EFF4F9",
-        height: "45px",
-        lineHeight: "45px",
+        background: "#fff",
+        padding: "0 16px",
+        borderBottom: "1px solid #E3E9EF",
+        height: "48px",
+        lineHeight: "48px",
       }}
     >
       {/* Left: Logo + 标题 + divider（2026-10-16 左上角改用 data_supply_base 的 dataatlas logo） */}
@@ -291,9 +291,9 @@ export const AppHeader: React.FC = () => {
           <img
             src="/wiki/login/dataatlas.png"
             alt="logo"
-            style={{ height: 28, width: "auto", display: "block" }}
+            style={{ height: 30, width: "auto", display: "block" }}
           />
-          <span style={{ fontSize: 16, fontWeight: 600, color: "#242e43" }}>领域知识构建</span>
+          <span style={{ fontSize: 16, fontWeight: 500, color: "#242e43" }}>领域知识构建</span>
         </div>
         <div style={{ width: "1px", height: "14px", background: "#E3E9EF", marginLeft: 16 }} />
       </div>
@@ -304,7 +304,7 @@ export const AppHeader: React.FC = () => {
       <div style={{ flex: 1 }} />
 
       {/* Right: 用户下拉（2026-10-06 通知管理功能已删除；2026-10-15 主题切换按钮已移除） */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, height: 45 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, height: 48 }}>
         <Dropdown
           open={dropdownOpen}
           onOpenChange={(open) => {

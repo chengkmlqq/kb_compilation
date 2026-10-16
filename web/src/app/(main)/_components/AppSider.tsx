@@ -195,10 +195,10 @@ export const AppSider: React.FC = () => {
       className="side-menu-kb"
       style={{
         background: "#F9FBFD",
-        borderRight: "1px solid #EFF4F9",
-        height: "calc(100vh - var(--app-header-h, 45px))",
+        borderRight: "1px solid #E3E9EF",
+        height: "calc(100vh - var(--app-header-h, 48px))",
         position: "sticky",
-        top: 45,
+        top: 48,
         left: 0,
       }}
     >

@@ -187,10 +187,10 @@ export default function JobsPage() {
       style={{
         display: "flex",
         flexDirection: "column",
-        height: "calc(100vh - var(--app-header-h, 45px))",
+        height: "calc(100vh - var(--app-header-h, 48px))",
         minHeight: 0,
-        background: "#F5F7FA",
-        padding: 8,
+        background: "#EFF4F9",
+        padding: 10,
         overflow: "hidden",
       }}
     >
