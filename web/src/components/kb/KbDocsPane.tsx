@@ -1042,7 +1042,7 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                   dataIndex: "file_name",
                   render: (v: string, doc: DocItem) => (
                     <Space>
-                      <span style={{ fontSize: 16 }}>{fileTypeIcon(doc.file_ext)}</span>
+                      {fileTypeIcon(doc.file_ext, 16)}
                       <a onClick={() => onOpenDoc(doc)}>{v}</a>
                     </Space>
                   ),

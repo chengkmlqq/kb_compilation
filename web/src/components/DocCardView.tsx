@@ -10,14 +10,6 @@ import { Button, Dropdown, Popover, Space, Tag, Typography } from "antd";
 import {
   DeleteOutlined,
   DownloadOutlined,
-  FileExcelOutlined,
-  FileImageOutlined,
-  FileMarkdownOutlined,
-  FilePdfOutlined,
-  FilePptOutlined,
-  FileTextOutlined,
-  FileUnknownOutlined,
-  FileWordOutlined,
   MoreOutlined,
   ProfileOutlined,
   RedoOutlined,
@@ -107,37 +99,15 @@ export function docStageText(d: DocItem): string {
   return `已就绪 · ${sum.text} · ${wiki.text}`;
 }
 
-export function fileTypeIcon(ext?: string | null) {
-  switch ((ext || "").toLowerCase()) {
-    case "pdf":
-      return <FilePdfOutlined style={{ color: "#f5222d" }} />;
-    case "doc":
-    case "docx":
-      return <FileWordOutlined style={{ color: "#1677ff" }} />;
-    case "xls":
-    case "xlsx":
-      return <FileExcelOutlined style={{ color: "#52c41a" }} />;
-    case "ppt":
-    case "pptx":
-      return <FilePptOutlined style={{ color: "#fa8c16" }} />;
-    case "md":
-    case "markdown":
-      return <FileMarkdownOutlined style={{ color: "#722ed1" }} />;
-    case "png":
-    case "jpg":
-    case "jpeg":
-    case "gif":
-    case "webp":
-      return <FileImageOutlined style={{ color: "#13c2c2" }} />;
-    case "txt":
-    case "csv":
-    case "html":
-    case "epub":
-      return <FileTextOutlined style={{ color: "#8c8c8c" }} />;
-    default:
-      return <FileUnknownOutlined style={{ color: "#8c8c8c" }} />;
-  }
-}
+/**
+ * 文件类型图标：改为 DSB 文档库（knowledge_lib_neo）逐类型 PNG
+ * （实现见 @/components/kb/FileTypeIcon，图标为 DSB 原样拷贝，非自绘）。
+ * 保留同名导出，供文档表格 / 详情面板 / 预览弹窗等既有调用方复用。
+ * 尺寸由 size 参数决定（默认 16），容器 font-size 不再影响（返回 <img>）。
+ */
+import { fileTypeIcon } from "@/components/kb/FileTypeIcon";
+
+export { fileTypeIcon };
 
 export function formatSize(bytes?: number | null): string {
   if (bytes == null) return "--";
@@ -282,7 +252,7 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
         >
           <div className="kb-doc-card" onClick={() => onOpen(d)}>
             <div className="kb-doc-card-header">
-              <div className="kb-doc-card-icon">{isTableDoc(d) ? tableIcon() : fileTypeIcon(d.file_ext)}</div>
+              <div className="kb-doc-card-icon">{isTableDoc(d) ? tableIcon() : fileTypeIcon(d.file_ext, 28)}</div>
               <div className="kb-doc-card-detail">
                 <div className="kb-doc-card-title-row">
                   <div className="kb-doc-card-title-name" title={d.file_name}>

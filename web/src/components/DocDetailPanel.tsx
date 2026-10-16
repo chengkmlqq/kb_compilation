@@ -181,7 +181,7 @@ export default function DocDetailPanel({ kbId, doc, onDocReparsed }: Props) {
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minHeight: "100%" }}>
         {/* 头部：文件图标 + 文件名 + 操作 */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1 }}>{fileTypeIcon(doc.file_ext)}</span>
+          {fileTypeIcon(doc.file_ext, 18, { flexShrink: 0 })}
           <Typography.Text
             strong
             style={{ flex: 1, minWidth: 0, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}

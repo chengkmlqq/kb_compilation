@@ -446,13 +446,13 @@ export default function DocPreviewModal({ kbId, doc, onClose, embedded }: Props)
   const title =
     kind === "unsupported" || error ? (
       <Space>
-        <span style={{ fontSize: 16 }}>{fileTypeIcon(doc?.file_ext)}</span>
+        {fileTypeIcon(doc?.file_ext, 16)}
         <span>{doc?.file_name}</span>
         {error ? <Tag color="orange">不支持预览</Tag> : null}
       </Space>
     ) : (
       <Space>
-        <span style={{ fontSize: 16 }}>{fileTypeIcon(doc?.file_ext)}</span>
+        {fileTypeIcon(doc?.file_ext, 16)}
         <span>{doc?.file_name}</span>
         <Tag color="blue">{ext || "TEXT"}</Tag>
       </Space>

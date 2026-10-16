@@ -17,7 +17,8 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Col, Collapse, Form, InputNumber, Modal, Row, Select, Space, Switch, Typography } from "antd";
-import { DeleteOutlined, FileTextOutlined, FolderOutlined, LinkOutlined, PlusOutlined } from "@ant-design/icons";
+import { DeleteOutlined, FolderOutlined, LinkOutlined, PlusOutlined } from "@ant-design/icons";
+import { fileTypeIcon } from "@/components/kb/FileTypeIcon";
 import { apiListParserEngines, BuildEngineItem, ParserEngineItem } from "@/lib/api";
 import { groupBuildEngineOptions } from "@/lib/tape-func";
 import { isDirectoryUpload, relativePathOf } from "@/lib/upload-dir";
@@ -102,7 +103,8 @@ function formatSize(size: number): string {
 
 function getFileIcon(name: string): React.ReactNode {
   const ext = (name.split(".").pop() || "").toLowerCase();
-  return <FileTextOutlined style={{ color: ext === "pdf" ? "#f5222d" : "#1677ff" }} />;
+  // 改用 DSB 文档库同款逐类型图标（@/components/kb/FileTypeIcon，原样 PNG 拷贝）
+  return fileTypeIcon(ext, 16);
 }
 
 export default function UploadConfirmDialog({
