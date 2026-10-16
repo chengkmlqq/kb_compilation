@@ -2840,26 +2840,31 @@ html[data-theme="dark"] .kb-citation-web:hover {
   align-items: center;
   min-width: 0;
 }
-/* DSB .content：100%×32px、padding 0 12px、space-between */
+/* DSB .content：100%×32px、padding 0 12px、gap 8px、space-between */
 .kb-chat-sider-header-inner {
   width: 100%;
   height: 32px;
   padding: 0 12px;
   display: flex;
+  gap: 8px;
   justify-content: space-between;
   align-items: center;
 }
-/* DSB .content .arco-btn:nth-child(1)：渐变底、padding 0 52px（非 flex:1）、白字 */
+/* DSB .content .add（arco-btn nth-child(1)，New 变体）：flex:1 占满剩余宽、padding 0 12px、渐变底、白字 16px */
 .kb-chat-sider-header .kb-chat-new-btn {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
   height: 100%;
-  /* antd v6 按钮内部用逻辑属性覆盖，此处必须 !important 才能对齐 DSB .content .arco-btn 的 0 52px */
-  padding: 0 52px !important;
+  /* antd v6 按钮内部用逻辑属性覆盖，此处必须 !important 才能对齐 DSB .content .add 的 0 12px */
+  padding: 0 12px !important;
   border: 0 !important;
   background: linear-gradient(90deg, #517ed8 0%, #53d4c7 100%) !important;
   color: #fff !important;
-  /* DSB .add：按钮字号 16px（含图标 1em）；图标与文字间距对齐 arco `svg + span { margin-left: 8px }` */
+  /* DSB .add：按钮字号 16px（含图标 1em）；图标与文字间距对齐 arco `svg + span { margin-left: 8px }`；
+     整钮 position relative top 1px（DSB .add 的字面值） */
   font-size: 16px;
+  position: relative;
+  top: 1px;
   gap: 8px !important;
   box-shadow: none !important;
 }
@@ -2871,20 +2876,21 @@ html[data-theme="dark"] .kb-citation-web:hover {
   font-size: 16px;
   color: #fff !important;
 }
-/* DSB .content .arco-btn:nth-child(2)：arco 文本按钮默认 32px 高、padding 0 15px、hover fill-2 */
+/* DSB .content .sider-collapse-btn（New 变体）：32×32、padding 0、hover #edf2f7 */
 .kb-chat-sider-collapse {
-  flex: 0 0 auto;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
-  padding: 0 15px;
+  padding: 0;
   color: rgba(77, 94, 125, 1);
-  border-radius: 2px;
+  border-radius: 0;
   cursor: pointer;
 }
 .kb-chat-sider-collapse:hover {
-  background: rgba(239, 244, 249, 1);
+  background: #edf2f7;
 }
 /* DSB .search-chat-list-box（padding 12px / margin-top 4px）+ 内层 .arco-spin-children（padding 0 12px 12px） */
 .kb-chat-sider-list {
@@ -2912,17 +2918,20 @@ html[data-theme="dark"] .kb-citation-web:hover {
   font-size: 14px;
   line-height: 21px;
 }
+/* DSB .ai-search-chat-list：row-gap 8px + fill-1 底 + radius 6（分组容器） */
 .kb-chat-sider-group-outer {
   display: flex;
   flex-direction: column;
   row-gap: 8px;
+  background: rgba(249, 251, 253, 1);
+  border-radius: 6px;
 }
 .kb-chat-sider-group-content {
   display: flex;
   flex-direction: column;
   row-gap: 8px;
 }
-/* DSB .list-item：padding 8px 12px / column-gap 6px / radius 8 */
+/* DSB .list-item：padding 8px 12px / column-gap 6px / radius 8（无显式字号行高，随 body 14px/1.5=21px） */
 .kb-chat-sider-item {
   position: relative;
   display: flex;
@@ -2933,7 +2942,6 @@ html[data-theme="dark"] .kb-citation-web:hover {
   border-radius: 8px;
   cursor: pointer;
   font-size: 14px;
-  line-height: 22px;
   color: rgba(36, 46, 67, 1);
   overflow: hidden;
 }
@@ -2948,10 +2956,9 @@ html[data-theme="dark"] .kb-citation-web:hover {
   color: rgba(50, 97, 206, 1);
   font-weight: 600;
 }
-/* DSB .item-label：line-height 20px + 单行省略 */
+/* DSB .item-label：width calc(100% - 17px)（为 16px 操作图标 + gap 留位）+ line-height 20px + 单行省略 */
 .kb-chat-sider-item-label {
-  flex: 1;
-  min-width: 0;
+  width: calc(100% - 17px);
   line-height: 20px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3667,9 +3674,17 @@ html[data-theme="dark"] .kb-citation-web:hover {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   DSB 知识集页面像素级对齐（2026-10-16）
-   基准：data_supply_base KnowledgeSetNeo
-   （48px header / 左分类树 260px / 右卡片网格 4 列 / 卡片 150px radius6）
+   DSB 知识库页面像素级对齐（基准：data_supply_base corpus_info 菜单 → KnowledgeSetOntology 页）
+   取值口径 = 线上真正生效的 CSS（modo-plugin-common/main.min.css 的 modo 编译产物
+   + 页面 style/index.less 编译产物 src_pages_KnowledgeSetOntology_*.min.css）：
+     · 字体  Inter,-apple-system,BlinkMacSystemFont,PingFang SC,Hiragino Sans GB,
+             noto sans,Microsoft YaHei,Helvetica Neue,Helvetica,Arial,sans-serif（行高 1.5）
+     · 色板  text-1 #242e43 / text-2 #4d5e7d / text-3 #79879c / text-4 #b3c0cc
+             fill-1 #f9fbfd / fill-2 #eff4f9 / border-2 #e3e9ef / primary-6 #3261ce
+             gray-5 #95a6ba（空态插画与文案色）
+     · 尺寸  控件高 28px、正文字号 12px、圆角 2px；胶囊按钮 14px、搜索框 13px/16px
+     · 图片  header-title-icon.png(16) / card-title-icon.png(32) / card-operate-icon.png(18)
+             / card-lock-icon.png(14) —— 与 DSB 源码同图（md5 一致）
    ═══════════════════════════════════════════════════════════════════ */
 
 .kb-kbs-page {
@@ -3679,53 +3694,76 @@ html[data-theme="dark"] .kb-citation-web:hover {
   overflow: hidden;
   min-height: 0;
   background: #fff;
+  /* 字体对齐 modo 主题（body 全局字体栈 + 1.5 行高 + 抗锯齿），字号按各元素显式声明 */
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "noto sans", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #242e43;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* ── header：48px 白底，左标题 + 右搜索/新建（对齐 .knowledge-header）── */
-.kb-kbs-header {
+/* ── 顶栏操作区（ModoTabs tabBarExtraContent）：搜索 + 新建胶囊（原 48px 标题行已移除）── */
+.kb-kbs-tab-actions {
   display: flex;
-  flex: 0 0 48px;
   align-items: center;
-  justify-content: space-between;
-  height: 48px;
-  padding: 0 16px;
-  background: #fff;
-  box-shadow: none;
-  border-bottom: 1px solid rgba(239, 244, 249, 1);
+  column-gap: 10px;
 }
-.kb-kbs-header-left {
-  display: flex;
+/* 首个页签标题（页面标题）：DSB header-title-icon.png 16px + 标题文字，对齐光环知识库页标题样式 */
+.kb-kbs-tab-title {
+  display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 14px;
-  color: rgba(36, 46, 67, 1);
 }
-.kb-kbs-header-left img {
+.kb-kbs-tab-title-icon {
   width: 16px;
   height: 16px;
+  flex-shrink: 0;
   vertical-align: middle;
 }
-.kb-kbs-header-right {
-  display: flex;
-  column-gap: 10px;
-  align-items: center;
-}
-/* 搜索：宽 360 胶囊（对齐 .header-search radius 13px） */
+
+/* 搜索：360 宽 / 13px 胶囊 / fill-2 底 / 12px 字 / 彩色放大镜前缀 14px
+   （对齐 .header-search + arco inner-wrapper「padding 0 12px」+ has-prefix 文本再让 12px） */
 .kb-kbs-search .ant-input-affix-wrapper {
-  border-radius: 13px;
   width: 360px;
+  padding: 0 12px;
+  border-radius: 13px;
+  background: #eff4f9;
+  border-color: transparent;
+}
+.kb-kbs-search .ant-input-affix-wrapper input.ant-input {
+  font-size: 12px;
+}
+.kb-kbs-search .ant-input-affix-wrapper input::placeholder {
+  color: #79879c;
 }
 .kb-kbs-search .ant-input-group-addon,
 .kb-kbs-search .ant-input-group-wrapper .ant-input-search-button {
   display: none !important;
 }
-/* 新建：胶囊（对齐 .header-add shape=round） */
-.kb-kbs-new-btn {
-  border-radius: 999px;
-  padding: 0 16px;
+.kb-kbs-search .ant-input-prefix {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 12px;
+  color: #4d5e7d;
+}
+/* DSB 头部搜索框不显示内部后缀图标（页面 LESS 已 display:none），也无清除按钮 */
+.kb-kbs-search .ant-input-suffix {
+  display: none !important;
 }
 
-/* ── main layout：左分类树 260px + 右卡片（对齐 .knowledge-main-layout）── */
+/* 新建：28px 高 / 14px 胶囊 / padding 0 12px / 12px 字 / 图标 12px + 8px 间距
+   （对齐 .header-add shape=round + modo 编译后 .arco-btn-size-default / shape-round） */
+.kb-kbs-new-btn.ant-btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 14px;
+  font-size: 12px;
+  gap: 8px;
+}
+
+/* ── main layout：左分类树 sider 260px 白底 + 右卡片（对齐 .knowledge-main-layout）── */
 .kb-kbs-main-layout {
   display: flex;
   flex: 1;
@@ -3735,68 +3773,296 @@ html[data-theme="dark"] .kb-citation-web:hover {
 .kb-kbs-category-sider {
   width: 260px;
   min-width: 260px;
-  border-right: 1px solid rgba(227, 233, 239, 1);
-  background: rgba(249, 251, 253, 1);
+  border-right: 1px solid #e3e9ef;
+  background: #fff;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-.kb-kbs-category-tree-title {
-  padding: 12px 16px 4px;
-  font-size: 14px;
-  font-weight: 600;
-  color: rgba(36, 46, 67, 1);
-  line-height: 22px;
+/* 分类搜索框（对齐 .knowledge-category-tree-toolbar：padding 12px 12px 8px、radius 16px、
+   右侧内置搜索图标 14px / text-2 色） */
+.kb-kbs-category-search {
+  padding: 12px 12px 8px;
 }
-.kb-kbs-category-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 36px;
-  margin: 0 8px;
+.kb-kbs-category-search .ant-input-affix-wrapper {
+  border-radius: 16px;
   padding: 0 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 22px;
-  color: rgba(36, 46, 67, 1);
+  background: #eff4f9;
+  border-color: transparent;
 }
-.kb-kbs-category-item:hover {
-  background: rgba(227, 233, 239, 0.5);
-}
-.kb-kbs-category-item.active {
-  background: rgba(227, 233, 239, 0.9);
-  color: rgba(50, 97, 206, 1);
-  font-weight: 500;
-}
-.kb-kbs-category-item-count {
-  color: rgba(121, 135, 156, 1);
+.kb-kbs-category-search .ant-input-affix-wrapper input.ant-input {
   font-size: 12px;
 }
+.kb-kbs-category-search .ant-input-affix-wrapper input::placeholder {
+  color: #79879c;
+}
+.kb-kbs-category-search .ant-input-suffix {
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: 0;
+  color: #4d5e7d;
+}
+.kb-kbs-category-search .ant-input-clear-icon {
+  display: none !important;
+}
+/* DSB arco 输入框状态链（实测）：默认 fill-2 #eff4f9 → hover fill-3 #e3e9ef → focus 白底 + primary 边框、无 ring */
+.kb-kbs-search .ant-input-affix-wrapper:hover,
+.kb-kbs-category-search .ant-input-affix-wrapper:hover {
+  background: #e3e9ef;
+  border-color: transparent;
+}
+.kb-kbs-search .ant-input-affix-wrapper-focused,
+.kb-kbs-search .ant-input-affix-wrapper:focus-within,
+.kb-kbs-category-search .ant-input-affix-wrapper-focused,
+.kb-kbs-category-search .ant-input-affix-wrapper:focus-within {
+  background: #fff;
+  border-color: #3261ce;
+  box-shadow: none;
+}
+/* 分类树主体（对齐 .knowledge-category-tree-main：padding 0 8px 12px、overflow auto） */
+.kb-kbs-category-tree-main {
+  flex: 1;
+  min-height: 0;
+  padding: 0 8px 12px;
+  overflow: auto;
+}
 
+/* 分类树节点（逐条对齐 arco Tree + modo-design 主题覆盖后的实测几何）：
+   行 padding-left 2px；根节点标题 4.5px 0、子节点 2.5px 0；字号 12px、行高 1.5715
+   缩进块 9px + 右距 10px；切换器槽 12px + 右距 10px（根 28px 高 / 子 24px 高）
+   标题 padding 左右 4px、margin-left -4px、radius 2px；hover / 选中 = 主色 600 无底色 */
+.kb-kbs-tree-node {
+  display: flex;
+  align-items: flex-start;
+  padding-left: 2px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.5715;
+  color: #242e43;
+}
+.kb-kbs-tree-indent {
+  align-self: stretch;
+  flex-shrink: 0;
+  position: relative;
+}
+.kb-kbs-tree-indent-block {
+  display: inline-block;
+  width: 9px;
+  margin-right: 10px;
+  height: 100%;
+  position: relative;
+}
+.kb-kbs-tree-switcher {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  position: relative;
+  width: 12px;
+  height: 24px;
+  margin-right: 10px;
+  color: #4d5e7d;
+}
+.kb-kbs-tree-node--root > .kb-kbs-tree-switcher {
+  height: 28px;
+}
+.kb-kbs-tree-switcher-icon {
+  display: inline-block;
+  position: relative;
+  margin: 0 auto;
+  width: 12px;
+  height: 12px;
+  line-height: 12px;
+  text-align: center;
+  vertical-align: middle;
+  font-size: 9px;
+  background: #eff4f9;
+  border-radius: 2px;
+}
+.kb-kbs-tree-switcher-icon svg {
+  width: 1em;
+  height: 1em;
+  vertical-align: -2px;
+  transform: rotate(-90deg);
+  transition: transform 0.2s cubic-bezier(0.34, 0.69, 0.1, 1);
+}
+.kb-kbs-tree-switcher-icon.expanded svg {
+  transform: rotate(0deg);
+}
+.kb-kbs-tree-title {
+  flex: 1;
+  min-width: 0;
+  padding: 2.5px 4px;
+  margin-left: -4px;
+  border-radius: 2px;
+  font-size: 12px;
+  line-height: 1.5715;
+  color: #242e43;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-kbs-tree-node--root > .kb-kbs-tree-title {
+  padding: 4.5px 4px;
+}
+.kb-kbs-tree-node:hover > .kb-kbs-tree-title,
+.kb-kbs-tree-title:hover {
+  color: #3261ce;
+  font-weight: 600;
+}
+.kb-kbs-tree-title.active {
+  color: #3261ce;
+  font-weight: 600;
+}
+
+/* ── 右列表：内容区定高滚动 + 分页绝对定位贴底（对齐 .knowledge-list-panel /
+   .knowledge-content / .knowledge-set-pagniation）── */
 .kb-kbs-list-panel {
   position: relative;
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 .kb-kbs-content {
-  flex: 1;
-  min-height: 0;
+  height: 100%;
   padding: 0 16px;
   overflow-y: auto;
 }
+/* 卡片行底部留白：分页常驻时 48px、无分页时 16px（对齐 .mt-fourth / .mt-sixteen） */
+.kb-kbs-rows {
+  padding-bottom: 16px;
+}
+.kb-kbs-rows--paged {
+  padding-bottom: 48px;
+}
 
-/* ── 知识库卡片：150px、radius 6、hover shadow（对齐 .content-cards）── */
+/* 空态（对齐 arco Empty + modo 主题：插画 1em=148px、文案 12px gray-5，
+   wrapper 相对定位 top:50% -40px） */
+.kb-kbs-empty {
+  width: 100%;
+  height: 100%;
+}
+.kb-kbs-empty-wrapper {
+  position: relative;
+  top: 50%;
+  transform: translateY(-40px);
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+  color: #95a6ba;
+}
+.kb-kbs-empty-image {
+  font-size: 148px;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.kb-kbs-empty-image svg {
+  width: 1em;
+  height: 1em;
+  vertical-align: -2px;
+  fill: none;
+  stroke: currentColor;
+}
+.kb-kbs-empty-description {
+  color: #95a6ba;
+  font-size: 12px;
+}
+
+/* 分页底栏（对齐 .knowledge-set-pagniation：padding 6px 16px、背景 fill-1） */
+.kb-kbs-pagination-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 16px;
+  background: #f9fbfd;
+}
+/* 分页本体（对齐 arco Pagination simple：12px 字、28px 行高、条目 28x28 radius 2） */
+.kb-kbs-pagination {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+}
+.kb-kbs-pagination-total {
+  display: inline-block;
+  margin-right: 8px;
+  color: #242e43;
+  font-size: 12px;
+  line-height: 28px;
+}
+.kb-kbs-pagination-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: inline-block;
+}
+.kb-kbs-pagination-item {
+  display: inline-block;
+  box-sizing: border-box;
+  min-width: 28px;
+  height: 28px;
+  line-height: 28px;
+  text-align: center;
+  vertical-align: middle;
+  list-style: none;
+  cursor: pointer;
+  outline: 0;
+  user-select: none;
+  border: 0 solid transparent;
+  border-radius: 2px;
+  background-color: transparent;
+  color: #4d5e7d;
+  font-size: 12px;
+}
+.kb-kbs-pagination-item svg {
+  width: 1em;
+  height: 1em;
+  vertical-align: -2px;
+  fill: none;
+  stroke: currentColor;
+}
+.kb-kbs-pagination-item:not(.kb-kbs-pagination-item-disabled):hover {
+  background-color: #f9fbfd;
+  color: #4d5e7d;
+}
+.kb-kbs-pagination-item-disabled {
+  cursor: not-allowed;
+  color: #b3c0cc;
+}
+.kb-kbs-pagination-item-simple-pager {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0 12px 0 4px;
+  color: #242e43;
+  line-height: 28px;
+}
+.kb-kbs-pagination-jumper-input {
+  width: 40px !important;
+  padding-left: 2px !important;
+  padding-right: 2px !important;
+  text-align: center;
+}
+.kb-kbs-pagination-separator {
+  padding: 0 12px;
+}
+.kb-kbs-pagination-option {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 8px;
+  height: 28px;
+  line-height: 0;
+}
+.kb-kbs-pagination-option .ant-select-selector {
+  font-size: 12px;
+}
+
+/* ── 知识库卡片：150px 高、radius 6、hover 阴影（对齐 .content-cards）── */
 .kb-kbs-card {
   box-sizing: border-box;
   height: 150px;
   padding: 16px 16px 12px 16px;
   cursor: pointer;
   background: #fff;
-  border: 1px solid rgba(227, 233, 239, 1);
+  border: 1px solid #e3e9ef;
   border-radius: 6px;
   transition: box-shadow 0.2s ease, border-color 0.2s ease;
   display: flex;
@@ -3805,7 +4071,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
 }
 .kb-kbs-card:hover {
   box-shadow: 0 4px 10px 0 rgba(36, 46, 67, 0.1);
-  border-color: rgba(227, 233, 239, 1);
+  border-color: #e3e9ef;
 }
 .kb-kbs-card-header {
   display: flex;
@@ -3820,8 +4086,10 @@ html[data-theme="dark"] .kb-citation-web:hover {
   flex-shrink: 0;
   width: 32px;
   height: 32px;
-  font-size: 20px;
-  color: #3261ce;
+}
+.kb-kbs-card-icon img {
+  width: 32px;
+  height: 32px;
 }
 .kb-kbs-card-detail {
   width: calc(100% - 40px);
@@ -3836,7 +4104,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
   font-size: 14px;
   font-weight: 600;
   line-height: 22px;
-  color: rgba(36, 46, 67, 1);
+  color: #242e43;
   min-width: 0;
 }
 .kb-kbs-card-title-name {
@@ -3846,10 +4114,18 @@ html[data-theme="dark"] .kb-citation-web:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 标题行右侧标记（私有锁图标 14px，对齐 .content-card-detail-title img） */
+.kb-kbs-card-title-flag {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
 .kb-kbs-card-meta {
+  width: 80%;
   font-size: 12px;
   line-height: 20px;
-  color: rgba(121, 135, 156, 1);
+  color: #4d5e7d;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3860,7 +4136,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
   margin-top: 10px;
   overflow: hidden;
   font-size: 12px;
-  color: rgba(77, 94, 125, 1);
+  color: #4d5e7d;
   line-height: 20px;
   text-overflow: ellipsis;
   -webkit-line-clamp: 2;
@@ -3875,17 +4151,35 @@ html[data-theme="dark"] .kb-citation-web:hover {
   flex-shrink: 0;
 }
 .kb-kbs-card-footer-left {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 28px;
+  padding: 4px;
   font-size: 12px;
-  color: rgba(121, 135, 156, 1);
-  line-height: 20px;
+  color: #4d5e7d;
+  line-height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .kb-kbs-card-footer-right {
-  display: none;
+  display: flex;
+  align-items: center;
   flex-shrink: 0;
+  height: 28px;
+  line-height: 28px;
+  cursor: pointer;
 }
-.kb-kbs-card:hover .kb-kbs-card-footer-right {
-  display: block;
+.kb-kbs-card-footer-right img {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+.kb-kbs-card-footer-right img:hover {
+  background: #eff4f9;
+  border-radius: 50%;
 }
