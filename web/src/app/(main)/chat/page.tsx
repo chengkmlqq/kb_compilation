@@ -1125,6 +1125,15 @@ export default function ChatPage() {
   const filteredSessions = sessions;
 
   // 2026-10-19 DSB 对齐：知识库选择面板过滤（分类 + 关键字；kb 后端只支持单 kb_id，面板做单选）
+  // 2026-10-19 DSB 对齐：空态首页问候语（DSB Portal getTimePeriod 同款，按时段）
+  const homeGreeting = (() => {
+    const hour = new Date().getHours();
+    if (hour < 6) return "夜深了，有什么需要帮忙吗？";
+    if (hour < 12) return "早上好，有什么需要帮忙吗？";
+    if (hour < 14) return "中午好，有什么需要帮忙吗？";
+    if (hour < 18) return "下午好，有什么需要帮忙吗？";
+    return "晚上好，有什么需要帮忙吗？";
+  })();
   const activeKb = kbs.find((k) => k.id === kbId);
   const panelKbs = useMemo(() => {
     const q = kbSearch.trim().toLowerCase();
@@ -1257,7 +1266,7 @@ export default function ChatPage() {
       )}
 
       {/* 右：对话区 */}
-      <div className="kb-chat-main">
+      <div className={`kb-chat-main${!loadingMsgs && msgs.length === 0 ? " is-home" : ""}`}>
         {/* 顶栏：DSB Portal Header 面包屑（48px / 无边框；左侧会话栏展开时不存在顶栏） */}
         {(embeddedMode || siderCollapsed) && (
         <div className="kb-chat-header">
@@ -1311,12 +1320,9 @@ export default function ChatPage() {
             </div>
           ) : msgs.length === 0 ? (
             <div className="kb-chat-home">
-              <div className="kb-chat-home-main">
-                <div className="kb-chat-home-content">
-                  <div className="kb-chat-home-title">智能问答</div>
-                  <div className="kb-chat-home-descr">输入你的需求，或者直接点击下方推荐问题开始对话。</div>
-                </div>
-                {(recommendations.length > 0 || recommendLoading) && (
+              {/* 2026-10-19 DSB 对齐：问候大标题（对齐 Portal .header-title .home-title：30px/600 居中） */}
+              <div className="kb-chat-home-greeting">{homeGreeting}</div>
+              {(recommendations.length > 0 || recommendLoading) && (
                   <div className="kb-chat-home-recommend">
                     <div className="kb-chat-home-recommend-title">你可以这样问我：</div>
                     {recommendLoading && recommendations.length === 0
@@ -1331,7 +1337,6 @@ export default function ChatPage() {
                         ))}
                   </div>
                 )}
-              </div>
             </div>
           ) : (
           <div className="kb-chat-ai-list">
