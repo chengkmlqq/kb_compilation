@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
-import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, TreeSelect, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, PauseCircleOutlined, FileAddOutlined, AppstoreOutlined, FileTextOutlined, FolderOutlined } from "@ant-design/icons";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
@@ -460,8 +460,25 @@ export default function OrchestrationsPage() {
     });
   };
 
-  // 分类下拉选项（表单「选择或输入新分类」数据源）
-  const categoryOptions = categories.map((c) => ({ value: c.category, label: `${c.category}（${c.effective}）` }));
+  // 2026-10-19 分类树形展示：表单分类从平铺下拉改 TreeSelect（一级 + 子级，保留 effective 计数）
+  const categoryTreeData = useMemo(() => {
+    type CatTreeNode = { value: string; title: string; children?: CatTreeNode[] };
+    const tops = categories.filter((c) => !c.parent_id);
+    const byParent = new Map<string, TapeCategory[]>();
+    categories
+      .filter((c) => c.parent_id)
+      .forEach((c) => {
+        const arr = byParent.get(c.parent_id!) || [];
+        arr.push(c);
+        byParent.set(c.parent_id!, arr);
+      });
+    const toNode = (c: TapeCategory): CatTreeNode => ({
+      value: c.category,
+      title: `${c.label || c.category}${c.effective ? `（${c.effective}）` : ""}`,
+      children: (byParent.get(c.category) || []).map(toNode),
+    });
+    return tops.map(toNode);
+  }, [categories]);
   // 左树「全部」计数
   const allTotal = useMemo(() => categories.reduce((acc, c) => acc + (c.total || 0), 0), [categories]);
 
@@ -698,20 +715,18 @@ export default function OrchestrationsPage() {
                 { label: "通用编排", value: "general" },
                 { label: "摘要", value: "summary" },
                 { label: "知识构建", value: "kb_build" },
+                { label: "质量评估", value: "quality" },
+                { label: "领域识别", value: "domain_resolve" },
               ]}
             />
           </Form.Item>
           <Form.Item name="category" label="分类">
-            <Select
+            <TreeSelect
+              allowClear
               showSearch
-              placeholder="选择或输入新分类"
-              options={categoryOptions}
-              optionFilterProp="label"
-              onSearch={(v) => {
-                if (v && !categoryOptions.some((o) => o.value === v)) {
-                  form.setFieldsValue({ category: v });
-                }
-              }}
+              treeNodeFilterProp="title"
+              placeholder="请选择分类"
+              treeData={categoryTreeData}
             />
           </Form.Item>
           <Form.Item name="tape_descr" label="描述">
