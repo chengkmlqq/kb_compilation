@@ -13,7 +13,7 @@ import logging
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from api.db import get_db
@@ -155,6 +155,31 @@ def quality_run_detail(quality_id: str, db: Session = Depends(get_db),
         dims[rp.dim] = {"metrics": rp.metrics or {}, "issues": rp.issues or []}
     data = {**_run_item(run), "reports": dims}
     return {"success": True, "data": data}
+
+
+@router.delete("/runs/{quality_id}")
+def delete_quality_run(
+    quality_id: str,
+    db: Session = Depends(get_db),
+    caller: dict = Depends(_require_caller),
+) -> dict:
+    """删除质量评估任务（连同三维度报告 kb_quality_report）。
+
+    - 进行中（queued/running）：非管理员拒绝（后台编排仍在写回，删除会产生
+      孤儿 report）；管理员可强制删除（用于清理卡死/误发任务）。
+    - 只删 kb_quality_run / kb_quality_report，不动编排运行记录（任务监控留档）。
+    - 权限：与页面现状一致（列表/发起均不限归属），登录即可删除；如需按
+      发起人/知识库权限收紧，另行加 can_manage 校验。
+    """
+    run = db.get(QualityRun, quality_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="评估任务不存在")
+    if run.status in ("queued", "running") and not caller.get("is_admin"):
+        raise HTTPException(status_code=409, detail="评估任务执行中，暂不能删除（管理员可强制删除）")
+    db.execute(delete(QualityReport).where(QualityReport.run_id == run.id))
+    db.delete(run)
+    db.commit()
+    return {"success": True, "data": {"id": run.id, "deleted": True}}
 
 
 def _run_item(r: QualityRun) -> dict:

@@ -3892,3 +3892,10 @@ export function apiLaunchQualityRun(payload: { kb_id: string; doc_ids?: string[]
     { method: "POST", body: JSON.stringify(payload) },
   );
 }
+
+export function apiDeleteQualityRun(qualityId: string) {
+  return request<{ id: string; deleted: boolean }>(
+    `/api/v1/quality/runs/${encodeURIComponent(qualityId)}`,
+    { method: "DELETE" },
+  );
+}

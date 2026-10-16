@@ -28,6 +28,7 @@ import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 import { ModoTable } from "@/components/biz/modo-table";
 import {
+  apiDeleteQualityRun,
   apiGetQualityRun,
   apiLaunchQualityRun,
   apiListDocuments,
@@ -101,7 +102,7 @@ const ISSUE_TYPE_LABEL: Record<string, string> = {
 };
 
 export default function QualityPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [items, setItems] = useState<QualityRunItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -114,6 +115,8 @@ export default function QualityPage() {
   const [detail, setDetail] = useState<QualityRunDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  // 删除中行 id（防重复提交；删除动作带 loading）
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [launchForm] = Form.useForm<{ kb_id: string; mode: string; doc_ids: string[] }>();
@@ -224,6 +227,37 @@ export default function QualityPage() {
     }
   };
 
+  const doDelete = (r: QualityRunItem) => {
+    modal.confirm({
+      title: "删除评估任务？",
+      content: "该任务的评估结果与问题清单将一并删除，删除后不可恢复。",
+      okText: "删除",
+      cancelText: "取消",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setDeletingId(r.id);
+        try {
+          const res = await apiDeleteQualityRun(r.id);
+          if (res.success) {
+            message.success("已删除");
+            // 详情抽屉正打开该任务时一并关闭
+            if (detail?.id === r.id) {
+              setDetail(null);
+              setDetailOpen(false);
+            }
+            load();
+          } else {
+            message.error(res.message || "删除失败");
+          }
+        } catch (e) {
+          message.error(`删除失败: ${String(e)}`);
+        } finally {
+          setDeletingId(null);
+        }
+      },
+    });
+  };
+
   const columns: ColumnsType<QualityRunItem> = [
     {
       title: "状态",
@@ -281,7 +315,17 @@ export default function QualityPage() {
       render: (_, r) => (
         <ModoActionGroup
           maxCount={2}
-          actions={[{ key: "detail", label: "详情", onClick: () => void openDetail(r.id) }]}
+          actions={[
+            { key: "detail", label: "详情", onClick: () => void openDetail(r.id) },
+            {
+              key: "delete",
+              label: "删除",
+              danger: true,
+              loading: deletingId === r.id,
+              disabled: deletingId !== null,
+              onClick: () => doDelete(r),
+            },
+          ]}
         />
       ),
     },
@@ -417,8 +461,8 @@ export default function QualityPage() {
     <div
       className="quality-page"
       style={{
-        padding: 8,
-        height: "calc(100vh - var(--app-header-h, 45px))",
+        padding: 10,
+        height: "calc(100vh - var(--app-header-h, 48px))",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
