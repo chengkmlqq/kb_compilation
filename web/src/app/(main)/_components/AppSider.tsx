@@ -140,21 +140,19 @@ export const AppSider: React.FC = () => {
 
   const groupId = groupOverride ?? activeGroupId;
   const currentGroup = siderMenus.find((m) => m.menu_id === groupId) as MenuTreeNode | undefined;
-  // 第二列子菜单：分组有 children 用 children；叶子一级（如线上智能问答/知识库/智能体直接置顶）
-  // 兜底显示其自身（高亮当前页），避免第二列空白。
-  const subItems = currentGroup?.children?.length
-    ? currentGroup.children
-    : currentGroup
-      ? [currentGroup]
-      : [];
+  // 对齐 data_supply_base narrow 菜单：第二列子菜单仅在当前一级分组有 children 时渲染
+  // （DSB 壳 `.narrow-child-menu` 渲染守卫 = children.length > 0；叶子一级无二级菜单，第二列整列不展示）
+  const hasSub = (currentGroup?.children?.length ?? 0) > 0;
+  const subItems = hasSub ? (currentGroup!.children ?? []) : [];
 
-  // 一级卡片点击：有子菜单 → 展开第二列；无子菜单且有路由 → 直接跳转
+  // 一级卡片点击：有子菜单 → 展开第二列；叶子一级（无子菜单）→ 收起第二列（对齐 DSB childMenuHide），有路由则直接跳转
   const handleGroupClick = (menu: MenuTreeNode) => {
     const hasChildren = (menu.children?.length ?? 0) > 0;
     if (hasChildren) {
       setGroupOverride(menu.menu_id as string);
-    } else if (menu.route) {
-      router.push(menu.route);
+    } else {
+      setGroupOverride(null);
+      if (menu.route) router.push(menu.route);
     }
   };
 
@@ -168,7 +166,7 @@ export const AppSider: React.FC = () => {
       collapsed={collapsed}
       onCollapse={setCollapsed}
       theme="light"
-      width={240}
+      width={hasSub ? 240 : 80}
       collapsedWidth={80}
       trigger={null}
       className="side-menu-kb"
@@ -200,8 +198,8 @@ export const AppSider: React.FC = () => {
             );
           })}
         </div>
-        {/* 第二列：当前一级分组下的子菜单 */}
-        {!collapsed && (
+        {/* 第二列：当前一级分组下的子菜单（对齐 DSB：无二级菜单时不渲染整列） */}
+        {!collapsed && hasSub && (
           <div className="kb-nav-sub">
             {subItems.map((c) => {
               const sel = c.menu_id === activeKey;
