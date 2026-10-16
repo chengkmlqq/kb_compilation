@@ -2,7 +2,19 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-20（上传格式门禁 + zip 压缩包自动解包）
+最后更新：2026-10-17（知识库文档图标改用 DSB 文档库逐类型图标）
+
+## 26. 当前状态（2026-10-17 知识库文档图标改用 DSB 文档库逐类型图标）
+
+- **需求**：「data_supply_base 的文档库针对各种文件有不同的图标，把图标抄过来，放到 kb-compilation 的知识库的文件上」
+- **DSB 侧真源（实测确认）**：DSB 文档库（knowledge_lib_neo）的逐类型图标是 `KnowledgeLibNeo/images/` 下的 **PNG**（doc/pdf/xlsx/ppt/txt/md/img/html/mp3/mp4.png，均 80x80），映射表在 `KnowledgeSetNeo/pages/KnowledgeLog/index.tsx` 的 `fileTypeMap`（docx/doc/wps→doc、xlsx/xls/csv/et→xlsx、ppt/pptx/dps→ppt、jpg/png/gif/webp/img/image→img、md、txt、html、mp3、mp4；**未命中回落 txt**）。注：其文档树 `WeknoraDocTree.tsx` 用的是 arco `IconFile` + `fileTypeColor()` 按类型染色的单图标，与「逐类型图标」是两套，本次抄的是 fileTypeMap 那套 PNG。
+- **代码改动（commit 4bfc47f）**：
+  1. 图标字节级原样拷贝 → `web/public/images/dsb/file-icons/`（10 个 PNG，md5 与源一致），运行期经 `/wiki/images/dsb/file-icons/<name>.png` 提供（应用 basePath=/wiki，静态资源需自带前缀）
+  2. 新增 `web/src/components/kb/FileTypeIcon.tsx`：`FILE_ICON_NAME` 映射（DSB fileTypeMap 同口径）+ `fileIconSrc()` + `fileTypeIcon(ext, size=16, style?)` 返回 `<img>`；未命中回落 txt（与 DSB 一致）
+  3. 5 处调用点统一走该函数：文档卡片 `DocCardView`（28px）、文档表格 `KbDocsPane`（16px）、文档详情 `DocDetailPanel`（18px）、预览弹窗 `DocPreviewModal`（16px）、上传确认弹窗 `UploadConfirmDialog`（16px）；`DocCardView` 保留 `fileTypeIcon` 同名导出（其余三处 import 自它，未改动契约）
+  4. 清理：`DocCardView` 移除 8 个 antd `File*Outlined` 导入；`UploadConfirmDialog` 去掉 `FileTextOutlined`
+- **验证**：`web` tsc --noEmit exit 0；`bun run build` 通过；**本地构建 + 反代线上后端**（playwright）实机断言：供管制度知识库 18 篇 → 图标命中 `doc.png`（.doc/.docx）与 `txt.png`（.zip 回落），`/wiki/images/dsb/file-icons/*.png` 全 200 image/png；**部署后线上复验**（nginx :80，同上 KB）18 处图标命中、无 console error，截图 /tmp/kb_doc_icons_live.png
+- **坑位**：① 图标是 `<img>`，容器 `font-size` 不再决定大小，尺寸必须显式传 `size`（卡片 28/表格 16/详情 18）；② 静态资源路径必须带 basePath（`/wiki/...`），漏前缀会 404；③ DSB 文档树（染色单图标）与文档列表（逐类型 PNG）是两套图标语言，抄之前先确认抄的是哪一套；④ `export { x } from "..."` 不建立本地绑定——同文件内还要用该符号时必须 `import` + 再 `export`
 
 ## 25. 当前状态（2026-10-20 上传格式门禁 + zip 压缩包自动解包）
 
