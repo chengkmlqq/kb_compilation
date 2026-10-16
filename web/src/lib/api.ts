@@ -450,6 +450,72 @@ export function apiUploadDocumentByUrl(kbId: string, url: string, fileName?: str
   });
 }
 
+/** 系统可处理的文档格式（上传白名单）——与后端门禁同源（2026-10-20） */
+export interface SupportedFileTypes {
+  types: string[];
+  /** <input accept> 取值（含点号） */
+  accept: string;
+  /** 可自动解包的压缩包格式 */
+  archive_types: string[];
+}
+
+export function apiGetSupportedFileTypes() {
+  return request<SupportedFileTypes>("/api/v1/kbs/file-types/supported");
+}
+
+/** zip 压缩包自动解包上传结果（POST /documents/upload-archive） */
+export interface ArchiveUploadResult {
+  archive_name: string;
+  created_count: number;
+  created: { id: string; file_name: string; folder_id: string }[];
+  folders_created: number;
+  skipped: {
+    hidden: number;
+    empty: number;
+    unsupported: number;
+    oversize: number;
+    failed: number;
+  };
+  /** 被跳过的格式清单（如 ["psd"]） */
+  unsupported_types: string[];
+  errors: string[];
+}
+
+/** 上传 zip 压缩包并自动解包（服务端按包内目录结构建文档目录） */
+export function apiUploadArchive(
+  kbId: string,
+  file: File,
+  onProgress?: (percent: number) => void,
+  folderId?: string,
+  keepStructure = true,
+) {
+  const form = new FormData();
+  form.append("file", file);
+  const params = new URLSearchParams({
+    keep_structure: keepStructure ? "true" : "false",
+  });
+  if (folderId) params.set("folder_id", folderId);
+  return requestUpload<ArchiveUploadResult>(
+    `/api/v1/kbs/${kbId}/documents/upload-archive?${params.toString()}`,
+    form,
+    onProgress,
+  );
+}
+
+/**
+ * 取接口错误文案：兼容统一封装的 { message } 与 FastAPI 的 { detail }。
+ * （requestUpload 直接透传响应体，400/413 的错误在 detail 上。）
+ */
+export function apiErrorMessage(
+  res: { message?: string; detail?: unknown } | null | undefined,
+  fallback = "操作失败",
+): string {
+  if (res?.message) return res.message;
+  const detail = res?.detail;
+  if (typeof detail === "string" && detail) return detail;
+  return fallback;
+}
+
 export function apiDeleteDocument(kbId: string, docId: string) {
   return request(`/api/v1/kbs/${kbId}/documents/${docId}`, { method: "DELETE" });
 }

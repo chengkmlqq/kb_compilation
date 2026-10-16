@@ -29,6 +29,7 @@ import {
   DownOutlined,
   DownloadOutlined,
   EditOutlined,
+  FileZipOutlined,
   FolderAddOutlined,
   FolderOutlined,
   PlusOutlined,
@@ -79,7 +80,7 @@ import { collectDirFiles, isDirectoryUpload, relativePathOf } from "@/lib/upload
 import {
   DEFAULT_SUPPORTED_EXTS,
   acceptAttr,
-  extOf,
+  isArchiveFileName,
   partitionBySupport,
   supportedLabel,
 } from "@/lib/upload-support";
@@ -754,29 +755,117 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
     }
   };
 
-  /** 目录选择（webkitdirectory）回调：分拣文件后进上传确认弹窗 */
+  /**
+   * 上传 zip 压缩包（服务端**自动解包**，2026-10-20）：
+   * 包内目录结构由后端还原到当前所选目录下（同级同名复用），逐个文件入队解析；
+   * 进度/结果用同 key 的 message 就地更新，完成后刷新列表与目录树。
+   */
+  const handleArchiveUpload = async (file: File) => {
+    if (!isArchiveFileName(file.name)) {
+      message.warning(`仅支持 zip 压缩包自动解包（当前文件：${file.name}）`);
+      return;
+    }
+    const progressKey = "kb-archive-upload";
+    message.open({
+      key: progressKey,
+      type: "loading",
+      content: `正在上传并解包「${file.name}」…`,
+      duration: 0,
+    });
+    const res = await apiUploadArchive(
+      kbId,
+      file,
+      (pct) =>
+        message.open({
+          key: progressKey,
+          type: "loading",
+          content: `正在上传并解包「${file.name}」… ${pct}%`,
+          duration: 0,
+        }),
+      docFolderId || undefined,
+    ).catch(() => null);
+    if (!res) {
+      message.open({ key: progressKey, type: "error", content: "压缩包上传失败", duration: 6 });
+      return;
+    }
+    if (!res.success || !res.data) {
+      message.open({
+        key: progressKey,
+        type: "error",
+        content: apiErrorMessage(res, "压缩包上传失败"),
+        duration: 8,
+      });
+      return;
+    }
+    const d = res.data;
+    const detail: string[] = [];
+    if (d.skipped.unsupported > 0) {
+      const types = d.unsupported_types.filter(Boolean).map((t) => `.${t}`).join(" ");
+      detail.push(`${d.skipped.unsupported} 个格式不支持${types ? `（${types}）` : ""}`);
+    }
+    if (d.skipped.hidden > 0) detail.push(`${d.skipped.hidden} 个隐藏/系统文件`);
+    if (d.skipped.empty > 0) detail.push(`${d.skipped.empty} 个空文件`);
+    if (d.skipped.oversize > 0) detail.push(`${d.skipped.oversize} 个超过单文件上限`);
+    if (d.skipped.failed > 0) detail.push(`${d.skipped.failed} 个处理失败`);
+    const suffix = detail.length > 0 ? `；跳过 ${detail.join("、")}` : "";
+    message.open({
+      key: progressKey,
+      type: d.created_count > 0 ? "success" : "warning",
+      content:
+        d.created_count > 0
+          ? `压缩包已解包：上传 ${d.created_count} 个文件${
+              d.folders_created > 0 ? `、新建 ${d.folders_created} 个目录` : ""
+            }${suffix}`
+          : `压缩包内没有可上传的文件${suffix}`,
+      duration: 8,
+    });
+    if (d.created_count > 0) {
+      setDocPage(1);
+      await loadDocFolders();
+      void load();
+    }
+  };
+
+  /** 目录选择（webkitdirectory）回调：先按格式白名单分拣，再进上传确认弹窗 */
   const handleDirPicked = (files: File[]) => {
     if (files.length === 0) return;
     const { entries, hiddenSkipped, emptySkipped } = collectDirFiles(files);
-    if (entries.length === 0) {
-      message.warning("所选目录内没有可上传的文件（隐藏文件与空文件已跳过）");
+    // 只保留系统能解析的格式（压缩包不在白名单内：请用「上传压缩包」单独解包）
+    const { kept } = partitionBySupport(
+      entries.map((e) => e.file),
+      supportedExts,
+    );
+    const keptSet = new Set(kept);
+    const validEntries = entries.filter((e) => keptSet.has(e.file));
+    const unsupportedSkipped = entries.length - validEntries.length;
+    if (validEntries.length === 0) {
+      message.warning(
+        `所选目录内没有可上传的文件（已跳过 ${hiddenSkipped + emptySkipped} 个隐藏/空文件` +
+          `${unsupportedSkipped > 0 ? `、${unsupportedSkipped} 个格式不支持` : ""}）`,
+      );
       return;
     }
-    const skipped = hiddenSkipped + emptySkipped;
+    const skipped = hiddenSkipped + emptySkipped + unsupportedSkipped;
     const open = () => {
-      setPendingUploadFiles(entries.map((e) => e.file));
+      setPendingUploadFiles(validEntries.map((e) => e.file));
       setUploadConfirmOpen(true);
     };
-    if (entries.length > DIR_UPLOAD_CONFIRM_THRESHOLD) {
+    if (validEntries.length > DIR_UPLOAD_CONFIRM_THRESHOLD) {
       modal.confirm({
-        title: `所选目录包含 ${entries.length} 个文件`,
-        content: `将按目录结构逐个上传并解析${skipped > 0 ? `（另有 ${skipped} 个隐藏/空文件已跳过）` : ""}，是否继续？`,
+        title: `所选目录包含 ${validEntries.length} 个文件`,
+        content: `将按目录结构逐个上传并解析${
+          skipped > 0 ? `（另有 ${skipped} 个隐藏/空/格式不支持的文件已跳过）` : ""
+        }，是否继续？`,
         okText: "继续上传",
         onOk: open,
       });
       return;
     }
-    if (skipped > 0) message.warning(`已跳过 ${skipped} 个隐藏/空文件`);
+    if (skipped > 0) {
+      message.warning(
+        `已跳过 ${skipped} 个隐藏/空/格式不支持的文件；系统可处理的格式：${supportedLabel(supportedExts)}`,
+      );
+    }
     open();
   };
 
@@ -885,10 +974,8 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                   setDocPage(1);
                   void load();
                 }}
-                options={["md", "pdf", "docx", "xlsx", "pptx", "txt", "epub"].map((t) => ({
-                  label: t.toUpperCase(),
-                  value: t,
-                }))}
+                // 选项与上传白名单同源（系统能处理的格式 = 库里可能存在的格式）
+                options={supportedExts.map((t) => ({ label: t.toUpperCase(), value: t }))}
               />
             </div>
           </div>
@@ -935,6 +1022,12 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                     onClick: () => dirInputRef.current?.click(),
                   },
                   {
+                    key: "upload-archive",
+                    icon: <FileZipOutlined />,
+                    label: "上传压缩包（自动解包）",
+                    onClick: () => zipInputRef.current?.click(),
+                  },
+                  {
                     key: "table",
                     icon: <TableOutlined />,
                     label: "添加表",
@@ -948,20 +1041,43 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                 <DownOutlined style={{ fontSize: 10, marginLeft: 2 }} />
               </ModoButton>
             </Dropdown>
-            {/* 隐藏的文件选择触发器（本地上传） */}
+            {/* 隐藏的文件选择触发器（本地上传）：accept 只列系统可解析的格式 */}
             <input
               ref={fileInputRef}
               type="file"
               multiple
+              accept={acceptAttr(supportedExts)}
               style={{ display: "none" }}
               onChange={(e) => {
-                const files = e.target.files;
-                if (files && files.length > 0) {
-                  // 对齐 WeKnora：先收集到确认弹窗，用户可选处理配置后确认上传
-                  setPendingUploadFiles((prev) => [...prev, ...Array.from(files)]);
-                  setUploadConfirmOpen(true);
-                }
+                const picked = e.target.files ? Array.from(e.target.files) : [];
                 e.target.value = "";
+                if (picked.length === 0) return;
+                // 只放行系统能解析的格式（与后端门禁同源；压缩包走「上传压缩包」入口）
+                const { kept, skipped } = partitionBySupport(picked, supportedExts);
+                if (skipped.length > 0) {
+                  const names = skipped.slice(0, 3).map((f) => f.name).join("、");
+                  message.warning(
+                    `已跳过 ${skipped.length} 个不支持的文件（${names}${
+                      skipped.length > 3 ? " 等" : ""
+                    }）；系统可处理的格式：${supportedLabel(supportedExts)}`,
+                  );
+                }
+                if (kept.length === 0) return;
+                // 对齐 WeKnora：先收集到确认弹窗，用户可选处理配置后确认上传
+                setPendingUploadFiles((prev) => [...prev, ...kept]);
+                setUploadConfirmOpen(true);
+              }}
+            />
+            {/* 隐藏的压缩包选择触发器（zip 自动解包：服务端按包内目录结构建文档目录） */}
+            <input
+              ref={zipInputRef}
+              type="file"
+              accept=".zip"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const picked = e.target.files?.[0];
+                e.target.value = "";
+                if (picked) void handleArchiveUpload(picked);
               }}
             />
             {/* 隐藏的目录选择触发器（上传文件夹：取出目录及子孙目录中的全部文件）

@@ -87,6 +87,17 @@ from api.services.kb_admin import (
     wiki_update_issue_status,
 )
 from api.services.kb_admin import _remove_local_file  # noqa: PLC2701 (same package helper)
+from api.services.parser_registry import (
+    SUPPORTED_ARCHIVE_TYPES,
+    SUPPORTED_UPLOAD_ACCEPT,
+    SUPPORTED_UPLOAD_TYPES,
+    archive_entry_parts,
+    ext_of,
+    is_archive_ext,
+    is_hidden_or_junk,
+    is_supported_ext,
+    unsupported_type_detail,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +106,9 @@ router = APIRouter(prefix="/kbs", tags=["kbs"])
 settings = get_settings()
 
 MAX_UPLOAD_BYTES = 600 * 1024 * 1024  # 600 MB（2026-10-16 心电图 pdf转word 大文件 258MB，原 50MB 超限）
+# 压缩包上传（自动解包）限制：条目数 + 解压后总量（防解压炸弹）
+MAX_ARCHIVE_ENTRIES = 2000
+MAX_ARCHIVE_UNCOMPRESSED_BYTES = 2 * MAX_UPLOAD_BYTES
 
 
 class KBCreateRequest(BaseModel):
@@ -656,6 +670,14 @@ async def upload_document(
         if not fname or fname == "untitled":
             raise HTTPException(status_code=400, detail="文件名不能为空")
         content = await file.read()
+
+    # --- 格式门禁（2026-10-20）：只接受系统真能解析的格式 ---
+    # 原先任意扩展名都会落库并排队，worker 解析时才抛「Unsupported file type」→ 文档 FAILED，
+    # 属于「传了又处理不了」。白名单与 docreader 注册表同源（见 parser_registry.SUPPORTED_UPLOAD_TYPES）。
+    doc_ext = ext_of(fname)
+    if not is_supported_ext(doc_ext):
+        raise HTTPException(status_code=400, detail=unsupported_type_detail(doc_ext))
+
     if not content:
         raise HTTPException(status_code=400, detail="文件内容为空")
     if len(content) > MAX_UPLOAD_BYTES:
@@ -714,6 +736,184 @@ async def upload_document(
             "file_name": doc.file_name,
             "parse_state": doc.parse_state,
             "storage_path": doc.storage_path,
+        },
+    }
+
+
+@router.get("/file-types/supported")
+def supported_file_types() -> dict:
+    """系统可处理的文档格式（上传白名单，2026-10-20）。
+
+    与后端门禁 / 前端 accept 与预校验同源（都读 parser_registry.SUPPORTED_UPLOAD_TYPES，
+    该清单与 docreader 内置解析器注册表一致）——前端据此限制可选文件类型，避免「传了又处理不了」。
+    """
+    return {
+        "success": True,
+        "data": {
+            "types": list(SUPPORTED_UPLOAD_TYPES),
+            "accept": SUPPORTED_UPLOAD_ACCEPT,
+            "archive_types": list(SUPPORTED_ARCHIVE_TYPES),
+        },
+    }
+
+
+@router.post("/{kb_id}/documents/upload-archive")
+async def upload_archive(
+    kb_id: str,
+    file: UploadFile,
+    folder_id: str = Query(default="", max_length=64),
+    keep_structure: bool = Query(default=True),
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """上传 zip 压缩包并**自动解包**入库（2026-10-20）。
+
+    - 包内目录结构 → 知识库文档目录（同级同名复用；keep_structure=false 时全部落到 folder_id）；
+    - 跳过：目录项、隐藏/系统垃圾文件（. 开头 / Thumbs.db 等）、空文件、非白名单格式、超大文件；
+    - 每个文件仍走「存储 → kb_document(PENDING) → Celery 解析」同一条链路（与单文件上传一致）；
+    - 返回 created + skipped 统计，前端据此提示「已解压上传 N 个、跳过 M 个」。
+    """
+    import zipfile
+
+    _kb_manage(kb_id, caller, db)
+
+    folder_id = (folder_id or "").strip()
+    if not doc_folder_exists(db, kb_id, folder_id):
+        raise HTTPException(status_code=400, detail=f"目录不存在: {folder_id}")
+
+    fname = (file.filename or "").strip()
+    archive_ext = ext_of(fname)
+    if not is_archive_ext(archive_ext):
+        suffix = f"（.{archive_ext}）" if archive_ext else ""
+        raise HTTPException(
+            status_code=400,
+            detail=f"仅支持 zip 压缩包自动解包；当前文件：{fname or '未命名'}{suffix}",
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="压缩包内容为空")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"压缩包超过大小限制 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB",
+        )
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(
+            status_code=400, detail="压缩包无法解压（不是有效的 zip 或文件已损坏）"
+        ) from exc
+
+    from api.services import storage as storage_svc
+
+    created: list[dict] = []
+    errors: list[str] = []
+    skipped = {"hidden": 0, "empty": 0, "unsupported": 0, "oversize": 0, "failed": 0}
+    unsupported_types: set[str] = set()
+    existing: dict[str, str] = {}
+    folder_seed_count = 0
+
+    try:
+        file_infos = [i for i in zf.infolist() if not (i.filename or "").endswith("/")]
+        if len(file_infos) > MAX_ARCHIVE_ENTRIES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"压缩包内文件过多（{len(file_infos)} 个，上限 {MAX_ARCHIVE_ENTRIES} 个），请拆分后上传",
+            )
+        total_uncompressed = sum(i.file_size for i in file_infos)
+        if total_uncompressed > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"压缩包解压后过大（约 {total_uncompressed // (1024 * 1024)}MB，上限 "
+                f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)}MB），请拆分后上传",
+            )
+
+        # 目录映射（同级同名复用）："(parent_id)\0(name)" → folder_id
+        existing = {f"{f['parent_id']}\0{f['name']}": f["id"] for f in doc_folders(db, kb_id)}
+        folder_seed_count = len(existing)
+        user_id = str(caller.get("user_id") or "")
+
+        def _ensure_folder(segments: list[str]) -> str:
+            parent = folder_id
+            for seg in segments:
+                key = f"{parent}\0{seg}"
+                fid = existing.get(key)
+                if not fid:
+                    fid = doc_create_folder(db, kb_id, {"name": seg, "parent_id": parent}, user_id)["id"]
+                    existing[key] = fid
+                parent = fid
+            return parent
+
+        for info in file_infos:
+            raw_name = (info.filename or "").replace("\\", "/")
+            parts = archive_entry_parts(raw_name)
+            if not parts:
+                continue  # 非法路径（含 .. / 全空段）直接丢弃
+            if is_hidden_or_junk(raw_name):
+                skipped["hidden"] += 1
+                continue
+            base_name = parts[-1]
+            entry_ext = ext_of(base_name)
+            if not is_supported_ext(entry_ext):
+                skipped["unsupported"] += 1
+                unsupported_types.add(entry_ext or base_name)
+                continue
+            if info.file_size == 0:
+                skipped["empty"] += 1
+                continue
+            if info.file_size > MAX_UPLOAD_BYTES:
+                skipped["oversize"] += 1
+                continue
+
+            target_folder = _ensure_folder(parts[:-1]) if keep_structure else folder_id
+            try:
+                data = zf.read(info)
+            except Exception as exc:  # noqa: BLE001 - 单个坏条目不阻断整包
+                logger.warning("archive entry read failed: %s (%s)", raw_name, exc)
+                skipped["failed"] += 1
+                errors.append(f"{base_name}: 读取失败")
+                continue
+
+            doc_id = uuid.uuid4().hex
+            storage_path = storage_svc.resolve_new_path(f"kb_documents/{kb_id}/{doc_id}.{entry_ext}")
+            try:
+                storage_svc.put_bytes(storage_path, data)
+            except Exception:  # noqa: BLE001
+                logger.exception("archive entry store failed: %s", raw_name)
+                skipped["failed"] += 1
+                errors.append(f"{base_name}: 存储失败")
+                continue
+
+            doc = create_document(
+                db,
+                kb_id=kb_id,
+                file_name=base_name,
+                file_ext=entry_ext,
+                file_size=len(data),
+                storage_path=storage_path,
+                folder_id=target_folder,
+            )
+            try:
+                _enqueue_document_process(kb_id, doc.id, caller_identity=x_next_identity or "")
+            except Exception:  # noqa: BLE001 - 保留 PENDING 行，可手动重试
+                logger.exception("failed to enqueue archived doc %s", doc.id)
+            created.append({"id": doc.id, "file_name": doc.file_name, "folder_id": target_folder})
+    finally:
+        zf.close()
+
+    return {
+        "success": True,
+        "data": {
+            "archive_name": fname,
+            "created_count": len(created),
+            "created": created,
+            "folders_created": max(0, len(existing) - folder_seed_count),
+            "skipped": skipped,
+            "unsupported_types": sorted(t for t in unsupported_types if t),
+            "errors": errors[:5],
         },
     }
 

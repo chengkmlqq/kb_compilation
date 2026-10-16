@@ -2,7 +2,19 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-20（知识库详情页面样式对齐知识库管理页）
+最后更新：2026-10-20（上传格式门禁 + zip 压缩包自动解包）
+
+## 25. 当前状态（2026-10-20 上传格式门禁 + zip 压缩包自动解包）
+
+- **需求**：「知识库上传文件时，系统支持处理哪些格式就允许传哪些格式，不要传了又处理不了；另外支持 zip 打包上传并自动解包」
+- **根因**：`POST /kbs/{id}/documents/upload` 原先不校验扩展名——任意文件都落库并排队，worker 解析时才由 docreader 注册表抛 `Unsupported file type: xxx` → 文档 FAILED（用户侧表现就是「传了又处理不了」）
+- **「系统支持哪些格式」的唯一真值**：docreader 内置解析器注册表（`docreader/parser/registry.py` BUILTIN_ENGINE）= doc/docx/pdf/ppt/pptx/xls/xlsx/txt/md/markdown/csv/epub/mhtml + png/jpg/jpeg/gif/bmp/tiff/webp，共 20 种（**html/htm 不在其中**）。后端白名单 `api/services/parser_registry.py::SUPPORTED_UPLOAD_TYPES` 与之逐项一致，并由 `tests/test_upload_file_types.py::test_supported_types_match_docreader_builtin_registry` 反查护栏（两边漂移会红）
+- **后端改动**：
+  1. `api/services/parser_registry.py`：新增 `SUPPORTED_UPLOAD_TYPES` / `SUPPORTED_UPLOAD_ACCEPT` / `SUPPORTED_ARCHIVE_TYPES`(zip) / `JUNK_FILE_NAMES` 与 `ext_of` / `is_supported_ext` / `is_archive_ext` / `unsupported_type_detail` / `archive_entry_parts` / `is_hidden_or_junk`
+  2. `api/routers/kbs.py`：单文件 / URL 导入加**格式门禁**（不支持 → 400，提示里带可处理格式清单）；新增 `GET /api/v1/kbs/file-types/supported`（白名单下发前端）；新增 `POST /api/v1/kbs/{kb_id}/documents/upload-archive`（zip **自动解包**：按包内目录结构建文档目录、同级同名复用、`keep_structure=false` 平铺到当前目录；跳过目录项/隐藏/系统垃圾文件/空文件/非白名单格式/超大文件；zip-slip 路径防护；条目 ≤2000、解压后 ≤1.2GB；每个文件仍走「存储 → kb_document(PENDING) → Celery 解析」同一条链路；返回 created + skipped 统计）
+- **前端改动**：新增 `web/src/lib/upload-support.ts`（白名单 / accept / 分拣 / 提示文案，兜底清单与后端同源）；`lib/api.ts` 增 `apiGetSupportedFileTypes` / `apiUploadArchive`（XHR 进度）/ `apiErrorMessage`；`KbDocsPane` 载入白名单 → 文件选择 `accept` 只列可处理格式 + 预校验跳过提示、新增「上传压缩包（自动解包）」入口（隐藏 input accept=.zip；进度 message + 结果概要，完成后自动刷新列表与目录树）、目录上传按白名单分拣（跳过隐藏/空/不支持）、文件类型筛选选项改为白名单同源；`GlobalDropZone` 拖入 zip 走自动解包（uploadTask 上报进度/结果与跳过统计），拖放收集按白名单过滤（`lib/drop-files.ts` 新增 `supported` 选项，拒绝原因写明「格式不支持」）
+- **验证**：`tests/test_upload_file_types.py` 11 用例（白名单与 docreader 注册表一致 / .psd 拒绝且不落库 / .md、.PDF 通过 / 白名单端点 / zip 解包保留目录结构 / 跳过隐藏+空+不支持+zip-slip / keep_structure=false 平铺 / 非 zip、坏包、未知目录拒绝）；全量 `uv run pytest -q` **709 passed**；`tsc --noEmit` exit 0；`bun run build` rc 0
+- **部署注意**：后端需重建 kb-api-server（新端点 + 门禁），前端需重建 kb-web。**旧前端 + 新后端兼容**（只是多一层拦截）；**新前端 + 旧后端**会 404 白名单接口 → 前端回落本地兜底清单（预校验仍生效，但「上传压缩包」入口会报错），故两者应同时上线
 
 ## 24. 当前状态（2026-10-20 知识库详情页面样式对齐知识库管理页）
 

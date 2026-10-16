@@ -9,12 +9,16 @@ Shared by the API layer (`GET /parsers/engines`) and the worker tasks
 
 2026-10-07: PaddleOCR-VL 已移除（占位服务/需 GPU/无真实模型）——仅保留
 docreader（内置）+ mineru（自建/云端）。
+
+2026-10-20: 新增**上传白名单**（SUPPORTED_UPLOAD_TYPES）——上传接口与前端
+accept/预校验共用同一份格式清单，杜绝「传了又解析不了」。
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 # --------------------------------------------------------------------------- #
@@ -278,3 +282,77 @@ def resolve_engine(
         # requested engine not configured -> docreader fallback
         return ENGINE_DOCREADER
     return chosen
+
+
+# --------------------------------------------------------------------------- #
+# 上传白名单（只允许系统真能解析的格式，2026-10-20）
+# --------------------------------------------------------------------------- #
+
+#: 允许上传的文档扩展名 = 内置 docreader（BUILTIN_ENGINE）实际注册了解析器的格式。
+#: ⚠️ 必须与 docreader/parser/registry.py 的 builtin 注册表保持一致——
+#: tests/test_upload_file_types.py 会反查 docreader 注册表，防止两边漂移。
+SUPPORTED_UPLOAD_TYPES: tuple[str, ...] = (
+    # Office / 文档
+    "doc", "docx", "pdf", "ppt", "pptx", "xls", "xlsx",
+    # 纯文本类
+    "txt", "md", "markdown", "csv", "epub", "mhtml",
+    # 图片（docreader ImageParser：解析为图片引用，供文档图片理解/检索）
+    "png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp",
+)
+
+#: 前端 <input accept> 用的扩展名串（与白名单同源）
+SUPPORTED_UPLOAD_ACCEPT: str = ",".join(f".{t}" for t in SUPPORTED_UPLOAD_TYPES)
+
+#: 允许上传的压缩包扩展名（服务端自动解包，见 /kbs/{id}/documents/upload-archive）
+SUPPORTED_ARCHIVE_TYPES: tuple[str, ...] = ("zip",)
+
+#: 目录上传 / 压缩包解包时跳过的系统垃圾文件（与前端 web/src/lib/upload-dir.ts 的
+#: JUNK_FILE_NAMES 同源；隐藏文件另外按「任一路径段以 . 开头」判定）
+JUNK_FILE_NAMES: frozenset[str] = frozenset({"thumbs.db", "desktop.ini", ".ds_store"})
+
+_ARCHIVE_SET = frozenset(SUPPORTED_ARCHIVE_TYPES)
+
+
+def ext_of(name: str | None) -> str:
+    """取扩展名（小写、不含点）——上传文件名 / URL 导入的统一取值口径。"""
+    return Path(str(name or "").strip()).suffix.lower().lstrip(".")
+
+
+def is_supported_ext(ext: str | None) -> bool:
+    """该扩展名是否有可用解析器（上传白名单）。"""
+    return str(ext or "").strip().lower().lstrip(".") in SUPPORTED_UPLOAD_TYPES
+
+
+def is_supported_file_name(name: str | None) -> bool:
+    return is_supported_ext(ext_of(name))
+
+
+def is_archive_ext(ext: str | None) -> bool:
+    """是否为允许上传的压缩包（zip）。"""
+    return str(ext or "").strip().lower().lstrip(".") in _ARCHIVE_SET
+
+
+def unsupported_type_detail(ext: str | None) -> str:
+    """统一的不支持格式提示（含可处理的格式清单）。"""
+    e = str(ext or "").strip().lower().lstrip(".")
+    shown = f"「.{e}」" if e else "（无扩展名）"
+    return (
+        f"不支持的文件格式{shown}；系统可处理的格式："
+        + "、".join(f".{t}" for t in SUPPORTED_UPLOAD_TYPES)
+    )
+
+
+def archive_entry_parts(entry_name: str) -> list[str]:
+    """压缩包条目名 → 规范化路径段（统一分隔符、去掉空段与 "."；含 ".." 视为非法返回 []）。"""
+    parts = [p for p in str(entry_name or "").replace("\\", "/").split("/") if p not in ("", ".")]
+    if any(p == ".." for p in parts):
+        return []
+    return parts
+
+
+def is_hidden_or_junk(rel_path: str) -> bool:
+    """路径中任一段以 "." 开头 / 命中系统垃圾文件 → 跳过（目录与压缩包上传共用判定）。"""
+    parts = [p for p in str(rel_path or "").replace("\\", "/").split("/") if p not in ("", ".")]
+    if not parts:
+        return True
+    return any(p.startswith(".") or p.lower() in JUNK_FILE_NAMES for p in parts)
