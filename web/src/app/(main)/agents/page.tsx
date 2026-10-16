@@ -12,8 +12,6 @@ import {
   Input,
   Row,
   Space,
-  Tag,
-  Typography,
 } from "antd";
 import {
   CopyOutlined,
@@ -64,16 +62,16 @@ const modeIcon = (
   return <AgentAvatar name={name || ""} size="medium" />;
 };
 
-const featureBadges = (c: Record<string, unknown> | undefined) => {
-  const out: React.ReactNode[] = [];
+const badgeText = (c: Record<string, unknown> | undefined, builtin?: boolean) => {
+  const parts: string[] = [];
+  if (builtin) parts.push("内置");
   const kbCount = Array.isArray(c?.knowledge_bases) ? c.knowledge_bases.length : 0;
-  if (kbCount > 0) out.push(<Tag key="kb" color="blue">知识库 {kbCount}</Tag>);
+  if (kbCount > 0) parts.push(`知识库 ${kbCount}`);
   const tools = Array.isArray(c?.allowed_tools) ? c.allowed_tools : [];
-  if (tools.length > 0) out.push(<Tag key="tools" color="purple">工具 {tools.length}</Tag>);
-  if (c?.enable_query_expansion || c?.enable_rewrite)
-    out.push(<Tag key="rewrite" color="cyan">意图改写</Tag>);
-  if (c?.vlm_model_id) out.push(<Tag key="vlm" color="orange">多模态</Tag>);
-  return out;
+  if (tools.length > 0) parts.push(`工具 ${tools.length}`);
+  if (c?.enable_query_expansion || c?.enable_rewrite) parts.push("意图改写");
+  if (c?.vlm_model_id) parts.push("多模态");
+  return parts.join(" · ") || "基础配置";
 };
 
 /** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务内容 */
@@ -259,52 +257,62 @@ export default function AgentsPage() {
                 const disabled = Boolean(agent.config?.disabled);
                 return (
                   <Col key={agent.id} xs={24} sm={12} lg={8} xl={6}>
-                    <Card
-                      className="agent-card"
-                      size="small"
-                      hoverable
-                      style={{ height: "100%", opacity: disabled ? 0.55 : 1 }}
-                      title={
-                        <Space>
-                          {modeIcon(agent.config, agent.is_builtin, agent.name)}
-                          <Typography.Text strong ellipsis style={{ maxWidth: 120 }}>
-                            {agent.name}
-                          </Typography.Text>
-                        </Space>
-                      }
-                      extra={
-                        <Dropdown
-                          menu={{
-                            items: menuItems(agent),
-                            onClick: ({ key }) => {
-                              if (key === "edit") {
-                                setEditing(agent);
-                                setEditorOpen(true);
-                              } else if (key === "copy") void onCopy(agent);
-                              else if (key === "enable" || key === "disable")
-                                void onToggleDisabled(agent);
-                              else if (key === "delete") onDelete(agent);
-                            },
-                          }}
-                        >
-                          <Button type="text" size="small" icon={<MoreOutlined />} />
-                        </Dropdown>
-                      }
+                    {/* 智能体卡片（对齐知识库卡片 kb-kbs-card 三段式：header 图标+标题 / 2行描述 / footer 标签+操作） */}
+                    <div
+                      className="kb-agent-card"
+                      style={{ opacity: disabled ? 0.55 : 1 }}
+                      title={agent.description || "（无描述）"}
                     >
-                      <Typography.Paragraph
-                        type="secondary"
-                        ellipsis={{ rows: 2 }}
-                        style={{ minHeight: 44, marginBottom: 8 }}
-                      >
+                      <div className="kb-agent-card-header">
+                        <div className="kb-agent-card-icon">
+                          {modeIcon(agent.config, agent.is_builtin, agent.name)}
+                        </div>
+                        <div className="kb-agent-card-detail">
+                          <div className="kb-agent-card-title-row">
+                            <div className="kb-agent-card-title-name" title={agent.name}>
+                              {agent.name}
+                            </div>
+                          </div>
+                          <div className="kb-agent-card-meta">
+                            {modeLabel(agent.config)}
+                            {disabled ? " · 已停用" : ""}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="kb-agent-card-description">
                         {agent.description || "（无描述）"}
-                      </Typography.Paragraph>
-                      <Space wrap size={4}>
-                        {agent.is_builtin && <Tag color="blue">内置</Tag>}
-                        <Tag>{modeLabel(agent.config)}</Tag>
-                        {disabled && <Tag color="red">已停用</Tag>}
-                        {featureBadges(agent.config)}
-                      </Space>
-                    </Card>
+                      </div>
+                      <div className="kb-agent-card-footer">
+                        <div
+                          className="kb-agent-card-footer-left"
+                          title={badgeText(agent.config, agent.is_builtin)}
+                        >
+                          {badgeText(agent.config, agent.is_builtin)}
+                        </div>
+                        <div
+                          className="kb-agent-card-footer-right"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Dropdown
+                            menu={{
+                              items: menuItems(agent),
+                              onClick: ({ key }) => {
+                                if (key === "edit") {
+                                  setEditing(agent);
+                                  setEditorOpen(true);
+                                } else if (key === "copy") void onCopy(agent);
+                                else if (key === "enable" || key === "disable")
+                                  void onToggleDisabled(agent);
+                                else if (key === "delete") onDelete(agent);
+                              },
+                            }}
+                            trigger={["click"]}
+                          >
+                            <Button type="text" size="small" icon={<MoreOutlined />} />
+                          </Dropdown>
+                        </div>
+                      </div>
+                    </div>
                   </Col>
                 );
               })}
