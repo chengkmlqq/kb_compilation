@@ -141,10 +141,61 @@ const ChevronRightIcon = () => (
   </svg>
 );
 
-/** arco IconFolder（48 viewBox 实心文件夹；DSB 文档库左树用 #f59e0b），14px */
+/** DSB 文档库（knowledge_lib_neo）左树目录节点图标——原样内联官方
+    `KnowledgeLibNeo/images/folderIcon.svg`（14x14 蓝色文件夹：#517ED8 外壳 + 白色内页 +
+    #97B9EB→#739CE2 渐变扉页），非自绘。 */
 const FolderIcon = () => (
-  <svg viewBox="0 0 48 48" fill="currentColor" stroke="none" aria-hidden>
-    <path d="M42.05 9.63 26 9.54l-1.57-2.46a1.79 1.79 0 0 0-1.29-.84H6.1a1.9 1.9 0 0 0-2.1 2v15.6l40 .09v-12a2.21 2.21 0 0 0-1.95-2.3ZM5.89 22.38V18a2.44 2.44 0 0 1 2.43-2.19h31.27A2.44 2.44 0 0 1 42 18l.06 4.42-36.17-.04Z" />
+  <svg width={14} height={14} viewBox="0 0 14 14" fill="none" aria-hidden>
+    <path
+      d="M5.22522 1.53125C5.4198 1.53125 5.60889 1.59615 5.76248 1.71561L6.30936 2.14093C6.46294 2.26037 6.65205 2.32529 6.84662 2.32529H12.25C12.7332 2.32529 13.125 2.71704 13.125 3.20029V11.545C13.125 12.0283 12.7332 12.42 12.25 12.42H1.75C1.26675 12.42 0.875 12.0283 0.875 11.545V2.40625C0.875 1.923 1.26675 1.53125 1.75 1.53125H5.22522Z"
+      fill="#517ED8"
+    />
+    <path
+      d="M11.5615 3.34619C11.9239 3.34624 12.2177 3.64003 12.2177 4.00244V9.49554C12.2177 9.85793 11.9239 10.1517 11.5615 10.1518H2.43872C2.0763 10.1518 1.7825 9.85796 1.78247 9.49554V4.00244C1.78247 3.64 2.07628 3.34619 2.43872 3.34619H11.5615Z"
+      fill="#fff"
+    />
+    <path
+      d="M12.4688 4.47998C12.8312 4.47998 13.125 4.77379 13.125 5.13623V11.5447C13.125 12.028 12.7332 12.4197 12.25 12.4197H1.75C1.26675 12.4197 0.875 12.028 0.875 11.5447V5.13623C0.875 4.77379 1.16881 4.47998 1.53125 4.47998H12.4688Z"
+      fill="url(#kbDocFolderGradient)"
+    />
+    <path
+      d="M11.9229 5.68994C12.0438 5.68994 12.1417 5.78788 12.1417 5.90869V5.92493C12.1417 6.04572 12.0437 6.14368 11.9229 6.14368H10.5457C10.4249 6.14368 10.327 6.04572 10.327 5.92493V5.90869C10.327 5.78788 10.4249 5.68994 10.5457 5.68994H11.9229Z"
+      fill="#517ED8"
+    />
+    <defs>
+      <linearGradient
+        id="kbDocFolderGradient"
+        x1="7"
+        y1="4.47998"
+        x2="7"
+        y2="12.4197"
+        gradientUnits="userSpaceOnUse"
+      >
+        <stop stopColor="#97B9EB" />
+        <stop offset="1" stopColor="#739CE2" />
+      </linearGradient>
+    </defs>
+  </svg>
+);
+
+/** arco IconCaretDown / IconCaretRight（DSB 文档库左树 hover 时替换文件夹图标的展开箭头） */
+const CaretDownIcon = () => (
+  <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth={4} aria-hidden>
+    <path
+      fill="currentColor"
+      stroke="none"
+      d="M24.938 34.829a1.2 1.2 0 0 1-1.875 0L9.56 17.949c-.628-.785-.069-1.949.937-1.949h27.007c1.006 0 1.565 1.164.937 1.95L24.937 34.829Z"
+    />
+  </svg>
+);
+
+const CaretRightIcon = () => (
+  <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth={4} aria-hidden>
+    <path
+      fill="currentColor"
+      stroke="none"
+      d="M34.829 23.063c.6.48.6 1.394 0 1.874L17.949 38.44c-.785.629-1.949.07-1.949-.937V10.497c0-1.007 1.164-1.566 1.95-.937l16.879 13.503Z"
+    />
   </svg>
 );
 
@@ -641,7 +692,7 @@ export default function KbsPage() {
             />
           </div>
           <div className="kb-kbs-category-tree-main">
-            {/* 根节点「全部」= 文件夹行（对齐 DSB 文档库左树 WeknoraDocTree）；
+            {/* 根节点「全部」= 一级目录节点（对齐 DSB 文档库 knowledge_lib_neo 左树 .arco-tree-node）；
                 右键 = 新建分类（2026-10-19 移除工具栏 + 按钮，入口只留这里） */}
             <Dropdown
               trigger={["contextMenu"]}
@@ -650,22 +701,27 @@ export default function KbsPage() {
               }}
             >
               <div
-                className={`kb-doc-tree-row${selectedLabel === "all" ? " active" : ""}`}
+                className={`kb-doc-tree-row kb-doc-tree-row--root${
+                  selectedLabel === "all" ? " active" : ""
+                }`}
                 style={{ paddingLeft: 8 }}
                 onClick={() => setSelectedLabel("all")}
                 title="全部"
               >
-                <span
-                  className={`kb-doc-tree-chevron${treeExpanded ? " kb-doc-tree-chevron--open" : ""}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setTreeExpanded((v) => !v);
-                  }}
-                >
-                  <ChevronRightIcon />
-                </span>
-                <span className="kb-doc-tree-folder">
-                  <FolderIcon />
+                {/* 图标槽（DSB .icon-container 14px）：默认文件夹图标，hover 时让位给展开箭头 */}
+                <span className="kb-doc-tree-icon">
+                  <span className="kb-doc-tree-node-icon">
+                    <FolderIcon />
+                  </span>
+                  <span
+                    className="kb-doc-tree-expand-icon"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setTreeExpanded((v) => !v);
+                    }}
+                  >
+                    {treeExpanded ? <CaretDownIcon /> : <CaretRightIcon />}
+                  </span>
                 </span>
                 <span className="kb-doc-tree-title">全部</span>
                 {total > 0 && <span className="kb-doc-tree-count">{total}</span>}
@@ -690,13 +746,15 @@ export default function KbsPage() {
                 >
                   <div
                     className={`kb-doc-tree-row${selectedLabel === c.name ? " active" : ""}`}
-                    style={{ paddingLeft: 22 }}
+                    style={{ paddingLeft: 20 }}
                     onClick={() => setSelectedLabel(c.name)}
                     title={c.name}
                   >
-                    <span className="kb-doc-tree-chevron" aria-hidden="true" />
-                    <span className="kb-doc-tree-folder">
-                      <FolderIcon />
+                    <span className="kb-doc-tree-icon">
+                      {/* 二级分类为叶子节点：图标常显（DSB 叶子节点 .node-icon.visible） */}
+                      <span className="kb-doc-tree-node-icon kb-doc-tree-node-icon--visible">
+                        <FolderIcon />
+                      </span>
                     </span>
                     <span className="kb-doc-tree-title">{c.name}</span>
                     {c.count > 0 && <span className="kb-doc-tree-count">{c.count}</span>}
