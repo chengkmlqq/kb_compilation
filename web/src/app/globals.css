@@ -3693,7 +3693,8 @@ html[data-theme="dark"] .kb-citation-web:hover {
 }
 /* ── 模型选择（对齐 DSB .portal-chat-dropdown-btn + .chat-sender-model-menu）──
    2026-10-19 起 DSB 用「胶囊按钮 + Dropdown 菜单（模型名/描述/勾选）」，不再用 Select 组件 */
-.kb-chat-model-btn {
+.kb-chat-model-btn,
+.kb-chat-agent-btn {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -3712,16 +3713,19 @@ html[data-theme="dark"] .kb-citation-web:hover {
   border-radius: 16px;
   cursor: pointer;
 }
-.kb-chat-model-btn:hover {
+.kb-chat-model-btn:hover,
+.kb-chat-agent-btn:hover {
   border-color: rgba(81, 126, 216, 1);
   background: rgba(232, 243, 255, 1);
 }
-.kb-chat-model-btn .dsb-icon {
+.kb-chat-model-btn .dsb-icon,
+.kb-chat-agent-btn .dsb-icon {
   flex: 0 0 auto;
   font-size: 14px;
   color: rgba(50, 97, 206, 1);
 }
-.kb-chat-model-btn-label {
+.kb-chat-model-btn-label,
+.kb-chat-agent-btn-label {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -3729,18 +3733,21 @@ html[data-theme="dark"] .kb-citation-web:hover {
   white-space: nowrap;
   text-align: left;
 }
-.kb-chat-model-btn-arrow {
+.kb-chat-model-btn-arrow,
+.kb-chat-agent-btn-arrow {
   flex: 0 0 auto;
   font-size: 12px;
   color: rgba(50, 97, 206, 1);
 }
 
 /* 模型下拉菜单（对齐 .chat-sender-model-menu：max-width 350 / padding 8 / 选项 52px 高 / radius 8） */
-.kb-chat-model-menu .ant-dropdown-menu {
+.kb-chat-model-menu .ant-dropdown-menu,
+.kb-chat-agent-menu .ant-dropdown-menu {
   max-width: 350px;
   padding: 8px;
 }
-.kb-chat-model-menu .ant-dropdown-menu-item {
+.kb-chat-model-menu .ant-dropdown-menu-item,
+.kb-chat-agent-menu .ant-dropdown-menu-item {
   display: flex;
   align-items: center;
   height: 52px;
@@ -3785,10 +3792,13 @@ html[data-theme="dark"] .kb-citation-web:hover {
 }
 /* 选中项（对齐 .chat-sender-model-item.active：primary-light-1 底 + 名称 link-6 + 勾选） */
 .kb-chat-model-menu .ant-dropdown-menu-item-selected,
-.kb-chat-model-menu .ant-dropdown-menu-item-selected:hover {
+.kb-chat-model-menu .ant-dropdown-menu-item-selected:hover,
+.kb-chat-agent-menu .ant-dropdown-menu-item-selected,
+.kb-chat-agent-menu .ant-dropdown-menu-item-selected:hover {
   background: rgba(232, 243, 255, 1) !important;
 }
-.kb-chat-model-menu .ant-dropdown-menu-item-selected .kb-chat-model-name {
+.kb-chat-model-menu .ant-dropdown-menu-item-selected .kb-chat-model-name,
+.kb-chat-agent-menu .ant-dropdown-menu-item-selected .kb-chat-model-name {
   color: rgba(50, 97, 206, 1);
 }
 

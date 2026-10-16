@@ -134,7 +134,9 @@ export default function ChatPage() {
   const [siderCollapsed, setSiderCollapsed] = useState(false);
   const [activeSessionTitle, setActiveSessionTitle] = useState("");
   // L3：Agent 模式 + 附件 + 消息搜索
-  const [agents, setAgents] = useState<{ id: string; name: string; config?: Record<string, unknown> }[]>([]);
+  const [agents, setAgents] = useState<
+    { id: string; name: string; description?: string | null; config?: Record<string, unknown> }[]
+  >([]);
   const [agentMode, setAgentMode] = useState<string>(); // 选中的 agent id
   const [attachments, setAttachments] = useState<ChatAttachmentItem[]>([]);
   // 2026-10-08 对齐 WeKnora：图片独立入口 + 发送前预览（本地对象 URL）
@@ -315,6 +317,7 @@ export default function ChatPage() {
           (res.data?.items || []).map((a) => ({
             id: a.id,
             name: a.name,
+            description: a.description,
             config: a.config,
           })),
         );
@@ -1640,29 +1643,60 @@ export default function ChatPage() {
                 </button>
               </Dropdown>
             )}
-            {/* 左下角：智能体选择（对齐 WeKnora agent-mode-btn） */}
-            <Select
-              className="kb-chat-aux-select"
-              value={agentMode || undefined}
-              onChange={(v) => {
-                setAgentMode(v || undefined);
-                // 选/切智能体时同步活跃会话的绑定（后端图片门禁按 session.agent_id 校验）
-                if (activeSession) {
-                  void apiUpdateSession(activeSession, { agent_id: v || "" });
-                }
+            {/* 2026-10-19 智能体选择与模型选择 UI 统一：胶囊按钮 + Dropdown 菜单（名称/描述/勾选） */}
+            <Dropdown
+              trigger={["click"]}
+              placement="bottomLeft"
+              overlayClassName="kb-chat-agent-menu"
+              menu={{
+                items: agents.map((a) => ({
+                  key: a.id,
+                  label: (
+                    <div className="kb-chat-model-item">
+                      <div className="kb-chat-model-item-left">
+                        <div className="kb-chat-model-name">{a.name}</div>
+                        <div className="kb-chat-model-descr">{a.description || "暂无描述"}</div>
+                      </div>
+                      <div className="kb-chat-model-check">
+                        {agentMode === a.id && <CheckOutlined />}
+                      </div>
+                    </div>
+                  ),
+                })),
+                selectable: false,
+                onClick: ({ key }) => {
+                  // 点击当前已选智能体 = 取消（切回普通问答）；否则选中并同步会话绑定
+                  if (agentMode === key) {
+                    setAgentMode(undefined);
+                    if (activeSession) {
+                      void apiUpdateSession(activeSession, { agent_id: "" });
+                    }
+                    return;
+                  }
+                  setAgentMode(key);
+                  // 选/切智能体时同步活跃会话的绑定（后端图片门禁按 session.agent_id 校验）
+                  if (activeSession) {
+                    void apiUpdateSession(activeSession, { agent_id: key });
+                  }
+                },
               }}
-              placeholder="普通问答"
-              allowClear
-              style={{ minWidth: 130 }}
-              suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
-              options={agents.map((a) => ({ value: a.id, label: a.name }))}
-              optionRender={(o) => (
-                <Space size={6}>
-                  <RobotOutlined style={{ color: "#1677ff" }} />
-                  {o.label}
-                </Space>
-              )}
-            />
+            >
+              <button
+                type="button"
+                className="kb-chat-agent-btn"
+                title={
+                  agents.find((a) => a.id === agentMode)?.name
+                    ? `智能体：${agents.find((a) => a.id === agentMode)?.name}`
+                    : "选择智能体"
+                }
+              >
+                <RobotOutlined style={{ color: "rgba(50,97,206,1)", fontSize: 14 }} />
+                <span className="kb-chat-agent-btn-label">
+                  {agents.find((a) => a.id === agentMode)?.name || "普通问答"}
+                </span>
+                <DsbIconChevronDown size={12} className="kb-chat-agent-btn-arrow" />
+              </button>
+            </Dropdown>
             {/* 2026-10-12 对齐 WeKnora Input-field：联网搜索开关（请求级生效）
                 （2026-10-15 显隐由参数表 CHAT_WEB_SEARCH_ENABLED 控制） */}
             {webSearchVisible && (
