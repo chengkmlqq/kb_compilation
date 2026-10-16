@@ -7,6 +7,8 @@ import {
   Button,
   Card,
   Drawer,
+  Dropdown,
+  Empty,
   Form,
   Input,
   Modal,
@@ -14,15 +16,22 @@ import {
   Space,
   Spin,
   Switch,
-  Table,
   Tabs,
   Tag,
   Typography,
 } from "antd";
-import { PlusOutlined, ReloadOutlined } from "@ant-design/icons";
+import {
+  ApiOutlined,
+  CodeOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  ExperimentOutlined,
+  MoreOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+} from "@ant-design/icons";
 import CodeViewer from "@/components/CodeViewer";
 import ModoPagination from "@/components/biz/modo-pagination";
-import { ModoActionGroup } from "@/components/biz/modo-action-group";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 import {
   apiCreateMcp,
@@ -127,7 +136,7 @@ export default function McpManagePage() {
     setEditOpen(true);
   };
 
-  // 列表区（首个选项卡内容）：类型 Tab + 表格 + 钉底分页
+  // 列表区（首个选项卡内容）：类型 Tab 固定 / 卡片网格滚动 / 分页钉底（对齐模型管理页卡视图）
   const listPane = (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Card
@@ -143,107 +152,136 @@ export default function McpManagePage() {
           },
         }}
       >
-      <Tabs
-              activeKey={typeFilter}
-              onChange={(k) => {
-                setTypeFilter(k);
-                setPage(1);
-              }}
-              style={{ marginBottom: 8, flexShrink: 0 }}
-        items={[
-          { key: "all", label: `全部 (${items.length})` },
-          { key: "streamable_http", label: `streamable_http (${countByType("streamable_http")})` },
-          { key: "stdio", label: `stdio (${countByType("stdio")})` },
-        ]}
-      />
-      <Table
-              rowKey="id"
-              size="small"
-              loading={loading}
-              dataSource={pagedItems}
-              pagination={false}
-              scroll={{ x: 1000, y: "calc(100vh - 262px)" }}
-              locale={{ emptyText: <Text type="secondary">暂无 MCP 服务器</Text> }}
-        columns={[
-          {
-            title: "名称",
-            dataIndex: "name",
-            render: (v: string, r: McpRegistryItem) => (
-              <Space size={4}>
-                <Text strong>{v}</Text>
-                <Tag color={SCOPE_COLOR[r.scope]}>{SCOPE_LABEL[r.scope]}</Tag>
-                {r.enabled !== false && <Tag color="green">启用</Tag>}
-              </Space>
-            ),
-          },
-          {
-            title: "类型",
-            dataIndex: "type",
-            width: 130,
-            render: (v: string) => <Tag>{v === "stdio" ? "stdio" : "streamable_http"}</Tag>,
-          },
-          { title: "URL", dataIndex: "url", ellipsis: true },
-          {
-            title: "密钥",
-            width: 150,
-            render: (_: unknown, r: McpRegistryItem) => (
-              <Text type={r.headers && Object.keys(r.headers).length ? "success" : "secondary"} style={{ fontSize: 12 }}>
-                {r.headers && Object.keys(r.headers).length ? "已配置" : "无"}
-              </Text>
-            ),
-          },
-          {
-            title: "操作",
-            width: 140,
-            render: (_: unknown, r: McpRegistryItem) => (
-              <ModoActionGroup
-                maxCount={2}
-                actions={[
-                  { key: "test", label: "测试", onClick: () => setTestTarget(r) },
-                  { key: "edit", label: "编辑", onClick: () => openEdit(r) },
-                  {
-                    key: "delete",
-                    label: "删除",
-                    danger: true,
-                    onClick: () =>
-                      modal.confirm({
-                        title: `确定删除 ${r.name}？`,
-                        onOk: () => handleDelete(r),
-                      }),
-                  },
-                ]}
-              />
-            ),
-          },
-        ]}
-      />
-      <div style={{ flexShrink: 0, marginTop: "auto" }}>
-        <ModoPagination
-          current={safePage}
-          pageSize={pageSize}
-          total={totalRows}
-          showTotal={(t) => `共 ${t} 条`}
-          onChange={(p, ps) => {
-            setPage(p);
-            setPageSize(ps);
+        <Tabs
+          activeKey={typeFilter}
+          onChange={(k) => {
+            setTypeFilter(k);
+            setPage(1);
           }}
+          style={{ marginBottom: 8, flexShrink: 0 }}
+          items={[
+            { key: "all", label: `全部 (${items.length})` },
+            { key: "streamable_http", label: `streamable_http (${countByType("streamable_http")})` },
+            { key: "stdio", label: `stdio (${countByType("stdio")})` },
+          ]}
         />
-      </div>
-      {editOpen && (
-        <McpEditorModal
-          open={editOpen}
-          item={editing}
-          scope="personal"
-          isAdmin={isAdmin}
-          onClose={() => setEditOpen(false)}
-          onSaved={() => {
-            setEditOpen(false);
-            void load();
-          }}
-          message={message}
-        />
-      )}
-      <McpTestDrawer target={testTarget} onClose={() => setTestTarget(null)} message={message} />
+
+        {loading && items.length === 0 ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+            <Spin />
+          </div>
+        ) : filtered.length === 0 ? (
+          <Empty description="暂无 MCP 服务器" />
+        ) : (
+          // 卡片视图：flex:1 占满剩余高度，内容超出时内部滚动
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflow: "auto",
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+              gap: 16,
+              alignContent: "start",
+            }}
+          >
+            {pagedItems.map((item) => {
+              const configured = !!item.headers && Object.keys(item.headers).length > 0;
+              return (
+                <div
+                  key={item.id}
+                  className="kb-model-card"
+                  style={item.enabled === false ? { opacity: 0.55 } : undefined}
+                  title={item.url || "（无端点）"}
+                  onClick={() => openEdit(item)}
+                >
+                  <div className="kb-model-card-header">
+                    <div className="kb-model-card-icon" style={{ color: "#1677ff" }}>
+                      {item.type === "stdio" ? <CodeOutlined /> : <ApiOutlined />}
+                    </div>
+                    <div className="kb-model-card-detail">
+                      <div className="kb-model-card-title-row">
+                        <div className="kb-model-card-title-name" title={item.name}>
+                          {item.name}
+                        </div>
+                        <Tag
+                          color={SCOPE_COLOR[item.scope]}
+                          style={{ flex: "none", marginInlineEnd: 0, fontSize: 12, lineHeight: "18px" }}
+                        >
+                          {SCOPE_LABEL[item.scope]}
+                        </Tag>
+                      </div>
+                      <div className="kb-model-card-meta">
+                        {item.type === "stdio" ? "stdio" : "streamable_http"}
+                        {item.enabled === false ? " · 已停用" : ""}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="kb-model-card-description">{item.url || "（无端点）"}</div>
+                  <div className="kb-model-card-footer">
+                    <div className="kb-model-card-footer-left" title={configured ? "已配置密钥" : "无密钥"}>
+                      <Text type={configured ? "success" : "secondary"} style={{ fontSize: 12 }}>
+                        {configured ? "密钥已配置" : "无密钥"}
+                      </Text>
+                    </div>
+                    <div className="kb-model-card-footer-right" onClick={(e) => e.stopPropagation()}>
+                      <Dropdown
+                        menu={{
+                          items: [
+                            { key: "test", icon: <ExperimentOutlined />, label: "测试" },
+                            { key: "edit", icon: <EditOutlined />, label: "编辑" },
+                            { type: "divider" },
+                            { key: "delete", icon: <DeleteOutlined />, label: "删除", danger: true },
+                          ],
+                          onClick: ({ key }) => {
+                            if (key === "test") setTestTarget(item);
+                            else if (key === "edit") openEdit(item);
+                            else if (key === "delete")
+                              modal.confirm({
+                                title: `确定删除 ${item.name}？`,
+                                onOk: () => handleDelete(item),
+                              });
+                          },
+                        }}
+                        trigger={["click"]}
+                      >
+                        <Button type="text" size="small" icon={<MoreOutlined />} />
+                      </Dropdown>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div style={{ flexShrink: 0, marginTop: "auto" }}>
+          <ModoPagination
+            current={safePage}
+            pageSize={pageSize}
+            total={totalRows}
+            showTotal={(t) => `共 ${t} 条`}
+            onChange={(p, ps) => {
+              setPage(p);
+              setPageSize(ps);
+            }}
+          />
+        </div>
+        {editOpen && (
+          <McpEditorModal
+            open={editOpen}
+            item={editing}
+            scope="personal"
+            isAdmin={isAdmin}
+            onClose={() => setEditOpen(false)}
+            onSaved={() => {
+              setEditOpen(false);
+              void load();
+            }}
+            message={message}
+          />
+        )}
+        <McpTestDrawer target={testTarget} onClose={() => setTestTarget(null)} message={message} />
       </Card>
     </div>
   );

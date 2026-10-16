@@ -288,6 +288,20 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
       value: m.id,
     }));
 
+  // 可选模型唯一时默认选上（仅在字段为空时填充，不覆盖已保存配置或用户已选）
+  useEffect(() => {
+    if (!open || models.length === 0) return;
+    const chat = modelOptions("chat");
+    const embedding = modelOptions("embedding");
+    if (chat.length === 1 && !form.getFieldValue("summary_model_id")) {
+      form.setFieldValue("summary_model_id", chat[0].value);
+    }
+    if (embedding.length === 1 && !form.getFieldValue("embedding_model_id")) {
+      form.setFieldValue("embedding_model_id", embedding[0].value);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, models, form]);
+
   return (
     <>
       <Drawer

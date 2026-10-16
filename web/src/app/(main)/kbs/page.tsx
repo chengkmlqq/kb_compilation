@@ -29,14 +29,12 @@ import {
   apiDeleteKbCategory,
   apiGetDocument,
   apiListBuildEngines,
-  apiListDatasources,
   apiListKbCategories,
   apiListKbs,
   apiListModels,
   apiListSkillsRegistry,
   apiRenameKbCategory,
   BuildEngineItem,
-  DatasourceItem,
   DocItem,
   KbCategoryItem,
   KbCreatePayload,
@@ -238,7 +236,6 @@ export default function KbsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [skills, setSkills] = useState<{ name: string; description?: string }[]>([]);
   const [models, setModels] = useState<ModelItem[]>([]);
-  const [vectorStores, setVectorStores] = useState<DatasourceItem[]>([]);
   const [buildEngines, setBuildEngines] = useState<BuildEngineItem[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
@@ -572,26 +569,6 @@ export default function KbsPage() {
       }
     })();
   }, []);
-  // 向量库可选资源：数据源管理中 Elasticsearch / PostgreSQL 类型的资源
-  useEffect(() => {
-    void (async () => {
-      try {
-        const res = await apiListDatasources(1, 200);
-        const items =
-          res.success && res.data?.items
-            ? res.data.items.filter(
-                (d) =>
-                  d.dsType === "elasticsearch" ||
-                  d.dsType === "postgresql" ||
-                  d.dsType === "pg"
-              )
-            : [];
-        setVectorStores(items);
-      } catch {
-        // 向量库资源加载失败不阻断创建（留空走系统默认向量库）
-      }
-    })();
-  }, []);
 
   const embeddingOptions = useMemo(
     () =>
@@ -605,6 +582,17 @@ export default function KbsPage() {
     [models]
   );
 
+  // 可选模型唯一时默认选上（省去手动选择；仅在字段为空时填充，不覆盖用户已选）
+  useEffect(() => {
+    if (!createOpen) return;
+    if (chatOptions.length === 1 && !form.getFieldValue("summary_model_id")) {
+      form.setFieldValue("summary_model_id", chatOptions[0].value);
+    }
+    if (embeddingOptions.length === 1 && !form.getFieldValue("embedding_model_id")) {
+      form.setFieldValue("embedding_model_id", embeddingOptions[0].value);
+    }
+  }, [createOpen, chatOptions, embeddingOptions, form]);
+
   const openCreate = () => {
     form.resetFields();
     setCreateSection("wiki"); // 对齐智能体编辑器：每次打开回到首个分区
@@ -616,7 +604,6 @@ export default function KbsPage() {
     if (!values) return;
     const payload: KbCreatePayload = {
       name: values.name,
-      label: values.label,
       description: values.description,
       scope: values.scope || "personal",
       type: values.type || "document",
@@ -631,7 +618,6 @@ export default function KbsPage() {
       },
       embedding_model_id: values.embedding_model_id || undefined,
       summary_model_id: values.summary_model_id || undefined,
-      vector_store_id: values.vector_store_id || undefined,
       build_tape_id: values.build_engine || undefined,
       // 摘要策略固定 auto：系统按文档规模自动路由（小文档全文直塞 / 大文档分块合并），不再开放给用户选择
       summary_strategy: "auto",
@@ -918,22 +904,13 @@ export default function KbsPage() {
           destroyOnClose
         >
           <Form form={form} layout="vertical" preserve={false}>
-            <Row gutter={16}>
-              <Col span={12}>
-                <Form.Item
-                  name="name"
-                  label="知识库名称"
-                  rules={[{ required: true, message: "请输入知识库名称" }]}
-                >
-                  <Input placeholder="如：监管制度知识库" />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item name="label" label="标签（可选）">
-                  <Input placeholder="如：制度 / 技术" />
-                </Form.Item>
-              </Col>
-            </Row>
+            <Form.Item
+              name="name"
+              label="知识库名称"
+              rules={[{ required: true, message: "请输入知识库名称" }]}
+            >
+              <Input placeholder="如：监管制度知识库" />
+            </Form.Item>
             <Form.Item name="description" label="描述（可选）">
               <Input.TextArea rows={2} placeholder="知识库用途说明" />
             </Form.Item>
@@ -1036,23 +1013,6 @@ export default function KbsPage() {
                       extra="知识向量化用；留空 = 系统默认"
                     >
                       <Select allowClear options={embeddingOptions} placeholder="选择向量模型" />
-                    </Form.Item>
-                    <Form.Item
-                      name="vector_store_id"
-                      label="向量数据库"
-                      initialValue=""
-                      extra="选择该知识库使用的向量库来源（数据源管理中配置的 ES / PostgreSQL 资源）；创建后不可切换，留空 = 系统默认（pgvector）"
-                    >
-                      <Select
-                        options={[
-                          { label: "默认（系统配置 pgvector）", value: "" },
-                          ...vectorStores.map((s) => ({
-                            label: `${s.dsLabel || s.dsName || s.id}（${s.dsType}）`,
-                            value: s.id as string,
-                          })),
-                        ]}
-                        placeholder="选择向量数据库"
-                      />
                     </Form.Item>
                   </>
                 )}
