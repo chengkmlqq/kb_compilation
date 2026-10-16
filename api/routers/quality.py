@@ -102,16 +102,37 @@ def list_quality_runs(
     """质量评估任务列表（kb_quality_run 分页）。"""
     from sqlalchemy import func
 
-    q = select(QualityRun)
+    # 2026-10-16 fix(1038 Out of sort memory)：kb_quality_run.issues 是聚合后的
+    # 问题清单 JSON，实测整库评估单行可达 ~600KB——全列 SELECT + ORDER BY 时
+    # 优化器按成本模型选 filesort，宽行塞 sort_buffer（默认 256KB）即溢出 →
+    # 列表端点 500（与任务监控 parents 9c5d15b / 编排 runs dc63463 同源）。
+    # 排序只取窄列 id（filesort 只碰 id 行，永不爆 buffer），再按 id 回表取
+    # 全行并按位置还原顺序（不依赖优化器是否选索引）。
+    conds = []
     if kb_id:
-        q = q.where(QualityRun.kb_id == kb_id)
+        conds.append(QualityRun.kb_id == kb_id)
     if status:
-        q = q.where(QualityRun.status == status)
-    total = db.execute(select(func.count()).select_from(q.subquery())).scalar() or 0
-    rows = db.execute(
-        q.order_by(QualityRun.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-    ).scalars().all()
-    items = [_run_item(r) for r in rows]
+        conds.append(QualityRun.status == status)
+
+    total_stmt = select(func.count()).select_from(QualityRun)
+    id_stmt = select(QualityRun.id)
+    if conds:
+        total_stmt = total_stmt.where(*conds)
+        id_stmt = id_stmt.where(*conds)
+    total = db.execute(total_stmt).scalar() or 0
+    run_ids: list[str] = list(
+        db.execute(
+            id_stmt.order_by(QualityRun.created_at.desc(), QualityRun.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).scalars().all()
+    )
+    items: list[dict] = []
+    if run_ids:
+        pos = {rid: i for i, rid in enumerate(run_ids)}
+        rows = db.execute(select(QualityRun).where(QualityRun.id.in_(run_ids))).scalars().all()
+        for r in sorted(rows, key=lambda r: pos.get(r.id, len(run_ids))):
+            items.append(_run_item(r))
     return {"success": True, "data": {"total": total, "page": page, "page_size": page_size,
                                       "items": items}}
 
@@ -123,11 +144,14 @@ def quality_run_detail(quality_id: str, db: Session = Depends(get_db),
     run = db.get(QualityRun, quality_id)
     if not run:
         raise HTTPException(status_code=404, detail="评估任务不存在")
+    # 2026-10-16 fix(1038 Out of sort memory)：kb_quality_report.issues 同为
+    # 大 JSON（实测单行 ~580KB），库内 ORDER BY dim 仍要 filesort 宽行 →
+    # 详情端点 500。改为取回后在应用层按 dim 排序（每 run 至多 3 行）。
     reports = db.execute(
-        select(QualityReport).where(QualityReport.run_id == run.id).order_by(QualityReport.dim)
+        select(QualityReport).where(QualityReport.run_id == run.id)
     ).scalars().all()
     dims = {}
-    for rp in reports:
+    for rp in sorted(reports, key=lambda x: x.dim or ""):
         dims[rp.dim] = {"metrics": rp.metrics or {}, "issues": rp.issues or []}
     data = {**_run_item(run), "reports": dims}
     return {"success": True, "data": data}
