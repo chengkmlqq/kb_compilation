@@ -446,12 +446,15 @@ async def upload_file(
     return {"success": True, "data": _file_to_dict(row)}
 
 
-def _content_disposition(file_name: str) -> str:
-    """RFC 5987 编码的 Content-Disposition（中文/特殊字符文件名必须走 filename*）。"""
+def _content_disposition(file_name: str, disposition: str = "attachment") -> str:
+    """RFC 5987 编码的 Content-Disposition（中文/特殊字符文件名必须走 filename*）。
+
+    disposition 默认 attachment（下载语义）；预览等内联场景传 "inline"。
+    """
     from urllib.parse import quote
 
     ascii_fallback = re.sub(r'[^\x20-\x7e]', "_", file_name).replace('"', "")
-    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(file_name)}"
+    return f'{disposition}; filename="{ascii_fallback}"; filename*=UTF-8\'\'{quote(file_name)}'
 
 
 def _resolve_stored_path(rel_path: str) -> str:

@@ -114,3 +114,52 @@ def test_download_404_when_no_storage_path(client_and_db):
 
     assert r.status_code == 404
     assert r.json().get("detail") == "物理文件缺失"
+
+
+def _mk_doc_typed(
+    db, storage_path: str, file_name: str, file_ext: str, doc_id: str = "docpv0001"
+) -> str:
+    _mk_kb(db)
+    doc = KbDocument(
+        id=doc_id,
+        kb_id="kbdl0001",
+        file_name=file_name,
+        file_ext=file_ext,
+        storage_path=storage_path,
+        parse_state="READY",
+    )
+    db.add(doc)
+    db.commit()
+    return doc.id
+
+
+@pytest.mark.parametrize(
+    ("file_name", "file_ext", "expect_mime"),
+    [
+        ("a.pdf", "pdf", "application/pdf"),
+        ("a.md", "md", "text/markdown"),
+        ("a.txt", "txt", "text/plain"),
+        ("a.png", "png", "image/png"),
+    ],
+)
+def test_preview_returns_inline_with_correct_mime(
+    client_and_db, monkeypatch, file_name, file_ext, expect_mime
+):
+    """预览接口必须按扩展名返回正确 MIME 且为 inline。
+
+    KB 文档上传只写 storage_path、不建 SysFile 行，预览读取时 mime 曾恒为
+    application/octet-stream —— 前端 blob.type 为 octet-stream 时 iframe 会触发
+    下载而非内联渲染（PDF 预览变下载的根因）。此用例固化「预览 MIME 按扩展名推断」。
+    """
+    client, db = client_and_db
+    doc_id = _mk_doc_typed(
+        db, f"kb_documents/kbdl0001/{file_name}", file_name, file_ext
+    )
+    monkeypatch.setattr("api.services.storage.get_bytes", lambda p: b"preview-bytes")
+
+    r = client.get(f"/api/v1/kbs/kbdl0001/documents/{doc_id}/preview")
+
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith(expect_mime)
+    assert r.headers["content-disposition"].startswith("inline")
+    assert r.content == b"preview-bytes"

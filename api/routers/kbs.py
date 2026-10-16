@@ -1581,6 +1581,50 @@ _DOCX_MIME = (
 # 需要服务端转 DOCX 才能渲染的 Word 扩展名
 _WORD_PREVIEW_CONVERT_EXTS = ("doc", "rtf", "odt")
 
+# 预览 MIME 显式映射（优先于 mimetypes.guess_type，避免平台差异漏判：
+# md/csv/tsv 在部分平台无映射，csv 甚至会被判成 application/vnd.ms-excel）
+_PREVIEW_MIME_OVERRIDES = {
+    "pdf": "application/pdf",
+    "md": "text/markdown",
+    "markdown": "text/markdown",
+    "csv": "text/csv",
+    "tsv": "text/tab-separated-values",
+    "txt": "text/plain",
+    "log": "text/plain",
+    "html": "text/html",
+    "htm": "text/html",
+    "json": "application/json",
+    "svg": "image/svg+xml",
+    "docx": _DOCX_MIME,
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "mp3": "audio/mpeg",
+    "wav": "audio/wav",
+    "m4a": "audio/mp4",
+    "flac": "audio/flac",
+    "ogg": "audio/ogg",
+    "aac": "audio/aac",
+    "opus": "audio/ogg",
+}
+
+
+def _preview_mime(file_name: str, stored_mime: str | None) -> str:
+    """预览响应的 MIME：优先按扩展名推断，回落系统 guess_type，最后用存储值。
+
+    背景：KB 文档上传只写 kb_document.storage_path、不建 SysFile 行，预览读取时
+    mime 恒为 application/octet-stream——iframe 加载 octet-stream blob 会触发
+    下载而不是内联渲染（PDF 预览变下载的根因）。预览必须返回正确的媒体类型。
+    """
+    import mimetypes
+
+    ext = Path(file_name or "").suffix.lstrip(".").lower()
+    if ext in _PREVIEW_MIME_OVERRIDES:
+        return _PREVIEW_MIME_OVERRIDES[ext]
+    guessed, _ = mimetypes.guess_type(file_name or "")
+    if guessed:
+        return guessed
+    return stored_mime or "application/octet-stream"
+
 
 def _read_document_bytes(db: Session, doc) -> tuple[bytes, str, str]:
     """读取文档原始字节（本地 / MinIO 统一），返回 (data, file_name, mime_type)。"""
@@ -1658,12 +1702,18 @@ def preview_document(
             return StreamingResponse(
                 io.BytesIO(converted),
                 media_type=_DOCX_MIME,
-                headers={"Content-Disposition": _content_disposition(f"{stem}.docx")},
+                headers={
+                    "Content-Disposition": _content_disposition(
+                        f"{stem}.docx", "inline"
+                    )
+                },
             )
         return StreamingResponse(
             io.BytesIO(data),
-            media_type=mime,
-            headers={"Content-Disposition": _content_disposition(file_name)},
+            media_type=_preview_mime(file_name, mime),
+            headers={
+                "Content-Disposition": _content_disposition(file_name, "inline")
+            },
         )
 
     # 其他类型：与 download 一致（本地文件走 FileResponse，MinIO 走字节流）
@@ -1674,18 +1724,24 @@ def preview_document(
         if f:
             local_path = _local_fallback_path(f.storage_path)
             if os.path.exists(local_path):
+                # 预览走 inline：不传 filename（starlette FileResponse 传 filename
+                # 会强制 attachment，浏览器/iframe 会转为下载）
                 return FileResponse(
                     local_path,
-                    media_type=f.mime_type or "application/octet-stream",
-                    filename=f.file_name,
+                    media_type=_preview_mime(f.file_name, f.mime_type),
+                    headers={
+                        "Content-Disposition": _content_disposition(
+                            f.file_name, "inline"
+                        )
+                    },
                 )
             if not _is_s3_row(f):
                 raise HTTPException(status_code=404, detail="物理文件缺失")
     data, file_name, mime = _read_document_bytes(db, doc)
     return StreamingResponse(
         io.BytesIO(data),
-        media_type=mime,
-        headers={"Content-Disposition": _content_disposition(file_name)},
+        media_type=_preview_mime(file_name, mime),
+        headers={"Content-Disposition": _content_disposition(file_name, "inline")},
     )
 
 

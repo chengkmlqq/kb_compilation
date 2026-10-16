@@ -269,7 +269,17 @@ export default function DocPreviewModal({ kbId, doc, onClose, embedded }: Props)
         setKind(k);
         const ab = await blob.arrayBuffer();
         const u8 = new Uint8Array(ab);
-        if (k === "image" || k === "pdf" || k === "audio") {
+        if (k === "pdf") {
+          // 兜底：后端若以 application/octet-stream 返回（旧行为，未重建镜像时仍在），
+          // iframe 加载该 blob 会触发下载而非内联渲染；这里强制按 pdf 重建 blob。
+          const safePdf =
+            blob.type === "application/pdf"
+              ? blob
+              : new Blob([blob], { type: "application/pdf" });
+          const u = URL.createObjectURL(safePdf);
+          urlBak.push(u);
+          setBlobUrl(u);
+        } else if (k === "image" || k === "audio") {
           const u = URL.createObjectURL(blob);
           urlBak.push(u);
           setBlobUrl(u);
