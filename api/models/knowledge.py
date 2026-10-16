@@ -445,6 +445,24 @@ class QualityReport(Base):
     )
 
 
+class KbCategory(Base):
+    """知识库分类（知识库页左侧分类树实体，2026-10）。
+
+    分类以 name 关联知识库的 label（KB.label == 分类名 = 归属该分类）；本表只
+    持久化分类实体本身（含暂无知识库归属的「空分类」）—— 分类树 = 本表行 ∪
+    可见知识库的 label，按 name 合并。
+    """
+
+    __tablename__ = "kb_category"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_by: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
 class KbAgent(Base):
     """An AI agent (QA assistant) bound to knowledge bases.
 

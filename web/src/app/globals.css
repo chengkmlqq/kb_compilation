@@ -3700,6 +3700,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
    （对齐 .header-search + arco inner-wrapper「padding 0 12px」+ has-prefix 文本再让 12px） */
 .kb-kbs-search .ant-input-affix-wrapper {
   width: 360px;
+  height: 28px;
   padding: 0 12px;
   border-radius: 13px;
   background: #eff4f9;
@@ -3707,14 +3708,14 @@ html[data-theme="dark"] .kb-citation-web:hover {
 }
 .kb-kbs-search .ant-input-affix-wrapper input.ant-input {
   font-size: 12px;
+  height: 26px;
+  line-height: 26px;
+  padding: 0;
 }
 .kb-kbs-search .ant-input-affix-wrapper input::placeholder {
   color: #79879c;
 }
-.kb-kbs-search .ant-input-group-addon,
-.kb-kbs-search .ant-input-group-wrapper .ant-input-search-button {
-  display: none !important;
-}
+/* 2026-10-19 头部搜索改为普通 Input（无查询按钮/addon；原 Input.Search 组按钮规则已移除） */
 .kb-kbs-search .ant-input-prefix {
   display: inline-flex;
   align-items: center;
@@ -3753,11 +3754,16 @@ html[data-theme="dark"] .kb-citation-web:hover {
   overflow: hidden;
 }
 /* 分类搜索框（对齐 .knowledge-category-tree-toolbar：padding 12px 12px 8px、radius 16px、
-   右侧内置搜索图标 14px / text-2 色） */
+   右侧内置搜索图标 14px / text-2 色；控件高 28px 对齐 modo）；右侧 + 为新建分类入口 */
 .kb-kbs-category-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   padding: 12px 12px 8px;
 }
 .kb-kbs-category-search .ant-input-affix-wrapper {
+  flex: 1;
+  height: 28px;
   border-radius: 16px;
   padding: 0 12px;
   background: #eff4f9;
@@ -3765,6 +3771,21 @@ html[data-theme="dark"] .kb-citation-web:hover {
 }
 .kb-kbs-category-search .ant-input-affix-wrapper input.ant-input {
   font-size: 12px;
+  height: 26px;
+  line-height: 26px;
+  padding: 0;
+}
+.kb-kbs-category-add.ant-btn {
+  height: 28px;
+  width: 28px;
+  flex-shrink: 0;
+  padding: 0;
+  color: #4d5e7d;
+  border-radius: 14px;
+}
+.kb-kbs-category-add.ant-btn:hover {
+  color: #3261ce;
+  background: #eff4f9;
 }
 .kb-kbs-category-search .ant-input-affix-wrapper input::placeholder {
   color: #79879c;

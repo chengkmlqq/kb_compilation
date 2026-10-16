@@ -3899,3 +3899,35 @@ export function apiDeleteQualityRun(qualityId: string) {
     { method: "DELETE" },
   );
 }
+
+// ---- 知识库分类（左侧分类树 CRUD，2026-10-19）----
+export interface KbCategoryItem {
+  id?: string | null;
+  name: string;
+  count: number;
+}
+
+export function apiListKbCategories() {
+  return request<{ items: KbCategoryItem[] }>("/api/v1/kb-categories");
+}
+
+export function apiCreateKbCategory(name: string) {
+  return request<{ id: string; name: string }>("/api/v1/kb-categories", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function apiRenameKbCategory(name: string, newName: string) {
+  return request<{ name: string; updated_kbs: number; row_renamed: boolean }>(
+    `/api/v1/kb-categories?name=${encodeURIComponent(name)}`,
+    { method: "PATCH", body: JSON.stringify({ name: newName }) },
+  );
+}
+
+export function apiDeleteKbCategory(name: string) {
+  return request<{ name: string; updated_kbs: number; row_deleted: boolean }>(
+    `/api/v1/kb-categories?name=${encodeURIComponent(name)}`,
+    { method: "DELETE" },
+  );
+}

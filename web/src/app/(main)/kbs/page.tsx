@@ -20,20 +20,26 @@ import {
 import {
   BookOutlined,
   DeleteOutlined,
+  PlusOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
 import {
   apiCreateKb,
+  apiCreateKbCategory,
   apiDeleteKb,
+  apiDeleteKbCategory,
   apiGetDocument,
   apiListBuildEngines,
   apiListDatasources,
+  apiListKbCategories,
   apiListKbs,
   apiListModels,
   apiListSkillsRegistry,
+  apiRenameKbCategory,
   BuildEngineItem,
   DatasourceItem,
   DocItem,
+  KbCategoryItem,
   KbCreatePayload,
   KbItem,
   ModelItem,
@@ -199,6 +205,15 @@ export default function KbsPage() {
   const [selectedLabel, setSelectedLabel] = useState<string>("all");
   // 2026-10-16 DSB corpus_info 对齐：分类树顶部「搜索分类」框
   const [categoryKeyword, setCategoryKeyword] = useState("");
+  // 2026-10-19 分类树 CRUD：数据来自 /api/v1/kb-categories（kb_category 行 ∪ 可见 KB label）
+  const [categories, setCategories] = useState<KbCategoryItem[]>([]);
+  const [catModal, setCatModal] = useState<
+    | { mode: "create" }
+    | { mode: "rename"; name: string }
+    | null
+  >(null);
+  const [catName, setCatName] = useState("");
+  const [catSubmitting, setCatSubmitting] = useState(false);
   // DSB 对齐：分类树展开态（DSB 默认展开全部）+ 分页页码输入框文本
   const [treeExpanded, setTreeExpanded] = useState(true);
   const [jumpText, setJumpText] = useState("1");
@@ -362,17 +377,87 @@ export default function KbsPage() {
     return list;
   }, [kbs, search, selectedLabel]);
 
-  // DSB 对齐：左侧分类树 = 「全部」+ 各标签（DSB 分类树不展示计数，按卡片数倒序）
-  const labels = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const k of kbs) {
-      const l = k.label || "无标签";
-      map.set(l, (map.get(l) || 0) + 1);
+  // 2026-10-19 分类树数据源：后端合并 kb_category 行与可见知识库的 label（含计数，倒序）
+  const loadCategories = useCallback(async () => {
+    try {
+      const res = await apiListKbCategories();
+      if (res.success) setCategories(res.data?.items ?? []);
+    } catch {
+      // 分类加载失败不阻断页面（树回退为空）
     }
-    return Array.from(map.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([label]) => label);
-  }, [kbs]);
+  }, []);
+
+  useEffect(() => {
+    void loadCategories();
+  }, [loadCategories]);
+
+  const openCatCreate = () => {
+    setCatName("");
+    setCatModal({ mode: "create" });
+  };
+
+  const openCatRename = (name: string) => {
+    setCatName(name);
+    setCatModal({ mode: "rename", name });
+  };
+
+  const submitCatModal = async () => {
+    const name = catName.trim();
+    if (!name) {
+      message.warning("请输入分类名称");
+      return;
+    }
+    if (catModal?.mode === "rename" && name === catModal.name) {
+      setCatModal(null);
+      return;
+    }
+    setCatSubmitting(true);
+    try {
+      const res =
+        catModal?.mode === "rename"
+          ? await apiRenameKbCategory(catModal.name, name)
+          : await apiCreateKbCategory(name);
+      if (res.success) {
+        message.success(catModal?.mode === "rename" ? "已重命名" : "分类已创建");
+        setCatModal(null);
+        void loadCategories();
+        void load(); // 重命名/删除会影响知识库 label 展示
+      } else {
+        message.error(res.message || "操作失败");
+      }
+    } catch (e) {
+      message.error(`操作失败: ${String(e)}`);
+    } finally {
+      setCatSubmitting(false);
+    }
+  };
+
+  const doDeleteCategory = (name: string, count: number) => {
+    modal.confirm({
+      title: `删除分类「${name}」？`,
+      content:
+        count > 0
+          ? `该分类下 ${count} 个知识库将回到「未分类」。`
+          : "删除后不可恢复。",
+      okText: "删除",
+      cancelText: "取消",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          const res = await apiDeleteKbCategory(name);
+          if (res.success) {
+            message.success("已删除");
+            void loadCategories();
+            void load();
+          } else {
+            message.error(res.message || "删除失败");
+          }
+        } catch (e) {
+          message.error(`删除失败: ${String(e)}`);
+        }
+      },
+    });
+  };
 
   // 分页（DSB 同款：total > 页容量时才出现分页条，页码输入框可跳页）
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -558,46 +643,86 @@ export default function KbsPage() {
               onChange={(e) => setCategoryKeyword(e.target.value)}
               suffix={<SearchLineIcon />}
             />
+            {/* 2026-10-19 分类 CRUD 入口：新建分类 */}
+            <Button
+              type="text"
+              size="small"
+              className="kb-kbs-category-add"
+              icon={<PlusOutlined />}
+              title="新建分类"
+              onClick={openCatCreate}
+            />
           </div>
           <div className="kb-kbs-category-tree-main">
-            {/* 根节点「全部」（对齐 arco Tree aria-level=0：切换器 12x12 底片 + 9px 三角） */}
-            <div
-              className="kb-kbs-tree-node kb-kbs-tree-node--root"
-              onClick={() => setSelectedLabel("all")}
+            {/* 根节点「全部」（对齐 arco Tree aria-level=0：切换器 12x12 底片 + 9px 三角）；
+                右键 = 新建分类 */}
+            <Dropdown
+              trigger={["contextMenu"]}
+              menu={{
+                items: [{ key: "create", label: "新建分类", onClick: openCatCreate }],
+              }}
             >
-              <span className="kb-kbs-tree-indent" aria-hidden="true" />
-              <span
-                className="kb-kbs-tree-switcher"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setTreeExpanded((v) => !v);
-                }}
+              <div
+                className="kb-kbs-tree-node kb-kbs-tree-node--root"
+                onClick={() => setSelectedLabel("all")}
               >
-                <span className={`kb-kbs-tree-switcher-icon${treeExpanded ? " expanded" : ""}`}>
-                  <CaretDownIcon />
+                <span className="kb-kbs-tree-indent" aria-hidden="true" />
+                <span
+                  className="kb-kbs-tree-switcher"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTreeExpanded((v) => !v);
+                  }}
+                >
+                  <span className={`kb-kbs-tree-switcher-icon${treeExpanded ? " expanded" : ""}`}>
+                    <CaretDownIcon />
+                  </span>
                 </span>
-              </span>
-              <span
-                className={`kb-kbs-tree-title${selectedLabel === "all" ? " active" : ""}`}
-                title="全部"
-              >
-                全部
-              </span>
-            </div>
+                <span
+                  className={`kb-kbs-tree-title${selectedLabel === "all" ? " active" : ""}`}
+                  title="全部"
+                >
+                  全部
+                </span>
+              </div>
+            </Dropdown>
             {treeExpanded &&
-              labels.map((l) => (
-                <div key={l} className="kb-kbs-tree-node" onClick={() => setSelectedLabel(l)}>
-                  <span className="kb-kbs-tree-indent" aria-hidden="true">
-                    <span className="kb-kbs-tree-indent-block" />
-                  </span>
-                  <span className="kb-kbs-tree-switcher" />
-                  <span
-                    className={`kb-kbs-tree-title${selectedLabel === l ? " active" : ""}`}
-                    title={l}
+              categories.map((c) => (
+                <Dropdown
+                  key={c.name}
+                  trigger={["contextMenu"]}
+                  menu={{
+                    items: [
+                      {
+                        key: "rename",
+                        label: "重命名",
+                        onClick: () => openCatRename(c.name),
+                      },
+                      {
+                        key: "delete",
+                        label: "删除",
+                        danger: true,
+                        onClick: () => doDeleteCategory(c.name, c.count),
+                      },
+                    ],
+                  }}
+                >
+                  <div
+                    className="kb-kbs-tree-node"
+                    onClick={() => setSelectedLabel(c.name)}
+                    title={c.name}
                   >
-                    {l}
-                  </span>
-                </div>
+                    <span className="kb-kbs-tree-indent" aria-hidden="true">
+                      <span className="kb-kbs-tree-indent-block" />
+                    </span>
+                    <span className="kb-kbs-tree-switcher" />
+                    <span
+                      className={`kb-kbs-tree-title${selectedLabel === c.name ? " active" : ""}`}
+                    >
+                      {c.name}
+                    </span>
+                  </div>
+                </Dropdown>
               ))}
           </div>
         </div>
@@ -900,6 +1025,30 @@ export default function KbsPage() {
           </Form>
         </Modal>
 
+        {/* 新建 / 重命名分类弹窗（2026-10-19 分类树 CRUD） */}
+        <Modal
+          title={catModal?.mode === "rename" ? "重命名分类" : "新建分类"}
+          open={catModal !== null}
+          onOk={() => void submitCatModal()}
+          onCancel={() => setCatModal(null)}
+          okText="保存"
+          cancelText="取消"
+          confirmLoading={catSubmitting}
+          destroyOnClose
+        >
+          <Form layout="vertical" style={{ marginTop: 8 }}>
+            <Form.Item label="分类名称" required>
+              <Input
+                value={catName}
+                onChange={(e) => setCatName(e.target.value)}
+                placeholder="如：制度 / 技术"
+                maxLength={64}
+                onPressEnter={() => void submitCatModal()}
+              />
+            </Form.Item>
+          </Form>
+        </Modal>
+
         <KBConfigModal
           kb={configKb}
           open={configKb !== null}
@@ -937,13 +1086,13 @@ export default function KbsPage() {
         }}
         tabBarExtraContent={
           <div className="kb-kbs-tab-actions">
-            <Input.Search
+            <Input
               className="kb-kbs-search"
               placeholder="输入并搜索..."
               prefix={<SearchColorIcon size={14} />}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              onSearch={(v) => setSearch(v.trim())}
+              onPressEnter={() => setSearch(search.trim())}
             />
             <Button
               className="kb-kbs-new-btn"
