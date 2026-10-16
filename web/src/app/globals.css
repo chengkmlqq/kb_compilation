@@ -4359,15 +4359,16 @@ html[data-theme="dark"] .kb-citation-web:hover {
   overflow: hidden;
 }
 /* 分类搜索框（对齐 DSB 文档库左树 WeknoraDocTree 的搜索：容器 padding 8px 8px 6px、
-   arco 默认输入框 = 高 28px / 圆角 2px / fill-2 底 / 右侧搜索图标 13px #9ca3af；
-   2026-10-19 移除工具栏「+ 新建分类」按钮，新建入口只留「全部」节点右键） */
+   高 28px / fill-2 底 / 右侧搜索图标 13px #9ca3af；
+   2026-10-19 移除工具栏「+ 新建分类」按钮，新建入口只留「全部」节点右键；
+   2026-10-20 圆角 2px → 14px 胶囊（用户要求「搜索分类输入框也用圆角」，与顶部搜索同款）） */
 .kb-kbs-category-search {
   flex-shrink: 0;
   padding: 8px 8px 6px;
 }
 .kb-kbs-category-search .ant-input-affix-wrapper {
   height: 28px;
-  border-radius: 2px;
+  border-radius: 14px;
   padding: 0 12px;
   background: #eff4f9;
   border-color: transparent;
