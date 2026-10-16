@@ -4,8 +4,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { App } from "antd";
 import { InboxOutlined } from "@ant-design/icons";
 import { usePathname } from "next/navigation";
-import { apiUploadDocumentWithProgress } from "@/lib/api";
+import { apiErrorMessage, apiGetSupportedFileTypes, apiUploadArchive, apiUploadDocumentWithProgress } from "@/lib/api";
+import { createDocFolderEnsurer, type DocFolderEnsurer } from "@/lib/doc-folder-ensure";
 import { collectDroppedFiles, MAX_DROP_FILES, MAX_FILE_SIZE_MB } from "@/lib/drop-files";
+import { dirsFromPath } from "@/lib/upload-dir";
+import { DEFAULT_SUPPORTED_EXTS, isArchiveFileName } from "@/lib/upload-support";
 import {
   emitFileDrop,
   emitUploadTask,
@@ -42,11 +45,25 @@ export default function GlobalDropZone() {
 
   const [dragging, setDragging] = useState(false);
   const [target, setTarget] = useState<FileDropTarget | null>(null);
+  // 系统可处理的格式白名单（与后端门禁同源；拉取失败用本地兜底清单）
+  const [supportedExts, setSupportedExts] = useState<string[]>(DEFAULT_SUPPORTED_EXTS);
 
   const dragCounter = useRef(0);
   const showTimer = useRef<number | null>(null);
   const hideTimer = useRef<number | null>(null);
   const mounted = useRef(true);
+
+  // 拉取上传白名单（只放行系统能解析的格式）
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await apiGetSupportedFileTypes();
+        if (res.success && res.data?.types?.length) setSupportedExts(res.data.types);
+      } catch {
+        // 拉取失败不阻断拖放：沿用本地兜底清单
+      }
+    })();
+  }, []);
 
   // 订阅拖放目标（知识库页/技能页注册），用于遮罩文案
   useEffect(() => {
@@ -65,20 +82,25 @@ export default function GlobalDropZone() {
   }, []);
 
   // 单文件上传到 KB（进度/结果经 uploadTask 事件上报，支持重试）
-  const uploadToKb = useCallback((kbId: string, file: File, taskId: string) => {
+  const uploadToKb = useCallback((kbId: string, file: File, taskId: string, folderId?: string) => {
     emitUploadTask({
       id: taskId,
       name: file.name,
       size: file.size,
       status: "uploading",
       progress: 0,
-      retry: () => uploadToKb(kbId, file, taskId),
+      retry: () => uploadToKb(kbId, file, taskId, folderId),
     });
     void (async () => {
       try {
-        const res = await apiUploadDocumentWithProgress(kbId, file, (pct) => {
-          emitUploadTask({ id: taskId, name: file.name, size: file.size, status: "uploading", progress: pct });
-        });
+        const res = await apiUploadDocumentWithProgress(
+          kbId,
+          file,
+          (pct) => {
+            emitUploadTask({ id: taskId, name: file.name, size: file.size, status: "uploading", progress: pct });
+          },
+          folderId || undefined,
+        );
         if (res.success) {
           emitUploadTask({ id: taskId, name: file.name, size: file.size, status: "success", progress: 100 });
         } else {
@@ -104,10 +126,75 @@ export default function GlobalDropZone() {
     })();
   }, []);
 
+  /**
+   * 拖入 zip 压缩包：走服务端自动解包（POST /documents/upload-archive），
+   * 包内目录结构由后端还原（保留目录层级），进度/结果仍经 uploadTask 上报。
+   */
+  const uploadArchiveToKb = useCallback((kbId: string, file: File, folderId?: string) => {
+    const taskId = makeUploadTaskId("kb-drop-zip");
+    const label = `${file.name}（压缩包自动解包）`;
+    emitUploadTask({
+      id: taskId,
+      name: label,
+      size: file.size,
+      status: "uploading",
+      progress: 0,
+      retry: () => uploadArchiveToKb(kbId, file, folderId),
+    });
+    void (async () => {
+      try {
+        const res = await apiUploadArchive(
+          kbId,
+          file,
+          (pct) => {
+            emitUploadTask({ id: taskId, name: label, size: file.size, status: "uploading", progress: pct });
+          },
+          folderId || undefined,
+        );
+        if (res.success && res.data) {
+          const d = res.data;
+          const skippedTotal =
+            d.skipped.hidden + d.skipped.empty + d.skipped.unsupported + d.skipped.oversize + d.skipped.failed;
+          const summary = `解压上传 ${d.created_count} 个文件${skippedTotal > 0 ? `，跳过 ${skippedTotal} 个` : ""}`;
+          if (d.created_count === 0) {
+            emitUploadTask({
+              id: taskId,
+              name: label,
+              size: file.size,
+              status: "error",
+              progress: 100,
+              error: skippedTotal > 0 ? `${summary}（压缩包内没有可处理的文件）` : "压缩包内没有可处理的文件",
+            });
+          } else {
+            emitUploadTask({ id: taskId, name: `${file.name}｜${summary}`, size: file.size, status: "success", progress: 100 });
+          }
+        } else {
+          emitUploadTask({
+            id: taskId,
+            name: label,
+            size: file.size,
+            status: "error",
+            progress: 100,
+            error: apiErrorMessage(res, "压缩包上传失败"),
+          });
+        }
+      } catch (e) {
+        emitUploadTask({
+          id: taskId,
+          name: label,
+          size: file.size,
+          status: "error",
+          progress: 100,
+          error: e instanceof Error ? e.message : "压缩包上传失败",
+        });
+      }
+    })();
+  }, []);
+
   const handleDropFiles = useCallback(
     async (dt: DataTransfer) => {
-      const result = await collectDroppedFiles(dt);
-      if (result.files.length === 0) {
+      const result = await collectDroppedFiles(dt, { supported: supportedExts });
+      if (result.entries.length === 0) {
         const reasons = Array.from(new Set(result.rejected.map((r) => r.reason)));
         message.warning(
           reasons.length > 0
@@ -118,17 +205,42 @@ export default function GlobalDropZone() {
       }
       const cur = getFileDropTarget();
       if (cur?.kbId) {
-        for (const f of result.files) {
-          uploadToKb(cur.kbId, f, makeUploadTaskId("kb-drop"));
+        const kbId = cur.kbId;
+        const baseFolderId = cur.folderId || "";
+        // 拖入目录时按相对路径在知识库内创建/复用文档目录（与「添加知识 → 上传文件夹」同语义；
+        // 目录层级来自 collectDroppedFiles 的 path，绝不落到文件名上）
+        let ensurer: DocFolderEnsurer | null = null;
+        if (result.entries.some((e) => dirsFromPath(e.path).length > 0)) {
+          ensurer = await createDocFolderEnsurer(kbId, baseFolderId).catch(() => null);
+          if (!ensurer) message.warning("目录读取失败，已按当前目录平铺上传");
+        }
+        for (const entry of result.entries) {
+          if (cur.accept && !cur.accept(entry.file)) continue;
+          // zip 压缩包：走服务端自动解包（包内目录结构由后端还原，无需逐级建目录）
+          if (isArchiveFileName(entry.file.name)) {
+            uploadArchiveToKb(kbId, entry.file, baseFolderId);
+            continue;
+          }
+          let folderId = baseFolderId;
+          const dirs = dirsFromPath(entry.path);
+          if (ensurer && dirs.length > 0) {
+            try {
+              folderId = await ensurer.ensure(dirs);
+            } catch (e) {
+              console.error("ensure doc folder failed", e);
+              folderId = baseFolderId;
+            }
+          }
+          uploadToKb(kbId, entry.file, makeUploadTaskId("kb-drop"), folderId || undefined);
         }
         cur.onUploaded?.();
       } else if (hasFileDropListener()) {
-        emitFileDrop(result.files);
+        emitFileDrop(result.entries.map((e) => e.file));
       } else {
         message.warning("请先进入知识库或技能页，再拖入文件");
       }
     },
-    [message, uploadToKb],
+    [message, supportedExts, uploadArchiveToKb, uploadToKb],
   );
 
   useEffect(() => {
@@ -217,7 +329,7 @@ export default function GlobalDropZone() {
         <InboxOutlined style={{ fontSize: 48, color: "#1677ff" }} />
         <div style={{ fontSize: 18, fontWeight: 600, color: "#1677ff" }}>{label}</div>
         <div style={{ fontSize: 13, color: "#666" }}>
-          支持目录拖入 · 单次 ≤ {MAX_DROP_FILES} 个文件 · 单文件 ≤ {MAX_FILE_SIZE_MB}MB
+          支持目录与 zip 压缩包（自动解包）· 单次 ≤ {MAX_DROP_FILES} 个文件 · 单文件 ≤ {MAX_FILE_SIZE_MB}MB
         </div>
       </div>
     </div>

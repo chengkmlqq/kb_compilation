@@ -32,6 +32,27 @@ export function relativePathOf(file: File): string {
   return (file as File & { webkitRelativePath?: string }).webkitRelativePath || "";
 }
 
+/**
+ * 取路径最后一段（文件名）。
+ *
+ * 兼容两种「名字里带路径」的形态：`<input webkitdirectory>` 走
+ * `webkitRelativePath`，而**拖入目录**时浏览器可能把相对路径直接写进
+ * `File.name`（Chrome 实测）——兜底取 basename，避免路径被当成文件名入库。
+ */
+export function baseNameOfPath(pathOrName: string): string {
+  const parts = pathOrName.split("/").filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : pathOrName;
+}
+
+/**
+ * 由相对路径推导需要在知识库内创建的目录层级：去掉顶层所选/拖入目录本身
+ * 与文件名（"制度/2024/a.pdf" → ["2024"]；根级文件 → []）。
+ */
+export function dirsFromPath(pathOrName: string): string[] {
+  const parts = pathOrName.split("/").filter(Boolean);
+  return parts.slice(1, -1);
+}
+
 /** 本次选择是否来自「上传文件夹」（存在带相对路径的文件） */
 export function isDirectoryUpload(files: File[]): boolean {
   return files.some((f) => relativePathOf(f) !== "");
@@ -52,7 +73,6 @@ export function collectDirFiles(files: File[]): CollectDirFilesResult {
     if (parts.length === 0) parts.push(file.name);
     const baseName = parts[parts.length - 1];
     const dirParts = parts.slice(0, -1);
-
     const hidden =
       JUNK_FILE_NAMES.has(baseName.toLowerCase()) ||
       baseName.startsWith(".") ||
@@ -66,7 +86,7 @@ export function collectDirFiles(files: File[]): CollectDirFilesResult {
       continue;
     }
     // 去掉顶层所选目录名（parts[0]）与文件名（parts[-1]）→ 需要还原的目录层级
-    entries.push({ file, dirs: parts.slice(1, -1) });
+    entries.push({ file, dirs: dirsFromPath(rel) });
   }
 
   return { entries, hiddenSkipped, emptySkipped };

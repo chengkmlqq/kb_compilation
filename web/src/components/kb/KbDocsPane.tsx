@@ -58,12 +58,15 @@ import {
   apiDeleteDocFolder,
   apiDeleteDocument,
   apiDownloadDocument,
+  apiErrorMessage,
   apiGetKb,
+  apiGetSupportedFileTypes,
   apiListBuildEngines,
   apiListDocFolders,
   apiListDocuments,
   apiMoveDocumentsToFolder,
   apiReparseDocument,
+  apiUploadArchive,
   apiUploadDocumentWithProgress,
   BuildEngineItem,
   DocFolderItem,
@@ -71,7 +74,15 @@ import {
   KbItem,
 } from "@/lib/api";
 import { emitUploadTask, makeUploadTaskId, setFileDropTarget } from "@/lib/upload-bus";
+import { createDocFolderEnsurer } from "@/lib/doc-folder-ensure";
 import { collectDirFiles, isDirectoryUpload, relativePathOf } from "@/lib/upload-dir";
+import {
+  DEFAULT_SUPPORTED_EXTS,
+  acceptAttr,
+  extOf,
+  partitionBySupport,
+  supportedLabel,
+} from "@/lib/upload-support";
 
 /** 目录上传文件数超过该值时先二次确认（避免误选巨型目录后批量入队解析） */
 const DIR_UPLOAD_CONFIRM_THRESHOLD = 200;
@@ -93,6 +104,8 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // 目录上传（webkitdirectory）隐藏选择器
   const dirInputRef = useRef<HTMLInputElement | null>(null);
+  // zip 压缩包上传（服务端自动解包）隐藏选择器
+  const zipInputRef = useRef<HTMLInputElement | null>(null);
   // 所在页签可见性：antd Tabs 默认不销毁隐藏 pane，隐藏时应暂停轮询/摘要，
   // 否则多开页签会各自在后台持续打接口（文档解析中每 3s 一轮）。
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -139,6 +152,9 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
   const [buildDoc, setBuildDoc] = useState<DocItem | null>(null);
   // 重新解析配置弹窗（2026-10-14：重解析前可选处理配置，对齐 WeKnora 重解析换配置）
   const [reparseDoc, setReparseDoc] = useState<DocItem | null>(null);
+  // 系统可处理的格式白名单（2026-10-20）：上传 accept / 预校验与后端格式门禁同源，
+  // 拉取失败回落 lib/upload-support 的本地兜底清单
+  const [supportedExts, setSupportedExts] = useState<string[]>(DEFAULT_SUPPORTED_EXTS);
 
   // 加载知识库详情（含 WeKnora 对齐配置：索引开关/技能绑定/模型绑定等）
   const loadKb = useCallback(async () => {
@@ -150,6 +166,18 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
   const loadBuildEngines = useCallback(async () => {
     const res = await apiListBuildEngines().catch(() => null);
     if (res?.success && res.data) setBuildEngines(res.data.items || []);
+  }, []);
+
+  // 上传白名单：系统只能处理这些格式（与后端格式门禁同源；后端也会拦，这里先给前端提示）
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await apiGetSupportedFileTypes();
+        if (res.success && res.data?.types?.length) setSupportedExts(res.data.types);
+      } catch {
+        // 拉取失败沿用本地兜底清单，不阻断上传
+      }
+    })();
   }, []);
 
   // 文档目录树（多级）：全量轻量元数据，前端按 parent_id 构建缩进树
@@ -657,44 +685,15 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
     const skipped = hiddenSkipped + emptySkipped;
     const baseFolderId = docFolderId;
     const progressKey = "kb-dir-upload";
-    // 目录映射：相对路径 key（"" = 基准目录）→ 目录 id；parentId+name → 目录 id（同级同名复用）
-    const folderIdByPath = new Map<string, string>([["", baseFolderId]]);
-    const folderIdByParentName = new Map<string, string>();
-
-    if (options.mirror) {
-      const res = await apiListDocFolders(kbId).catch(() => null);
-      const data = res?.success ? (res.data as unknown) : null;
-      const folders = Array.isArray(data)
-        ? (data as DocFolderItem[])
-        : (data as { folders?: DocFolderItem[] })?.folders || [];
-      for (const f of folders) folderIdByParentName.set(`${f.parent_id || ""}\u0000${f.name}`, f.id);
-    }
+    // 目录映射（同级同名复用 + 缺失层级创建）：与全局拖放目录共用 doc-folder-ensure
+    const folderEnsurer = options.mirror
+      ? await createDocFolderEnsurer(kbId, baseFolderId).catch(() => null)
+      : null;
 
     /** 逐级确保目录存在，返回末级目录 id（同级同名复用，缺失的依次创建） */
     const ensureFolder = async (dirs: string[]): Promise<string> => {
-      let parent = baseFolderId;
-      let key = "";
-      for (const seg of dirs) {
-        key = key ? `${key}/${seg}` : seg;
-        const cached = folderIdByPath.get(key);
-        if (cached) {
-          parent = cached;
-          continue;
-        }
-        const scoped = `${parent}\u0000${seg}`;
-        let id = folderIdByParentName.get(scoped);
-        if (!id) {
-          const created = await apiCreateDocFolder(kbId, { name: seg, parent_id: parent || undefined });
-          if (!created.success || !created.data?.id) {
-            throw new Error(created.message || `创建目录「${seg}」失败`);
-          }
-          id = created.data.id;
-          folderIdByParentName.set(scoped, id);
-        }
-        folderIdByPath.set(key, id);
-        parent = id;
-      }
-      return parent;
+      if (!folderEnsurer) throw new Error("目录映射不可用");
+      return folderEnsurer.ensure(dirs);
     };
 
     const total = entries.length;
@@ -781,18 +780,21 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
     open();
   };
 
-  // 注册为全局拖放目标：drop 时由 GlobalDropZone 直接上传到本 KB，完成后刷新列表
+  // 注册为全局拖放目标：drop 时由 GlobalDropZone 直接上传到本 KB（拖入目录按子目录建目录），
+  // 完成后刷新列表与目录树（新增目录要在左树可见）
   useEffect(() => {
     setFileDropTarget({
       kbId,
+      folderId: docFolderId || undefined,
       label: kb?.name ? `知识库：${kb.name}` : "当前知识库",
       onUploaded: () => {
         setDocPage(1);
         void load();
+        void loadDocFolders();
       },
     });
     return () => setFileDropTarget(null);
-  }, [kbId, kb?.name, load]);
+  }, [kbId, kb?.name, docFolderId, load, loadDocFolders]);
 
   return (
     <div ref={paneRef} style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>

@@ -1,10 +1,15 @@
 "use client";
 
 /**
- * 拖放文件收集：支持目录递归（webkitGetAsEntry 深度遍历），带数量/大小限制。
+ * 拖放文件收集：支持目录递归（webkitGetAsEntry 深度遍历），带数量/大小/格式限制。
  *
- * 限制（对齐设计约定）：单次最多 200 个文件，单文件最大 100MB。
+ * 限制：单次最多 200 个文件，单文件最大 100MB；只放行系统可解析的格式
+ * （白名单见 lib/upload-support.ts，与后端 parser_registry 同源）——压缩包放行，
+ * 由调用方决定走「自动解包」链路还是普通上传。
+ * 返回条目保留相对路径（path），供上传侧在知识库内创建对应文档目录。
  */
+import { baseNameOfPath } from "@/lib/upload-dir";
+import { isArchiveFileName, isSupportedFileName, extOf } from "@/lib/upload-support";
 
 export const MAX_DROP_FILES = 200;
 export const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
@@ -17,22 +22,33 @@ export interface CollectedFile {
 }
 
 export interface DropCollectResult {
-  /** 过滤后实际可上传的文件（≤200 个、每个 ≤100MB） */
-  files: File[];
+  /** 过滤后实际可上传的文件（≤200 个、每个 ≤100MB），含推导出的相对路径 */
+  entries: CollectedFile[];
   /** 收集到的文件总数（过滤前，用于「目录含 N 个文件」提示） */
   total: number;
   /** 被拒绝的文件及原因 */
   rejected: { name: string; reason: string }[];
 }
 
+/**
+ * 规范化拖入的 File：把「名字里带路径」的形态（Chrome 拖入目录时 File.name
+ * 会是 "新建文件夹/a.docx"）还原成裸文件名，避免路径被当成文件名入库。
+ */
+function normalizeDroppedFile(file: File, name: string): File {
+  if (file.name === name) return file;
+  return new File([file], name, { type: file.type, lastModified: file.lastModified });
+}
+
 /** 深度遍历单个 FileSystemEntry，递归展开目录 */
 async function collectEntry(entry: FileSystemEntry, basePath: string, out: CollectedFile[]): Promise<void> {
   if (entry.isFile) {
     const fileEntry = entry as FileSystemFileEntry;
-    const file = await new Promise<File>((resolve, reject) => {
+    const raw = await new Promise<File>((resolve, reject) => {
       fileEntry.file(resolve, reject);
     });
-    out.push({ file, path: basePath ? `${basePath}/${file.name}` : file.name });
+    const name = baseNameOfPath(raw.name);
+    const path = basePath ? `${basePath}/${name}` : name;
+    out.push({ file: normalizeDroppedFile(raw, name), path });
     return;
   }
   if (entry.isDirectory) {
@@ -65,8 +81,17 @@ function hasDirectorySupport(dt: DataTransfer): boolean {
   }
 }
 
-/** 从 DataTransfer 收集文件（目录递归展开），并应用数量/大小过滤 */
-export async function collectDroppedFiles(dt: DataTransfer): Promise<DropCollectResult> {
+/**
+ * 从 DataTransfer 收集文件（目录递归展开），并应用数量/大小/格式过滤。
+ *
+ * options.supported：系统可解析的扩展名白名单（页面从 /kbs/file-types/supported 拉取，
+ * 不传则用 lib/upload-support 的兜底白名单）。
+ */
+export async function collectDroppedFiles(
+  dt: DataTransfer,
+  options?: { supported?: string[] },
+): Promise<DropCollectResult> {
+  const supported = options?.supported;
   const collected: CollectedFile[] = [];
   if (hasDirectorySupport(dt)) {
     const items = dt.items;
@@ -81,9 +106,10 @@ export async function collectDroppedFiles(dt: DataTransfer): Promise<DropCollect
       }
     }
   } else {
-    // 兜底：不支持目录的场景直接取 dt.files
+    // 兜底：不支持目录的场景直接取 dt.files（Chrome 拖入目录时其 name 可能自带相对路径）
     for (const f of Array.from(dt.files)) {
-      collected.push({ file: f, path: f.name });
+      const name = baseNameOfPath(f.name);
+      collected.push({ file: normalizeDroppedFile(f, name), path: f.name });
     }
   }
 
@@ -109,8 +135,27 @@ export async function collectDroppedFiles(dt: DataTransfer): Promise<DropCollect
   }
   files = sizeFiltered;
 
+  // 格式过滤（2026-10-20）：只放行系统能解析的格式；压缩包放行（调用方判定是否自动解包）
+  const formatFiltered: CollectedFile[] = [];
+  for (const c of files) {
+    if (isArchiveFileName(c.file.name)) {
+      formatFiltered.push(c);
+      continue;
+    }
+    if (!isSupportedFileName(c.file.name, supported)) {
+      const ext = extOf(c.file.name);
+      rejected.push({
+        name: c.path,
+        reason: `格式不支持${ext ? `（.${ext}）` : ""}：系统无法解析该格式`,
+      });
+      continue;
+    }
+    formatFiltered.push(c);
+  }
+  files = formatFiltered;
+
   return {
-    files: files.map((c) => c.file),
+    entries: files,
     total,
     rejected,
   };

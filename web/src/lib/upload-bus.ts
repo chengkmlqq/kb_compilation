@@ -30,6 +30,8 @@ export interface UploadTaskDetail {
 export interface FileDropTarget {
   /** 知识库 ID：存在时 GlobalDropZone 直接调用该 KB 的文档上传接口 */
   kbId?: string;
+  /** 当前所在文档目录（拖入文件的落点基准；拖入目录时在其下还原子目录结构） */
+  folderId?: string;
   /** 遮罩文案中的目标名，如「知识库：xxx」「技能管理」 */
   label: string;
   /** 是否接受该文件（可按扩展名/大小过滤）；缺省全部接受 */
