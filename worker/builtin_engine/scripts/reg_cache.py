@@ -50,9 +50,22 @@ except Exception:  # pragma: no cover - 兜底：storage 不可用时走本地�
     _MINIO_OK = False
 
 
+def _bucket() -> str:
+    """系统默认 bucket（compose MINIO_BUCKET=kb-compilation）。"""
+    try:
+        from api.config import get_settings
+        return get_settings().MINIO_BUCKET or "kb-compilation"
+    except Exception:  # pragma: no cover
+        return "kb-compilation"
+
+
 def _key(dir_prefix: str, name: str) -> str:
-    """DIR 前缀 + 文件名 → MinIO 对象 key（reg-cache/reg_xxx/name）。"""
-    return f"{dir_prefix.rstrip('/')}/{name.lstrip('/')}"
+    """DIR 前缀 + 文件名 → MinIO 对象 key（minio://bucket/reg-cache/reg_xxx/name）。
+
+    必须带 minio:// 前缀——api.services.storage 只对 minio:// 开头的
+    storage_path 走 MinIO，裸路径会落到本地磁盘（2026-10-16 实测踩坑）。
+    """
+    return f"minio://{_bucket()}/{dir_prefix.rstrip('/')}/{name.lstrip('/')}"
 
 
 def write_json(dir_prefix: str, name: str, obj: Any) -> None:

@@ -55,6 +55,24 @@ def _render(template: str, ctx: dict) -> str:
 
 
 def _read_json(path: str) -> Any:
+    """读 JSON。支持 MinIO 对象路径（minio:// 或 reg-cache/ 前缀）。
+
+    2026-10-16: 编排中间产物改存 MinIO 后，wiki_publish 等原子的
+    source（如 {{reg_dir}}/ls_all.json）可能是 minio://... 或相对前缀，
+    本地 open 读不到。统一在此适配：远程路径走 storage.get_bytes。
+    """
+    if path.startswith("reg-cache/"):
+        from api.config import get_settings
+        path = f"minio://{get_settings().MINIO_BUCKET or 'kb-compilation'}/{path}"
+    if path.startswith("minio://"):
+        from api.services.storage import get_bytes
+        try:
+            raw = get_bytes(path)
+            return json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError as e:
+            _die(f"输入 JSON 解析失败 {path}: {e}")
+        except Exception as e:  # noqa: BLE001 — 对象不存在等统一视为文件缺失
+            _die(f"输入文件不存在: {path} ({e})")
     if not os.path.exists(path):
         _die(f"输入文件不存在: {path}")
     with open(path, encoding="utf-8") as f:
