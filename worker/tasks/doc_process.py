@@ -164,8 +164,8 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
     #   - KB 或文档绑定了构建引擎（build_tape_id，服务编排中已发布的编排）
     #     → 按该编排构建 wiki（替代内置 skill 链，2026-10-12）
     #   - 未绑定时：custom_wiki_generation=false → 2026-10-16 起先等摘要完成后
-    #     经「题材分析」编排自动选领域编排构建（DOMAIN_RESOLVE_TAPE 参数未配置
-    #     时回退 skill 链）
+    #     经「题材分析」编排自动选领域编排构建；任一环节失败/超时即停止，
+    #     不再回退技能直跑（2026-10-16 起废除直跑兜底）
     #   - custom_wiki_generation=true（用户显式手动模式）→ 不自动构建
     #   - 2026-10-15: 「Wiki 构建」开关（indexing_strategy.wiki_enabled）表单已
     #     移除且不再作为触发前置条件——配置了构建编排（KB 级或文档级）即触发；
@@ -205,10 +205,11 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
             # 2026-10-16 摘要驱动自动领域构建：知识库创建时未选构建引擎、上传
             # 文件也未选时，构建任务等摘要任务结束，题材分析编排基于摘要 +
             # 平台已有领域构建编排的划分自动选定编排继续构建；任一环节
-            # 缺失/失败/超时回退 skill 链（原行为），保证构建不静默丢失。
+            # 缺失/失败/超时即停止（2026-10-16 起废除技能直跑兜底，摘要失败
+            # 不再用直跑顶替，未构建状态如实反映到任务监控）。
             result.update(_enqueue_domain_guided_build(
                 kb_id, document_id, parent_job_id=job_id, cookie=caller_cookie,
-                summary_run_id=summary_run_id, skill_name=flags.get("skill") or None,
+                summary_run_id=summary_run_id,
             ))
         else:
             # 2026-10-15：不再依赖 wiki_enabled 开关——仅 custom_wiki_generation
@@ -512,7 +513,8 @@ def _enqueue_summary_task(
 # ── 题材分析驱动构建（2026-10-16）────────────────────────────────
 # 知识库创建时未选构建引擎、上传文件也未选时：摘要 run 完成后先跑题材分析
 # 编排（LLM 基于摘要 + 平台已有领域构建编排的划分判定领域），再按判定结果
-# 启动对应领域编排构建 wiki。任一环节缺失/失败/超时 → 回退 skill 链。
+# 启动对应领域编排构建 wiki。任一环节缺失/失败/超时即停止、不构建——
+# 2026-10-16 起废除技能直跑兜底（摘要失败不再用直跑顶替）。
 DOMAIN_RESOLVE_DIM_KEY = "DOMAIN_RESOLVE_TAPE"
 # 等待上限：Map-Reduce 大文档摘要可能数分钟~十几分钟；题材分析仅一次 LLM 调用。
 SUMMARY_RUN_WAIT_TIMEOUT_S = 1800
@@ -659,44 +661,42 @@ def _enqueue_resolve_run(
 def _enqueue_domain_guided_build(
     kb_id: str, document_id: str,
     parent_job_id: str | None = None, cookie: str = "",
-    summary_run_id: str | None = None, skill_name: str | None = None,
+    summary_run_id: str | None = None,
 ) -> dict:
     """未选构建引擎时的「摘要 → 题材分析 → 领域编排构建」串行链路。
 
     返回可并入 result 的诊断字段（domain_guided / summary_run_status /
     resolve_run_status / domain / resolved_tape_id / build_engine_triggered /
-    fallback_reason / wiki_skill_triggered）。回退时 fallback_reason 说明原因。
-    """
-    out: dict = {"domain_guided": False}
+    build_skipped / build_skipped_reason / wiki_skill_triggered）。
 
-    def _fallback(reason: str) -> dict:
-        logger.info("domain-guided build fallback (kb=%s doc=%s): %s", kb_id, document_id, reason)
-        out["fallback_reason"] = reason
-        try:
-            out["wiki_skill_triggered"] = _enqueue_wiki_skill_task(
-                kb_id, document_id, skill_name=skill_name, parent_job_id=parent_job_id
-            )
-        except Exception as exc:  # noqa: BLE001 — 回退也失败不使解析任务失败
-            logger.warning("failed to enqueue wiki skill task (fallback): %s", exc)
-            out["wiki_skill_triggered"] = False
+    2026-10-16 改造：废除技能直跑兜底——任一环节缺失/失败/超时即停止，
+    构建不触发（摘要失败不再用技能直跑顶替）；build_skipped_reason 说明
+    停止原因。wiki_skill_triggered 恒为 False（契约字段保留）。
+    """
+    out: dict = {"domain_guided": False, "wiki_skill_triggered": False}
+
+    def _stop(reason: str) -> dict:
+        logger.info("domain-guided build stopped (kb=%s doc=%s): %s", kb_id, document_id, reason)
+        out["build_skipped"] = True
+        out["build_skipped_reason"] = reason
         return out
 
     resolve_tape = _domain_resolve_tape_id()
     if not resolve_tape:
-        return _fallback(f"{DOMAIN_RESOLVE_DIM_KEY} 未配置")
+        return _stop(f"{DOMAIN_RESOLVE_DIM_KEY} 未配置")
     if not summary_run_id:
-        return _fallback("摘要未触发")
+        return _stop("摘要未触发")
 
     st = _wait_run_terminal(summary_run_id, SUMMARY_RUN_WAIT_TIMEOUT_S)
     out["summary_run_status"] = st
     if st != "success":
-        return _fallback(f"摘要未成功({st or 'timeout'})")
+        return _stop(f"摘要未成功({st or 'timeout'})")
 
     resolve_run_id = _enqueue_resolve_run(
         kb_id, document_id, resolve_tape, parent_job_id=parent_job_id, cookie=cookie
     )
     if not resolve_run_id:
-        return _fallback("题材分析 run 创建失败")
+        return _stop("题材分析 run 创建失败")
     out["domain_guided"] = True
     out["resolve_run_id"] = resolve_run_id
     st2 = _wait_run_terminal(resolve_run_id, RESOLVE_RUN_WAIT_TIMEOUT_S)
@@ -721,9 +721,9 @@ def _enqueue_domain_guided_build(
                     kb_id, document_id, domain, tape_id,
                 )
                 return out
-            return _fallback("领域编排触发失败")
-        return _fallback(f"题材分析未匹配到领域(domain={domain or '空'})")
-    return _fallback(f"题材分析未成功({st2 or 'timeout'})")
+            return _stop("领域编排触发失败")
+        return _stop(f"题材分析未匹配到领域(domain={domain or '空'})")
+    return _stop(f"题材分析未成功({st2 or 'timeout'})")
 
 
 def _enqueue_wiki_build_task(kb_id: str, document_id: str, parent_job_id: str | None = None) -> bool:
@@ -803,6 +803,10 @@ def _enqueue_wiki_skill_task(
     parent_job_id: str | None = None,  # 2026-10-12 父子：链头解析任务 job id
 ) -> bool:
     """enqueue wiki 构建的 agent 任务（默认内联 agent worker，见 _agent_task_target）。
+
+    ⚠️ 2026-10-16 起上传链不再自动调用本函数（技能直跑兜底已废除：
+    _enqueue_domain_guided_build 任一环节失败即停止）。保留函数与既有
+    测试以维持 KbSkillDirectBuildTask 的投递契约，供显式/手动触发使用。
 
     skill_name: 指定技能（KB 级 wiki_config.skill 绑定）；为空则用全局
     WIKI_SKILL_NAME（WeKnora WikiConfig.Skill 为空的回退语义）。

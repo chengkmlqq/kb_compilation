@@ -139,8 +139,9 @@ def test_enqueue_wiki_skill_task_commits_before_send(chain_env, monkeypatch) -> 
     assert visible_at_send.get("found") is True
 
 
-def test_handle_process_document_chain_triggered_on_success(chain_env, monkeypatch) -> None:
-    """process_document 成功（parse_state=READY）+ kb_id 存在 → wiki_skill_triggered=True。"""
+def test_handle_process_document_stops_on_success_without_build_tape(chain_env, monkeypatch) -> None:
+    """process_document 成功（parse_state=READY）+ kb_id 存在、未配构建引擎 →
+    2026-10-16 起不回退技能直跑：题材分析未配置即停止、不构建。"""
     Session, sent = chain_env
     monkeypatch.setattr(
         dp, "process_document",
@@ -148,7 +149,9 @@ def test_handle_process_document_chain_triggered_on_success(chain_env, monkeypat
     )
     result = dp._handle_process_document("job-1", json.dumps({"documentId": "doc-1", "kbId": "kb-1"}))
     assert result["success"] is True
-    assert result["wiki_skill_triggered"] is True
+    assert result["wiki_skill_triggered"] is False
+    assert result["build_skipped"] is True
+    assert "DOMAIN_RESOLVE_TAPE 未配置" in result["build_skipped_reason"]
 
 
 def test_handle_process_document_no_chain_on_failure(chain_env, monkeypatch) -> None:
@@ -166,11 +169,12 @@ def test_handle_process_document_no_chain_on_failure(chain_env, monkeypatch) -> 
     db.close()
 
 
-def test_handle_process_document_graph_no_longer_auto_triggered(chain_env, monkeypatch) -> None:
+def test_handle_process_document_stops_without_build_tape(chain_env, monkeypatch) -> None:
     """2026-10-14 改造：graph_enabled=true 也不再自动触发 KbGraphBuildTask
     （图谱构建改由文档 wiki 处理编排自行承接；避免上传即全库切片 LLM 抽取）。
     2026-10-15 改造：wiki 构建不再依赖 wiki_enabled 开关——未配置构建引擎时
-    走 domain-guided 链路（未配置题材分析编排则回退 skill 链）触发构建。"""
+    走 domain-guided 链路；2026-10-16 起任一环节失败/未配置即停止，不回退
+    技能直跑。"""
     Session, sent = chain_env
     # 种子 KB：graph 开、wiki 关
     from api.models.knowledge import KbDatasource
@@ -193,18 +197,21 @@ def test_handle_process_document_graph_no_longer_auto_triggered(chain_env, monke
     result = dp._handle_process_document("job-1", json.dumps({"documentId": "doc-1", "kbId": "kb-1"}))
     # 2026-10-14 起不再自动触发图谱构建
     assert result.get("graph_build_triggered") is None
-    # wiki_enabled=false 不再阻断构建：未绑构建引擎 → 回退 skill 链触发
-    assert result["wiki_skill_triggered"] is True
+    # wiki_enabled=false 不再阻断判断，但无构建编排/题材分析参数时停止、不直跑
+    assert result["wiki_skill_triggered"] is False
+    assert result["build_skipped"] is True
     db = Session()
     classes = {j.task_class for j in db.execute(select(Job)).scalars().all()}
     assert "KbGraphBuildTask" not in classes
-    assert "KbAgentWikiBuildTask" not in classes  # 默认 direct：KbSkillDirectBuildTask
+    assert "KbAgentWikiBuildTask" not in classes
+    assert not any(j.id.startswith("WIKI_SKILL_") for j in db.execute(select(Job)).scalars().all())
     db.close()
 
 
-def test_handle_process_document_auto_build_without_wiki_flag(chain_env, monkeypatch) -> None:
-    """2026-10-15 改造：wiki_enabled=false 也能自动构建——「Wiki 构建」开关
-    已从表单移除，只要未开启自定义生成（手动模式）即触发构建（skill 回退）。"""
+def test_handle_process_document_no_fallback_without_wiki_flag(chain_env, monkeypatch) -> None:
+    """2026-10-15 改造：wiki_enabled=false 也能自动构建——「Wiki 构建」
+    开关已从表单移除；2026-10-16 起未配构建引擎时走领域引导链，题材分析
+    未配置即停止——不再投 WIKI_SKILL 任务（技能直跑兜底已废除）。"""
     Session, sent = chain_env
     from api.models.knowledge import KbDatasource
 
@@ -224,12 +231,11 @@ def test_handle_process_document_auto_build_without_wiki_flag(chain_env, monkeyp
         lambda doc_id, content, parser_engine=None: {"success": True, "parse_state": "READY", "document_id": doc_id},
     )
     result = dp._handle_process_document("job-1", json.dumps({"documentId": "doc-1", "kbId": "kb-1"}))
-    # wiki_enabled=false 也触发（不再依赖开关）
-    assert result["wiki_skill_triggered"] is True
+    assert result["wiki_skill_triggered"] is False
+    assert result["build_skipped"] is True
     db = Session()
     jobs = db.execute(select(Job)).scalars().all()
-    assert len(jobs) == 1
-    assert jobs[0].id.startswith("WIKI_SKILL_")
+    assert not any(j.id.startswith("WIKI_SKILL_") for j in jobs)
     db.close()
 
 
