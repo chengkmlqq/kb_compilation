@@ -1176,61 +1176,71 @@ html[data-theme="dark"] body {
   font-size: 14px;
 }
 
-/* ── 消息正文 markdown（对齐 chat-markdown.less：16px / 1.625） ── */
+/* ── 消息正文 markdown（对齐 DSB .content-view / .content-md-editor-view 实测值）── */
 .kb-chat-md {
   font-size: 14px;
   color: var(--kb-c-text);
   line-height: 1.5;
 }
 
+/* DSB：.content-md-editor-view p / strong { margin: 4px 0; font-size: 16px; line-height: 24px } */
 .kb-chat-md-p {
-  margin: 0 0 0.25em;
-  line-height: 1.625;
+  margin: 4px 0;
+  font-size: 16px;
+  line-height: 24px;
 }
 
+/* DSB：h1/h2 未被覆盖 → 浏览器默认 2em / 1.5em + 0.67em / 0.83em 外边距；h3 16px、h4 14px，margin 4px 0 */
 .kb-chat-md-h1,
 .kb-chat-md-h2,
 .kb-chat-md-h3,
 .kb-chat-md-h4 {
-  font-weight: 600;
-  line-height: 1.5;
+  font-weight: 700;
 }
 
 .kb-chat-md-h1 {
-  margin-top: 0.75em;
-  margin-bottom: 0.25em;
-  font-size: 1.5em;
+  margin: 0.67em 0;
+  font-size: 2em;
+  line-height: 1.5;
 }
 
 .kb-chat-md-h2 {
-  margin-top: 1.25em;
-  margin-bottom: 0.5em;
-  font-size: 1.25em;
+  margin: 0.83em 0;
+  font-size: 1.5em;
+  line-height: 1.5;
 }
 
 .kb-chat-md-h3 {
-  margin-top: 0.75em;
-  margin-bottom: 0.25em;
-  font-size: 1.125em;
+  margin: 4px 0;
+  font-size: 16px;
+  line-height: 24px;
 }
 
 .kb-chat-md-h4 {
-  margin-top: 0.75em;
-  margin-bottom: 0.25em;
-  font-size: 1em;
+  margin: 4px 0;
+  font-size: 14px;
+  line-height: 22px;
 }
 
+/* DSB：ul / li / ol { margin: 4px 0; font-size: 14px; line-height: 22px }，ul padding-left 24px、ol 18px */
 .kb-chat-md-list {
-  margin: 0.125em 0 0.375em;
-  padding-left: 1.5em;
-  line-height: 1.625;
+  margin: 4px 0;
+  padding-left: 24px;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.kb-chat-md ol.kb-chat-md-list {
+  padding-left: 18px;
 }
 
 .kb-chat-md-li {
-  margin-bottom: 0.125em;
-  line-height: 1.625;
+  margin: 4px 0;
+  font-size: 14px;
+  line-height: 22px;
 }
 
+/* DSB 未覆盖 blockquote → 保留可读的引用块样式（DSB 侧为浏览器默认） */
 .kb-chat-md-quote {
   margin: 0.75em 0;
   padding: 6px 10px 6px 12px;
@@ -1241,13 +1251,15 @@ html[data-theme="dark"] body {
   line-height: 1.2;
 }
 
+/* DSB：code / kbd / samp { white-space: pre-wrap }，code 14px（无底色块） */
 .kb-chat-md-inline-code {
-  padding: 0.15em 0.45em;
-  font-size: 0.8125em;
-  line-height: 1.4;
-  color: var(--kb-c-text);
-  background: var(--kb-c-user-bubble);
-  border-radius: 4px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 22px;
+  color: inherit;
+  background: transparent;
+  border-radius: 0;
+  white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
@@ -1259,7 +1271,7 @@ html[data-theme="dark"] body {
   border-radius: 0 0 6px 6px;
   overflow: auto;
   line-height: 1.55;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .kb-chat-md-pre code {
@@ -1343,30 +1355,23 @@ html[data-theme="dark"] body {
   text-decoration: underline;
 }
 
+/* DSB .ai-chat-list table：border-collapse collapse；th/td 1px solid #ddd + padding 8px；th nowrap + #f2f2f2 */
 .kb-chat-md-table {
   border-collapse: collapse;
-  margin: 0.75em 0;
-  font-size: 13px;
-  line-height: 1.55;
+  margin: 0;
+  font-size: 14px;
   background: var(--kb-c-surface);
-  border: 1px solid var(--kb-c-border);
-  border-radius: 6px;
-  display: block;
-  width: fit-content;
-  max-width: 100%;
-  overflow-x: auto;
 }
 
 .kb-chat-md-table th,
 .kb-chat-md-table td {
-  border: 1px solid var(--kb-c-border);
-  padding: 6px 10px;
-  text-align: left;
-  vertical-align: top;
+  border: 1px solid #ddd;
+  padding: 8px;
 }
 
 .kb-chat-md-table th {
-  background: var(--kb-c-surface-2);
+  white-space: nowrap;
+  background-color: #f2f2f2;
   font-weight: 600;
   color: var(--kb-c-text);
 }
@@ -2763,6 +2768,19 @@ html[data-theme="dark"] .kb-citation-web:hover {
    ═══════════════════════════════════════════════════════════════════ */
 
 /* ── 页面容器：白底全高，左会话列表 + 中问答区 ── */
+/* ═══════════════════════════════════════════════════════════════════════
+   智能问答页 = DSB 门户问答页像素级对齐（2026-10-16）
+   基准：data_supply_base / DataSupplyPortalRecordDemo
+     · 结构：Portal.tsx（.portal-home / .sider-breadcrumb / .sliding-element）
+             components/ChatSider/style/index.less（会话列表）
+             pages/PortalAiChat/style/index.less（.chat-home / .chat-content / .chat-footer）
+             components/Sender/style/index.less + @ant-design/x Sender 默认 token（输入卡片）
+     · 主题变量实测值（modo 主题）：
+       fill-1 #F9FBFD · fill-2 #EFF4F9 · fill-3 #E3E9EF · border-1 #EFF4F9 · border-2 #E3E9EF
+       text-1 #242E43 · text-2 #4D5E7D · text-3 #79879C · link-6/primary #3261CE
+       primary-light-1 #E8F3FF · border-radius-large 8px · border-radius-small 2px
+   ═══════════════════════════════════════════════════════════════════════ */
+
 .kb-chat-page {
   display: flex;
   height: 100%;
@@ -2770,81 +2788,141 @@ html[data-theme="dark"] .kb-citation-web:hover {
   min-height: 0;
   overflow: hidden;
   background: #fff;
+  /* DSB body：Inter 字体栈 / line-height 1.5 / antialiased；arco body 基准字号 14px */
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "Noto Sans", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(36, 46, 67, 1);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* DSB 图标底座（等价 .moda-icon / .arco-icon）：1em 尺寸 + currentColor */
+.kb-chat-page .dsb-icon {
+  display: inline-block;
+  flex: none;
+  width: 1em;
+  height: 1em;
+  vertical-align: -2px;
+  fill: currentColor;
+}
+.kb-chat-page .dsb-stop-loading {
+  vertical-align: middle;
 }
 
 /* ── 左侧会话列表（对齐 DSB ChatSider .chat-sider-container / .ai-search-chat-list）── */
 .kb-chat-sider {
   flex: 0 0 228px;
+  width: 228px;
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
+  /* DSB .arco-layout-sider-light：228px / fill-1 / border-right border-1 */
   background: rgba(249, 251, 253, 1);
   border-right: 1px solid rgba(239, 244, 249, 1);
+  /* DSB .sliding-element：收起 / 展开 0.3s 过渡（.sider-show / .sider-hide） */
+  transition: all 0.3s;
 }
+.kb-chat-sider.hide {
+  flex: 0 0 0;
+  width: 0;
+  opacity: 0;
+  transform: translateX(-228px);
+}
+/* DSB .chat-sider-header：48px 高、无下边框（内层 .content 承担左右内边距） */
 .kb-chat-sider-header {
   height: 48px;
   flex: 0 0 48px;
   display: flex;
   align-items: center;
-  padding: 0 12px;
-  border-bottom: 1px solid rgba(239, 244, 249, 1);
-}
-/* DSB .content：新对话渐变按钮(flex:1) + 折叠按钮(32px) */
-.kb-chat-sider-header .kb-chat-new-btn {
-  flex: 1;
   min-width: 0;
+}
+/* DSB .content：100%×32px、padding 0 12px、space-between */
+.kb-chat-sider-header-inner {
+  width: 100%;
   height: 32px;
   padding: 0 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+/* DSB .content .arco-btn:nth-child(1)：渐变底、padding 0 52px（非 flex:1）、白字 */
+.kb-chat-sider-header .kb-chat-new-btn {
+  flex: 0 0 auto;
+  height: 100%;
+  /* antd v6 按钮内部用逻辑属性覆盖，此处必须 !important 才能对齐 DSB .content .arco-btn 的 0 52px */
+  padding: 0 52px !important;
   border: 0 !important;
-  border-radius: 16px !important;
   background: linear-gradient(90deg, #517ed8 0%, #53d4c7 100%) !important;
   color: #fff !important;
-  font-size: 14px;
+  /* DSB .add：按钮字号 16px（含图标 1em）；图标与文字间距对齐 arco `svg + span { margin-left: 8px }` */
+  font-size: 16px;
+  gap: 8px !important;
   box-shadow: none !important;
 }
 .kb-chat-sider-header .kb-chat-new-btn:hover {
   opacity: 0.9;
 }
+/* DSB .add：图标 16px、白字、上移 1px */
+.kb-chat-sider-header .kb-chat-new-btn .dsb-icon {
+  font-size: 16px;
+  color: #fff !important;
+}
+/* DSB .content .arco-btn:nth-child(2)：arco 文本按钮默认 32px 高、padding 0 15px、hover fill-2 */
 .kb-chat-sider-collapse {
-  flex: 0 0 32px;
-  width: 32px;
-  height: 32px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-left: 8px;
+  height: 100%;
+  padding: 0 15px;
   color: rgba(77, 94, 125, 1);
-  border-radius: 0;
+  border-radius: 2px;
   cursor: pointer;
 }
 .kb-chat-sider-collapse:hover {
-  background: #edf2f7;
+  background: rgba(239, 244, 249, 1);
 }
+/* DSB .search-chat-list-box（padding 12px / margin-top 4px）+ 内层 .arco-spin-children（padding 0 12px 12px） */
 .kb-chat-sider-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 12px;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+}
+.kb-chat-sider-list-inner {
   display: flex;
   flex-direction: column;
   row-gap: 8px;
+  padding: 0 12px 12px;
 }
 .kb-chat-sider-list::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
+/* DSB .ai-search-chat-list .list-title：仅 color text-3（字号随 body 14px） */
 .kb-chat-sider-group-title {
   color: rgba(121, 135, 156, 1);
-  font-size: 12px;
-  line-height: 20px;
-  padding: 8px 4px 4px;
+  font-size: 14px;
+  line-height: 21px;
 }
 .kb-chat-sider-group-outer {
   display: flex;
   flex-direction: column;
   row-gap: 8px;
 }
+.kb-chat-sider-group-content {
+  display: flex;
+  flex-direction: column;
+  row-gap: 8px;
+}
+/* DSB .list-item：padding 8px 12px / column-gap 6px / radius 8 */
 .kb-chat-sider-item {
   position: relative;
   display: flex;
@@ -2862,29 +2940,71 @@ html[data-theme="dark"] .kb-citation-web:hover {
 .kb-chat-sider-item:hover {
   background: rgba(239, 244, 249, 1);
 }
+.kb-chat-sider-item:hover .kb-chat-sider-item-label {
+  font-weight: 600;
+}
 .kb-chat-sider-item.active {
   background: rgba(239, 244, 249, 1);
   color: rgba(50, 97, 206, 1);
   font-weight: 600;
 }
+/* DSB .item-label：line-height 20px + 单行省略 */
 .kb-chat-sider-item-label {
   flex: 1;
   min-width: 0;
+  line-height: 20px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* DSB .item-oper：默认 0×0，hover / active 展开为 16×16 */
 .kb-chat-sider-item-oper {
-  display: none;
-  flex: 0 0 auto;
-  gap: 2px;
-  margin-left: 4px;
-}
-.kb-chat-sider-item:hover .kb-chat-sider-item-oper {
   display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 0;
+  height: 0;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: rgba(77, 94, 125, 1);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.kb-chat-sider-item:hover .kb-chat-sider-item-oper,
+.kb-chat-sider-item.active .kb-chat-sider-item-oper {
+  width: 16px;
+  height: 16px;
+}
+.kb-chat-sider-item-oper-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
 .kb-chat-sider-item.active .kb-chat-sider-item-oper {
-  display: inline-flex;
+  color: rgba(50, 97, 206, 1);
+}
+/* DSB .item-oper-menu-item：菜单元（重命名 / 删除） */
+.kb-chat-sider-item-menu .ant-dropdown-menu-item {
+  display: flex;
+  column-gap: 4px;
+  align-items: center;
+  font-weight: 400;
+  color: rgba(36, 46, 67, 1);
+}
+.kb-chat-sider-item-menu .ant-dropdown-menu-item.kb-menu-danger,
+.kb-chat-sider-item-menu .ant-dropdown-menu-item.kb-menu-danger .anticon {
+  color: rgba(195, 52, 47, 1);
 }
 
 /* ── 右侧问答区 ── */
@@ -2899,53 +3019,61 @@ html[data-theme="dark"] .kb-citation-web:hover {
   background: #fff;
 }
 
-/* chat-header：48px grid 三栏、标题居中（对齐 PortalAiChat .chat-header） */
+/* chat-header：对齐 DSB Portal Header 面包屑（.sider-breadcrumb）
+   48px 高 / padding-left 16px / 无下边框；仅左侧会话栏收起时出现 */
 .kb-chat-header {
-  display: grid;
+  display: flex;
   flex: 0 0 48px;
-  grid-template-columns: 96px minmax(0, 1fr) 96px;
   align-items: center;
   height: 48px;
-  padding: 0 16px;
+  padding-left: 16px;
   line-height: 22px;
   background: #fff;
-  border-bottom: 1px solid rgba(239, 244, 249, 1);
 }
-.kb-chat-header-title {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 14px;
-  font-weight: 600;
-  color: rgba(36, 46, 67, 1);
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* DSB .arco-breadcrumb-item：padding 0 8px */
 .kb-chat-header-actions {
   display: flex;
   align-items: center;
   gap: 4px;
+  padding: 0 8px;
 }
-.kb-chat-header-actions-right {
-  justify-content: flex-end;
-}
+/* DSB .icon-normal：text-2 图标按钮（arco 文本按钮 32px 高 / padding 0 15px / hover fill-2） */
 .kb-chat-header-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
   height: 32px;
-  padding: 0;
+  padding: 0 15px;
   color: rgba(77, 94, 125, 1);
   background: transparent;
-  border: 0 !important;
-  border-radius: 0 !important;
+  border-radius: 2px;
   cursor: pointer;
 }
 .kb-chat-header-icon:hover {
-  background: #edf2f7;
-  border: 0 !important;
-  border-radius: 0 !important;
+  background: rgba(239, 244, 249, 1);
+}
+.kb-chat-header-icon img {
+  display: block;
+}
+/* DSB .arco-breadcrumb-item-separator：margin 0 4px、color text-4（#B3C0CC） */
+.kb-chat-header-sep {
+  padding: 0 8px;
+  color: rgba(179, 192, 204, 1);
+  line-height: 24px;
+  user-select: none;
+}
+/* DSB .arco-breadcrumb-item:last-child：top 1px / 16px / 600 */
+.kb-chat-header-title {
+  position: relative;
+  top: 1px;
+  padding: 0 8px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(36, 46, 67, 1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── chat-home 欢迎页（对齐 DSB .chat-home：标题胶囊 + descr + 推荐 rela-item）── */
@@ -3009,6 +3137,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
 .kb-chat-home-rela-item:hover {
   background: rgba(239, 244, 249, 1);
 }
+/* DSB .rela-item .moda-icon：flex 0 0 14px / width 14px / color text-2 */
 .kb-chat-home-rela-item .kb-chat-home-rela-arrow {
   flex: 0 0 14px;
   width: 14px;
@@ -3044,10 +3173,11 @@ html[data-theme="dark"] .kb-citation-web:hover {
   justify-content: flex-start;
 }
 
-/* 用户消息：灰底 fill-2 圆角 16px、padding 8px 20px（对齐 .user-content） */
+/* 用户消息：灰底 fill-2 圆角 16px、padding 8px 20px（对齐 .user-content）
+   宽度上限 = DSB .item-wrap 的 60% */
 .kb-chat-user-bubble {
   width: max-content;
-  max-width: 100%;
+  max-width: 60%;
   padding: 8px 20px;
   font-size: 16px;
   line-height: 24px;
@@ -3095,9 +3225,51 @@ html[data-theme="dark"] .kb-citation-web:hover {
   border-radius: 8px;
   width: 100%;
   min-height: 36px;
+  color: rgba(36, 46, 67, 1);
+  text-align: left;
 }
 .kb-chat-answer img {
   max-width: 100%;
+}
+
+/* 答案工具条：对齐 DSB .assistant-footer / .ai-oper-left
+   （按钮 20px 高、padding 0 2px、图标 20px、色 text-2；喜欢/不喜欢激活色 = warning-6 / danger-6） */
+.kb-chat-assistant-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+.kb-chat-assistant-oper {
+  display: flex;
+  column-gap: 10px;
+  align-items: center;
+}
+.kb-chat-oper-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  padding: 0 2px;
+  font-size: 20px;
+  color: rgba(77, 94, 125, 1);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.kb-chat-oper-btn:hover {
+  color: rgba(36, 46, 67, 1);
+}
+.kb-chat-oper-btn.is-agree {
+  color: rgba(245, 166, 35, 1);
+}
+.kb-chat-oper-btn.is-disagree {
+  color: rgba(195, 52, 47, 1);
+}
+.kb-chat-oper-split {
+  width: 1px;
+  height: 12px;
+  background: rgba(227, 233, 239, 1);
 }
 
 /* think-btn：思考折叠按钮（对齐 .think-btn：14px、text-2、无背景） */
@@ -3240,15 +3412,15 @@ html[data-theme="dark"] .kb-citation-web:hover {
   font-size: 12px;
 }
 
-/* ── 反思模式开关按钮（对齐 .reflect-mode-switch-btn 圆角）── */
+/* ── 反思模式开关（对齐 DSB .reflect-mode-switch-btn：arco 圆形描边按钮，32px 高、padding 0 8px）── */
 .kb-reflect-btn {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
+  height: 32px;
   padding: 0 8px;
-  min-height: 28px;
-  border-radius: 999px;
+  border-radius: 16px;
   border: 1px solid rgba(227, 233, 239, 1);
   background: #fff;
   color: rgba(36, 46, 67, 1);
@@ -3258,33 +3430,240 @@ html[data-theme="dark"] .kb-citation-web:hover {
   white-space: nowrap;
   transition: all 0.2s ease;
 }
-.kb-reflect-btn:hover {
-  border-color: rgba(50, 97, 206, 1);
+.kb-reflect-btn .dsb-icon {
+  font-size: 14px;
 }
+.kb-reflect-btn:hover {
+  border-color: rgba(81, 126, 216, 1);
+  color: rgba(50, 97, 206, 1);
+}
+/* DSB .reflect-mode-switch-btn.arco-btn-primary：primary-light-1 底 + link-6 字 + 600 */
 .kb-reflect-btn.active {
   border-color: rgba(50, 97, 206, 1);
-  background: rgba(232, 241, 255, 1);
+  background: rgba(232, 243, 255, 1);
   color: rgba(50, 97, 206, 1);
   font-weight: 600;
 }
 
-/* 输入区（对齐 DSB .chat-footer：padding 16px 15%、无 border-top、白底；高度自适应 Sender 内容） */
+/* 输入区：对齐 DSB .chat-footer（flex 0 0 172px / height 172px / padding 16px 15% / column-gap 4px） */
 .kb-chat-footer {
   display: flex;
-  flex: 0 0 auto;
-  min-height: 172px;
+  flex: 0 0 172px;
+  height: 172px;
   column-gap: 4px;
   align-items: center;
   padding: 16px 15%;
   box-sizing: border-box;
   background: #fff;
 }
+/* DSB .chat-footer.file：附件态高度 230px */
+.kb-chat-footer.has-file {
+  flex: 0 0 230px;
+  height: 230px;
+}
 .kb-chat-footer-inner {
   flex: 1 1 auto;
   height: 100%;
+  min-height: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* 输入卡片：对齐 @ant-design/x Sender 默认形态
+   （radius = borderRadius 6×2 = 12px；1px 描边 colorBorder #D9D9D9；boxShadowTertiary） */
+.kb-chat-input-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02),
+    0 2px 4px 0 rgba(0, 0, 0, 0.02);
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.kb-chat-input-card.is-drag {
+  border-color: rgba(50, 97, 206, 1);
+  box-shadow: 0 0 0 2px rgba(50, 97, 206, 0.2);
+}
+/* DSB .ant-sender-content：padding-block 12px / padding-inline 16px 12px / gap 8px / align-items flex-end */
+.kb-chat-input-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 12px 16px;
+}
+/* DSB .ant-sender-input：无内边距 / 无描边 / 无圆角（描边与圆角由卡片承担） */
+.kb-chat-input-body .ant-input {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0;
+  overflow: auto;
+  font-size: 14px;
+  line-height: 22px;
+  color: rgba(36, 46, 67, 1);
+  background: transparent;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  resize: none;
+}
+.kb-chat-input-body .ant-input::placeholder {
+  color: rgba(121, 135, 156, 1);
+}
+/* DSB .ant-sender-footer：padding 10px 16px 12px 16px（无分隔线） */
+.kb-chat-input-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px 12px 16px;
+}
+/* DSB .footer-left：column-gap 8px / overflow hidden */
+.kb-chat-input-actions-left {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+/* DSB .footer-right：column-gap 8px / margin-left auto */
+.kb-chat-input-actions-right {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  column-gap: 8px;
+  margin-left: auto;
+}
+/* DSB .file-text-btn：radius 8px / padding 4px 8px / color text-1（arco 默认 32px 高） */
+.kb-chat-input-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 14px;
+  color: rgba(36, 46, 67, 1);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.kb-chat-input-icon-btn:hover {
+  background: rgba(239, 244, 249, 1);
+}
+.kb-chat-input-icon-btn .dsb-icon {
+  font-size: 14px;
+}
+.kb-chat-input-icon-btn.active {
+  color: rgba(50, 97, 206, 1);
+  background: rgba(232, 243, 255, 1);
+}
+/* 发送 / 停止：对齐 @ant-design/x ActionButton（antd Button circle，32px） */
+.kb-chat-send-btn,
+.kb-chat-stop-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.kb-chat-send-btn {
+  color: #fff;
+  background: rgba(50, 97, 206, 1);
+  border: 1px solid rgba(50, 97, 206, 1);
+  font-size: 16px;
+}
+.kb-chat-send-btn:hover {
+  background: rgba(81, 126, 216, 1);
+  border-color: rgba(81, 126, 216, 1);
+}
+.kb-chat-send-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.kb-chat-stop-btn {
+  color: rgba(50, 97, 206, 1);
+  background: transparent;
+  border: 0;
+}
+.kb-chat-stop-btn:hover {
+  background: rgba(239, 244, 249, 1);
+}
+/* 模型选择：对齐 DSB .portal-chat-dropdown-btn
+   （min 156 / max 180、padding 0 8px、primary-light-1 底、link-6 字色、600、32px 胶囊）
+   antd v6 的 Select 根元素即 .ant-select（描边/底色/圆角都在根上），故同时覆盖根与旧版 .ant-select-selector */
+.kb-chat-model-select {
+  min-width: 156px;
+  max-width: 180px;
+  height: 32px !important;
+  padding: 0 8px !important;
+  border: 1px solid rgba(50, 97, 206, 1) !important;
+  border-radius: 16px !important;
+  background: rgba(232, 243, 255, 1) !important;
+  color: rgba(50, 97, 206, 1) !important;
+  font-size: 14px !important;
+  font-weight: 600;
+}
+.kb-chat-model-select:hover,
+.kb-chat-model-select.ant-select-focused {
+  border-color: rgba(50, 97, 206, 1) !important;
+  background: rgba(232, 243, 255, 1) !important;
+}
+.kb-chat-model-select .ant-select-selector {
+  height: 32px !important;
+  border-radius: 16px !important;
+  border-color: rgba(50, 97, 206, 1) !important;
+  background: rgba(232, 243, 255, 1) !important;
+  color: rgba(50, 97, 206, 1) !important;
+  font-weight: 600;
+}
+.kb-chat-model-select .ant-select-content,
+.kb-chat-model-select .ant-select-selection-item,
+.kb-chat-model-select .ant-select-selection-placeholder,
+.kb-chat-model-select .ant-select-suffix,
+.kb-chat-model-select .ant-select-arrow {
+  color: rgba(50, 97, 206, 1) !important;
+  line-height: 30px !important;
+  font-size: 14px !important;
+}
+.kb-chat-model-select .dsb-icon {
+  font-size: 14px;
+  color: rgba(50, 97, 206, 1);
+}
+/* 知识库 / 智能体选择：对齐 DSB 圆形描边按钮（32px / padding 0 8px / 描边 #E3E9EF / 白底） */
+.kb-chat-aux-select {
+  height: 32px !important;
+  padding: 0 8px !important;
+  border: 1px solid rgba(227, 233, 239, 1) !important;
+  border-radius: 16px !important;
+  background: #fff !important;
+  font-size: 14px !important;
+}
+.kb-chat-aux-select .ant-select-selector {
+  height: 32px !important;
+  border-radius: 16px !important;
+  border-color: rgba(227, 233, 239, 1) !important;
+  background: #fff !important;
+}
+.kb-chat-aux-select .ant-select-content,
+.kb-chat-aux-select .ant-select-selection-item,
+.kb-chat-aux-select .ant-select-selection-placeholder,
+.kb-chat-aux-select .ant-select-suffix,
+.kb-chat-aux-select .ant-select-arrow {
+  line-height: 30px !important;
+  color: rgba(36, 46, 67, 1);
+  font-size: 14px !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════

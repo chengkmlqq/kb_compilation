@@ -7,11 +7,11 @@ import {
   Button,
   Card,
   Drawer,
+  Dropdown,
   Empty,
   Input,
   List,
   Modal,
-  Popconfirm,
   Select,
   Space,
   Tag,
@@ -22,7 +22,6 @@ import {
 } from "antd";
 import {
   BulbOutlined,
-  CopyOutlined,
   DatabaseOutlined,
   DeleteOutlined,
   DownOutlined,
@@ -31,15 +30,26 @@ import {
   GlobalOutlined,
   PaperClipOutlined,
   PictureOutlined,
-  PlusOutlined,
-  ReloadOutlined,
   RobotOutlined,
   SearchOutlined,
-  SendOutlined,
-  StopOutlined,
-  LikeOutlined,
-  DislikeOutlined,
+  ArrowUpOutlined,
 } from "@ant-design/icons";
+import {
+  DsbIconAdd,
+  DsbIconAgree,
+  DsbIconChevronDown,
+  DsbIconChevronUp,
+  DsbIconCopy,
+  DsbIconDataGovernance,
+  DsbIconDisagree,
+  DsbIconLayout3,
+  DsbIconLink,
+  DsbIconModelMgr,
+  DsbIconOperate,
+  DsbIconRefresh,
+  DsbIconSwapRight,
+  DsbStopLoading,
+} from "@/components/DsbIcons";
 import {
   apiCreateAgentSession,
   apiCreateSession,
@@ -643,13 +653,16 @@ export default function ChatPage() {
       }
     }
 
-    // 对齐 WeKnora：图片随发送上传到当前会话（作为问答上下文附件）
+    // 对齐 WeKnora：图片随发送上传到当前会话（作为问答上下文附件）。
+    // 收集本轮附件 id 传给问答接口：后端按当轮 id 注入图片（不再重发会话内历史图片）
+    let turnImageIds: string[] = [];
     if (imagePreviews.length) {
       const pending = imagePreviews;
       setImagePreviews([]);
       for (const p of pending) {
         try {
-          await uploadAttachment(p.file, sessionId);
+          const attId = await uploadAttachment(p.file, sessionId);
+          if (attId) turnImageIds.push(attId);
         } finally {
           URL.revokeObjectURL(p.url);
         }
@@ -672,6 +685,8 @@ export default function ChatPage() {
           embed_query: true,
           model_id: modelId || undefined, // 2026-10-06: 模型切换（空=默认模型）
           web_search_enabled: webSearch, // 2026-10-12 对齐 WeKnora 输入区联网开关
+          // 2026-10-18 对齐 WeKnora 图片仅随当轮注入：本轮图片附件 id（[]=本轮无图）
+          image_attachment_ids: turnImageIds,
         }),
         signal: controller.signal,
       });
@@ -933,8 +948,8 @@ export default function ChatPage() {
     await loadSessions();
   };
 
-  // L3：附件上传/删除
-  const uploadAttachment = async (file: File, sid?: string) => {
+  // L3：附件上传/删除。返回新附件 id（图片问答按当轮 id 注入，见 send()）
+  const uploadAttachment = async (file: File, sid?: string): Promise<string | null> => {
     let sessionId = sid ?? activeSession;
     if (!sessionId) {
       const created = agentMode
@@ -946,16 +961,17 @@ export default function ChatPage() {
         await loadSessions();
       } else {
         toast.error("创建会话失败，无法上传附件");
-        return;
+        return null;
       }
     }
     const res = await apiUploadAttachment(sessionId!, file);
     if (res.success && res.data) {
       setAttachments((prev) => [...prev, res.data!]);
       toast.success(`附件已上传：${res.data.file_name}`);
-    } else {
-      toast.error(res.message || "附件上传失败");
+      return res.data.id;
     }
+    toast.error(res.message || "附件上传失败");
+    return null;
   };
 
   const removeAttachment = async (attId: string) => {
@@ -1111,109 +1127,116 @@ export default function ChatPage() {
     // 2026-10-08: 对齐任务监控页「固定视口高度 + 统一 8px 边距」——外层锁定 视口 − 顶栏(45px)，
     // 左右两栏吃满剩余高度、各自内部滚动，页面本身不出现滚动条。
     <div className="kb-chat-page">
-      {/* 左：会话列表（2026-10-12 embeddedMode 时隐藏，问答区满宽沉浸式） */}
-      {!embeddedMode && !siderCollapsed && (
-      <div className="kb-chat-sider">
+      {/* 左：会话列表（DSB .arco-layout-sider-light 228px + ChatSider；收起时 slide-out 0.3s） */}
+      {!embeddedMode && (
+      <div className={`kb-chat-sider${siderCollapsed ? " hide" : ""}`}>
         <div className="kb-chat-sider-header">
-          <Button
-            className="kb-chat-new-btn"
-            type="primary"
-            shape="round"
-            icon={<PlusOutlined />}
-            onClick={() => void newSession()}
-          >
-            新对话
-          </Button>
-          <Tooltip title="收起侧边栏">
-            <span className="kb-chat-sider-collapse" onClick={() => setSiderCollapsed(true)}>
-              <DownOutlined style={{ color: "rgba(77,94,125,1)", fontSize: 18 }} />
-            </span>
-          </Tooltip>
-        </div>
-        {/* 会话列表：占满剩余高度，超高时内部滚动 */}
-        <div className="kb-chat-sider-list">
-        {groupedSessions.length === 0 ? (
-          <div style={{ padding: "40px 0", textAlign: "center" }}>
-            <Empty description="暂无会话" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          <div className="kb-chat-sider-header-inner">
+            <Button
+              className="kb-chat-new-btn"
+              type="primary"
+              shape="round"
+              icon={<DsbIconAdd size={16} />}
+              onClick={() => void newSession()}
+            >
+              新对话
+            </Button>
+            <Tooltip title="收起侧边栏">
+              <span className="kb-chat-sider-collapse" onClick={() => setSiderCollapsed(true)}>
+                <DsbIconLayout3 size={18} color="rgba(77,94,125,1)" />
+              </span>
+            </Tooltip>
           </div>
-        ) : (
-          groupedSessions.map((g) => (
-            <div key={g.key} className="kb-chat-sider-group-outer">
-              <div className="kb-chat-sider-group-title">{g.label}</div>
-              <div className="kb-chat-sider-group-content">
-                {g.items.map((s) => {
-                  const active = activeSession === s.id;
-                  return (
-                    <div
-                      key={s.id}
-                      className={`kb-chat-sider-item${active ? " active" : ""}`}
-                      onClick={() => void openSession(s.id)}
-                      title={s.title}
-                    >
-                      <div className="kb-chat-sider-item-label">{s.title}</div>
-                      <div className="kb-chat-sider-item-oper">
-                        <Tooltip title="重命名">
-                          <EditOutlined
-                            style={{ fontSize: 13, color: active ? "rgba(50,97,206,1)" : token.colorTextTertiary }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setRenameTarget(s);
-                              setRenameValue(s.title);
-                            }}
-                          />
-                        </Tooltip>
-                        <Popconfirm
-                          title="删除该会话？"
-                          onConfirm={(e) => {
-                            e?.stopPropagation();
-                            void deleteSession(s.id);
-                          }}
-                        >
-                          <DeleteOutlined
-                            style={{ fontSize: 13, color: active ? "rgba(50,97,206,1)" : token.colorTextTertiary }}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        </Popconfirm>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+        </div>
+        {/* 会话列表：DSB .search-chat-list-box + .arco-spin-children 内边距 */}
+        <div className="kb-chat-sider-list">
+          <div className="kb-chat-sider-list-inner">
+          {groupedSessions.length === 0 ? (
+            <div style={{ padding: "40px 0", textAlign: "center" }}>
+              <Empty description="暂无会话" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             </div>
-          ))
-        )}
+          ) : (
+            groupedSessions.map((g) => (
+              <div key={g.key} className="kb-chat-sider-group-outer">
+                <div className="kb-chat-sider-group-title">{g.label}</div>
+                <div className="kb-chat-sider-group-content">
+                  {g.items.map((s) => {
+                    const active = activeSession === s.id;
+                    return (
+                      <div
+                        key={s.id}
+                        className={`kb-chat-sider-item${active ? " active" : ""}`}
+                        onClick={() => void openSession(s.id)}
+                        title={s.title}
+                      >
+                        <div className="kb-chat-sider-item-label">{s.title}</div>
+                        {/* DSB .item-oper：单个操作图标 + 下拉菜单（重命名 / 删除） */}
+                        <div className="kb-chat-sider-item-oper">
+                          <Dropdown
+                            trigger={["click"]}
+                            overlayClassName="kb-chat-sider-item-menu"
+                            menu={{
+                              items: [
+                                { key: "rename", label: "重命名", icon: <EditOutlined /> },
+                                { key: "delete", label: "删除", icon: <DeleteOutlined />, className: "kb-menu-danger" },
+                              ],
+                              onClick: ({ key, domEvent }) => {
+                                domEvent.stopPropagation();
+                                if (key === "rename") {
+                                  setRenameTarget(s);
+                                  setRenameValue(s.title);
+                                } else if (key === "delete") {
+                                  void deleteSession(s.id);
+                                }
+                              },
+                            }}
+                          >
+                            <button
+                              type="button"
+                              className="kb-chat-sider-item-oper-btn"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <DsbIconOperate size={16} />
+                            </button>
+                          </Dropdown>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))
+          )}
+          </div>
         </div>
       </div>
       )}
 
       {/* 右：对话区 */}
       <div className="kb-chat-main">
+        {/* 顶栏：DSB Portal Header 面包屑（48px / 无边框；左侧会话栏展开时不存在顶栏） */}
+        {(embeddedMode || siderCollapsed) && (
         <div className="kb-chat-header">
           <div className="kb-chat-header-actions">
-            <Tooltip title="打开侧边栏">
-              <span className="kb-chat-header-icon" onClick={() => setSiderCollapsed(false)}>
-                <DownOutlined style={{ color: "rgba(77,94,125,1)", fontSize: 18 }} />
-              </span>
-            </Tooltip>
-            <Tooltip title="新对话">
-              <span className="kb-chat-header-icon" onClick={() => void newSession()}>
-                <PlusOutlined style={{ color: "rgba(77,94,125,1)", fontSize: 16 }} />
-              </span>
-            </Tooltip>
-          </div>
-          <div className="kb-chat-header-title">
-            {activeSessionTitle || "智能问答"}
-          </div>
-          <div className="kb-chat-header-actions kb-chat-header-actions-right">
-            {streaming && (
-              <Tooltip title="停止生成">
-                <span className="kb-chat-header-icon" onClick={stopGenerating}>
-                  <StopOutlined style={{ color: "rgba(77,94,125,1)", fontSize: 16 }} />
+            {!embeddedMode && (
+              <Tooltip title="打开侧边栏">
+                <span className="kb-chat-header-icon" onClick={() => setSiderCollapsed(false)}>
+                  <DsbIconLayout3 size={18} color="rgba(77,94,125,1)" />
                 </span>
               </Tooltip>
             )}
+            <Tooltip title="新对话">
+              <span className="kb-chat-header-icon" onClick={() => void newSession()}>
+                <img src="/images/dsb/record-new-chat-icon.png" alt="" width={18} height={18} />
+              </span>
+            </Tooltip>
+          </div>
+          <span className="kb-chat-header-sep">|</span>
+          <div className="kb-chat-header-title">
+            {activeSessionTitle || "智能问答"}
           </div>
         </div>
+        )}
 
         <div
           ref={scrollRef}
@@ -1259,7 +1282,7 @@ export default function ChatPage() {
                       : recommendations.map((q, i) => (
                           <div className="kb-chat-home-rela-item" key={i} onClick={() => void send(q)}>
                             <span style={{ flex: 1, minWidth: 0 }}>{q}</span>
-                            <span className="kb-chat-home-rela-arrow">›</span>
+                            <DsbIconSwapRight size={14} className="kb-chat-home-rela-arrow" />
                           </div>
                         ))}
                   </div>
@@ -1354,58 +1377,60 @@ export default function ChatPage() {
                         setRefDrawer({ open: true, refs: m.refs || [], answer: m.content, activeChunk: r.chunk_id })
                       } />
                     )}
-                </div>
-                )}
-                {/* 答案工具栏：重新生成 + 复制 + 喜欢/不喜欢反馈，全部图标（2026-10-15） */}
-                {m.role === "assistant" && !m.streaming && m.content && (
-                  <div style={{ marginTop: 6, display: "flex", gap: 4, alignItems: "center" }}>
-                    {!m.error && (
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<ReloadOutlined />}
-                        style={{ fontSize: 12, padding: "0 4px", height: "auto", color: token.colorTextTertiary }}
-                        onClick={() => regenerate(msgs, idx)}
-                      />
+                    {/* 答案工具条：对齐 DSB .assistant-footer / .ai-oper-left
+                        （复制 · 重新生成 ｜ 喜欢 · 不喜欢，图标 20px、按钮 20px 高） */}
+                    {!m.streaming && m.content && (
+                      <div className="kb-chat-assistant-footer">
+                        <div className="kb-chat-assistant-oper">
+                          <Tooltip title="复制">
+                            <button
+                              type="button"
+                              className="kb-chat-oper-btn"
+                              onClick={async () => {
+                                // copyText：HTTP 非安全上下文下 navigator.clipboard 不可用，
+                                // 自动降级 execCommand（否则固定提示「复制失败」）
+                                const ok = await copyText(m.content);
+                                if (ok) toast.success("已复制回答");
+                                else toast.error("复制失败，请检查浏览器剪贴板权限");
+                              }}
+                            >
+                              <DsbIconCopy size={20} />
+                            </button>
+                          </Tooltip>
+                          {!m.error && (
+                            <Tooltip title="重新生成">
+                              <button
+                                type="button"
+                                className="kb-chat-oper-btn"
+                                onClick={() => regenerate(msgs, idx)}
+                              >
+                                <DsbIconRefresh size={20} />
+                              </button>
+                            </Tooltip>
+                          )}
+                          <span className="kb-chat-oper-split" />
+                          <Tooltip title="喜欢">
+                            <button
+                              type="button"
+                              className={`kb-chat-oper-btn${m.feedback === "like" ? " is-agree" : ""}`}
+                              onClick={() => void toggleFeedback(m, "like")}
+                            >
+                              <DsbIconAgree size={20} />
+                            </button>
+                          </Tooltip>
+                          <Tooltip title="不喜欢">
+                            <button
+                              type="button"
+                              className={`kb-chat-oper-btn${m.feedback === "dislike" ? " is-disagree" : ""}`}
+                              onClick={() => void toggleFeedback(m, "dislike")}
+                            >
+                              <DsbIconDisagree size={20} />
+                            </button>
+                          </Tooltip>
+                        </div>
+                      </div>
                     )}
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<CopyOutlined />}
-                      style={{ fontSize: 12, padding: "0 4px", height: "auto", color: token.colorTextTertiary }}
-                      onClick={async () => {
-                        // copyText：HTTP 非安全上下文下 navigator.clipboard 不可用，
-                        // 自动降级 execCommand（否则固定提示「复制失败」）
-                        const ok = await copyText(m.content);
-                        if (ok) toast.success("已复制回答");
-                        else toast.error("复制失败，请检查浏览器剪贴板权限");
-                      }}
-                    />
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<LikeOutlined />}
-                      style={{
-                        fontSize: 12,
-                        padding: "0 4px",
-                        height: "auto",
-                        color: m.feedback === "like" ? token.colorPrimary : token.colorTextTertiary,
-                      }}
-                      onClick={() => void toggleFeedback(m, "like")}
-                    />
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<DislikeOutlined />}
-                      style={{
-                        fontSize: 12,
-                        padding: "0 4px",
-                        height: "auto",
-                        color: m.feedback === "dislike" ? token.colorError : token.colorTextTertiary,
-                      }}
-                      onClick={() => void toggleFeedback(m, "dislike")}
-                    />
-                  </div>
+                </div>
                 )}
                 {/* 2026-10-15：消息末尾不再展示来源文档面板（ReferencePanel），仅保留正文引用角标（点击开右侧抽屉） */}
                 {/* 2026-10-16：回复下方「推荐追问」建议块已移除（用户要求） */}
@@ -1424,25 +1449,12 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </div>
 
-        <div className="kb-chat-footer">
-          {/* 底部内容统一居中列：输入卡片与消息列表同宽；模型/智能体选择收敛进卡片控制栏（对齐 DSB .chat-footer / Sender） */}
+        <div className={`kb-chat-footer${attachments.length > 0 ? " has-file" : ""}`}>
+          {/* 输入卡片：对齐 DSB .chat-footer > @ant-design/x Sender（卡片描边/圆角/阴影 + 内容区 + 底栏） */}
           <div className="kb-chat-footer-inner">
-          {/* 附件区（会话级已上传附件） */}
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
-        {attachments.map((a) => (
-          <Tag
-            key={a.id}
-            closable
-            onClose={() => void removeAttachment(a.id)}
-            style={{ maxWidth: 240 }}
-            title={a.media_type === "image" ? `图片：${a.file_name}` : a.file_name}
-          >
-            {a.media_type === "image" ? <PictureOutlined /> : <PaperClipOutlined />} {a.file_name}
-          </Tag>
-        ))}
-      </div>
       {/* 2026-10-08 对齐 WeKnora：图片 / 附件双入口 + 输入卡片式布局；2026-10-12 支持整文件拖放 */}
       <div
+        className={`kb-chat-input-card${dragActive ? " is-drag" : ""}`}
         onDragEnter={(e) => {
           e.preventDefault();
           setDragActive(true);
@@ -1457,15 +1469,24 @@ export default function ChatPage() {
           setDragActive(false);
         }}
         onDrop={handleChatDrop}
-        style={{
-                  border: `1px solid ${dragActive ? token.colorPrimary : token.colorBorderSecondary}`,
-                  borderRadius: 12,
-                  boxShadow: dragActive ? `0 0 0 2px ${token.colorPrimaryBorder}` : "none",
-                  background: dragActive ? token.colorPrimaryBg : token.colorBgContainer,
-                  padding: "10px 14px 6px",
-                  transition: "border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease",
-                }}
       >
+        <div className="kb-chat-input-body">
+        {/* 附件区（会话级已上传附件；对齐 DSB Sender prefix 附件条） */}
+        {attachments.length > 0 && (
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {attachments.map((a) => (
+          <Tag
+            key={a.id}
+            closable
+            onClose={() => void removeAttachment(a.id)}
+            style={{ maxWidth: 240 }}
+            title={a.media_type === "image" ? `图片：${a.file_name}` : a.file_name}
+          >
+            {a.media_type === "image" ? <PictureOutlined /> : <PaperClipOutlined />} {a.file_name}
+          </Tag>
+        ))}
+      </div>
+        )}
         {/* 图片预览条（发送前本地预览） */}
         {imagePreviews.length > 0 && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "8px 0 6px" }}>
@@ -1526,7 +1547,6 @@ export default function ChatPage() {
           onChange={(e) => setInput(e.target.value)}
           onPaste={handleChatPaste}
           placeholder="输入问题，Enter 发送，Shift+Enter 换行"
-          autoSize={{ minRows: 1, maxRows: 4 }}
           disabled={streaming}
           onPressEnter={(e) => {
             if (!e.shiftKey) {
@@ -1534,21 +1554,13 @@ export default function ChatPage() {
               void send();
             }
           }}
-          style={{ padding: "8px 20px", background: "#fff", border: "1px solid rgba(227,233,239,1)", borderRadius: 24, resize: "none", overflow: "auto" }}
+          style={{ height: "100%" }}
         />
-        {/* 控制栏：左 智能体选择 + 工具按钮 / 右 模型选择 + 发送·停止（对齐 WeKnora Input-field 布局） */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-            padding: "6px 0 2px",
-            borderTop: `1px solid ${token.colorSplit}`,
-            marginTop: 4,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        </div>
+        {/* 控制栏：对齐 DSB Sender .ant-sender-footer > .sender-footer-main
+            （左 .footer-left：反思模式 / 知识库 / 智能体 / 工具按钮；右 .footer-right：模型 + 发送·停止） */}
+        <div className="kb-chat-input-actions">
+          <div className="kb-chat-input-actions-left">
             {/* 2026-10-16 DSB 门户对齐：反思模式开关（开启 = 走 agent 问答流，答案带思考过程） */}
             <button
               type="button"
@@ -1556,21 +1568,23 @@ export default function ChatPage() {
               onClick={() => setReflectMode((v) => !v)}
               title={reflectMode ? "关闭反思模式" : "反思模式：多步思考后作答"}
             >
-              <BulbOutlined style={{ fontSize: 13 }} />
+              <DsbIconDataGovernance size={14} />
               {reflectMode ? "关闭反思模式" : "反思模式"}
             </button>
             {/* 2026-10-15 纯对话模式：知识库选择（allowClear，清空=不检索直接对话） */}
             <Select
+              className="kb-chat-aux-select"
               value={kbId || undefined}
               onChange={(v) => setKbId(v || undefined)}
               placeholder="不选=直接对话"
               allowClear
-              style={{ minWidth: 150, marginRight: 6 }}
+              style={{ minWidth: 150 }}
               suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
               options={kbs.map((k) => ({ value: k.id, label: k.name }))}
             />
             {/* 左下角：智能体选择（对齐 WeKnora agent-mode-btn） */}
             <Select
+              className="kb-chat-aux-select"
               value={agentMode || undefined}
               onChange={(v) => {
                 setAgentMode(v || undefined);
@@ -1581,7 +1595,7 @@ export default function ChatPage() {
               }}
               placeholder="普通问答"
               allowClear
-              style={{ minWidth: 130, marginRight: 6 }}
+              style={{ minWidth: 130 }}
               suffixIcon={<DownOutlined style={{ fontSize: 10 }} />}
               options={agents.map((a) => ({ value: a.id, label: a.name }))}
               optionRender={(o) => (
@@ -1594,10 +1608,9 @@ export default function ChatPage() {
             {/* 2026-10-12 对齐 WeKnora Input-field：联网搜索开关（请求级生效）
                 （2026-10-15 显隐由参数表 CHAT_WEB_SEARCH_ENABLED 控制） */}
             {webSearchVisible && (
-              <Button
-                type="text"
-                size="small"
-                icon={<GlobalOutlined />}
+              <button
+                type="button"
+                className={`kb-chat-input-icon-btn${webSearch ? " active" : ""}`}
                 title={
                   webSearch
                     ? "联网搜索已开启：回答可调用 web_search 检索实时信息"
@@ -1605,38 +1618,40 @@ export default function ChatPage() {
                 }
                 aria-pressed={webSearch}
                 onClick={() => setWebSearch((v) => !v)}
-                style={{
-                  color: webSearch ? token.colorPrimary : undefined,
-                  background: webSearch ? token.colorPrimaryBg : undefined,
-                }}
-              />
+              >
+                <GlobalOutlined />
+              </button>
             )}
             {canUploadImage && (
-              <Button
-                type="text"
-                size="small"
-                icon={<PictureOutlined />}
+              <button
+                type="button"
+                className="kb-chat-input-icon-btn"
                 title="上传图片（随问答发给模型识别）"
                 onClick={() => imageInputRef.current?.click()}
-              />
+              >
+                <PictureOutlined />
+              </button>
             )}
-            <Button
-              type="text"
-              size="small"
-              icon={<PaperClipOutlined />}
+            <button
+              type="button"
+              className="kb-chat-input-icon-btn"
               title="上传附件"
               onClick={() => attachmentInputRef.current?.click()}
-            />
+            >
+              <DsbIconLink size={16} />
+              附件
+            </button>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {/* 右侧：模型选择（对齐 WeKnora model-selector-trigger） */}
+          <div className="kb-chat-input-actions-right">
+            {/* 右侧：模型选择（对齐 DSB .portal-chat-dropdown-btn 胶囊） */}
             {chatModels.length > 0 && (
               <Select
+                className="kb-chat-model-select"
                 value={modelId || undefined}
                 onChange={setModelId}
                 placeholder="默认模型"
                 allowClear
-                style={{ width: 170 }}
+                prefix={<DsbIconModelMgr size={14} />}
                 options={chatModels.map((m) => ({
                   value: m.id,
                   label: m.display_name || m.name || m.id,
@@ -1644,29 +1659,23 @@ export default function ChatPage() {
               />
             )}
             {streaming ? (
-              <Button
-                shape="circle"
-                size="small"
-                icon={<StopOutlined />}
+              <button
+                type="button"
+                className="kb-chat-stop-btn"
                 title="停止生成"
-                onClick={() => abortRef.current?.abort()}
-                style={{
-                  width: 30,
-                  height: 30,
-                  background: token.colorPrimaryBg,
-                  color: token.colorPrimary,
-                  borderColor: token.colorPrimaryBorder,
-                }}
-              />
+                onClick={stopGenerating}
+              >
+                <DsbStopLoading size={32} />
+              </button>
             ) : (
-              <Button
-                type="primary"
-                shape="circle"
-                size="small"
-                icon={<SendOutlined />}
+              <button
+                type="button"
+                className="kb-chat-send-btn"
+                title="发送"
                 onClick={() => void send()}
-                style={{ width: 30, height: 30 }}
-              />
+              >
+                <ArrowUpOutlined />
+              </button>
             )}
           </div>
         </div>
