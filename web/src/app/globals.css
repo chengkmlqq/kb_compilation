@@ -1655,15 +1655,12 @@ html[data-theme="dark"] body {
   margin-top: 2px;
 }
 
-/* ── 卡片网格视图（知识库列表 / 文档卡片 / 智能体列表） ──
+/* ── 卡片网格视图（知识库列表 / 智能体列表） ──
    列表面板本身是白底，而全局 .ant-card 去掉了边框、只剩一层 10% 软阴影，
    白卡叠白底 → 卡片边界完全不可辨。这里给卡片网格内的卡片补可见描边 + 投影，
-   hover 时加深，明确卡片边界（只命中下列类名，不影响面板级卡片）。 */
-.kb-list-card.ant-card,
-.kb-list-card.ant-card:hover {
-  border-color: #bfcddd !important;
-  box-shadow: 0 4px 10px rgba(36, 46, 67, 0.1) !important;
-}
+   hover 时加深，明确卡片边界（只命中下列类名，不影响面板级卡片）。
+   2026-10-20：文档卡片已改为自绘 .kb-doc-card（同 .kb-kbs-card 三段式），不再使用 .ant-card，
+   故原 .kb-list-card 规则随实现移除（避免留死样式让后续对齐误判「已经对了」）。 */
 
 /* ═══════════════════════════════════════════════════════════════
    智能体卡片（对齐知识库卡片 kb-kbs-card 三段式：
@@ -2056,8 +2053,9 @@ html[data-theme="dark"] body {
   flex-direction: column;
   min-height: 0;
   position: relative;
-  /* 右侧内容区按系统面板内边距 12/16 排布（左侧目录树保持贴面板边缘） */
-  padding: 12px 16px 0;
+  /* 右侧内容区按系统面板内边距 16 排布（左侧目录树保持贴面板边缘），
+     底部 12px 给钉底的分页条留出呼吸位 */
+  padding: 12px 16px 12px;
 }
 
 /* 表格视图容器：给白底表格补可见边界，避免与白色面板融为一体（对比度不足）。
@@ -2086,41 +2084,59 @@ html[data-theme="dark"] body {
   white-space: nowrap;
 }
 
-/* ── 文档目录侧边栏（左侧树）── */
+/* ── 文档目录侧边栏（左侧树）——对齐知识库管理页左树（DSB 文档库 knowledge_lib_neo）：
+   260px 白底 + #f0f0f0 右边框（同 .kb-kbs-category-sider），树行复用 .kb-doc-tree-* 样式族 ── */
 .kb-doc-folder-sidebar {
-  background: var(--kb-bg-subtle, #fafafa);
-}
-/* 左侧树撑满容器：antd Tree 的 style 只作用于内层 NodeList，root .ant-tree 仍默认白底且
-   高度只随内容，与侧栏底色（#fafafa）错位、视觉上「树未撑满」。令滚动容器纵向 flex，
-   树根透明并占满剩余高度。 */
-.kb-doc-folder-tree {
+  box-sizing: border-box;
+  width: 260px;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  background: #fff;
+  border-right: 1px solid #f0f0f0;
 }
-.kb-doc-folder-tree .ant-tree {
+/* 侧栏标题行（与知识库管理页分类搜索框同档 28px，上下留白一致） */
+.kb-doc-folder-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  margin: 8px 8px 6px;
+}
+.kb-doc-folder-header-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #242e43;
+}
+/* 树容器（对齐 .kb-kbs-category-tree-main：左右 12px + 底部 12px 内边距，可滚动） */
+.kb-doc-folder-tree {
   flex: 1;
   min-height: 0;
-  background: transparent;
+  padding: 0 12px 12px;
+  overflow: auto;
 }
-.kb-doc-folder-tree .ant-tree-treenode {
-  padding: 2px 0;
+.kb-doc-folder-empty {
+  padding: 12px 4px;
+  font-size: 12px;
+  color: #79879c;
 }
-.kb-doc-folder-tree .ant-tree-node-content-wrapper {
-  min-width: 0;
-  flex: 1;
+/* 目录操作（新建子目录 / 重命名 / 删除）：行 hover 时浮现 */
+.kb-doc-folder-actions {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 4px;
+  color: #79879c;
 }
-.kb-doc-folder-tree .ant-tree-node-content-wrapper .ant-tree-title {
-  width: 100%;
-}
-.kb-doc-folder-tree .ant-tree-node-content-wrapper:hover .kb-doc-folder-actions,
-.kb-doc-folder-tree .ant-tree-treenode-selected .kb-doc-folder-actions {
-  display: inline-flex !important;
-}
-.kb-doc-folder-actions span {
+.kb-doc-folder-actions .anticon {
+  font-size: 12px;
   cursor: pointer;
 }
-.kb-doc-folder-tree .ant-tree-switcher {
-  width: 18px;
+.kb-doc-tree-row:hover .kb-doc-folder-actions {
+  display: inline-flex;
 }
 
 /* ── 筛选栏：grid 'search trailing' / 'filters filters' ── */
@@ -2136,13 +2152,56 @@ html[data-theme="dark"] body {
   align-items: center;
 }
 
-.kb-doc-search-input {
+/* 搜索框（对齐知识库管理页 .kb-kbs-search：fill-2 底 / 无边框 / 14px 胶囊 / 28px 高 / 12px 字）。
+   普通 Input 的 className 落在 affix-wrapper 自身，故自带类选择器与后代选择器都写上 */
+.kb-doc-search-input.ant-input-affix-wrapper,
+.kb-doc-search-input .ant-input-affix-wrapper {
   grid-area: search;
   min-width: 0;
-  /* 原先 width:100% 会撑满 grid 的 1fr 列，宽屏下搜索框过长；
-     与其它列表页搜索框一致改为固定宽度（见 kbs/page.tsx width:220） */
+  /* 原先 width:100% 会撑满 grid 的 1fr 列，宽屏下搜索框过长；固定宽度与其它列表页搜索框一致 */
   width: 240px;
   max-width: 100%;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 14px;
+  background: #eff4f9;
+  border-color: transparent;
+}
+.kb-doc-search-input.ant-input-affix-wrapper input.ant-input,
+.kb-doc-search-input .ant-input-affix-wrapper input.ant-input {
+  font-size: 12px;
+  height: 26px;
+  line-height: 26px;
+  padding: 0;
+}
+.kb-doc-search-input.ant-input-affix-wrapper input::placeholder,
+.kb-doc-search-input .ant-input-affix-wrapper input::placeholder {
+  color: #79879c;
+}
+.kb-doc-search-input .ant-input-prefix {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 8px;
+  color: #4d5e7d;
+}
+.kb-doc-search-input .ant-input-suffix {
+  margin-inline-start: 0;
+  color: #9ca3af;
+  font-size: 13px;
+}
+/* DSB arco 输入框状态链：默认 fill-2 → hover fill-3 → focus 白底 + primary 边框、无 ring */
+.kb-doc-search-input.ant-input-affix-wrapper:hover,
+.kb-doc-search-input .ant-input-affix-wrapper:hover {
+  background: #e3e9ef;
+  border-color: transparent;
+}
+.kb-doc-search-input.ant-input-affix-wrapper-focused,
+.kb-doc-search-input.ant-input-affix-wrapper:focus-within,
+.kb-doc-search-input .ant-input-affix-wrapper-focused,
+.kb-doc-search-input .ant-input-affix-wrapper:focus-within {
+  background: #fff;
+  border-color: #3261ce;
+  box-shadow: none;
 }
 
 .kb-doc-filter-trailing {
@@ -2169,8 +2228,28 @@ html[data-theme="dark"] body {
   flex-shrink: 0;
 }
 
+/* 过滤下拉（对齐 modo filled 控件：28px 高 / 12px 字 / fill-2 底 / 14px 胶囊，
+   与同排搜索框同一形态；antd v6 的文案节点为 .ant-select-content，v5 为 selection-item/placeholder，两代都覆盖） */
 .kb-doc-filter-control {
   width: 100%;
+}
+.kb-doc-filter-control.ant-select .ant-select-selector,
+.kb-doc-filter-control .ant-select-selector {
+  height: 28px;
+  border-radius: 14px;
+  background: #eff4f9;
+  border-color: transparent;
+}
+.kb-doc-filter-control.ant-select .ant-select-content,
+.kb-doc-filter-control.ant-select .ant-select-selection-item,
+.kb-doc-filter-control.ant-select .ant-select-selection-placeholder {
+  font-size: 12px;
+  line-height: 26px;
+}
+.kb-doc-filter-control.ant-select .ant-select-arrow,
+.kb-doc-filter-control.ant-select .ant-select-clear {
+  color: #79879c;
+  font-size: 12px;
 }
 
 @media (min-width: 1280px) {
@@ -2187,13 +2266,13 @@ html[data-theme="dark"] body {
   }
 }
 
-/* ── 视图切换（28×24 图标按钮组，secondarycontainer 底） ── */
+/* ── 视图切换（28×24 图标按钮组，fill-2 底 / 选中白底 + primary，对齐 modo 控件配色） ── */
 .kb-doc-view-toggle {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   padding: 2px;
-  background: #f3f3f3;
+  background: #eff4f9;
   border-radius: 6px;
   gap: 0;
 }
@@ -2207,7 +2286,7 @@ html[data-theme="dark"] body {
   border: 0;
   background: transparent;
   border-radius: 4px;
-  color: rgba(0, 0, 0, 0.65);
+  color: #4d5e7d;
   font-size: 14px;
   cursor: pointer;
   padding: 0;
@@ -2215,23 +2294,160 @@ html[data-theme="dark"] body {
 }
 
 .kb-doc-view-toggle-btn:hover {
-  color: rgba(0, 0, 0, 0.88);
+  color: #242e43;
 }
 
 .kb-doc-view-toggle-btn.active {
   background: #fff;
-  color: #1677ff;
+  color: #3261ce;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
-/* ── 滚动容器 ── */
-.kb-doc-scroll-container {
-  position: relative;
+/* ── 分页条（对齐知识库管理页 .kb-kbs-pagination-bar：fill-1 底 + 6/16 内边距；
+      内部几何复用 .kb-kbs-pagination* 类，故这里只补容器） ── */
+.kb-doc-pagination-bar {
+  flex-shrink: 0;
+  padding: 6px 16px;
+  background: #f9fbfd;
+}
+
+/* ── 空态（表格占位行等不具备固定高度的容器：不撑满居中，随内容自然排布） ── */
+.kb-kbs-empty--inline .kb-kbs-empty-wrapper {
+  position: static;
+  top: 0;
+  transform: none;
+  padding: 20px 0;
+}
+.kb-kbs-empty--inline .kb-kbs-empty-image {
+  font-size: 96px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   文档卡片（对齐知识库卡片 .kb-kbs-card 三段式：header 44px 图标+标题+meta /
+   两行摘要 / footer 28px 状态文本 + 操作下拉）
+   ═══════════════════════════════════════════════════════════════ */
+.kb-doc-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+.kb-doc-card {
+  box-sizing: border-box;
+  height: 150px;
+  padding: 16px 16px 12px 16px;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid #e3e9ef;
+  border-radius: 6px;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.kb-doc-card:hover {
+  box-shadow: 0 4px 10px 0 rgba(36, 46, 67, 0.1);
+  border-color: #e3e9ef;
+}
+.kb-doc-card-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  height: 44px;
+  flex-shrink: 0;
+}
+.kb-doc-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+}
+.kb-doc-card-icon .anticon {
+  font-size: 28px;
+}
+.kb-doc-card-detail {
+  width: calc(100% - 40px);
+  min-width: 0;
+}
+.kb-doc-card-title-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 22px;
+  color: #242e43;
+}
+.kb-doc-card-title-name {
   flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding-right: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-doc-card-meta {
+  width: 100%;
+  font-size: 12px;
+  line-height: 20px;
+  color: #4d5e7d;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-doc-card-description {
+  display: -webkit-box;
+  height: 40px;
+  margin-top: 10px;
+  overflow: hidden;
+  font-size: 12px;
+  color: #4d5e7d;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.kb-doc-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: auto;
+  flex-shrink: 0;
+  gap: 8px;
+}
+.kb-doc-card-footer-left {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: #4d5e7d;
+  line-height: 28px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-doc-card-footer-left--link,
+.kb-doc-card-footer-left--danger {
+  cursor: pointer;
+}
+.kb-doc-card-footer-left--danger {
+  color: #cf1322;
+}
+.kb-doc-card-footer-right {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.kb-doc-card-footer-right .ant-btn-text {
+  color: #4d5e7d;
 }
 
 

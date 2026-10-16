@@ -86,10 +86,12 @@ export default function KbDetailPage() {
   };
 
   return (
+    // 与知识库管理页（kbs/page.tsx）同一页面外壳：用 .kb-kbs-page 承载 modo 字体栈 /
+    // 12px 基准字号 / 白底满屏（原先用无样式的 kbs-page + padding:10，比管理页多出一圈灰边、
+    // 且字体回落到 antd 默认栈，两个页面观感不一致）
     <div
-      className="kbs-page"
+      className="kb-kbs-page"
       style={{
-        padding: 10,
         height: "calc(100vh - var(--app-header-h, 48px))",
         display: "flex",
         flexDirection: "column",

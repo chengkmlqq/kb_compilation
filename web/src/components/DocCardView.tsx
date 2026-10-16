@@ -1,10 +1,12 @@
 "use client";
 /**
- * 文档卡片视图（对齐 WeKnora 卡片网格）：文件图标 + 文件名 + 状态/信息 + 更多操作菜单。
- * 点击卡片/文件名 → 打开详情抽屉（onOpen）；处理中/失败状态可点 → 查看轨迹（onTrace）。
+ * 文档卡片视图（对齐知识库卡片 kb-kbs-card 三段式，2026-10-20 统一详情页与知识库页观感）：
+ * header 44px（32px 文件类型图标 + 文件名 14px/600 + meta 12px）
+ * → 两行摘要（40px 截断）→ footer 28px（左：状态文本；右：更多操作）。
+ * 悬浮 Popover 保留原有的完整信息（大小/分块/时间/失败原因）与操作入口。
  */
-import { useState, type ReactNode } from "react";
-import { Button, Card, Dropdown, Empty, Popover, Space, Spin, Tag, Typography } from "antd";
+import type { ReactNode } from "react";
+import { Button, Dropdown, Popover, Space, Tag, Typography } from "antd";
 import {
   DeleteOutlined,
   DownloadOutlined,
@@ -22,6 +24,7 @@ import {
   TableOutlined,
 } from "@ant-design/icons";
 import type { DocItem } from "@/lib/api";
+import KbsEmpty from "@/components/kb/KbsEmpty";
 
 export const PARSE_STATE_COLOR: Record<string, string> = {
   PENDING: "default",
@@ -66,6 +69,7 @@ export const WIKI_STAGE_LABEL: Record<string, { text: string; color: string }> =
  * parse_state=READY 时在「已就绪」主标签旁附加摘要与构建两个阶段小标签，
  * 使用户一眼看到整条管线（解析+向量化 / 摘要 / wiki 构建）的完成度，
  * 而不仅是解析就绪。parse_state 非 READY 时只返回解析主标签。
+ * （列表视图表格「状态」列仍使用彩色 Tag；卡片视图改为同信息的纯文本，见 docStageText）
  */
 export function docStageTags(d: DocItem): ReactNode {
   if (d.parse_state !== "READY") {
@@ -88,6 +92,20 @@ export function docStageTags(d: DocItem): ReactNode {
 }
 
 const IN_FLIGHT = new Set(["PENDING", "PARSING", "EMBEDDING"]);
+
+/** 卡片 footer 状态文本（对齐知识库卡片 footer：纯文本承载原彩色 Tag 组信息） */
+export function docStageText(d: DocItem): string {
+  if (IN_FLIGHT.has(d.parse_state)) {
+    return STATE_LABEL[d.parse_state] || d.parse_state;
+  }
+  if (d.parse_state === "FAILED") {
+    return "失败 · 查看原因";
+  }
+  const sum = SUMMARY_STAGE_LABEL[d.summary_status || ""] || SUMMARY_STAGE_LABEL[""];
+  const wikiState = d.wiki_build?.state || "";
+  const wiki = WIKI_STAGE_LABEL[wikiState] || { text: "构建未生成", color: "default" };
+  return `已就绪 · ${sum.text} · ${wiki.text}`;
+}
 
 export function fileTypeIcon(ext?: string | null) {
   switch ((ext || "").toLowerCase()) {
@@ -165,32 +183,14 @@ function formatRows(n?: number | null): string {
 
 export default function DocCardView({ items, onOpen, onDownload, onReparse, onDelete, onTrace }: Props) {
   if (items.length === 0) {
-    return <Empty description="暂无文档，拖拽文件到右上角上传" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+    return <KbsEmpty description="暂无文档，拖拽文件到右上角上传" />;
   }
 
-  const statusOf = (d: DocItem) => {
-    if (IN_FLIGHT.has(d.parse_state)) {
-      return (
-        <Space size={4}>
-          <Spin size="small" />
-          <a onClick={(e) => { e.stopPropagation(); onTrace(d); }} style={{ color: "inherit" }}>
-            {STATE_LABEL[d.parse_state] || d.parse_state}
-          </a>
-        </Space>
-      );
-    }
-    if (d.parse_state === "FAILED") {
-      return (
-        <Space size={4}>
-          <Tag color="error">失败</Tag>
-          <a onClick={(e) => { e.stopPropagation(); onTrace(d); }}>查看原因</a>
-        </Space>
-      );
-    }
-    // READY（或未知态）：方案A 三段阶段标签（解析✓ + 摘要 + 构建），
-    // 展示整条管线完成度而非仅「已就绪」。
-    return docStageTags(d);
-  };
+  /** 卡片 meta 行（对齐知识库卡片 meta：文件数 · Wiki 数 的等位信息） */
+  const metaOf = (d: DocItem) =>
+    isTableDoc(d)
+      ? `${formatRows(d.row_count)} · ${d.chunk_count ?? 0} 个分块`
+      : `${d.chunk_count ?? 0} 个分块 · ${formatSize(d.file_size)}`;
 
   const menuOf = (d: DocItem) => ({
     items: [
@@ -199,7 +199,7 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
         icon: <DownloadOutlined />,
         label: "下载原文件",
         // Dropdown 菜单经 portal 渲染但仍按组件树冒泡：必须停掉冒泡，
-        // 否则点菜单项会穿透到 Card 的 onClick 打开详情抽屉
+        // 否则点菜单项会穿透到卡片的 onClick 打开详情
         onClick: ({ domEvent }: { domEvent: { stopPropagation: () => void } }) => {
           domEvent.stopPropagation();
           onDownload(d);
@@ -268,68 +268,64 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
     </div>
   );
 
+  /** 处理中 / 失败的文档：footer 状态文本可点，直达构建过程 */
+  const traceableOf = (d: DocItem) => IN_FLIGHT.has(d.parse_state) || d.parse_state === "FAILED";
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12 }}>
+    <div className="kb-doc-cards">
       {items.map((d) => (
-        <Popover key={d.id} content={hoverContentOf(d)} placement="right" overlayStyle={{ pointerEvents: "none" }}>
-          <Card
-            className="kb-list-card"
-            size="small"
-            hoverable
-            style={{ cursor: "pointer" }}
-            title={
-              <Space>
-                <span style={{ fontSize: 18 }}>{isTableDoc(d) ? tableIcon() : fileTypeIcon(d.file_ext)}</span>
-                <Typography.Text
-                  ellipsis={{ tooltip: d.file_name }}
-                  style={{ maxWidth: 150, fontWeight: 600 }}
-                  onClick={() => onOpen(d)}
-                >
-                  {d.file_name}
-                </Typography.Text>
-              </Space>
-            }
-            extra={
-              <Dropdown menu={menuOf(d)} trigger={["click"]} placement="bottomRight">
-                <Button size="small" type="text" icon={<MoreOutlined />} onClick={(e) => e.stopPropagation()} />
-              </Dropdown>
-            }
-            onClick={() => onOpen(d)}
-          >
-            {statusOf(d)}
-            {d.summary ? (
-              <div
-                style={{
-                  marginTop: 6,
-                  color: "#595959",
-                  fontSize: 12,
-                  lineHeight: "19px",
-                  maxHeight: 38,
-                  overflow: "hidden",
-                  display: "-webkit-box",
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: "vertical",
-                }}
-              >
-                {d.summary}
-              </div>
-            ) : null}
-            <div style={{ marginTop: 6, color: "#8c8c8c", fontSize: 12, lineHeight: "20px" }}>
-              {isTableDoc(d) ? (
-                <>
-                  <div>数据量：{formatRows(d.row_count)}</div>
-                  <div>{d.ds_source_name || "—"} · {formatTime(d.created_at)}</div>
-                </>
-              ) : (
-                <>
-                  <div>
-                    {d.chunk_count != null ? `${d.chunk_count} 个分块` : "—"} · {formatSize(d.file_size)}
+        <Popover
+          key={d.id}
+          content={hoverContentOf(d)}
+          placement="right"
+          overlayStyle={{ pointerEvents: "none" }}
+        >
+          <div className="kb-doc-card" onClick={() => onOpen(d)}>
+            <div className="kb-doc-card-header">
+              <div className="kb-doc-card-icon">{isTableDoc(d) ? tableIcon() : fileTypeIcon(d.file_ext)}</div>
+              <div className="kb-doc-card-detail">
+                <div className="kb-doc-card-title-row">
+                  <div className="kb-doc-card-title-name" title={d.file_name}>
+                    {d.file_name}
                   </div>
-                  <div>{formatTime(d.created_at)}</div>
-                </>
-              )}
+                </div>
+                <div className="kb-doc-card-meta">{metaOf(d)}</div>
+              </div>
             </div>
-          </Card>
+            <div className="kb-doc-card-description">{d.summary || ""}</div>
+            <div className="kb-doc-card-footer">
+              <div
+                className={`kb-doc-card-footer-left${
+                  d.parse_state === "FAILED"
+                    ? " kb-doc-card-footer-left--danger"
+                    : traceableOf(d)
+                      ? " kb-doc-card-footer-left--link"
+                      : ""
+                }`}
+                title={docStageText(d)}
+                onClick={
+                  traceableOf(d)
+                    ? (e) => {
+                        e.stopPropagation();
+                        onTrace(d);
+                      }
+                    : undefined
+                }
+              >
+                {docStageText(d)}
+              </div>
+              <div className="kb-doc-card-footer-right" onClick={(e) => e.stopPropagation()}>
+                <Dropdown menu={menuOf(d)} trigger={["click"]} placement="bottomRight">
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<MoreOutlined />}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </Dropdown>
+              </div>
+            </div>
+          </div>
         </Popover>
       ))}
     </div>
