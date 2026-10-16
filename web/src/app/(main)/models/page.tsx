@@ -347,34 +347,72 @@ export default function ModelRegistryPage() {
             }}
           >
             {pagedItems.map((item) => (
-              <Card
+              <div
                 key={item.id}
-                size="small"
-                hoverable
+                className="kb-model-card"
+                style={item.is_default ? { borderColor: "#52c41a" } : undefined}
+                title={item.description || "（无描述）"}
                 onClick={() => openEdit(item)}
-                style={{ borderColor: item.is_default ? "#52c41a" : undefined, cursor: "pointer" }}
-                title={
-                  <Space>
-                    <span style={{ color: TYPE_COLOR[item.type as ModelType] }}>
-                      {TYPE_ICON[item.type as ModelType]}
-                    </span>
-                    <Text strong>{item.display_name || item.name}</Text>
-                    <Tag color={SCOPE_COLOR[item.scope]}>{SCOPE_LABEL[item.scope]}</Tag>
-                    <Tag color={TYPE_COLOR[item.type as ModelType]}>{TYPE_LABEL[item.type as ModelType]}</Tag>
-                    {item.is_default && (
-                      <Tag color="success" icon={<StarFilled />}>
-                        默认
-                      </Tag>
-                    )}
-                  </Space>
-                }
-                extra={
-                  <Space size={0} onClick={(e) => e.stopPropagation()}>
+              >
+                <div className="kb-model-card-header">
+                  <div
+                    className="kb-model-card-icon"
+                    style={{ color: TYPE_COLOR[item.type as ModelType] }}
+                  >
+                    {TYPE_ICON[item.type as ModelType]}
+                  </div>
+                  <div className="kb-model-card-detail">
+                    <div className="kb-model-card-title-row">
+                      <div
+                        className="kb-model-card-title-name"
+                        title={item.display_name || item.name}
+                      >
+                        {item.display_name || item.name}
+                      </div>
+                      {/* 默认模型标记（对齐知识库卡片的标题右侧标记位） */}
+                      {item.is_default && (
+                        <Tooltip title="默认模型">
+                          <StarFilled
+                            className="kb-model-card-title-flag"
+                            style={{ color: "#f5a623" }}
+                          />
+                        </Tooltip>
+                      )}
+                    </div>
+                    <div className="kb-model-card-meta">
+                      {SCOPE_LABEL[item.scope]} · {TYPE_LABEL[item.type as ModelType]}
+                      {item.type === "embedding" && item.dimension ? ` · 维度 ${item.dimension}` : ""}
+                      {item.supports_vision && item.type === "chat" ? " · 视觉" : ""}
+                      {item.max_concurrency ? ` · 并发 ${item.max_concurrency}` : ""}
+                      {item.thinking_control ? ` · 思考 ${item.thinking_control}` : ""}
+                    </div>
+                  </div>
+                </div>
+                <div className="kb-model-card-description">
+                  {item.description || "（无描述）"}
+                </div>
+                <div className="kb-model-card-footer">
+                  <div
+                    className="kb-model-card-footer-left"
+                    title={[item.provider, item.base_url].filter(Boolean).join(" · ")}
+                  >
+                    {item.provider || "自建"} ·{" "}
+                    <Text
+                      type={item.api_key_configured ? "success" : "danger"}
+                      style={{ fontSize: 12 }}
+                    >
+                      {item.api_key_configured ? "密钥已配置" : "未配置密钥"}
+                    </Text>
+                  </div>
+                  <div
+                    className="kb-model-card-footer-right"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     {!item.is_default && (
                       <Tooltip title="设为默认">
                         <Button
-                          size="small"
                           type="text"
+                          size="small"
                           icon={<StarOutlined />}
                           onClick={() => void handleSetDefault(item)}
                         />
@@ -385,63 +423,37 @@ export default function ModelRegistryPage() {
                         items: [
                           { key: "edit", icon: <EditOutlined />, label: "编辑" },
                           { key: "copy", icon: <CopyOutlined />, label: "复制" },
+                          { type: "divider" },
+                          { key: "delete", icon: <DeleteOutlined />, label: "删除", danger: true },
                         ],
                         onClick: ({ key }) => {
                           if (key === "edit") openEdit(item);
                           else if (key === "copy") void handleCopy(item);
+                          else if (key === "delete")
+                            modal.confirm({
+                              title: `删除模型 ${item.name}？`,
+                              content: "删除后不可恢复",
+                              okText: "删除",
+                              okButtonProps: { danger: true },
+                              onOk: () => handleDelete(item),
+                            });
                         },
                       }}
+                      trigger={["click"]}
                     >
-                      <Button size="small" type="text" icon={<EllipsisOutlined />} />
+                      <Button type="text" size="small" icon={<EllipsisOutlined />} />
                     </Dropdown>
-                    <Button
-                      size="small"
-                      type="text"
-                      danger
-                      icon={<DeleteOutlined />}
-                      onClick={() =>
-                        modal.confirm({
-                          title: `删除模型 ${item.name}？`,
-                          content: "删除后不可恢复",
-                          okText: "删除",
-                          okButtonProps: { danger: true },
-                          onOk: () => handleDelete(item),
-                        })
-                      }
-                    />
-                  </Space>
-                }
-              >
-                <Space direction="vertical" size={2}>
-                  <Text type="secondary" code>
-                    {item.name}
-                    {item.provider ? ` · ${item.provider}` : ""}
-                  </Text>
-                  {item.base_url ? <Text type="secondary" style={{ fontSize: 12 }}>{item.base_url}</Text> : null}
-                  <Space size={4} wrap>
-                    {item.type === "embedding" && item.dimension ? (
-                      <Tag>维度 {item.dimension}</Tag>
-                    ) : null}
-                    {item.supports_vision && item.type === "chat" ? <Tag>视觉</Tag> : null}
-                    {item.max_concurrency ? <Tag>并发 {item.max_concurrency}</Tag> : null}
-                    {item.thinking_control ? <Tag>思考 {item.thinking_control}</Tag> : null}
-                  </Space>
-                  {item.description ? (
-                    <Text type="secondary" style={{ fontSize: 12 }} ellipsis={{ tooltip: item.description }}>
-                      {item.description}
-                    </Text>
-                  ) : null}
-                  <Text type={item.api_key_configured ? "success" : "danger"} style={{ fontSize: 12 }}>
-                    {item.api_key_configured ? `密钥已配置 ${item.api_key_masked}` : "未配置密钥"}
-                  </Text>
-                  <Button size="small" icon={<ExperimentOutlined />} onClick={(e) => {
-                    e.stopPropagation();
-                    setDebugTarget(item);
-                  }}>
-                    调试
-                  </Button>
-                </Space>
-              </Card>
+                    <Tooltip title="调试">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<ExperimentOutlined />}
+                        onClick={() => setDebugTarget(item)}
+                      />
+                    </Tooltip>
+                  </div>
+                </div>
+              </div>
             ))}
           </div>
         )}
