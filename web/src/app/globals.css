@@ -1782,6 +1782,137 @@ html[data-theme="dark"] body {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   智能体页布局（对齐知识库页 kb-kbs-* 范式，2026-10-16）：
+   顶栏 ModoTabs（标题图标 + 胶囊搜索 + 胶囊新建）+ 内容区直排卡片网格。
+   ═══════════════════════════════════════════════════════════════ */
+.agents-list-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+  background: #fff;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "noto sans", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #242e43;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 顶栏操作区（ModoTabs tabBarExtraContent）：搜索 + 新建胶囊 */
+.agents-tab-actions {
+  display: flex;
+  align-items: center;
+  column-gap: 10px;
+}
+/* 首个页签标题（页面标题）：header-title-icon.png 16px + 标题文字 */
+.agents-tab-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.agents-tab-title-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+/* 搜索：360 宽 / 14px 胶囊 / fill-2 底 / 12px 字 / 彩色放大镜前缀 14px（对齐 .kb-kbs-search） */
+.agents-search.ant-input-affix-wrapper,
+.agents-search .ant-input-affix-wrapper {
+  width: 360px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 14px;
+  background: #eff4f9;
+  border-color: transparent;
+}
+.agents-search.ant-input-affix-wrapper input.ant-input,
+.agents-search .ant-input-affix-wrapper input.ant-input {
+  font-size: 12px;
+  height: 26px;
+  line-height: 26px;
+  padding: 0;
+}
+.agents-search.ant-input-affix-wrapper input::placeholder,
+.agents-search .ant-input-affix-wrapper input::placeholder {
+  color: #79879c;
+}
+.agents-search .ant-input-prefix {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 12px;
+  color: #4d5e7d;
+}
+.agents-search .ant-input-suffix {
+  display: none !important;
+}
+.agents-search.ant-input-affix-wrapper:hover,
+.agents-search .ant-input-affix-wrapper:hover {
+  background: #e3e9ef;
+  border-color: transparent;
+}
+.agents-search.ant-input-affix-wrapper-focused,
+.agents-search.ant-input-affix-wrapper:focus-within,
+.agents-search .ant-input-affix-wrapper-focused,
+.agents-search .ant-input-affix-wrapper:focus-within {
+  background: #fff;
+  border-color: #3261ce;
+  box-shadow: none;
+}
+
+/* 新建：28px 高 / 14px 胶囊 / padding 0 12px / 12px 字 / 图标 12px + 8px 间距 */
+.agents-new-btn.ant-btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 14px;
+  font-size: 12px;
+  gap: 8px;
+}
+
+/* 内容区：定高滚动 + 卡片网格 */
+.agents-content {
+  flex: 1;
+  min-height: 0;
+  padding: 0 16px 16px;
+  overflow-y: auto;
+}
+
+/* 空态（对齐 arco Empty + modo 主题：插画 1em=148px、文案 12px gray-5） */
+.agents-empty {
+  width: 100%;
+  height: 100%;
+}
+.agents-empty-wrapper {
+  position: relative;
+  top: 50%;
+  transform: translateY(-40px);
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+  color: #95a6ba;
+}
+.agents-empty-image {
+  font-size: 148px;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.agents-empty-image svg {
+  width: 1em;
+  height: 1em;
+  vertical-align: -2px;
+  fill: none;
+  stroke: currentColor;
+}
+.agents-empty-description {
+  color: #95a6ba;
+  font-size: 12px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
    模型配置卡片（对齐知识库卡片 kb-kbs-card 三段式：
    header 44px 图标+标题 / 两行描述 / footer 特征文本+操作）
    ═══════════════════════════════════════════════════════════════ */

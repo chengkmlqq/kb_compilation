@@ -1,18 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import {
-  App,
-  Button,
-  Card,
-  Col,
-  Dropdown,
-  Empty,
-  Form,
-  Input,
-  Row,
-  Space,
-} from "antd";
+import { App, Button, Col, Dropdown, Input, Row } from "antd";
 import {
   CopyOutlined,
   DeleteOutlined,
@@ -34,6 +23,63 @@ import {
 import AgentEditorModal, { AgentEditorValues } from "@/components/AgentEditorModal";
 import AgentAvatar from "@/components/AgentAvatar";
 import { ModoTabs } from "@/components/biz/modo-tabs";
+
+// 2026-10-16 对齐知识库页（kbs/page.tsx）：页面标题图标 / 顶栏彩色搜索与新建图标 / 空态插画
+// 均从同批 DSB 资源与内联 SVG 复用，保证两页 UI 一致。
+const KBS_ASSET_BASE = "/wiki/kbs";
+const headerTitleIcon = `${KBS_ASSET_BASE}/header-title-icon.png`;
+
+/** 彩色放大镜（对齐 modo-design IconSearchColor：viewBox 12x12，圆圈 opacity .25 + 实心头） */
+const SearchColorIcon = ({ size = 14 }: { size?: number }) => (
+  <svg
+    viewBox="0 0 12 12"
+    fill="none"
+    stroke="none"
+    width={size}
+    height={size}
+    style={{ verticalAlign: "-2px" }}
+    aria-hidden
+  >
+    <path
+      fillRule="evenodd"
+      d="M5 8a3 3 0 1 0-3-3 3 3 0 0 0 3 3Zm0 1a4 4 0 1 0-4-4 4 4 0 0 0 4 4Z"
+      opacity=".25"
+      fill="currentColor"
+    />
+    <path
+      d="M7.64 8.005a4.018 4.018 0 0 0 .365-.364l.35.097a.5.5 0 0 1 .219.129L11 10.293l-.707.707-2.426-2.426a.5.5 0 0 1-.129-.22Z"
+      fill="currentColor"
+    />
+  </svg>
+);
+
+/** 彩色加号（对齐 modo-design IconAddColor：圆圈 opacity .25 + 实心加号） */
+const AddColorIcon = ({ size = 14 }: { size?: number }) => (
+  <svg
+    viewBox="0 0 12 12"
+    fill="none"
+    stroke="none"
+    width={size}
+    height={size}
+    style={{ verticalAlign: "-2px" }}
+    aria-hidden
+  >
+    <path
+      fillRule="evenodd"
+      d="M6 11a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm.5-4.5v2h-1v-2h-2v-1h2v-2h1v2h2v1Z"
+      opacity=".25"
+      fill="currentColor"
+    />
+    <path d="M5.5 8.5h1v-2h2v-1h-2v-2h-1v2h-2v1h2Z" fill="currentColor" />
+  </svg>
+);
+
+/** arco Empty 默认插画（viewBox 48 / 描边 4）；容器 font-size 148px → 插画 148px */
+const EmptyIllustration = () => (
+  <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth={4} aria-hidden>
+    <path d="M24 5v6m7 1 4-4m-18 4-4-4m28.5 22H28s-1 3-4 3-4-3-4-3H6.5M40 41H8a2 2 0 0 1-2-2v-8.46a2 2 0 0 1 .272-1.007l6.15-10.54A2 2 0 0 1 14.148 18H33.85a2 2 0 0 1 1.728.992l6.149 10.541A2 2 0 0 1 42 30.541V39a2 2 0 0 1-2 2Z" />
+  </svg>
+);
 
 const modeLabel = (c: Record<string, unknown> | undefined) =>
   c?.agent_mode === "smart-reasoning" ? "智能推理" : "快速问答";
@@ -84,7 +130,6 @@ export default function AgentsPage() {
   const [search, setSearch] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<AgentItem | null>(null);
-  const [searchForm] = Form.useForm<{ keyword: string }>();
 
   // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
   // 首个 tab「智能体配置」= 页面标题 + 列表，不可关闭；后续内容较多的详情/编辑表单可 push 进 tabs 以选项卡打开。
@@ -191,134 +236,88 @@ export default function AgentsPage() {
     ];
   };
 
-  // 筛选（对齐用户管理页：查询/重置 显式触发；本地过滤）
-  const doSearch = (vals: { keyword?: string }) => {
-    setSearch(vals.keyword?.trim() || "");
-  };
-
-  const doReset = () => {
-    searchForm.resetFields();
-    setSearch("");
-  };
-
-  // 列表区（首个选项卡内容）：筛选固定 / 卡片列表滚动 + 编辑弹窗
+  // 列表区（首个选项卡内容）：卡片网格滚动 + 空态 + 编辑弹窗
+  // 对齐知识库页（kbs/page.tsx）：顶部搜索与新建在 ModoTabs tabBarExtraContent，内容区直排卡片网格、无外层 Card。
   const listPane = (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      <Card
-        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{
-          body: {
-            flex: 1,
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            padding: "12px 16px 0",
-          },
-        }}
-      >
-        {/* 筛选表单（对齐用户管理页：查询/重置 显式触发） */}
-        <Form
-          form={searchForm}
-          layout="inline"
-          style={{ marginBottom: 12, flexShrink: 0 }}
-          onFinish={doSearch}
-          initialValues={{ keyword: "" }}
-        >
-          <Form.Item name="keyword" label="智能体">
-            <Input allowClear placeholder="搜索名称/描述" style={{ width: 220 }} />
-          </Form.Item>
-          <Form.Item>
-            <Space>
-              <Button type="primary" htmlType="submit">
-                查询
-              </Button>
-              <Button
-                onClick={() => {
-                  searchForm.resetFields();
-                  doReset();
-                }}
-              >
-                重置
-              </Button>
-            </Space>
-          </Form.Item>
-        </Form>
-
-        {/* 卡片列表（flex:1 占满剩余高度，内容超出时内部滚动）
-            仅纵向滚动：Row 的 gutter 会给自身加 -8px 水平外边距（由 Col 的 8px padding 抵消），
-            若此容器 overflow 双轴 auto，则只要有卡片就会溢出 16px 出现横向滚动条（对齐知识库列表页做法）。 */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
-          {visible.length === 0 ? (
-            <Empty description="暂无智能体" />
-          ) : (
-            <Row gutter={[16, 16]}>
-              {visible.map((agent) => {
-                const disabled = Boolean(agent.config?.disabled);
-                return (
-                  <Col key={agent.id} xs={24} sm={12} lg={8} xl={6}>
-                    {/* 智能体卡片（对齐知识库卡片 kb-kbs-card 三段式：header 图标+标题 / 2行描述 / footer 标签+操作） */}
-                    <div
-                      className="kb-agent-card"
-                      style={{ opacity: disabled ? 0.55 : 1 }}
-                      title={agent.description || "（无描述）"}
-                    >
-                      <div className="kb-agent-card-header">
-                        <div className="kb-agent-card-icon">
-                          {modeIcon(agent.config, agent.is_builtin, agent.name)}
-                        </div>
-                        <div className="kb-agent-card-detail">
-                          <div className="kb-agent-card-title-row">
-                            <div className="kb-agent-card-title-name" title={agent.name}>
-                              {agent.name}
-                            </div>
-                          </div>
-                          <div className="kb-agent-card-meta">
-                            {modeLabel(agent.config)}
-                            {disabled ? " · 已停用" : ""}
+    <div className="agents-list-page">
+      <div className="agents-content">
+        {visible.length === 0 ? (
+          /* 空态（对齐知识库页 arco Empty：148px 插画 + 「暂无数据」） */
+          <div className="agents-empty">
+            <div className="agents-empty-wrapper">
+              <div className="agents-empty-image">
+                <EmptyIllustration />
+              </div>
+              <div className="agents-empty-description">暂无数据</div>
+            </div>
+          </div>
+        ) : (
+          <Row gutter={[16, 16]}>
+            {visible.map((agent) => {
+              const disabled = Boolean(agent.config?.disabled);
+              return (
+                <Col key={agent.id} xs={24} sm={12} lg={8} xl={6}>
+                  {/* 智能体卡片（对齐知识库卡片 kb-kbs-card 三段式：header 图标+标题 / 2行描述 / footer 标签+操作） */}
+                  <div
+                    className="kb-agent-card"
+                    style={{ opacity: disabled ? 0.55 : 1 }}
+                    title={agent.description || "（无描述）"}
+                  >
+                    <div className="kb-agent-card-header">
+                      <div className="kb-agent-card-icon">
+                        {modeIcon(agent.config, agent.is_builtin, agent.name)}
+                      </div>
+                      <div className="kb-agent-card-detail">
+                        <div className="kb-agent-card-title-row">
+                          <div className="kb-agent-card-title-name" title={agent.name}>
+                            {agent.name}
                           </div>
                         </div>
-                      </div>
-                      <div className="kb-agent-card-description">
-                        {agent.description || "（无描述）"}
-                      </div>
-                      <div className="kb-agent-card-footer">
-                        <div
-                          className="kb-agent-card-footer-left"
-                          title={badgeText(agent.config, agent.is_builtin)}
-                        >
-                          {badgeText(agent.config, agent.is_builtin)}
-                        </div>
-                        <div
-                          className="kb-agent-card-footer-right"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <Dropdown
-                            menu={{
-                              items: menuItems(agent),
-                              onClick: ({ key }) => {
-                                if (key === "edit") {
-                                  setEditing(agent);
-                                  setEditorOpen(true);
-                                } else if (key === "copy") void onCopy(agent);
-                                else if (key === "enable" || key === "disable")
-                                  void onToggleDisabled(agent);
-                                else if (key === "delete") onDelete(agent);
-                              },
-                            }}
-                            trigger={["click"]}
-                          >
-                            <Button type="text" size="small" icon={<MoreOutlined />} />
-                          </Dropdown>
+                        <div className="kb-agent-card-meta">
+                          {modeLabel(agent.config)}
+                          {disabled ? " · 已停用" : ""}
                         </div>
                       </div>
                     </div>
-                  </Col>
-                );
-              })}
-            </Row>
-          )}
-        </div>
+                    <div className="kb-agent-card-description">
+                      {agent.description || "（无描述）"}
+                    </div>
+                    <div className="kb-agent-card-footer">
+                      <div
+                        className="kb-agent-card-footer-left"
+                        title={badgeText(agent.config, agent.is_builtin)}
+                      >
+                        {badgeText(agent.config, agent.is_builtin)}
+                      </div>
+                      <div
+                        className="kb-agent-card-footer-right"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Dropdown
+                          menu={{
+                            items: menuItems(agent),
+                            onClick: ({ key }) => {
+                              if (key === "edit") {
+                                setEditing(agent);
+                                setEditorOpen(true);
+                              } else if (key === "copy") void onCopy(agent);
+                              else if (key === "enable" || key === "disable")
+                                void onToggleDisabled(agent);
+                              else if (key === "delete") onDelete(agent);
+                            },
+                          }}
+                          trigger={["click"]}
+                        >
+                          <Button type="text" size="small" icon={<MoreOutlined />} />
+                        </Dropdown>
+                      </div>
+                    </div>
+                  </div>
+                </Col>
+              );
+            })}
+          </Row>
+        )}
 
         <AgentEditorModal
           mode={editing ? "edit" : "create"}
@@ -335,21 +334,21 @@ export default function AgentsPage() {
           }}
           onSubmit={handleSubmit}
         />
-      </Card>
+      </div>
     </div>
   );
 
   return (
-    // 2026-10-08: 对齐用户管理页范式——外层定高不滚动，卡片内「筛选固定 / 卡片列表滚动」
+    // 2026-10-16: 对齐知识库页范式——外层定高不滚动，顶栏 ModoTabs（标题图标 + 搜索 + 新建），内容区直排卡片网格
     <div
       className="agents-page"
       style={{
-        padding: 10,
         height: "calc(100vh - var(--app-header-h, 48px))",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
         minHeight: 0,
+        background: "#fff",
       }}
     >
       <ModoTabs
@@ -361,18 +360,40 @@ export default function AgentsPage() {
           if (action === "remove") closeTab(String(key));
         }}
         tabBarExtraContent={
-          <Button
-            type="primary"
-            onClick={() => {
-              setEditing(null);
-              setEditorOpen(true);
-            }}
-          >
-            新建智能体
-          </Button>
+          <div className="agents-tab-actions">
+            <Input
+              className="agents-search"
+              placeholder="输入并搜索..."
+              prefix={<SearchColorIcon size={14} />}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onPressEnter={() => setSearch(search.trim())}
+            />
+            <Button
+              className="agents-new-btn"
+              type="primary"
+              icon={<AddColorIcon size={12} />}
+              onClick={() => {
+                setEditing(null);
+                setEditorOpen(true);
+              }}
+            >
+              新建
+            </Button>
+          </div>
         }
         items={[
-          { key: "home", label: "智能体配置", children: listPane },
+          {
+            key: "home",
+            // 页面标题：DSB header-title-icon.png（16px）置于标题左侧（对齐知识库页）
+            label: (
+              <span className="agents-tab-title">
+                <img className="agents-tab-title-icon" src={headerTitleIcon} alt="" />
+                智能体配置
+              </span>
+            ),
+            children: listPane,
+          },
           ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
         ]}
       />
