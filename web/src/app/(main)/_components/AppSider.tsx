@@ -26,6 +26,14 @@ import {
   ProfileOutlined,
   TeamOutlined,
   BellOutlined,
+  // 2026-10-16 补充：此前漏配的图标名（库内菜单在用但 ICON_MAP 缺，导致静默回落默认 Appstore 图标）
+  ApartmentOutlined,
+  BlockOutlined,
+  BugOutlined,
+  CheckCircleOutlined,
+  LikeOutlined,
+  ScheduleOutlined,
+  SearchOutlined,
 } from "@ant-design/icons";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useMenuContext, MenuTreeNode } from "./MenuContext";
@@ -66,6 +74,15 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   ProfileOutlined: <ProfileOutlined />,
   TeamOutlined: <TeamOutlined />,
   BellOutlined: <BellOutlined />,
+  // 2026-10-16 补充：补齐库内菜单在用但此前漏配的图标名（缺失时 iconOf 会静默回落 DEFAULT_ICON，
+  // 表现为「本体Schema/编排组件/调试工具/质量评估/问答反馈/任务管理/联网搜索」全显示成默认 Appstore 图标）
+  ApartmentOutlined: <ApartmentOutlined />,
+  BlockOutlined: <BlockOutlined />,
+  BugOutlined: <BugOutlined />,
+  CheckCircleOutlined: <CheckCircleOutlined />,
+  LikeOutlined: <LikeOutlined />,
+  ScheduleOutlined: <ScheduleOutlined />,
+  SearchOutlined: <SearchOutlined />,
   // 2026-10-16 补充：shandong 数据供给平台菜单实际使用的 modo 彩色图标（ModoMenuIcons.tsx 内联）
   IconBook1Color: <ModoIconBook1 />,
   IconCloudAddColor: <ModoIconCloudAdd />,

@@ -26,9 +26,11 @@
   3. 菜单名同步（种子 `scripts/seed_framework_db.py` KB_MENUS + 前端兜底 `MenuContext.tsx` FALLBACK_MENUS）：kbs=IconBook1Color、chat/agents=IconSemanticSearchColor、grp_ops/jobs=IconTaskMonitorColor、files/workers=IconCloudServerColor、datasources=IconDatabaseColor、system=IconSystemMgrColor、orch_tapes=IconResourceOrchestrationColor
   4. `api/routers/system.py` MENU_ICONS 目录补齐这 9 个名字（菜单管理页下拉可选）
   5. `web/src/app/(main)/system/menus/page.tsx`：图标组件表 = antd 图标池 ∪ modo 图标池（下拉预览可渲染彩色图标）
+  6. **补齐漏配图标名（同日二轮）**：`AppSider.tsx` 的 ICON_MAP 缺 7 个库内菜单在用的名字（ApartmentOutlined 本体Schema / BlockOutlined 编排组件 / BugOutlined 调试工具 / CheckCircleOutlined 质量评估 / LikeOutlined 问答反馈 / ScheduleOutlined 任务管理 / SearchOutlined 联网搜索），`iconOf()` 命中不到即静默回落 DEFAULT_ICON（AppstoreOutlined）——实机截图发现「调试工具」一级卡片显示成默认 4 方块图标。已补 import + 映射，ICON_MAP 现 36 键，与「KB_MENUS ∪ 前端兜底 ∪ 线上库」所需图标名零缺失
 - **库内数据（apply 脚本已应用）**：新增 `scripts/apply_menu_modo_icons.py`（按 **menu_name** 匹配，因同一菜单 menu_id 在各环境形态不一：本部署 files/workers 是 UUID）→ docker cp 进 kb-api-server 执行，**10/10 命中**（9 改 + files 行 UUID 键补改），重放 0 更新；`GET /system/my-menus` 实测返回 10 条 `Icon*Color`
 - **验证**：`web` 目录 `./node_modules/.bin/tsc --noEmit` exit 0；my-menus 接口实测 10 条 modo 图标名；apply 脚本幂等（二次执行全 skip）
-- **坑位**：① 按 menu_id 写死映射会漏改（本部署 files/workers 的 menu_id 是 UUID，其它是语义名）→ 一律按 menu_name 匹配；② 图标名换新后**前端必须同步部署**——旧 kb-web 的 ICON_MAP 无这些名字会全部回落默认 Appstore 图标（改造期间视觉会短暂统一成默认图标）
+- **验证**：`web` 目录 `./node_modules/.bin/tsc --noEmit` exit 0；my-menus 接口实测 10 条 modo 图标名；apply 脚本幂等（二次执行全 skip）；playwright 实机断言（kb_compilation/.venv 自带 playwright + ~/.cache/ms-playwright/chromium-1228，需显式 executable_path，本机 agent-browser 因 glibc 不可用）：登录 /wiki/login → 侧栏 7 个一级卡片中 5 个渲染 modo 彩色图标（.kb-modo-icon 计数 5）、无 console error
+- **坑位**：① 按 menu_id 写死映射会漏改（本部署 files/workers 的 menu_id 是 UUID，其它是语义名）→ 一律按 menu_name 匹配；② 图标名换新后**前端必须同步部署**——旧 kb-web 的 ICON_MAP 无这些名字会全部回落默认 Appstore 图标（改造期间视觉会短暂统一成默认图标）；③ **ICON_MAP 缺失的图标名不会报错、只会静默回落默认图标**（本次新发现 7 个，含一级「调试工具」）——加菜单/换图标后应核对 ICON_MAP ⊇ 库内所有 menu_icon 名；④ 第二列（160px 子菜单）在窄菜单形态下只渲染文字、不渲染图标（对齐 DSB modo-studio frame：`o&&!i ? labelOnly : [icon,label]`），故子项 menu_icon 仅在该项作为一级卡片出现时才可见
 - **部署**：前端为新组件 + 图标映射改动 → CI 重建 kb-web 后 pull；后端仅图标目录常量 → CI 重建 kb-api-server（或容器内 docker cp api/routers/system.py + restart 热修）
 
 ## 22. 当前状态（2026-10-18 智能问答图片链路对齐 WeKnora）
