@@ -312,7 +312,11 @@ def wiki_publish(cfg: dict[str, Any]) -> dict[str, Any]:
         print(f"[wiki_publish] dry_run: 跳过目录解析（folder={folder_name or folder_id or '未指定'}）")
     else:
         if not folder_id:
-            folder_id = _resolve_folder(folder_name or "", kb_id=wr.KB)
+            folder_id = _resolve_folder(
+                folder_name or "",
+                kb_id=wr.KB,
+                parent_id=cfg.get("folder_parent_id") or "",
+            )
         print(f"[wiki_publish] 目录: {folder_name or folder_id} → {folder_id}")
 
     kid_prefix = hashlib.md5(kid.encode()).hexdigest()[:10] if (kid and with_kid) else ""
@@ -383,21 +387,38 @@ def wiki_publish(cfg: dict[str, Any]) -> dict[str, Any]:
             "errors": errors, "total": len(records), "folder_id": folder_id}
 
 
-def _resolve_folder(name: str, kb_id: str | None = None) -> str:
+def _resolve_folder(name: str, kb_id: str | None = None, parent_id: str | None = None) -> str:
     """按名称解析目录 ID。
 
     优先复用脚本层缓存（list_all_folders_cached，一次拉全量 + 本地查，
     避免 direct 模式每层 5.66s 的往返）；缓存不可用时回退逐层列举。
-    同名目录取首个匹配（与 build_full.ensure_folder 语义一致）。
+
+    2026-10-17 修复：给出 parent_id 时**必须**在父目录下匹配（不存在则在该父目录
+    下创建）。此前只按名字全库取首个匹配 —— 50 个文档都有「长句原文」目录时，
+    所有文档的长句页全挂到第一个同名目录，其余目录全空。
     """
     kb = kb_id or wr.KB
-    # 1) 全量缓存命中
+    want_parent = str(parent_id).strip() if parent_id else ""
+    # 1) 全量缓存命中（有 parent 限定则严格要求 parent 匹配）
     try:
         for f in wr.list_all_folders_cached(kb_id=kb):
-            if f.get("name") == name:
-                return f.get("id")
+            if f.get("name") != name:
+                continue
+            if want_parent and str(f.get("parent_id") or "") != want_parent:
+                continue
+            return f.get("id")
     except Exception:  # noqa: BLE001 — 缓存不可用走回退
         pass
+    # 1b) 有 parent 限定：直接在父目录下列举
+    if want_parent:
+        r = wr.list_folders(kb_id=kb, parent_id=want_parent)
+        for f in (r.get("data") or r.get("folders") or []):
+            if f.get("name") == name:
+                return f.get("id")
+        r = wr.create_folder(name, parent_id=want_parent, kb_id=kb)
+        if isinstance(r, dict) and "error" in r:
+            raise RuntimeError(f"create_folder 失败: {r['error']}")
+        return r.get("folder", {}).get("id", r.get("id", ""))
     # 2) 逐层列举（两层足够：根→法规根→子目录）
     frontier = [""]
     seen = set()

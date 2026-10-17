@@ -1383,6 +1383,51 @@ except Exception as e:
 # n16: 合并重复实体 + 链接重建（批次末，skip_final 时跳过）
 # ─────────────────────────────────────────────────────────────────────
 CODE_MERGE = WR_HEAD + '''
+# 2026-10-17: 清理本文件根目录下的空目录（无页面且无子目录）
+def _purge_empty_folders(_root):
+    try:
+        from api.db import get_sessionmaker as _gsm
+        from sqlalchemy import text as _st2
+        _d2 = _gsm()()
+        try:
+            _rows = _d2.execute(_st2("select id, parent_id from wiki_folder where kb_id = :k"), {"k": wr.KB}).all()
+            _kids = {}
+            _par = {}
+            for _fid, _pid in _rows:
+                _kids.setdefault(_pid or "", []).append(_fid)
+                _par[_fid] = _pid or ""
+            _sub, _depth = [], {}
+            _stack = [(_root, 1)]
+            while _stack:
+                _cur, _dp = _stack.pop()
+                for _c in _kids.get(_cur, []):
+                    _sub.append(_c)
+                    _depth[_c] = _dp
+                    _stack.append((_c, _dp + 1))
+            if not _sub:
+                return 0
+            _cnt = dict(_d2.execute(_st2("select folder_id, count(*) from wiki_page where kb_id = :k and folder_id is not null group by folder_id"), {"k": wr.KB}).all())
+            _rm = 0
+            for _fid in sorted(_sub, key=lambda x: -_depth.get(x, 0)):
+                if _cnt.get(_fid, 0) == 0 and not _kids.get(_fid):
+                    _d2.execute(_st2("delete from wiki_page_folder where folder_id = :i"), {"i": _fid})
+                    _d2.execute(_st2("delete from wiki_folder where id = :i"), {"i": _fid})
+                    _rm += 1
+                    _p = _par.get(_fid)
+                    if _p and _fid in _kids.get(_p, []):
+                        _kids[_p].remove(_fid)
+            _d2.commit()
+            return _rm
+        finally:
+            _d2.close()
+    except Exception as _e:
+        print(f"[n16] 空目录清理跳过: {_e}")
+        return 0
+try:
+    print(f"[n16] 空目录清理: 删除 {_purge_empty_folders(bindings.get('root_id') or '')} 个")
+except Exception as _e2:
+    print(f"[n16] 空目录清理异常: {_e2}")
+
 if str(bindings.get('skip_final', 'false')).lower() == 'true':
     print("[n16] skip_final=true，跳过全库合并+链接重建（批次末统一执行）")
     raise SystemExit(0)
@@ -1463,6 +1508,9 @@ def build_tape() -> dict:
         node("n08", "wiki_publish", "长句建页", {
             "source": "{{reg_dir}}/ls_all.json",
             "folder": "长句原文",
+            # 2026-10-17: 必须限定父目录 —— 否则 _resolve_folder 按名字取全库第一个
+            # 同名目录，所有文档的长句页会挤到同一个「长句原文」目录
+            "folder_parent_id": "{{root_id}}",
             "page_type": "original_sentence",
             "slug_prefix": "longsentence",
             "slug_hash_field": "text",
