@@ -771,6 +771,30 @@ def main(argv: list[str] | None = None) -> None:
             f"[新建 {dims_created} / 已有跳过 {len(SYSTEM_CONFIG_DIMS) - dims_created}]"
         )
 
+        # 6c) 构建失败补位自愈 cron（2026-10-17）：批量 wiki 构建的 failed 文档
+        #     滚动补位搬进平台内（宿主 retrigger_batched.py 无自愈，进程被杀即
+        #     停滞）；默认每 6 小时一次，定时任务管理页可改频率/水位。幂等。
+        existing_cron = db.execute(
+            select(CronTask).where(CronTask.task_class == "KbBuildRetriggerTask")
+        ).scalars().first()
+        if existing_cron:
+            print("[6c/7] 构建补位自愈 cron 已存在 (skip)")
+        else:
+            db.add(
+                CronTask(
+                    id=uuid.uuid4().hex,
+                    name="构建失败补位自愈",
+                    label="批量 wiki 构建 failed 文档滚动补位（默认每 6 小时，水位 40）",
+                    cron_expression="0 */6 * * *",
+                    state="1",
+                    task_class="KbBuildRetriggerTask",
+                    fire_params=json.dumps({"watermark": 40}, ensure_ascii=False),
+                    queue_name="default",
+                )
+            )
+            db.commit()
+            print("[6c/7] 构建补位自愈 cron 种子 OK: 每 6 小时")
+
         # 7) 编排内置组件定义（幂等 upsert）
         d_created, d_updated = _seed_step_defines(db)
         print(f"[7/7] 编排组件定义种子 OK: 内置 {len(ORCH_STEP_DEFINES)} 个 [新建 {d_created} / 修正 {d_updated}]")

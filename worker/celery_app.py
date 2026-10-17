@@ -68,6 +68,7 @@ celery_app.conf.beat_schedule = {
 try:
     from worker.tasks import (
         agent_gateway,
+        build_retrigger,
         chunk_verify,
         doc_process,
         log_cleanup,
