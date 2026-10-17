@@ -477,7 +477,7 @@ export default function DocPreviewModal({ kbId, doc, onClose, embedded }: Props)
               if (doc) void import("@/lib/api").then((m) => m.apiDownloadDocument(kbId, doc.id, doc.file_name).catch((e) => message.error(e.message)));
             }}
           >
-            下载原文件
+            下载
           </Button>
         </Empty>
       );

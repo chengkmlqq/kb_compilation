@@ -2389,6 +2389,26 @@ html[data-theme="dark"] body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 标题行右侧状态标签（原 footer 三段状态文本合并为单一标签上移） */
+.kb-doc-card-status {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  max-width: 60%;
+  overflow: hidden;
+}
+.kb-doc-card-status .ant-tag {
+  max-width: 100%;
+  margin-inline-end: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 18px;
+}
+.kb-doc-card-status[title] {
+  cursor: pointer;
+}
 .kb-doc-card-meta {
   width: 100%;
   font-size: 12px;
@@ -2413,33 +2433,11 @@ html[data-theme="dark"] body {
 .kb-doc-card-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   width: 100%;
   margin-top: auto;
   flex-shrink: 0;
   gap: 8px;
-}
-.kb-doc-card-footer-left {
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  flex: 1;
-  min-width: 0;
-  height: 28px;
-  padding: 0 4px;
-  font-size: 12px;
-  color: #4d5e7d;
-  line-height: 28px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.kb-doc-card-footer-left--link,
-.kb-doc-card-footer-left--danger {
-  cursor: pointer;
-}
-.kb-doc-card-footer-left--danger {
-  color: #cf1322;
 }
 .kb-doc-card-footer-right {
   display: flex;

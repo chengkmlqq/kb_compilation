@@ -11,7 +11,6 @@ import {
   Form,
   Input,
   InputNumber,
-  Modal,
   Radio,
   Select,
   Space,
@@ -734,15 +733,20 @@ function ModelEditorModal({
   };
 
   return (
-    <Modal
+    <Drawer
       open={open}
-      title={editing ? "编辑模型" : "新建模型"}
+      title={editing ? `编辑模型：${item?.display_name || item?.name || ""}` : "新建模型"}
       width={680}
-      okText={editing ? "保存" : "创建"}
-      confirmLoading={saving}
-      onOk={() => void doSave()}
-      onCancel={onClose}
+      onClose={onClose}
       destroyOnClose
+      extra={
+        <Space>
+          <Button onClick={onClose}>取消</Button>
+          <Button type="primary" loading={saving} onClick={() => void doSave()}>
+            {editing ? "保存" : "创建"}
+          </Button>
+        </Space>
+      }
     >
       <Form form={form} layout="vertical" initialValues={{ scope, type: "chat", provider: "deepseek", interface_type: "openai", is_default: true }}>
         <Form.Item name="scope" label="配置级别" style={{ maxWidth: 240 }}>
@@ -850,7 +854,7 @@ function ModelEditorModal({
           <Input.TextArea rows={3} placeholder={'{"X-Api-Key": "xxx"}'} />
         </Form.Item>
       </Form>
-      <Space style={{ marginTop: -12 }}>
+      <Space style={{ marginTop: 12 }}>
         <Button loading={testing} onClick={() => void doTest()}>
           测试连通性
         </Button>
@@ -860,7 +864,7 @@ function ModelEditorModal({
           </Text>
         )}
       </Space>
-    </Modal>
+    </Drawer>
   );
 }
 

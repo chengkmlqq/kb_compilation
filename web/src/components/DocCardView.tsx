@@ -1,8 +1,8 @@
 "use client";
 /**
  * 文档卡片视图（对齐知识库卡片 kb-kbs-card 三段式，2026-10-20 统一详情页与知识库页观感）：
- * header 44px（32px 文件类型图标 + 文件名 14px/600 + meta 12px）
- * → 两行摘要（40px 截断）→ footer 28px（左：状态文本；右：更多操作）。
+ * header 44px（32px 文件类型图标 + 文件名 14px/600 + 右侧状态标签 + meta 12px）
+ * → 两行摘要（40px 截断）→ footer 28px（右：更多操作）。
  * 悬浮 Popover 保留原有的完整信息（大小/分块/时间/失败原因）与操作入口。
  */
 import type { ReactNode } from "react";
@@ -61,7 +61,7 @@ export const WIKI_STAGE_LABEL: Record<string, { text: string; color: string }> =
  * parse_state=READY 时在「已就绪」主标签旁附加摘要与构建两个阶段小标签，
  * 使用户一眼看到整条管线（解析+向量化 / 摘要 / wiki 构建）的完成度，
  * 而不仅是解析就绪。parse_state 非 READY 时只返回解析主标签。
- * （列表视图表格「状态」列仍使用彩色 Tag；卡片视图改为同信息的纯文本，见 docStageText）
+ * （列表视图表格「状态」列仍使用彩色 Tag；卡片视图改为右上角合并的单一标签，见 docStageTag）
  */
 export function docStageTags(d: DocItem): ReactNode {
   if (d.parse_state !== "READY") {
@@ -85,18 +85,40 @@ export function docStageTags(d: DocItem): ReactNode {
 
 const IN_FLIGHT = new Set(["PENDING", "PARSING", "EMBEDDING"]);
 
-/** 卡片 footer 状态文本（对齐知识库卡片 footer：纯文本承载原彩色 Tag 组信息） */
-export function docStageText(d: DocItem): string {
+/** Tag 颜色严重度（取最严重者作为合并标签颜色） */
+const COLOR_SEVERITY: Record<string, number> = {
+  error: 3,
+  processing: 2,
+  warning: 2,
+  default: 1,
+  success: 0,
+};
+
+/**
+ * 卡片右上角状态标签（2026-10-20：原 footer 左侧的三段状态文本合并为单个标签，
+ * 移到标题行右侧）。解析未就绪 → 单解析标签；READY → 解析/摘要/构建三段合并为一个标签，
+ * 颜色取最严重者（如「摘要失败」整体呈 error）。
+ */
+export function docStageTag(d: DocItem): ReactNode {
   if (IN_FLIGHT.has(d.parse_state)) {
-    return STATE_LABEL[d.parse_state] || d.parse_state;
+    return (
+      <Tag color={PARSE_STATE_COLOR[d.parse_state] || "default"}>
+        {STATE_LABEL[d.parse_state] || d.parse_state}
+      </Tag>
+    );
   }
   if (d.parse_state === "FAILED") {
-    return "失败 · 查看原因";
+    return <Tag color="error">失败</Tag>;
   }
   const sum = SUMMARY_STAGE_LABEL[d.summary_status || ""] || SUMMARY_STAGE_LABEL[""];
-  const wikiState = d.wiki_build?.state || "";
-  const wiki = WIKI_STAGE_LABEL[wikiState] || { text: "构建未生成", color: "default" };
-  return `已就绪 · ${sum.text} · ${wiki.text}`;
+  const wiki = WIKI_STAGE_LABEL[d.wiki_build?.state || ""] || { text: "构建未生成", color: "default" };
+  const color =
+    (COLOR_SEVERITY[wiki.color] ?? 0) > (COLOR_SEVERITY[sum.color] ?? 0) ? wiki.color : sum.color;
+  return (
+    <Tag color={color}>
+      已就绪 · {sum.text} · {wiki.text}
+    </Tag>
+  );
 }
 
 /**
@@ -167,7 +189,7 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
       {
         key: "download",
         icon: <DownloadOutlined />,
-        label: "下载原文件",
+        label: "下载",
         // Dropdown 菜单经 portal 渲染但仍按组件树冒泡：必须停掉冒泡，
         // 否则点菜单项会穿透到卡片的 onClick 打开详情
         onClick: ({ domEvent }: { domEvent: { stopPropagation: () => void } }) => {
@@ -258,32 +280,27 @@ export default function DocCardView({ items, onOpen, onDownload, onReparse, onDe
                   <div className="kb-doc-card-title-name" title={d.file_name}>
                     {d.file_name}
                   </div>
+                  {/* 状态标签（合并后的单一标签）置于标题行右侧 */}
+                  <span
+                    className="kb-doc-card-status"
+                    onClick={
+                      traceableOf(d)
+                        ? (e) => {
+                            e.stopPropagation();
+                            onTrace(d);
+                          }
+                        : undefined
+                    }
+                    title={traceableOf(d) ? "查看构建过程" : undefined}
+                  >
+                    {docStageTag(d)}
+                  </span>
                 </div>
                 <div className="kb-doc-card-meta">{metaOf(d)}</div>
               </div>
             </div>
             <div className="kb-doc-card-description">{d.summary || ""}</div>
             <div className="kb-doc-card-footer">
-              <div
-                className={`kb-doc-card-footer-left${
-                  d.parse_state === "FAILED"
-                    ? " kb-doc-card-footer-left--danger"
-                    : traceableOf(d)
-                      ? " kb-doc-card-footer-left--link"
-                      : ""
-                }`}
-                title={docStageText(d)}
-                onClick={
-                  traceableOf(d)
-                    ? (e) => {
-                        e.stopPropagation();
-                        onTrace(d);
-                      }
-                    : undefined
-                }
-              >
-                {docStageText(d)}
-              </div>
               <div className="kb-doc-card-footer-right" onClick={(e) => e.stopPropagation()}>
                 <Dropdown menu={menuOf(d)} trigger={["click"]} placement="bottomRight">
                   <Button
