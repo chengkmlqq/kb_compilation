@@ -794,6 +794,24 @@ def _cancel_related_wiki_tasks(db: Session, document_id: str) -> None:
     """删除文档时级联取消其关联的未完成 wiki 构建任务（避免删后假成功/孤儿页）。"""
     from api.models.framework import Job
 
+    # 2026-10-17：编排化 wiki 构建（kb_tape_run）此前不会被取消 —— 文档删除后
+    # run 仍继续执行，切片拉取 0 字 → 切片门禁 failed，任务监控/编排列表留失败记录。
+    try:
+        from sqlalchemy import text as _sql_text
+
+        _n = db.execute(
+            _sql_text(
+                "update kb_tape_run set status = 'failed', "
+                "error = '文档已删除，wiki 构建自动取消', updated_at = now() "
+                "where status in ('queued', 'running') and inputs like :p"
+            ),
+            {"p": f"%{document_id}%"},
+        ).rowcount
+        if _n:
+            logger.info("cancel %s orchestration run(s) for deleted document %s", _n, document_id)
+    except Exception:  # noqa: BLE001 - 取消失败不阻断删除
+        logger.warning("cancel orchestration runs for document %s failed", document_id, exc_info=True)
+
     jobs = db.execute(
         select(Job).where(
             Job.id.like("WIKI_%"),

@@ -342,7 +342,15 @@ def ingest_document(
         return result
 
     if not markdown.strip():
-        update_document_state(kb_db, document.id, "FAILED", error="empty parse result")
+        update_document_state(
+            kb_db,
+            document.id,
+            "FAILED",
+            error=(
+                "解析结果为空：该文件没有可抽取的文本层（常见于扫描件/纯图片 PDF、"
+                "加密文档或内容编码不受支持的 mhtml）。请转成可复制文本的 PDF/Markdown 后重新上传。"
+            ),
+        )
         kb_db.commit()
         result["error"] = "empty parse result"
         result["success"] = False
