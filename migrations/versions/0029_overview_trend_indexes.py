@@ -8,7 +8,7 @@
   避免全量扫行。对已手动建过索引的库幂等跳过。
 
 Revision ID: 0029_overview_trend_indexes
-Revises: 0028_llm_usage
+Revises: 0029_code_repo_config
 Create Date: 2026-10-20
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "0029_overview_trend_indexes"
-down_revision: Union[str, None] = "0028_llm_usage"
+down_revision: Union[str, None] = "0029_code_repo_config"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

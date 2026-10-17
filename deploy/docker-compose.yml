@@ -102,9 +102,11 @@ services:
     image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-api-server:${KB_IMAGE_TAG:-latest}
     container_name: kb-api-server
     restart: unless-stopped
-    # 2026-10-16 单进程 uvicorn 被 40 并发编排请求打爆两次（health 超时→构建
-    # 节点 API 超时 failed）。改多进程；启动迁移已是最新时 no-op，并发安全。
-    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+    # 2026-10-16 曾改 --workers 4 缓解并发压垮；2026-10-18 实测多 worker 下
+    # 4 个 spawn 子进程并发跑 alembic 迁移互相干扰（CPU 自旋 + 卡 startup，
+    # 单进程/workers=2 均无法启动）。直连（KB_INTERNAL_DIRECT=1）上线后编排
+    # 节点不再经 HTTP 打 api-server，单进程足够——回退单进程，启动稳定。
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     <<: *api-env
     extra_hosts:
       - "host.docker.internal:host-gateway"
