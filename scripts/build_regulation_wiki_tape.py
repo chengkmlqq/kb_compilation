@@ -178,6 +178,24 @@ bindings['root_id'] = root_id
 bindings['leaf'] = leaf
 bindings['cat_ids'] = cat_ids
 print(f"[n05] 目录树就绪 root={root_id} leaf={json.dumps(leaf, ensure_ascii=False)}")
+
+# 2026-10-17: 清空重跑 —— 删除本文件旧专属页、共享页仅摘除本文件关联
+try:
+    import clear_file_pages as _cfp
+    _all_folders = [v for v in leaf.values() if v]
+    _all_folders.append(root_id)
+    for _m in (cat_ids.get('biz') or {}).values():
+        if _m:
+            _all_folders.append(_m)
+    for _m in (cat_ids.get('rule') or {}).values():
+        if _m:
+            _all_folders.append(_m)
+    _cleared, _shared = _cfp.clear_file_pages(
+        wr, wr.KB, _kid, leaf.get('基础实体', ''), file_label=_doc, all_folders=_all_folders)
+    print(f"[n05] 清空重跑: 删除专属页 {len(_cleared)} 个, 共享页摘除关联 {len(_shared)} 个")
+except Exception as _e:
+    print(f"[n05] 清空旧页失败（不中断构建）: {_e}")
+
 '''
 
 # ─────────────────────────────────────────────────────────────────────
