@@ -23,6 +23,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -502,6 +503,53 @@ def default_indexing_strategy() -> dict:
     }
 
 
+class LlmUsageRecord(Base):
+    """LLM 调用使用记录（2026-10-16 LLM 使用看板数据源）。
+
+    一次逻辑调用一条记录（重试收敛在一条里，retries 计数）；wiki 构建管线
+    （worker/builtin_engine weknora_rpc.llm_call）、智能问答（chat.py 流式）、
+    agent 任务三处埋点写入，best-effort 写库不阻断业务。字段全部可移植
+    SQL 类型，与业务表同存 framework store（跨 MySQL/PG 通用）。
+
+    status 取值：success / error / timeout / context_overflow / running。
+    cache_read = 缓存命中（DeepSeek 系 usage.prompt_cache_hit_tokens 或
+    prompt_tokens_details.cached_tokens）；cache_creation = 缓存写入（多数
+    上游不暴露，记 0）。ttft_ms 仅流式问答有值（首字耗时）；wiki 构建非流式
+    记 NULL。
+    """
+
+    __tablename__ = "kb_llm_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 请求级 trace id（req_xxx）；wiki 构建场景 = job_id
+    trace_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    ts: Mapped[datetime | None] = mapped_column(
+        DateTime, index=True, server_default=text("CURRENT_TIMESTAMP")
+    )
+    source: Mapped[str] = mapped_column(String(16), default="")  # chat/wiki_build/agent
+    kb_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    kb_name: Mapped[str | None] = mapped_column(String(128))
+    doc_id: Mapped[str | None] = mapped_column(String(64))
+    doc_name: Mapped[str | None] = mapped_column(String(255))
+    model: Mapped[str | None] = mapped_column(String(128), index=True)
+    # 业务动作 key（OP_TYPES 映射表见 api/services/llm_usage.py）；phase 保留原始构建阶段名
+    operation_type: Mapped[str | None] = mapped_column(String(32), index=True)
+    phase: Mapped[str | None] = mapped_column(String(48))
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_creation_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    ttft_ms: Mapped[float | None] = mapped_column(Float)  # 首字耗时（流式）
+    total_ms: Mapped[int | None] = mapped_column(Integer)  # 端到端耗时
+    tps: Mapped[float | None] = mapped_column(Float)  # 输出 TPS = output/(total-ttft)
+    status: Mapped[str] = mapped_column(String(24), default="success", index=True)
+    error_msg: Mapped[str | None] = mapped_column(Text, default="")
+    retries: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
 __all__ = [
     "KbAgent",
     "KbDatasource",
@@ -511,5 +559,6 @@ __all__ = [
     "WikiFolder",
     "WikiPage",
     "WikiLink",
+    "LlmUsageRecord",
     "default_indexing_strategy",
 ]

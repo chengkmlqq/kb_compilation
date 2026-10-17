@@ -1204,6 +1204,169 @@ export function apiFeedbackList(
   );
 }
 
+// ---- LLM 使用记录与性能监控看板（2026-10-16，无任何金额字段） ----
+
+export interface UsageLatency {
+  ttft: number | null;
+  total: number | null;
+  tps: number | null;
+}
+
+export interface UsageSummary {
+  totalRequests: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  cacheHitRate: number;
+  processedDocs: number;
+  generatedKnowledge: number;
+  avgLatency: UsageLatency;
+  successCount: number;
+  failedCount: number;
+  errorRate: number;
+  retries: number;
+  range: { start: string; end: string };
+}
+
+export interface UsageDistItem {
+  key: string;
+  name: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+}
+
+export interface UsageTrend {
+  granularity: string;
+  timestamps: string[];
+  inputTokens: number[];
+  outputTokens: number[];
+  cacheReadTokens: number[];
+  cacheCreationTokens: number[];
+  cacheHitRate: number[];
+}
+
+export interface UsageDetailItem {
+  id: string;
+  ts: string | null;
+  source: string;
+  kbName: string;
+  kbId: string;
+  docName: string;
+  docId: string;
+  model: string;
+  operationType: string;
+  operationLabel: string;
+  phase: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+  cacheReadTokens: number;
+  latency: UsageLatency;
+  status: string;
+  errorMessage: string;
+  retries: number;
+}
+
+export interface UsageDetailsResp {
+  items: UsageDetailItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  errorBreakdown: Record<string, number>;
+}
+
+export interface UsageOptions {
+  knowledgeBases: { id: string; name: string }[];
+  models: string[];
+  operations: { value: string; label: string }[];
+}
+
+export type UsagePreset = "24h" | "7d" | "30d" | "custom";
+
+interface UsageRange {
+  preset: UsagePreset;
+  start?: string;
+  end?: string;
+}
+
+function usageQuery(p: UsageRange & Record<string, unknown>): string {
+  const params = new URLSearchParams();
+  params.set("preset", p.preset);
+  if (p.preset === "custom") {
+    if (p.start) params.set("start", String(p.start));
+    if (p.end) params.set("end", String(p.end));
+  }
+  for (const [k, v] of Object.entries(p)) {
+    if (k === "preset" || k === "start" || k === "end") continue;
+    if (v !== undefined && v !== null && v !== "") params.set(k, String(v));
+  }
+  return params.toString();
+}
+
+export function apiUsageSummary(p: UsageRange, kbId?: string, model?: string, operation?: string) {
+  const q = usageQuery({ ...p, kb_id: kbId, model, operation });
+  return request<UsageSummary>(`/api/v1/usage/summary?${q}`);
+}
+
+export function apiUsageDistribution(
+  dim: "kb" | "model" | "operation",
+  p: UsageRange,
+  kbId?: string,
+  model?: string,
+  operation?: string
+) {
+  const q = usageQuery({ ...p, dim, kb_id: kbId, model, operation });
+  return request<UsageDistItem[]>(`/api/v1/usage/distribution?${q}`);
+}
+
+export function apiUsageTrend(
+  granularity: "hour" | "day",
+  p: UsageRange,
+  kbId?: string,
+  model?: string,
+  operation?: string
+) {
+  const q = usageQuery({ ...p, granularity, kb_id: kbId, model, operation });
+  return request<UsageTrend>(`/api/v1/usage/trend?${q}`);
+}
+
+export function apiUsageDetails(
+  p: UsageRange,
+  opts: {
+    page: number;
+    pageSize: number;
+    sort?: string;
+    order?: string;
+    status?: string;
+    keyword?: string;
+    kbId?: string;
+    model?: string;
+    operation?: string;
+  }
+) {
+  const q = usageQuery({
+    ...p,
+    page: opts.page,
+    page_size: opts.pageSize,
+    sort: opts.sort || "ts",
+    order: opts.order || "desc",
+    status: opts.status || "",
+    keyword: opts.keyword || "",
+    kb_id: opts.kbId,
+    model: opts.model,
+    operation: opts.operation,
+  });
+  return request<UsageDetailsResp>(`/api/v1/usage/details?${q}`);
+}
+
+export function apiUsageOptions(days = 30) {
+  return request<UsageOptions>(`/api/v1/usage/options?days=${days}`);
+}
+
 // ---- 数据查询（DataGrid，迁移 data-synth） ----
 
 export interface DatagridDsItem {

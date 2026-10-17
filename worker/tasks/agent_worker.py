@@ -349,6 +349,11 @@ def _execute_agent_payload(payload: dict[str, Any], job_id: str) -> dict[str, An
         return {"success": False, "error": repr(exc), "job_id": job_id}
 
     result["job_id"] = job_id
+    # ── LLM 使用记录（2026-10-16 LLM 使用看板）：按 agent 运行聚合一条（best-effort）──
+    try:
+        _record_agent_usage(job_id, config, result)
+    except Exception:  # noqa: BLE001 - 埋点失败不阻断任务
+        logger.debug("record agent usage failed job=%s", job_id, exc_info=True)
     # ── 失败如实标记（2026-10-06）：agent 汇报"构建未完成/两次超时"等 → 标失败
     if result.get("success"):
         _out = str(result.get("output") or "")
@@ -844,6 +849,87 @@ register_task_handlers()
 # payload 结构与 KbAgentWikiBuildTask 的 task_params 同构：
 #     {input, instructions, agent_name, config{skill/kb_id/model/...}}
 # ===========================================================================
+
+def _record_agent_usage(job_id: str, config: dict[str, Any], result: dict[str, Any]) -> None:
+    """写一条 agent 运行级 LLM 使用记录（source=agent，按运行聚合，best-effort）。
+
+    token 从 SDK generation span 提取（agents 追踪 span_data.usage 可能是
+    {input_tokens, output_tokens, ...}）；拿不到时记 0（只有耗时/状态）。
+    """
+    from api.services.llm_usage import classify_error, record_llm_usage
+
+    kb_id = str(config.get("kb_id") or "")
+    kb_name = ""
+    if kb_id:
+        try:
+            from sqlalchemy import select
+
+            from api.db import get_sessionmaker
+            from api.models.knowledge import KbDatasource
+
+            db = get_sessionmaker()()
+            try:
+                kb_name = (
+                    db.execute(
+                        select(KbDatasource.name).where(KbDatasource.id == kb_id)
+                    ).scalar()
+                    or ""
+                )
+            finally:
+                db.close()
+        except Exception:  # noqa: BLE001
+            kb_name = ""
+
+    model = str(config.get("model") or "")
+    usage = {"input": 0, "output": 0, "read": 0, "creation": 0}
+    gen_ms = 0
+    try:
+        tid = str(result.get("sdk_trace_id") or "")
+        if tid:
+            from worker.agent.trace_store import peek_trace_spans
+
+            for sp in peek_trace_spans(tid):
+                sd = sp.get("span_data") or {}
+                if str(sd.get("type") or "") != "generation":
+                    continue
+                if not model:
+                    model = str(sd.get("model") or "")
+                u = sd.get("usage") or {}
+                if isinstance(u, dict):
+                    usage["input"] += int(u.get("input_tokens") or u.get("prompt_tokens") or 0)
+                    usage["output"] += int(u.get("output_tokens") or u.get("completion_tokens") or 0)
+                    read = int(u.get("cache_read_tokens") or u.get("prompt_cache_hit_tokens") or 0)
+                    usage["read"] += read
+                    usage["creation"] += int(u.get("cache_creation_tokens") or 0)
+                try:
+                    import datetime
+
+                    st = datetime.datetime.fromisoformat(str(sp.get("started_at")).replace("Z", "+00:00"))
+                    en = datetime.datetime.fromisoformat(str(sp.get("ended_at")).replace("Z", "+00:00"))
+                    gen_ms += max(0, int((en - st).total_seconds() * 1000))
+                except Exception:  # noqa: BLE001
+                    pass
+    except Exception:  # noqa: BLE001
+        pass
+
+    status = "success" if result.get("success") else classify_error(str(result.get("error") or ""))
+    total_ms = int(result.get("runs_ms") or 0) or gen_ms or None
+    record_llm_usage(
+        trace_id=job_id,
+        source="agent",
+        kb_id=kb_id,
+        kb_name=kb_name,
+        model=model or "",
+        operation_type="agent",
+        input_tokens=usage["input"],
+        output_tokens=usage["output"],
+        cache_read_tokens=usage["read"],
+        cache_creation_tokens=usage["creation"],
+        total_ms=total_ms,
+        status=status,
+        error_msg=str(result.get("error") or "")[:300],
+    )
+
 
 def run_agent_inline(payload: dict[str, Any], task_id: str = "") -> dict[str, Any]:
     """编排 agent_run 节点投递的 agent 循环任务（agent 队列消费）。"""

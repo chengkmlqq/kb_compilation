@@ -82,6 +82,7 @@ API_ROUTE_MAP: tuple[tuple[str, str], ...] = (
     ("/api/v1/datasources", "/datasources"),
     ("/api/v1/datagrid", "/datagrid"),
     ("/api/v1/feedback", "/feedback-stats"),
+    ("/api/v1/usage", "/usage"),  # 2026-10-16 LLM 使用看板
 )
 
 

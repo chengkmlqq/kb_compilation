@@ -221,6 +221,59 @@ def build_messages(
     return messages
 
 
+def _usage_from_openai(o: dict) -> dict[str, int]:
+    """从 usage 对象提取 input/output/cache（deepseek 与 OpenAI 两种字段兼容）。"""
+    read = int(o.get("prompt_cache_hit_tokens") or 0)
+    details = o.get("prompt_tokens_details") or {}
+    if not read and isinstance(details, dict):
+        read = int(details.get("cached_tokens") or 0)
+    return {
+        "input": int(o.get("prompt_tokens") or 0),
+        "output": int(o.get("completion_tokens") or 0),
+        "read": read,
+        "creation": int((details or {}).get("cache_creation_tokens") or 0)
+        if isinstance(details, dict)
+        else 0,
+    }
+
+
+def _record_chat_usage(
+    usage_ctx: dict,
+    model: str,
+    usage: dict[str, int],
+    t0: float,
+    ttft_ms: float | None,
+    err: Exception | None,
+    retries: int,
+) -> None:
+    """写一条 chat 来源的 LLM 使用记录（best-effort，绝不抛出）。"""
+    try:
+        from api.services.llm_usage import classify_error, record_llm_usage
+
+        msg = str(err)[:300] if err else ""
+        record_llm_usage(
+            trace_id=str(usage_ctx.get("trace_id") or ""),
+            source="chat",
+            kb_id=str(usage_ctx.get("kb_id") or ""),
+            kb_name=str(usage_ctx.get("kb_name") or ""),
+            doc_id=str(usage_ctx.get("doc_id") or ""),
+            doc_name=str(usage_ctx.get("doc_name") or ""),
+            model=model,
+            operation_type=str(usage_ctx.get("operation") or "qa"),
+            input_tokens=usage.get("input", 0),
+            output_tokens=usage.get("output", 0),
+            cache_read_tokens=usage.get("read", 0),
+            cache_creation_tokens=usage.get("creation", 0),
+            ttft_ms=ttft_ms,
+            total_ms=int((time.time() - t0) * 1000),
+            status="success" if err is None else classify_error(msg),
+            error_msg=msg,
+            retries=retries,
+        )
+    except Exception:  # noqa: BLE001 — 埋点失败不影响问答
+        logger.debug("record chat usage failed", exc_info=True)
+
+
 class ChatClient:
     """OpenAI-compatible streaming chat client."""
 
@@ -234,9 +287,10 @@ class ChatClient:
         max_tokens: int = 2048,
         top_p: float | None = None,
         thinking: bool | None = None,
+        usage_ctx: dict | None = None,
     ) -> Iterator[str]:
         """Yield delta text chunks as they arrive (SSE-parsed)."""
-        for delta in self.stream_events(messages, temperature, max_tokens, top_p, thinking):
+        for delta in self.stream_events(messages, temperature, max_tokens, top_p, thinking, usage_ctx):
             yield delta.get("text") or ""
 
     def stream_events(
@@ -246,6 +300,7 @@ class ChatClient:
         max_tokens: int = 2048,
         top_p: float | None = None,
         thinking: bool | None = None,
+        usage_ctx: dict | None = None,
         tools: list[dict] | None = None,
     ) -> Iterator[dict]:
         """Yield structured events as they arrive (SSE-parsed).
@@ -261,11 +316,49 @@ class ChatClient:
         request payload (thinking maps to {"type": "enabled"|"disabled"}).
         Messages carrying images are serialized as OpenAI content arrays
         (image_url data URLs) for multimodal (vllm) probing.
+
+        usage_ctx（2026-10-16 LLM 使用看板埋点）: 提供时开启
+        stream_options.include_usage 并测量 TTFT/总耗时，结束写一条
+        kb_llm_usage 记录（source=chat）。字段：kb_id/kb_name/doc_id/
+        doc_name/operation。不提供则与接入前逐字一致（无埋点无副作用）。
         """
         # 接口协议 = oip：KServe Open Inference Protocol（/v2 非流式）
-        if (self.cfg.interface_type or "openai").lower() == "oip":
-            yield from self._stream_oip(messages, temperature, max_tokens, top_p)
-            return
+        oip_taken = (self.cfg.interface_type or "openai").lower() == "oip"
+        t0 = time.time()
+        usage_acc: dict[str, int] = {"input": 0, "output": 0, "read": 0, "creation": 0}
+        # 埋点统计（_stream_openai_stream 内原地更新，finally 读取）
+        _stats: dict = {"t0": t0, "ttft": None, "retries": 0}
+        err: Exception | None = None
+        try:
+            if oip_taken:
+                yield from self._stream_oip(messages, temperature, max_tokens, top_p, usage_ctx)
+                return
+            yield from self._stream_openai_stream(
+                messages, temperature, max_tokens, top_p, thinking, tools,
+                usage_ctx, usage_acc, _stats,
+            )
+        except Exception as exc:  # noqa: BLE001
+            err = exc
+            raise
+        finally:
+            if usage_ctx is not None and not oip_taken:
+                _record_chat_usage(
+                    usage_ctx, self.cfg.model, usage_acc,
+                    t0, _stats.get("ttft"), err, _stats.get("retries", 0),
+                )
+
+    def _stream_openai_stream(
+        self,
+        messages: list[ChatMessage],
+        temperature: float,
+        max_tokens: int,
+        top_p: float | None,
+        thinking: bool | None,
+        tools: list[dict] | None,
+        usage_ctx: dict | None,
+        usage_acc: dict[str, int],
+        _stats: dict,
+    ) -> Iterator[dict]:
 
         endpoint = (self.cfg.base_url or "").rstrip("/")
         if not endpoint:
@@ -295,6 +388,9 @@ class ChatClient:
             "max_tokens": max_tokens,
             "stream": True,
         }
+        if usage_ctx is not None:
+            # 2026-10-16 LLM 使用看板：请求 usage 计数（多数 OpenAI 兼容网关支持）
+            payload["stream_options"] = {"include_usage": True}
         if tools:
             payload["tools"] = tools
         if top_p is not None:
@@ -332,6 +428,7 @@ class ChatClient:
             resp = None
             last_exc: Exception | None = None
             for attempt in range(3):  # 最多 3 次尝试（2 次重试）
+                _stats["retries"] = attempt
                 try:
                     req = client.build_request("POST", endpoint, json=payload, headers=headers)
                     resp = client.send(req, stream=True)
@@ -389,10 +486,19 @@ class ChatClient:
                     delta = choice.get("delta") or {}
                     text = delta.get("content") or ""
                     reasoning = delta.get("reasoning_content") or ""
+                    # 2026-10-16 LLM 使用看板：TTFT = 首个可见 token（thinking/正文）时间
+                    if (reasoning or text) and _stats.get("ttft") is None:
+                        _stats["ttft"] = round((time.time() - _stats["t0"]) * 1000, 2)
                     if reasoning:
                         yield {"type": "thinking", "text": reasoning}
                     if text:
                         yield {"type": "delta", "text": text}
+                    # 流式 usage（include_usage 末帧下发）：deepseek 系缓存字段兼容
+                    u = obj.get("usage") or {}
+                    if u:
+                        got = _usage_from_openai(u)
+                        for _k in usage_acc:
+                            usage_acc[_k] += got.get(_k, 0)
                     for tc in delta.get("tool_calls") or []:
                         idx = int(tc.get("index", 0))
                         slot = tool_acc.setdefault(idx, {})
@@ -418,6 +524,7 @@ class ChatClient:
         temperature: float,
         max_tokens: int,
         top_p: float | None,
+        usage_ctx: dict | None = None,
     ) -> Iterator[dict]:
         """KServe Open Inference Protocol (non-streaming).
 
@@ -425,40 +532,54 @@ class ChatClient:
         /v2/models/{model}/infer response, so it is emitted as a single
         delta event to keep the upstream event contract unchanged.
         Thinking / tool calls / multimodal have no portable OIP binding.
+        OIP 无 usage 字段：提供 usage_ctx 时只记耗时/状态，token 记 0。
         """
         from api.services.oip import decode_bytes_cell, infer, scalar_input, text_input
 
-        roles = {"system": "System", "user": "User", "assistant": "Assistant", "tool": "Tool"}
-        parts = [f"{roles.get(m.role, m.role)}: {m.content}" for m in messages if (m.content or "").strip()]
-        prompt = "\n\n".join(parts)
-        if not prompt.strip():
-            raise RuntimeError("OIP infer skipped: empty prompt")
+        t0 = time.time()
+        err: Exception | None = None
+        try:
+            roles = {"system": "System", "user": "User", "assistant": "Assistant", "tool": "Tool"}
+            parts = [f"{roles.get(m.role, m.role)}: {m.content}" for m in messages if (m.content or "").strip()]
+            prompt = "\n\n".join(parts)
+            if not prompt.strip():
+                raise RuntimeError("OIP infer skipped: empty prompt")
 
-        inputs = [
-            text_input("text", [prompt]),
-            scalar_input("stream", "BOOL", False),
-        ]
-        if max_tokens:
-            inputs.append(scalar_input("max_tokens", "INT64", int(max_tokens)))
-        if temperature is not None:
-            inputs.append(scalar_input("temperature", "FP32", float(temperature)))
-        if top_p is not None:
-            inputs.append(scalar_input("top_p", "FP32", float(top_p)))
+            inputs = [
+                text_input("text", [prompt]),
+                scalar_input("stream", "BOOL", False),
+            ]
+            if max_tokens:
+                inputs.append(scalar_input("max_tokens", "INT64", int(max_tokens)))
+            if temperature is not None:
+                inputs.append(scalar_input("temperature", "FP32", float(temperature)))
+            if top_p is not None:
+                inputs.append(scalar_input("top_p", "FP32", float(top_p)))
 
-        blob = infer(
-            self.cfg.base_url,
-            self.cfg.model,
-            inputs,
-            [{"name": "text"}],
-            api_key=self.cfg.api_key,
-            custom_headers=self.cfg.custom_headers,
-            timeout=self.cfg.timeout,
-        )
-        cells = blob.get("text") or []
-        text = decode_bytes_cell(cells[0]) if cells else ""
-        if text:
-            yield {"type": "delta", "text": text}
-        yield {"type": "done"}
+            blob = infer(
+                self.cfg.base_url,
+                self.cfg.model,
+                inputs,
+                [{"name": "text"}],
+                api_key=self.cfg.api_key,
+                custom_headers=self.cfg.custom_headers,
+                timeout=self.cfg.timeout,
+            )
+            cells = blob.get("text") or []
+            text = decode_bytes_cell(cells[0]) if cells else ""
+            if text:
+                yield {"type": "delta", "text": text}
+            yield {"type": "done"}
+        except Exception as exc:  # noqa: BLE001
+            err = exc
+            raise
+        finally:
+            if usage_ctx is not None:
+                _record_chat_usage(
+                    usage_ctx, self.cfg.model,
+                    {"input": 0, "output": 0, "read": 0, "creation": 0},
+                    t0, None, err, 0,
+                )
 
     def chat(
         self,
@@ -613,6 +734,23 @@ def answer_question(
         }
         yield {"type": "context", "hits": [h.__dict__ for h in hits]}
 
+    # 2026-10-16 LLM 使用看板埋点上下文：kb/文档取自本次问答命中
+    _first = next(
+        (
+            h
+            for h in hits
+            if getattr(h, "document_id", None) or getattr(h, "document_title", None)
+        ),
+        None,
+    )
+    usage_ctx = {
+        "kb_id": getattr(kb, "id", "") or "",
+        "kb_name": getattr(kb, "name", "") or ("全部知识库" if kbs else ""),
+        "doc_id": getattr(_first, "document_id", "") if _first is not None else "",
+        "doc_name": getattr(_first, "document_title", "") if _first is not None else "",
+        "operation": "agent" if agent_prompt else "qa",
+    }
+
     if history:
         normalized: list[ChatMessage] = [
             m if isinstance(m, ChatMessage) else ChatMessage(role=m["role"], content=m["content"])
@@ -635,7 +773,7 @@ def answer_question(
     # 无工具：与接入前逐字一致的单轮流式
     if not tools:
         yield {"type": "stage", "stage": "generation", "status": "running", "title": "正在生成回答…"}
-        yield from _stream_once(client, messages)
+        yield from _stream_once(client, messages, usage_ctx)
         # 2026-10-12: 此前只发 running 从不发 done，前端步骤树的
         # 「正在生成回答…」永远转 loading（收到回复后仍显示）。结束补发 done。
         yield {"type": "stage", "stage": "generation", "status": "done", "title": "回答完成"}
@@ -650,7 +788,7 @@ def answer_question(
             "status": "running",
             "title": f"正在生成回答…（第 {round_idx + 1} 轮）" if round_idx > 0 else "正在生成回答…",
         }
-        for ev in client.stream_events(messages, tools=tools):
+        for ev in client.stream_events(messages, tools=tools, usage_ctx=usage_ctx):
             etype = ev.get("type")
             if etype == "tool_call":
                 tool_calls.append(ev)
@@ -712,8 +850,8 @@ def answer_question(
     yield {"type": "stage", "stage": "generation", "status": "done", "title": "回答完成"}
 
 
-def _stream_once(client: ChatClient, messages: list[ChatMessage]) -> Iterator[dict]:
+def _stream_once(client: ChatClient, messages: list[ChatMessage], usage_ctx: dict | None = None) -> Iterator[dict]:
     """单轮流式：只透传 delta / thinking（done 由 answer_question 之前的循环收尾）。"""
-    for ev in client.stream_events(messages):
+    for ev in client.stream_events(messages, usage_ctx=usage_ctx):
         if ev.get("type") in ("delta", "thinking"):
             yield ev

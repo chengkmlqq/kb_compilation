@@ -59,6 +59,8 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "datagrid", menu_name: "datagrid", menu_label: "数据查询", route: "/datagrid", parent_id: "grp_data", menu_icon: "TableOutlined", sort_num: 5, state: "1" },
   // 2026-10-14 问答反馈（点赞/点踩统计，采集用户使用情况；种子挂 grp_ops，兜底按现有分组挂 grp_data）
   { menu_id: "feedback_stats", menu_name: "feedback_stats", menu_label: "问答反馈", route: "/feedback-stats", parent_id: "grp_data", menu_icon: "LikeOutlined", sort_num: 6, state: "1" },
+  // 2026-10-16 LLM 使用记录与性能监控看板（调用/token/延迟/错误明细，无任何金额统计）
+  { menu_id: "llm_usage", menu_name: "llm_usage", menu_label: "LLM 使用", route: "/usage", parent_id: "grp_data", menu_icon: "BarChartOutlined", sort_num: 7, state: "1" },
   { menu_id: "system", menu_name: "system", menu_label: "系统管理", route: "/system", parent_id: null, menu_icon: "IconSystemMgrColor", sort_num: 4, state: "1" },
   // 调试工具（2026-10-12 方案H：编排管理/编排模板/编排组件 收拢于此，对齐种子 KB_MENUS）
   { menu_id: "grp_debug", menu_name: "grp_debug", menu_label: "调试工具", route: null, parent_id: null, menu_icon: "BugOutlined", sort_num: 5, state: "1" },

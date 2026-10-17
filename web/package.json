@@ -28,6 +28,7 @@
     "d3": "^7.9.0",
     "dayjs": "^1.11.13",
     "docx-preview": "^0.4.1",
+    "echarts": "^5.6.0",
     "handsontable": "^18.1.2",
     "jszip": "^3.10.2",
     "katex": "^0.19.0",

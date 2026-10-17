@@ -121,6 +121,15 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
         "LikeOutlined",
         7,
     ),
+    (
+        "llm_usage",
+        "llm_usage",
+        "LLM 使用",
+        "/usage",
+        "grp_ops",
+        "BarChartOutlined",
+        8,
+    ),
     # ---- 配置管理（顶级目录：数据源管理/模型/MCP/技能/参数/联网搜索） ----
     ("grp_config", "grp_config", "配置管理", None, None, "ToolOutlined", 5),
     ("datasources", "datasources", "数据源管理", "/datasources", "grp_config", "IconDatabaseColor", 1),

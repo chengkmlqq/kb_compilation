@@ -67,6 +67,10 @@ x-api-env: &api-env
     # 文档解析服务（MinerU 4.0.9 CPU 推理；2026-10-07 PaddleOCR-VL 已移除）：
     # parser_registry.mineru_endpoint() 直接读该 env，缺失时 PDF/OCR 解析判定引擎不可用。
     MINERU_ENDPOINT: ${MINERU_ENDPOINT:-http://mineru:8000}
+    # 编排节点 weknora_rpc 直连开关（.env 置 1）：进程内调 api.services，不经 HTTP，
+    # 消除 api-server 单点（40 并发编排打爆单进程 uvicorn 的根因）。仅执行编排
+    # script 节点的 worker 需要；放共享锚点对纯 API/调度服务无害。
+    KB_INTERNAL_DIRECT: ${KB_INTERNAL_DIRECT:-}
 
 services:
   nginx:
@@ -98,6 +102,9 @@ services:
     image: ${REGISTRY:-crpi-u265r07n4blchcqo.cn-shanghai.personal.cr.aliyuncs.com}/ck-registry/kb-api-server:${KB_IMAGE_TAG:-latest}
     container_name: kb-api-server
     restart: unless-stopped
+    # 2026-10-16 单进程 uvicorn 被 40 并发编排请求打爆两次（health 超时→构建
+    # 节点 API 超时 failed）。改多进程；启动迁移已是最新时 no-op，并发安全。
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
     <<: *api-env
     extra_hosts:
       - "host.docker.internal:host-gateway"

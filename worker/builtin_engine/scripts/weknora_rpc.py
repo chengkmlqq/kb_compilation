@@ -1342,6 +1342,118 @@ def _local_tokens(text):
 
 
 _last_llm_ts = [0.0]
+# ---------------------------------------------------------------------------
+# LLM 使用记录（2026-10-16 LLM 使用看板）：逐次调用写 kb_llm_usage（best-effort）
+# ---------------------------------------------------------------------------
+_USAGE_PHASE = ""
+_KB_NAME_CACHE = {}
+
+
+def _usage_kb_doc():
+    """当前构建的 kb/文档：优先 wr.KB 模块全局（build_full 设置），回退命令行 --kb。"""
+    kb = ""
+    try:
+        kb = str(globals().get("KB") or "")
+    except Exception:
+        kb = ""
+    if not kb:
+        try:
+            argv = sys.argv
+            if "--kb" in argv and argv.index("--kb") + 1 < len(argv):
+                kb = str(argv[argv.index("--kb") + 1])
+        except Exception:
+            kb = ""
+    doc = ""
+    try:
+        argv = sys.argv
+        for flag in ("--source-file", "--title"):
+            if flag in argv and argv.index(flag) + 1 < len(argv):
+                doc = os.path.basename(str(argv[argv.index(flag) + 1]))
+                break
+    except Exception:
+        doc = ""
+    return kb, doc
+
+
+def _kb_name_cached(kb_id):
+    if not kb_id:
+        return ""
+    if kb_id in _KB_NAME_CACHE:
+        return _KB_NAME_CACHE[kb_id]
+    name = ""
+    try:
+        from sqlalchemy import select
+        from api.db import get_sessionmaker
+        from api.models.knowledge import KbDatasource
+
+        db = get_sessionmaker()()
+        try:
+            row = db.execute(select(KbDatasource.name).where(KbDatasource.id == kb_id)).scalar()
+            name = row or ""
+        finally:
+            db.close()
+    except Exception:
+        name = ""
+    _KB_NAME_CACHE[kb_id] = name
+    return name
+
+
+_SCRIPT_OP = {
+    "gen_summary": "summary", "backfill_ls_summary": "summary",
+    "extract_long_sentences": "parse", "extract_entities": "entity",
+    "extract_rules": "rule", "filter_terms": "filter",
+    "build_relations": "relation", "describe_hidden_relations": "relation",
+    "gen_topic_pages": "topic", "gen_topic": "topic", "build_wiki": "topic",
+}
+
+
+def _infer_operation():
+    if _USAGE_PHASE:
+        return _USAGE_PHASE
+    try:
+        base = os.path.basename(sys.argv[0] or "") if sys.argv else ""
+        for key, op in _SCRIPT_OP.items():
+            if key in base:
+                return op
+    except Exception:
+        pass
+    return "other"
+
+
+def _record_usage(model, usage, total_ms, status, error="", retries=0):
+    """写一条 kb_llm_usage（source=wiki_build）。best-effort，绝不抛出。"""
+    try:
+        from api.services.llm_usage import classify_error, record_llm_usage
+
+        if status != "success":
+            status = classify_error(error or "")
+        kb, doc = _usage_kb_doc()
+        record_llm_usage(
+            source="wiki_build", kb_id=kb, kb_name=_kb_name_cached(kb),
+            doc_name=doc, model=model,
+            operation_type=_infer_operation(), phase=_USAGE_PHASE,
+            input_tokens=usage.get("input", 0), output_tokens=usage.get("output", 0),
+            cache_read_tokens=usage.get("read", 0), cache_creation_tokens=usage.get("creation", 0),
+            total_ms=total_ms, status=status, error_msg=error, retries=retries,
+        )
+    except Exception:
+        pass
+
+
+def _extract_usage(resp):
+    """从 chat/completions 响应 usage 提取 input/output/cache（deepseek 兼容）。"""
+    u = resp.get("usage") or {}
+    read = int(u.get("prompt_cache_hit_tokens") or 0)
+    det = u.get("prompt_tokens_details") or {}
+    if not read and isinstance(det, dict):
+        read = int(det.get("cached_tokens") or 0)
+    return {
+        "input": int(u.get("prompt_tokens") or 0),
+        "output": int(u.get("completion_tokens") or 0),
+        "read": read,
+        "creation": int((det or {}).get("cache_creation_tokens") or 0) if isinstance(det, dict) else 0,
+    }
+
 
 # ---------------------------------------------------------------------------
 # LLM 调用事件埋点（2026-10-06 可观测性）：每次调用/重试写结构化 JSONL
@@ -1352,7 +1464,9 @@ _ev_log_path_cache = [None]
 
 def set_phase(name):
     """标记当前构建阶段（long_sentences/terms/filter_terms/extract_joint/rules/…）"""
+    global _USAGE_PHASE
     _phase_ctx["name"] = name
+    _USAGE_PHASE = name
 
 
 def measure(step):
@@ -1516,6 +1630,11 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
                 continue
             if finish == 'length':
                 print(f'  ⚠️ LLM 输出被截断 (finish_reason=length, {len(content)} chars)')
+            try:
+                _record_usage(model, _extract_usage(resp),
+                              int((time.time() - t_start) * 1000), "success", "", len(retry_events))
+            except Exception:  # noqa: BLE001
+                pass
             _log_llm_event(
                 kind="ok", model=model, llm_ms=int((time.time() - t_start) * 1000),
                 wait_ms=wait_ms, retries=len(retry_events), retry_events=retry_events,
@@ -1557,6 +1676,11 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
         kind="error", model=model, llm_ms=int((time.time() - t_start) * 1000),
         wait_ms=wait_ms, retries=len(retry_events), retry_events=retry_events,
         error=str(last_err)[:200])
+    try:
+        _record_usage(model, {}, int((time.time() - t_start) * 1000),
+                      "error", str(last_err)[:300], len(retry_events))
+    except Exception:  # noqa: BLE001
+        pass
     raise RuntimeError(f'LLM 调用失败，已重试 {retries} 次: {last_err}')
 
 
