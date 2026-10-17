@@ -172,3 +172,43 @@ def test_requires_login(env) -> None:
     assert anonymous.post("/api/v1/kb-categories", json={"name": "x"}).status_code == 401
     assert anonymous.patch("/api/v1/kb-categories?name=x", json={"name": "y"}).status_code == 401
     assert anonymous.delete("/api/v1/kb-categories?name=x").status_code == 401
+
+
+def test_put_kb_updates_label(env) -> None:
+    """卡片拖拽 / 配置弹窗改分类：PUT /kbs/{id} 更新 label = 归入分类树对应分类。"""
+    db, client = env
+    _add_cat(db, "技术")
+    _add_kb(db, "mine", None)  # 未分类
+
+    # 拖卡到分类「技术」：label = 分类名，分类计数 +1
+    r = client.put("/api/v1/kbs/mine", json={"label": "技术"})
+    assert r.status_code == 200
+    assert db.get(KbDatasource, "mine").label == "技术"
+    by_name = {
+        i["name"]: i for i in client.get("/api/v1/kb-categories").json()["data"]["items"]
+    }
+    assert by_name["技术"]["count"] == 1
+
+
+def test_put_kb_label_empty_clears_category(env) -> None:
+    """拖回「全部」/ 配置弹窗清空分类：空串 '' 生效（未分类）。"""
+    db, client = env
+    _add_cat(db, "技术")
+    _add_kb(db, "mine", "技术")
+    r = client.put("/api/v1/kbs/mine", json={"label": ""})
+    assert r.status_code == 200
+    assert db.get(KbDatasource, "mine").label == ""
+    # 分类行仍在（空分类），但计数归零
+    by_name = {
+        i["name"]: i for i in client.get("/api/v1/kb-categories").json()["data"]["items"]
+    }
+    assert by_name["技术"]["count"] == 0
+
+
+def test_put_kb_label_null_keeps_existing(env) -> None:
+    """null 被 PUT 端点 exclude_none 丢弃：label 保持原值——前端清空分类必须传空串。"""
+    db, client = env
+    _add_kb(db, "mine", "技术")
+    r = client.put("/api/v1/kbs/mine", json={"label": None})
+    assert r.status_code == 200
+    assert db.get(KbDatasource, "mine").label == "技术"

@@ -4786,6 +4786,13 @@ html[data-theme="dark"] .kb-citation-web:hover {
   color: #3261ce;
   background: #e8f3ff;
 }
+/* 拖拽卡片悬停目标（2026-10-20）：主色底 + 虚线描边，标识卡片可放入该分类 */
+.kb-doc-tree-row--drop-target {
+  color: #3261ce;
+  background: #e8f3ff;
+  outline: 1px dashed #3261ce;
+  outline-offset: -1px;
+}
 .kb-doc-tree-row--root {
   font-weight: 600;
 }
@@ -4999,6 +5006,11 @@ html[data-theme="dark"] .kb-citation-web:hover {
 .kb-kbs-card:hover {
   box-shadow: 0 4px 10px 0 rgba(36, 46, 67, 0.1);
   border-color: #e3e9ef;
+}
+/* 拖拽中的卡片（2026-10-20）：半透明，提示处于可放入分类树的拖拽状态 */
+.kb-kbs-card--dragging {
+  opacity: 0.55;
+  box-shadow: 0 4px 10px 0 rgba(36, 46, 67, 0.1);
 }
 .kb-kbs-card-header {
   display: flex;

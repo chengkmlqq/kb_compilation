@@ -24,6 +24,7 @@ import {
 import {
   apiGetChunkingConfig,
   apiListBuildEngines,
+  apiListKbCategories,
   apiListModels,
   apiListParserEngines,
   apiListSkillsRegistry,
@@ -31,6 +32,7 @@ import {
   apiUpdateKb,
   BuildEngineItem,
   ChunkingConfig,
+  KbCategoryItem,
   KbItem,
   KbUpdatePayload,
   ModelItem,
@@ -125,6 +127,8 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
   const [models, setModels] = useState<ModelItem[]>([]);
   const [engines, setEngines] = useState<ParserEngineItem[]>([]);
   const [buildEngines, setBuildEngines] = useState<BuildEngineItem[]>([]);
+  // 分类下拉（2026-10-20 配置弹窗补入口）：数据源 = 分类树（kb_category 行 ∪ 可见 KB label）
+  const [categories, setCategories] = useState<KbCategoryItem[]>([]);
   const [chunkLoading, setChunkLoading] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -150,6 +154,11 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
         const be = await apiListBuildEngines();
         if (be.success && Array.isArray(be.data?.items)) setBuildEngines(be.data.items);
       } catch { /* 不阻断 */ }
+      try {
+        // 分类下拉（2026-10-20）：左侧分类树数据（kb_category 行 ∪ 可见 KB label）
+        const c = await apiListKbCategories();
+        if (c.success) setCategories(c.data?.items ?? []);
+      } catch { /* 不阻断 */ }
     })();
   }, [open]);
 
@@ -158,6 +167,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
     if (!open || !kb) return;
     const strat = kb.indexing_strategy || {};
     form.setFieldsValue({
+      label: kb.label || undefined,
       vector_enabled: !!strat.vector_enabled,
       keyword_enabled: !!strat.keyword_enabled,
       graph_enabled: !!strat.graph_enabled,
@@ -229,6 +239,8 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
     const v = await form.validateFields().catch(() => null);
     if (!v) return;
     const payload: KbUpdatePayload = {
+      // 分类（2026-10-20）：空 = 移出分类（后端 exclude_none 丢 null，必须传空串清空）
+      label: (v.label as string | undefined) ?? "",
       type: "document",
       indexing_strategy: {
         vector_enabled: !!v.vector_enabled,
@@ -319,6 +331,18 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
         }
       >
         <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
+          {/* 基本信息（2026-10-20 分类入口）：分区导航上方的常驻项，新建/编辑共用 */}
+          <Form.Item
+            name="label"
+            label="所属分类"
+            extra="选择左侧分类树中的已有分类；留空 = 未分类"
+          >
+            <Select
+              allowClear
+              placeholder="选择分类"
+              options={categories.map((c) => ({ label: c.name, value: c.name }))}
+            />
+          </Form.Item>
           <div style={{ display: "flex", gap: 16, minHeight: 440 }}>
             {/* 左侧分区导航（对齐智能体编辑器 AgentEditorModal） */}
             <div

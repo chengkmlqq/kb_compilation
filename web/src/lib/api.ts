@@ -209,6 +209,8 @@ export interface PageList<T> {
 
 export interface KbUpdatePayload {
   type?: "document";
+  /** 所属分类（与分类树 name 对应；空字符串 = 移出分类/未分类） */
+  label?: string | null;
   indexing_strategy?: IndexingStrategy;
   custom_wiki_generation?: boolean;
   embedding_model_id?: string | null;
