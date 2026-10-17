@@ -17,6 +17,12 @@ export const DEFAULT_SUPPORTED_EXTS: string[] = [
   "txt", "md", "markdown", "csv", "epub", "mhtml",
   // 图片
   "png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp",
+  // 代码文件（2026-10 代码仓库知识库：与 docreader CodeParser 同源）
+  "py", "java", "js", "mjs", "cjs", "jsx", "ts", "tsx", "go", "rs",
+  "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "kt", "kts", "swift",
+  "php", "rb", "sh", "bash", "zsh", "sql", "yaml", "yml", "json",
+  "xml", "html", "htm", "css", "scss", "less", "vue", "proto",
+  "dockerfile",
 ];
 
 /** 可自动解包的压缩包格式（服务端解包，见 apiUploadArchive） */

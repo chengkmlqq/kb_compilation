@@ -18,6 +18,7 @@ import {
 } from "antd";
 import {
   BookOutlined,
+  CodeOutlined,
   DeleteOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
@@ -47,6 +48,7 @@ import KBConfigModal from "@/components/KBConfigModal";
 import KbDocsPane from "@/components/kb/KbDocsPane";
 import KbWikiPane from "@/components/kb/KbWikiPane";
 import KbGraphPane from "@/components/kb/KbGraphPane";
+import CodeRepoPane from "@/components/kb/CodeRepoPane";
 import WikiGraphView from "@/components/WikiGraphView";
 import DocDetailPanel from "@/components/DocDetailPanel";
 
@@ -198,12 +200,13 @@ const CaretRightIcon = () => (
 
 /** 新建知识库弹窗分区导航（对齐智能体编辑器 AgentEditorModal 与配置弹窗 KBConfigModal） */
 const CREATE_SECTIONS = [
+  { key: "source", label: "知识来源", icon: <CodeOutlined /> },
   { key: "wiki", label: "Wiki 构建", icon: <BookOutlined /> },
   { key: "retrieval", label: "检索配置", icon: <SearchOutlined /> },
 ];
 
-/** 知识库详情分段：文档 / Wiki / 知识图谱(Neo4j) / wiki 关系图，各自成为顶层动态选项卡 */
-type KbSection = "docs" | "wiki" | "graph" | "wiki-graph";
+/** 知识库详情分段：文档 / Wiki / 知识图谱(Neo4j) / wiki 关系图 / 代码仓库(2026-10)，各自成为顶层动态选项卡 */
+type KbSection = "docs" | "wiki" | "graph" | "wiki-graph" | "repo";
 /** 动态选项卡条目（复用用户管理页模式）：首个 tab 固定为「页面标题 + 列表」，其余为可关闭的业务分段 */
 type KbSectionTab = {
   key: string;
@@ -219,6 +222,7 @@ const SECTION_LABEL: Record<KbSection, string> = {
   wiki: "Wiki",
   graph: "知识图谱",
   "wiki-graph": "wiki 关系图",
+  repo: "代码仓库",
 };
 
 /** 文档详情选项卡（点击文件打开，可关闭）：key = doc-<docId>，内容为 DocDetailPanel */
@@ -245,7 +249,10 @@ export default function KbsPage() {
   const [dragKbId, setDragKbId] = useState<string | null>(null);
   const [dropTargetLabel, setDropTargetLabel] = useState<string | null>(null);
   const [form] = Form.useForm();
-  const [createSection, setCreateSection] = useState("wiki");
+    const [createSection, setCreateSection] = useState("source");
+    // 代码仓库知识库（2026-10）：条件渲染依赖表单值，用 useWatch 订阅触发重渲染
+    const repoType = Form.useWatch("repo_type", form);
+    const repoAuthType = Form.useWatch("repo_auth_type", form);
   // 2026-10-16 DSB 知识集页对齐：左侧分类树（按 label 分组筛选）
   const [selectedLabel, setSelectedLabel] = useState<string>("all");
   // 2026-10-16 DSB corpus_info 对齐：分类树顶部「搜索分类」框
@@ -395,6 +402,7 @@ export default function KbsPage() {
     if (t.section === "wiki-graph") {
       return <WikiGraphView kbId={t.kbId} focusSlug={t.focusSlug} />;
     }
+    if (t.section === "repo") return <CodeRepoPane kbId={t.kbId} />;
     return (
       <KbDocsPane
         kbId={t.kbId}
@@ -597,13 +605,14 @@ export default function KbsPage() {
 
   const openCreate = () => {
     form.resetFields();
-    setCreateSection("wiki"); // 对齐智能体编辑器：每次打开回到首个分区
+    setCreateSection("source"); // 对齐智能体编辑器：每次打开回到首个分区
     setCreateOpen(true);
   };
 
   const onCreate = async () => {
     const values = await form.validateFields().catch(() => null);
     if (!values) return;
+    const isRepo = values.repo_type === "git";
     const payload: KbCreatePayload = {
       name: values.name,
       label: values.label || undefined,
@@ -624,6 +633,12 @@ export default function KbsPage() {
       build_tape_id: values.build_engine || undefined,
       // 摘要策略固定 auto：系统按文档规模自动路由（小文档全文直塞 / 大文档分块合并），不再开放给用户选择
       summary_strategy: "auto",
+      // 代码仓库知识库（2026-10）
+      repo_type: isRepo ? "git" : "",
+      repo_url: isRepo ? values.repo_url : "",
+      repo_branch: isRepo ? values.repo_branch || "" : "",
+      repo_auth_type: isRepo ? values.repo_auth_type || "none" : "none",
+      repo_auth_secret: isRepo ? values.repo_auth_secret || "" : "",
     };
     const res = await apiCreateKb(payload);
     if (res.success) {
@@ -863,6 +878,9 @@ export default function KbsPage() {
                               { key: "wiki", label: "Wiki" },
                               { key: "graph", label: "知识图谱" },
                               { key: "wiki-graph", label: "wiki 关系图" },
+                              ...(kb.repo_type === "git"
+                                ? [{ key: "repo", label: "代码仓库" }]
+                                : []),
                               { key: "config", label: "知识库配置" },
                               { type: "divider" },
                               { key: "delete", label: "删除", danger: true },
@@ -873,6 +891,7 @@ export default function KbsPage() {
                               else if (key === "wiki") openKbSection(kb, "wiki");
                               else if (key === "graph") openKbSection(kb, "graph");
                               else if (key === "wiki-graph") openKbSection(kb, "wiki-graph");
+                              else if (key === "repo") openKbSection(kb, "repo");
                               else if (key === "config") setConfigKb(kb);
                               else if (key === "delete") onDelete(kb);
                             },
@@ -1031,6 +1050,73 @@ export default function KbsPage() {
 
               {/* 右侧分区内容 */}
               <div style={{ flex: 1, overflowY: "auto", maxHeight: 480 }}>
+                {createSection === "source" && (
+                  <>
+                    <Form.Item
+                      name="repo_type"
+                      label="知识来源"
+                      initialValue="file"
+                      extra="文档上传 = 手动上传文件/目录构建知识库；Git 代码仓库 = 创建后自动拉取仓库代码并按目录结构建立知识库"
+                    >
+                      <Select
+                        options={[
+                          { label: "文档上传（手动）", value: "file" },
+                          { label: "Git 代码仓库（自动拉取）", value: "git" },
+                        ]}
+                      />
+                    </Form.Item>
+                    {repoType === "git" && (
+                      <>
+                        <Form.Item
+                          name="repo_url"
+                          label="仓库地址"
+                          rules={[{ required: true, message: "请输入 Git 仓库地址" }]}
+                          extra="支持 http/https/ssh/git@ 地址，如 https://git.example.com/team/repo.git"
+                        >
+                          <Input placeholder="https://git.example.com/team/repo.git" />
+                        </Form.Item>
+                        <Form.Item name="repo_branch" label="分支（可选）">
+                          <Input placeholder="留空 = 仓库默认分支" />
+                        </Form.Item>
+                        <Form.Item
+                          name="repo_auth_type"
+                          label="拉取凭证"
+                          initialValue="none"
+                        >
+                          <Select
+                            options={[
+                              { label: "无凭证（公开仓库）", value: "none" },
+                              { label: "Token（访问令牌）", value: "token" },
+                              { label: "SSH 私钥", value: "ssh_key" },
+                              { label: "用户名 + 密码", value: "user_pass" },
+                            ]}
+                          />
+                        </Form.Item>
+                        {(repoAuthType ?? "none") !== "none" && (
+                          <Form.Item
+                            name="repo_auth_secret"
+                            label={repoAuthType === "ssh_key" ? "SSH 私钥内容" : repoAuthType === "user_pass" ? "用户名:密码（冒号分隔）" : "Token"}
+                            rules={[{ required: true, message: "请输入凭证内容" }]}
+                          >
+                            <Input.TextArea
+                              rows={repoAuthType === "ssh_key" ? 6 : 2}
+                              placeholder={
+                                repoAuthType === "ssh_key"
+                                  ? "-----BEGIN OPENSSH PRIVATE KEY----- ..."
+                                  : repoAuthType === "user_pass"
+                                    ? "username:password"
+                                    : "ghp_xxxxxxxxxxxx"
+                              }
+                            />
+                          </Form.Item>
+                        )}
+                        <div style={{ padding: 8, background: "#f5f7fa", borderRadius: 6, color: "#4d5e7d", fontSize: 12 }}>
+                          创建后将自动拉取仓库代码存入对象存储，仓库目录会镜像为知识库文档目录，文件进入解析与 Wiki 构建编排链路。
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
                 {createSection === "wiki" && (
                   <>
                     <Form.Item

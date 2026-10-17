@@ -198,6 +198,16 @@ export interface KbItem {
   storage_provider_config?: Record<string, unknown>;
   storage_backend_id?: string;
   vector_store_id?: string;
+  /** 代码仓库知识库（2026-10）：repo_type="git" 时为代码仓库来源 */
+  repo_type?: string;
+  repo_url?: string;
+  repo_branch?: string;
+  repo_auth_type?: string;
+  repo_commit_sha?: string;
+  repo_pull_status?: string;
+  repo_pull_error?: string | null;
+  repo_last_pull_at?: string | null;
+  repo_file_count?: number;
 }
 
 export interface PageList<T> {
@@ -220,6 +230,12 @@ export interface KbUpdatePayload {
   summary_strategy?: string;
   /** 构建引擎（2026-10-16 配置弹窗补入口）：kb_tape.id；null = 清除绑定 */
   build_tape_id?: string | null;
+  /** 代码仓库知识库（2026-10）：凭证留空 = 保持不变 */
+  repo_type?: string;
+  repo_url?: string;
+  repo_branch?: string;
+  repo_auth_type?: string;
+  repo_auth_secret?: string;
 }
 
 export function apiUpdateKb(kbId: string, payload: KbUpdatePayload) {
@@ -231,6 +247,32 @@ export function apiUpdateKb(kbId: string, payload: KbUpdatePayload) {
 
 export function apiGetKb(kbId: string) {
   return request<KbItem>(`/api/v1/kbs/${encodeURIComponent(kbId)}`);
+}
+
+// ---- 代码仓库知识库（2026-10）----
+
+export interface RepoDetail {
+  repo_url: string;
+  repo_branch: string;
+  repo_auth_type: string;
+  repo_commit_sha: string;
+  repo_pull_status: string;
+  repo_pull_error?: string | null;
+  repo_last_pull_at?: string | null;
+  repo_file_count: number;
+}
+
+/** 手动触发代码仓库同步 */
+export function apiRepoPull(kbId: string) {
+  return request<{ job_id: string }>(
+    `/api/v1/kbs/${encodeURIComponent(kbId)}/repo/pull`,
+    { method: "POST" },
+  );
+}
+
+/** 代码仓库同步状态（凭证不回显） */
+export function apiRepoDetail(kbId: string) {
+  return request<RepoDetail>(`/api/v1/kbs/${encodeURIComponent(kbId)}/repo`);
 }
 
 export function apiListKbs(page = 1, pageSize = 20, keyword = "", scope?: string) {
@@ -258,6 +300,12 @@ export interface KbCreatePayload {
   build_tape_id?: string | null;
   /** 上传摘要策略（2026-10-13）：off 不生成 / auto 自动路由 / stuff / mapreduce / refine */
   summary_strategy?: string;
+  /** 代码仓库知识库（2026-10）：repo_type="git" 时为代码仓库来源 */
+  repo_type?: string;
+  repo_url?: string;
+  repo_branch?: string;
+  repo_auth_type?: string; // none / token / ssh_key / user_pass
+  repo_auth_secret?: string; // 明文凭证（仅创建/修改时提交，读取不回显）
 }
 
 export function apiCreateKb(payload: KbCreatePayload) {

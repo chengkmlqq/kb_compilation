@@ -129,6 +129,12 @@ class KBCreateRequest(BaseModel):
     ontology_schema_name: str | None = None  # 绑定本体 Schema（抽取分类结构，多领域）
     build_tape_id: str | None = None  # 构建引擎 = 服务编排中已发布的编排程序（kb_tape.id）
     summary_strategy: str | None = None  # 上传摘要策略: off/auto/stuff/mapreduce/refine（默认 auto）
+    # ── 代码仓库知识库（2026-10）──
+    repo_type: str = ""  # ""=普通文档库 / "git"=代码仓库知识库
+    repo_url: str = ""
+    repo_branch: str = ""
+    repo_auth_type: str = "none"  # none/token/ssh_key/user_pass
+    repo_auth_secret: str = ""  # 明文凭证（创建时加密落库，读取不回显）
 
 
 class KBUpdateRequest(BaseModel):
@@ -145,6 +151,12 @@ class KBUpdateRequest(BaseModel):
     configs: dict | None = None
     build_tape_id: str | None = None
     summary_strategy: str | None = None
+    # ── 代码仓库知识库（2026-10：凭证留空=保持不变）──
+    repo_type: str | None = None
+    repo_url: str | None = None
+    repo_branch: str | None = None
+    repo_auth_type: str | None = None
+    repo_auth_secret: str | None = None
 
 
 class SearchRequest(BaseModel):
@@ -366,9 +378,22 @@ def post_kb(
             caller_user_id=caller_user_id or None,
             caller_team_name=caller_team_name or None,
             is_sys_admin=is_sys_admin,
+            repo_type=req.repo_type,
+            repo_url=req.repo_url,
+            repo_branch=req.repo_branch,
+            repo_auth_type=req.repo_auth_type,
+            repo_auth_secret=req.repo_auth_secret,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # 代码仓库知识库：创建成功后投递首次同步任务（best-effort，失败不阻塞创建）
+    if (req.repo_type or "").strip() == "git":
+        try:
+            from worker.tasks.code_repo import TASK_CLASS_CODE_REPO
+
+            _enqueue_code_repo_pull(kb.id, caller_user_id or "", x_next_identity or "")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("首次代码仓库同步投递失败 kb=%s: %s", kb.id, exc)
     return {"success": True, "data": {"id": kb.id, "name": kb.name, "scope": kb.scope}}
 
 
@@ -492,6 +517,97 @@ def del_kb(
     if not result["success"]:
         raise HTTPException(status_code=404, detail=result["message"])
     return result
+
+
+def _enqueue_code_repo_pull(kb_id: str, user_id: str, cookie: str) -> dict:
+    """建 modo_job 行（REPO_{kb_id}）+ 投 Celery KbCodeRepoSyncTask。
+
+    幂等：同 kb 的同步任务行已存在则重置为 PENDING（并发重复触发会被
+    任务内 pulling 状态 + 行重置兜底，最终只执行一轮）。
+    """
+    from api.db import get_sessionmaker
+    from worker.celery_app import celery_app
+    from worker.tasks.code_repo import TASK_CLASS_CODE_REPO
+
+    job_id = f"REPO_{kb_id}"
+    task_params = json.dumps(
+        {"kbId": kb_id, "cookie": cookie}, ensure_ascii=False
+    )
+    framework_db = get_sessionmaker()()
+    try:
+        existing = framework_db.get(Job, job_id)
+        if existing is None:
+            framework_db.add(
+                Job(
+                    id=job_id,
+                    task_id=kb_id,
+                    task_class=TASK_CLASS_CODE_REPO,
+                    queue_name="default",
+                    task_params=task_params,
+                    trigger_type="API",
+                    state="PENDING",
+                )
+            )
+        else:
+            existing.task_params = task_params
+            existing.state = "PENDING"
+            existing.start_time = None
+            existing.end_time = None
+            existing.duration_ms = None
+            existing.error_message = None
+        framework_db.commit()
+    finally:
+        framework_db.close()
+    celery_app.send_task(
+        "worker.tasks.scheduler.execute_modo_job",
+        args=[job_id],
+        task_id=job_id,
+        queue="default",
+    )
+    return {"success": True, "data": {"job_id": job_id}}
+
+
+@router.post("/{kb_id}/repo/pull")
+def repo_pull(
+    kb_id: str,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+) -> dict:
+    """手动触发代码仓库同步（幂等：pulling 中拒绝重复触发）。"""
+    kb = _kb_manage(kb_id, caller, db)
+    if (getattr(kb, "repo_type", None) or "") != "git":
+        raise HTTPException(status_code=400, detail="该知识库不是代码仓库类型")
+    if (getattr(kb, "repo_pull_status", None) or "") == "pulling":
+        raise HTTPException(status_code=409, detail="仓库同步正在进行中，请稍后再试")
+    return _enqueue_code_repo_pull(kb_id, caller["user_id"], x_next_identity or "")
+
+
+@router.get("/{kb_id}/repo")
+def repo_detail(
+    kb_id: str,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """代码仓库同步状态（凭证不回显）。"""
+    kb = _kb_visible(kb_id, caller, db)
+    if (getattr(kb, "repo_type", None) or "") != "git":
+        raise HTTPException(status_code=400, detail="该知识库不是代码仓库类型")
+    return {
+        "success": True,
+        "data": {
+            "repo_url": getattr(kb, "repo_url", None) or "",
+            "repo_branch": getattr(kb, "repo_branch", None) or "",
+            "repo_auth_type": getattr(kb, "repo_auth_type", None) or "none",
+            "repo_commit_sha": getattr(kb, "repo_commit_sha", None) or "",
+            "repo_pull_status": getattr(kb, "repo_pull_status", None) or "",
+            "repo_pull_error": getattr(kb, "repo_pull_error", None) or "",
+            "repo_last_pull_at": (
+                kb.repo_last_pull_at.isoformat() if kb.repo_last_pull_at else None
+            ),
+            "repo_file_count": getattr(kb, "repo_file_count", None) or 0,
+        },
+    }
 
 
 @router.get("/{kb_id}/documents")

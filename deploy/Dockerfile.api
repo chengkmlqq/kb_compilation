@@ -15,9 +15,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /srv/kb
 
-# system deps used by docreader's PDF/HTML engines and playwright
+# system deps used by docreader's PDF/HTML engines, playwright, and git (代码仓库知识库拉取)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
+        git \
+        openssh-client \
         fonts-liberation \
         libnss3 \
         libnspr4 \

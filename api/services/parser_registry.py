@@ -298,6 +298,13 @@ SUPPORTED_UPLOAD_TYPES: tuple[str, ...] = (
     "txt", "md", "markdown", "csv", "epub", "mhtml",
     # 图片（docreader ImageParser：解析为图片引用，供文档图片理解/检索）
     "png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp",
+    # 代码文件（2026-10 代码仓库知识库：docreader CodeParser 已注册，
+    # 与 docreader/parser/registry.py 的 CODE_LANGUAGE_MAP 保持一致）
+    "py", "java", "js", "mjs", "cjs", "jsx", "ts", "tsx", "go", "rs",
+    "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "kt", "kts", "swift",
+    "php", "rb", "sh", "bash", "zsh", "sql", "yaml", "yml", "json",
+    "xml", "html", "htm", "css", "scss", "less", "vue", "proto",
+    "dockerfile",
 )
 
 #: 前端 <input accept> 用的扩展名串（与白名单同源）

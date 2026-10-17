@@ -13,6 +13,7 @@ Celery tasks and FastAPI routers reuse the same logic without globals.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import uuid
@@ -202,6 +203,12 @@ def create_kb(
     caller_user_id: str | None = None,
     caller_team_name: str | None = None,
     is_sys_admin: bool = False,
+    # ── 代码仓库知识库（2026-10，迁移 0029）──
+    repo_type: str = "",
+    repo_url: str = "",
+    repo_branch: str = "",
+    repo_auth_type: str = "none",
+    repo_auth_secret: str = "",
 ) -> KbDatasource:
     """Create a KB; name is required, id is generated if absent.
 
@@ -230,6 +237,30 @@ def create_kb(
     _validate_bound_model(
         db, summary_model_id, "摘要", caller_user_id, caller_team_name, is_sys_admin
     )
+    # 代码仓库知识库校验（2026-10）：repo_type=git 时仓库地址必填、凭证缺省 none
+    repo_type = (repo_type or "").strip()
+    repo_url_clean = (repo_url or "").strip()
+    if repo_type == "git":
+        if not repo_url_clean:
+            raise ValueError("代码仓库知识库必须配置仓库地址")
+        if repo_url_clean.startswith("git@"):
+            pass  # ssh:// 或 git@host:path 形态交由 worker git 命令处理
+        elif not repo_url_clean.startswith(("http://", "https://", "ssh://", "git://")):
+            raise ValueError("仓库地址格式不合法（支持 http/https/ssh/git@）")
+        auth_type = (repo_auth_type or "none").strip() or "none"
+        if auth_type not in ("none", "token", "ssh_key", "user_pass"):
+            raise ValueError(f"凭证类型不合法: {auth_type}")
+        if auth_type != "none" and not (repo_auth_secret or "").strip():
+            raise ValueError("已选择凭证类型但未提供凭证内容")
+    # 凭证 AES 加密落库（payload 形状与 update 的 _apply_repo_fields 一致）
+    auth_type = (repo_auth_type or "none").strip() or "none"
+    secret_plain = (repo_auth_secret or "").strip()
+    encrypted_secret = ""
+    if secret_plain:
+        from api.lib.crypto import aes_encrypt
+
+        payload = {"type": auth_type, "secret": secret_plain}
+        encrypted_secret = aes_encrypt(json.dumps(payload, ensure_ascii=False))
     kb = KbDatasource(
         id=_uuid(),
         name=name.strip(),
@@ -259,6 +290,11 @@ def create_kb(
             cfg.get("storage_provider_config")
         ),
         image_processing_config=dict(cfg.get("image_processing_config") or {}),
+        repo_type=repo_type,
+        repo_url=repo_url_clean,
+        repo_branch=(repo_branch or "").strip(),
+        repo_auth_type=auth_type,
+        repo_auth_secret=encrypted_secret,
         state="1",
     )
     db.add(kb)
@@ -395,9 +431,41 @@ def update_kb(
         kb.image_processing_config = dict(cfg["image_processing_config"] or {})
     elif "image_processing_config" in fields:
         kb.image_processing_config = dict(fields["image_processing_config"] or {})
+    # 代码仓库配置更新（2026-10）：凭证留空=保持不变；改地址/分支/类型时按需重加密
+    repo_fields = ("repo_type", "repo_url", "repo_branch", "repo_auth_type", "repo_auth_secret")
+    if any(f in fields for f in repo_fields):
+        _apply_repo_fields(db, kb, fields)
     db.commit()
     db.refresh(kb)
     return kb
+
+
+def _apply_repo_fields(db: Session, kb: KbDatasource, fields: dict) -> None:
+    """应用代码仓库配置字段（update_kb 内部）。
+
+    - repo_type/repo_url/repo_branch/repo_auth_type 直接更新；
+    - repo_auth_secret 非空（新明文）→ 重加密覆盖；空 → 保持不变。
+    """
+    from api.lib.crypto import aes_encrypt
+
+    if "repo_type" in fields:
+        rt = str(fields.get("repo_type") or "").strip()
+        kb.repo_type = rt if rt in ("", "git") else kb.repo_type
+    if "repo_url" in fields:
+        kb.repo_url = str(fields.get("repo_url") or "").strip()
+    if "repo_branch" in fields:
+        kb.repo_branch = str(fields.get("repo_branch") or "").strip()
+    if "repo_auth_type" in fields:
+        at = str(fields.get("repo_auth_type") or "none").strip() or "none"
+        if at in ("none", "token", "ssh_key", "user_pass"):
+            kb.repo_auth_type = at
+    new_secret = str(fields.get("repo_auth_secret") or "").strip()
+    if new_secret:
+        payload = {"type": kb.repo_auth_type or "none", "secret": new_secret}
+        kb.repo_auth_secret = aes_encrypt(json.dumps(payload, ensure_ascii=False))
+    # 仓库配置变更后清空拉取状态（下次同步重新拉取）
+    kb.repo_pull_status = ""
+    kb.repo_pull_error = None
 
 
 def delete_kb(db: Session, kb_id: str) -> dict:
@@ -435,6 +503,13 @@ def delete_kb(db: Session, kb_id: str) -> dict:
 
     # 1) KB 软删
     kb.state = "0"
+    # 1.1) 清空代码仓库凭证（敏感信息不随软删残留；2026-10 代码仓库知识库）
+    try:
+        kb.repo_auth_secret = None
+        kb.repo_url = ""
+        kb.repo_pull_error = None
+    except Exception:  # noqa: BLE001 — 旧库无 repo 列时忽略
+        pass
 
     # 1.5) 级联取消该库未完成的转换/wiki 任务（2026-10-05 实测: 删库后
     #      关联任务行残留 PENDING, celery 仍会消费 -> agent 为已删库建页）
@@ -534,6 +609,16 @@ def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0) -> dict:
         "storage_provider_config": getattr(kb, "storage_provider_config", None) or {},
         "storage_backend_id": getattr(kb, "storage_backend_id", None) or "",
         "vector_store_id": getattr(kb, "vector_store_id", None) or "",
+        # ── 代码仓库知识库（凭证密文不回显）──
+        "repo_type": getattr(kb, "repo_type", None) or "",
+        "repo_url": getattr(kb, "repo_url", None) or "",
+        "repo_branch": getattr(kb, "repo_branch", None) or "",
+        "repo_auth_type": getattr(kb, "repo_auth_type", None) or "none",
+        "repo_commit_sha": getattr(kb, "repo_commit_sha", None) or "",
+        "repo_pull_status": getattr(kb, "repo_pull_status", None) or "",
+        "repo_pull_error": getattr(kb, "repo_pull_error", None) or "",
+        "repo_last_pull_at": kb.repo_last_pull_at.isoformat() if kb.repo_last_pull_at else None,
+        "repo_file_count": getattr(kb, "repo_file_count", None) or 0,
     }
 
 
@@ -593,6 +678,7 @@ def list_documents(
             "ds_table_schema": d.ds_table_schema,
             "ds_table_name": d.ds_table_name,
             "row_count": d.row_count,
+            "repo_commit_sha": getattr(d, "repo_commit_sha", None) or "",
             "created_at": d.created_at.isoformat() if d.created_at else None,
         }
         for d in rows
@@ -617,6 +703,7 @@ def create_document(
     ds_table_name: str | None = None,
     row_count: int | None = None,
     build_tape_id: str | None = None,  # 文档级构建引擎（空 = 用 KB 默认）
+    repo_commit_sha: str = "",  # 代码仓库源：文件来源 commit（2026-10）
 ) -> KbDocument:
     if build_tape_id:
         _validate_build_tape_ref(db, build_tape_id)
@@ -635,6 +722,7 @@ def create_document(
         ds_table_name=ds_table_name,
         row_count=row_count,
         build_tape_id=build_tape_id,
+        repo_commit_sha=repo_commit_sha or "",
         parse_state="PENDING",
         chunk_count=0,
         created_by=created_by,

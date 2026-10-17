@@ -65,7 +65,18 @@ CREATE TABLE IF NOT EXISTS kb_datasource (
     storage_provider_config JSON,
     storage_backend_id VARCHAR(36),
     vector_store_id   VARCHAR(36),
-    build_tape_id     VARCHAR(64)
+    build_tape_id     VARCHAR(64),
+    -- 2026-10 代码仓库知识库（迁移 0029）
+    repo_type         VARCHAR(16) NOT NULL DEFAULT '',
+    repo_url          VARCHAR(512) NOT NULL DEFAULT '',
+    repo_branch       VARCHAR(128) NOT NULL DEFAULT '',
+    repo_auth_type    VARCHAR(16) NOT NULL DEFAULT 'none',
+    repo_auth_secret  TEXT,
+    repo_commit_sha   VARCHAR(64) NOT NULL DEFAULT '',
+    repo_pull_status  VARCHAR(16) NOT NULL DEFAULT '',
+    repo_pull_error   TEXT,
+    repo_last_pull_at TIMESTAMP,
+    repo_file_count   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_kb_datasource_team ON kb_datasource (team_name);
 CREATE INDEX idx_kb_datasource_build_tape ON kb_datasource (build_tape_id);
@@ -87,6 +98,7 @@ CREATE TABLE IF NOT EXISTS kb_document (
     summary_status VARCHAR(16) NOT NULL DEFAULT '',
     summary_error  TEXT,
     build_tape_id VARCHAR(64),   -- 2026-10-12 文档级构建引擎覆盖（上传/选表时可重选）
+    repo_commit_sha VARCHAR(64) NOT NULL DEFAULT '', -- 2026-10 代码仓库源：文件来源 commit
     created_by   VARCHAR(64),
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP

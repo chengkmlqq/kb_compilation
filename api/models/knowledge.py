@@ -101,6 +101,23 @@ class KbDatasource(Base):
     # worker/tasks/doc_process.py::_resolve_summary_tape。
     summary_strategy: Mapped[str] = mapped_column(String(16), default="auto")
 
+    # ── 代码仓库知识库（2026-10，迁移 0029）────────────────────────────
+    # repo_type=""=普通文档库；"git"=代码仓库知识库（创建后由
+    # KbCodeRepoSyncTask 拉取仓库代码存 MinIO，目录镜像为 doc_folder）。
+    repo_type: Mapped[str] = mapped_column(String(16), default="")
+    repo_url: Mapped[str] = mapped_column(String(512), default="")
+    repo_branch: Mapped[str] = mapped_column(String(128), default="")  # 空=仓库默认分支
+    repo_auth_type: Mapped[str] = mapped_column(String(16), default="none")  # none/token/ssh_key/user_pass
+    # AES 加密的拉取凭证（api/lib/crypto.py aes_encrypt），序列化接口不回显
+    repo_auth_secret: Mapped[str | None] = mapped_column(Text)
+    # 最近一次成功拉取的 commit SHA（增量同步基准）
+    repo_commit_sha: Mapped[str] = mapped_column(String(64), default="")
+    # idle/pulling/success/failed
+    repo_pull_status: Mapped[str] = mapped_column(String(16), default="")
+    repo_pull_error: Mapped[str | None] = mapped_column(Text)
+    repo_last_pull_at: Mapped[datetime | None] = mapped_column(DateTime)
+    repo_file_count: Mapped[int] = mapped_column(Integer, default=0)
+
     state: Mapped[str] = mapped_column(String(16), default="1")  # 1=active 0=deleted
     created_by: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime | None] = mapped_column(
@@ -152,6 +169,8 @@ class KbDocument(Base):
     ds_table_schema: Mapped[str | None] = mapped_column(String(128))
     ds_table_name: Mapped[str | None] = mapped_column(String(256))
     row_count: Mapped[int | None] = mapped_column(BigInteger)
+    # repo 源专属：文件来源 commit（增量同步 diff 判定，2026-10 迁移 0029）
+    repo_commit_sha: Mapped[str] = mapped_column(String(64), default="")
 
     created_by: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime | None] = mapped_column(

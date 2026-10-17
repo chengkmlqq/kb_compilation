@@ -2,6 +2,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 from docreader.parser.base_parser import BaseParser
+from docreader.parser.code_parser import CodeParser, CODE_LANGUAGE_MAP
 from docreader.parser.doc_parser import DocParser
 from docreader.parser.docx2_parser import Docx2Parser
 from docreader.parser.epub_parser import EPUBParser
@@ -139,6 +140,8 @@ def _build_default_registry() -> ParserEngineRegistry:
             "xls": ExcelParser,
             "epub": EPUBParser,
             "mhtml": MHTMLParser,
+            # 代码文件解析（2026-10 代码仓库知识库）：按扩展名映射 CodeParser
+            **{ext: CodeParser for ext in CODE_LANGUAGE_MAP},
             **_image_types,
         },
         description="内置解析引擎",
