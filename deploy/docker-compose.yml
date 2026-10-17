@@ -67,6 +67,9 @@ x-api-env: &api-env
     # 文档解析服务（MinerU 4.0.9 CPU 推理；2026-10-07 PaddleOCR-VL 已移除）：
     # parser_registry.mineru_endpoint() 直接读该 env，缺失时 PDF/OCR 解析判定引擎不可用。
     MINERU_ENDPOINT: ${MINERU_ENDPOINT:-http://mineru:8000}
+    # 启动自动迁移开关（默认开）：迁移链 multi-head 等异常时运维可临时关掉
+    # 跳过启动迁移（DB 手动推到最新）快速恢复 api-server，修复后恢复开。
+    AUTO_MIGRATE_ON_START: ${AUTO_MIGRATE_ON_START:-}
     # 编排节点 weknora_rpc 直连开关（.env 置 1）：进程内调 api.services，不经 HTTP，
     # 消除 api-server 单点（40 并发编排打爆单进程 uvicorn 的根因）。仅执行编排
     # script 节点的 worker 需要；放共享锚点对纯 API/调度服务无害。
