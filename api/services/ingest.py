@@ -324,15 +324,35 @@ def ingest_document(
     update_document_state(kb_db, document.id, "PARSING")
     kb_db.commit()
     used_engine = parser_engine
+    # 2026-10-18 解析超时保护：docreader Parser.parse_file 对个别 docx 会无限
+    # 卡死（实测 DOC_ed384dd1 RUNNING 154 分钟无返回），任务无超时兜底 →
+    # 永卡 RUNNING + 孤儿恢复每 60min 循环重投又卡。线程 + 超时：超时即显式
+    # FAILED（防状态卡死）；僵尸线程低频可接受。
+    import concurrent.futures as _cf
+
+    _PARSE_TIMEOUT_S = 1200  # 20 分钟；正常 docx 解析 <1min，大文件留余量
     try:
-        markdown, images, used_engine = parse_document_by_engine(
-            document.file_name,
-            document.file_ext or "",
-            file_content,
-            engine_rules=engine_rules,
-            forced_engine=parser_engine,
-            vlm_server_url=vlm_server_url,
+        with _cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="kb-parse") as _ex:
+            _fut = _ex.submit(
+                parse_document_by_engine,
+                document.file_name,
+                document.file_ext or "",
+                file_content,
+                engine_rules=engine_rules,
+                forced_engine=parser_engine,
+                vlm_server_url=vlm_server_url,
+            )
+            markdown, images, used_engine = _fut.result(timeout=_PARSE_TIMEOUT_S)
+    except _cf.TimeoutError:
+        logger.error(
+            "parse timeout after %ss for document %s (engine=%s)",
+            _PARSE_TIMEOUT_S, document.id, used_engine,
         )
+        update_document_state(kb_db, document.id, "FAILED", error=f"parse timeout (> {_PARSE_TIMEOUT_S}s)")
+        kb_db.commit()
+        result["error"] = f"parse timeout (> {_PARSE_TIMEOUT_S}s)"
+        result["success"] = False
+        return result
     except Exception as e:  # noqa: BLE001
         logger.exception("parse failed for document %s", document.id)
         update_document_state(kb_db, document.id, "FAILED", error=f"parse: {e}")

@@ -142,8 +142,17 @@ TASK_CLASS_BUILD_RETRIGGER = "KbBuildRetriggerTask"
 
 
 def _handle_build_retrigger(job_id: str, task_params: dict | None = None) -> dict:
-    """execute_modo_job 分发的 handler：构建失败补位自愈（cron 每 6h）。"""
+    """execute_modo_job 分发的 handler：构建失败补位自愈（cron 每 6h）。
+
+    task_params 约定：execute_modo_job 传原始字符串（Job.task_params 文本列），
+    兼容 dict（手动投递）与 str（cron 投递）两种形态。
+    """
     params = task_params or {}
+    if isinstance(params, str):
+        try:
+            params = json.loads(params) or {}
+        except (TypeError, ValueError):
+            params = {}
     try:
         watermark = int(params.get("watermark", DEFAULT_WATERMARK))
     except (TypeError, ValueError):
