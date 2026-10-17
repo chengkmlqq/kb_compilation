@@ -1569,6 +1569,10 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
         'max_tokens': max_tokens,
         'temperature': temperature,
         'enable_thinking': False,
+        # 2026-10-17: api.inferaiapi.com 的 deepseek-v4-pro 只认 thinking.type=disabled，
+        # 仅 enable_thinking=False 会被忽略 → reasoning 吃光 max_tokens，
+        # content 为空且 finish_reason=length，触发无谓重试。
+        'thinking': {'type': 'disabled'},
     }
     data = json.dumps(payload).encode()
     # inferaiapi.com 前置 Cloudflare 拦截 urllib 默认 UA（403/1010）→ 浏览器 UA

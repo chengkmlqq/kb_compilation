@@ -1507,10 +1507,10 @@ def build_tape() -> dict:
         node("n07", "script", "长句抽取", {"code": CODE_LONGSENT}),
         node("n08", "wiki_publish", "长句建页", {
             "source": "{{reg_dir}}/ls_all.json",
-            "folder": "长句原文",
-            # 2026-10-17: 必须限定父目录 —— 否则 _resolve_folder 按名字取全库第一个
-            # 同名目录，所有文档的长句页会挤到同一个「长句原文」目录
-            "folder_parent_id": "{{root_id}}",
+            # 2026-10-17: 直接传本文档「长句原文」目录 ID（bindings.leaf）。
+            # 此前只传目录名 → _resolve_folder 按名字取全库第一个同名目录，
+            # 1586 个长句页全挤到最早那个目录，其余文档目录全空。
+            "folder_id": "{{leaf['长句原文']}}",
             "page_type": "original_sentence",
             "slug_prefix": "longsentence",
             "slug_hash_field": "text",
