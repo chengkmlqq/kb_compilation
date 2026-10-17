@@ -14,7 +14,6 @@ import {
   Space,
   Switch,
   Tag,
-  Tooltip,
   Typography,
 } from "antd";
 import {
@@ -57,7 +56,6 @@ const KBS_ASSET_BASE = "/wiki/kbs";
 const headerTitleIcon = `${KBS_ASSET_BASE}/header-title-icon.png`;
 const cardTitleIcon = `${KBS_ASSET_BASE}/card-title-icon.png`;
 const cardOperateIcon = `${KBS_ASSET_BASE}/card-operate-icon.png`;
-const cardLockIcon = `${KBS_ASSET_BASE}/card-lock-icon.png`;
 
 /** 彩色放大镜（对齐 modo-design IconSearchColor：viewBox 12x12，圆圈 opacity .25 + 实心头） */
 const SearchColorIcon = ({ size = 14 }: { size?: number }) => (
@@ -779,12 +777,6 @@ export default function KbsPage() {
                           <div className="kb-kbs-card-title-name" title={kb.name}>
                             {kb.name}
                           </div>
-                          {/* 私有知识库标记（对齐 DSB：card-lock-icon.png 14px + 「私有」气泡） */}
-                          {(kb.scope || "personal") === "personal" && (
-                            <Tooltip title="私有">
-                              <img className="kb-kbs-card-title-flag" src={cardLockIcon} alt="" />
-                            </Tooltip>
-                          )}
                         </div>
                         <div className="kb-kbs-card-meta">
                           {kb.doc_count ?? 0}个文件 · {kb.page_count ?? 0}个Wiki

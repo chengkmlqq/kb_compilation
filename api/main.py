@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from api.config import get_settings
 from api.db import get_db
 from api.middleware import normalize_content_type, rbac_guard
-from api.routers import agents, auth, chat_sessions, chunking, cron, datasources, datagrid, feedback, files, graph, jobs, kb_categories, kbs, mcps, metadata, models, ontology, orchestrations, qa, quality, skills, system, system_config, usage, websearch, workers
+from api.routers import agents, auth, chat_sessions, chunking, cron, datasources, datagrid, feedback, files, graph, jobs, kb_categories, kbs, mcps, metadata, models, ontology, orchestrations, overview, qa, quality, skills, system, system_config, usage, websearch, workers
 from api.services.identity import Identity, decode_identity_cookie
 from api.services.migrations import run_migrations_on_startup
 
@@ -70,6 +70,7 @@ app.include_router(quality.router, prefix="/api/v1")
 app.include_router(kb_categories.router, prefix="/api/v1")  # 2026-10-19 知识库分类树 CRUD
 app.include_router(feedback.router, prefix="/api/v1")  # 2026-10-14 问答反馈统计
 app.include_router(usage.router, prefix="/api/v1")  # 2026-10-16 LLM 使用记录与性能监控看板
+app.include_router(overview.router, prefix="/api/v1")  # 2026-10-20 首页总览统计看板
 
 
 @app.get("/health")

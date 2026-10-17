@@ -43,6 +43,8 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   // 2026-10-10 方案B：与 scripts/seed_framework_db.py KB_MENUS 结构完全对齐——
   // 切片核对挪入知识管理；删除指向不存在页面的死链(/notification、/system/retrieval)；
   // 补全 datagrid/orchestrations/orch_defines/ont_schemas/sys_dims/sys_metadata_collection。
+  // 2026-10-20 首页总览（知识构建看板）：顶级第一位，根路径 / 重定向至此
+  { menu_id: "overview", menu_name: "overview", menu_label: "总览", route: "/overview", parent_id: null, menu_icon: "IconHomeColor", sort_num: 0, state: "1" },
   { menu_id: "grp_knowledge", menu_name: "grp_knowledge", menu_label: "知识管理", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 1, state: "1" },
   { menu_id: "kbs", menu_name: "kbs", menu_label: "知识库管理", route: "/kbs", parent_id: "grp_knowledge", menu_icon: "IconBook1Color", sort_num: 1, state: "1" },
   { menu_id: "files", menu_name: "files", menu_label: "文件管理", route: "/files", parent_id: "grp_knowledge", menu_icon: "IconCloudServerColor", sort_num: 2, state: "1" },

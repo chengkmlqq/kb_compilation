@@ -2962,6 +2962,48 @@ export function apiDeleteJob(jobId: string) {
   );
 }
 
+// ---- 首页总览统计（/api/v1/overview，2026-10-20 知识构建看板） ----
+
+export interface OverviewSummary {
+  kbs: { total: number; by_scope: Record<string, number> };
+  docs: {
+    total: number;
+    by_state: Record<string, number>;
+    summary_ready: number;
+    summary_failed: number;
+  };
+  chunks: { total: number };
+  wiki: { pages: number; links: number; issues_open: number };
+  jobs: {
+    total: number;
+    running: number;
+    success: number;
+    failed: number;
+    queued: number;
+    success_rate: number;
+    avg_duration_ms: number;
+  };
+  quality: { runs: number; avg_score: number };
+  feedback: { total: number; like_rate: number; week_count: number };
+}
+
+export function apiOverviewSummary() {
+  return request<OverviewSummary>("/api/v1/overview/summary");
+}
+
+export interface OverviewTrendDay {
+  date: string;
+  docs: number;
+  chunks: number;
+  wiki_pages: number;
+}
+
+export function apiOverviewTrend(days = 7) {
+  return request<{ days: OverviewTrendDay[] }>(
+    `/api/v1/overview/trend?days=${encodeURIComponent(String(days))}`,
+  );
+}
+
 // ---- 任务管理（定时任务 modo_cron_task，对齐 data-synth cron） ----
 
 export interface CronTaskItem {

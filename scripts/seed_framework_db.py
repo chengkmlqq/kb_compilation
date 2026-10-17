@@ -93,6 +93,7 @@ REMOVED_MENUS: set[str] = {"chat_next"}
 #   - route 有值且带子级 = 分组兼页面（点击自身跳该路由）
 KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     # ---- 顶级页面 ----
+    ("overview", "overview", "总览", "/overview", None, "IconHomeColor", 0),
     ("chat", "chat", "智能问答", "/chat", None, "IconSemanticSearchColor", 1),
     ("kbs", "kbs", "知识库", "/kbs", None, "IconBook1Color", 2),
     ("agents", "agents", "智能体", "/agents", None, "IconSemanticSearchColor", 3),
