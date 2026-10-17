@@ -33,6 +33,7 @@ import {
   apiListModels,
   apiListSkillsRegistry,
   apiRenameKbCategory,
+  apiUpdateKb,
   BuildEngineItem,
   DocItem,
   KbCategoryItem,
@@ -240,6 +241,9 @@ export default function KbsPage() {
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState("");
   const [configKb, setConfigKb] = useState<KbItem | null>(null);
+  // 卡片拖拽改分类（2026-10-20）：dragKbId = 正在拖拽的知识库；dropTargetLabel = 当前悬停的分类目标（高亮）
+  const [dragKbId, setDragKbId] = useState<string | null>(null);
+  const [dropTargetLabel, setDropTargetLabel] = useState<string | null>(null);
   const [form] = Form.useForm();
   const [createSection, setCreateSection] = useState("wiki");
   // 2026-10-16 DSB 知识集页对齐：左侧分类树（按 label 分组筛选）
@@ -602,6 +606,7 @@ export default function KbsPage() {
     if (!values) return;
     const payload: KbCreatePayload = {
       name: values.name,
+      label: values.label || undefined,
       description: values.description,
       scope: values.scope || "personal",
       type: values.type || "document",
@@ -658,6 +663,22 @@ export default function KbsPage() {
     });
   };
 
+  // ---- 卡片拖拽改分类（2026-10-20）----
+  // 拖拽卡片到左侧分类树：拖到分类条目 = 归入该分类；拖到「全部」= 移出分类（未分类）。
+  // 后端 PUT /kbs/{id} 的 exclude_none=True 会丢弃 null，清空分类必须传空字符串 ""。
+  const onDropToCategory = async (kb: KbItem, label: string) => {
+    const target = label || "";
+    if ((kb.label || "") === target) return;
+    const res = await apiUpdateKb(kb.id, { label: target });
+    if (res.success) {
+      message.success(target ? `已移至分类「${target}」` : "已移出分类（未分类）");
+      void load();
+      void loadCategories();
+    } else {
+      message.error(res.message || "修改分类失败");
+    }
+  };
+
   // 列表区（首个选项卡内容）：筛选 + 卡片视图 + 钉底分页 + 新建弹窗/配置弹窗
   // 根容器用 height:100% 对齐模型管理页——外层 .ant-tabs-content 非 flex 容器，
   // flex:1 对 block 父无效会退回内容高度，导致卡片区撑不开、分页不钉底（贴在卡片下方而非页面底部）
@@ -687,9 +708,22 @@ export default function KbsPage() {
               <div
                 className={`kb-doc-tree-row kb-doc-tree-row--root${
                   selectedLabel === "all" ? " active" : ""
-                }`}
+                }${dropTargetLabel === "" ? " kb-doc-tree-row--drop-target" : ""}`}
                 style={{ paddingLeft: 8 }}
                 onClick={() => setSelectedLabel("all")}
+                onDragOver={(e) => {
+                  if (!dragKbId) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setDropTargetLabel("");
+                }}
+                onDragLeave={() => setDropTargetLabel((v) => (v === "" ? null : v))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const kb = kbs.find((k) => k.id === dragKbId);
+                  setDropTargetLabel(null);
+                  if (kb) void onDropToCategory(kb, "");
+                }}
                 title="全部"
               >
                 {/* 图标槽（DSB .icon-container 14px）：默认文件夹图标，hover 时让位给展开箭头 */}
@@ -729,9 +763,26 @@ export default function KbsPage() {
                   }}
                 >
                   <div
-                    className={`kb-doc-tree-row${selectedLabel === c.name ? " active" : ""}`}
+                    className={`kb-doc-tree-row${
+                      selectedLabel === c.name ? " active" : ""
+                    }${dropTargetLabel === c.name ? " kb-doc-tree-row--drop-target" : ""}`}
                     style={{ paddingLeft: 20 }}
                     onClick={() => setSelectedLabel(c.name)}
+                    onDragOver={(e) => {
+                      if (!dragKbId) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      setDropTargetLabel(c.name);
+                    }}
+                    onDragLeave={() =>
+                      setDropTargetLabel((v) => (v === c.name ? null : v))
+                    }
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const kb = kbs.find((k) => k.id === dragKbId);
+                      setDropTargetLabel(null);
+                      if (kb) void onDropToCategory(kb, c.name);
+                    }}
                     title={c.name}
                   >
                     <span className="kb-doc-tree-icon">
@@ -767,7 +818,20 @@ export default function KbsPage() {
             >
               {visibleKbs.map((kb) => (
                 <Col key={kb.id} span={6}>
-                  <div className="kb-kbs-card" onClick={() => openKbSection(kb, "docs")}>
+                  <div
+                    className={`kb-kbs-card${dragKbId === kb.id ? " kb-kbs-card--dragging" : ""}`}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData("text/plain", kb.id);
+                      e.dataTransfer.effectAllowed = "move";
+                      setDragKbId(kb.id);
+                    }}
+                    onDragEnd={() => {
+                      setDragKbId(null);
+                      setDropTargetLabel(null);
+                    }}
+                    onClick={() => openKbSection(kb, "docs")}
+                  >
                     <div className="kb-kbs-card-header">
                       <div className="kb-kbs-card-icon">
                         <img src={cardTitleIcon} alt="" />
@@ -918,6 +982,17 @@ export default function KbsPage() {
                   { label: "团队", value: "team" },
                   { label: "系统", value: "system" },
                 ]}
+              />
+            </Form.Item>
+            <Form.Item
+              name="label"
+              label="分类（可选）"
+              extra="选择左侧分类树中的已有分类；留空 = 未分类（可在知识库配置中或拖拽卡片调整）"
+            >
+              <Select
+                allowClear
+                placeholder="选择分类"
+                options={categories.map((c) => ({ label: c.name, value: c.name }))}
               />
             </Form.Item>
 

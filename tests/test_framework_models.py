@@ -78,6 +78,8 @@ KNOWLEDGE_BUSINESS_TABLES = {
     "kb_doc_type_config",
     # 知识库分类（左侧分类树实体，迁移 0027）随分类 CRUD 引入，2026-10-19 补白名单。
     "kb_category",
+    # LLM 使用记录（token 统计看板，迁移 0028）随 3ce2fa4 引入，2026-10-20 补白名单。
+    "kb_llm_usage",
 }
 
 # Chat conversation persistence (chat_session / chat_message / chat_attachment) — framework store.
