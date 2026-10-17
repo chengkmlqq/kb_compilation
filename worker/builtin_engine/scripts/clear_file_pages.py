@@ -46,47 +46,57 @@ def clear_file_pages(wr, kb_id, kid, folder_id, file_label='', page_size=100, dr
     # "slug 已存在"。这里按 source_refs 直接查库，覆盖全部状态：
     #   专属页（refs 只含本 kid）→ 物理删除（含 link / page_folder 关联）
     #   共享页（refs 还含其他 kid）→ 仅摘除本 kid 关联
+    # 多文档并发清空实测 MySQL 1213 Deadlock → 整个事务重试 3 次。
     if not dry_run:
-        try:
-            import json as _json
-            from api.db import get_sessionmaker as _gsm
-            from sqlalchemy import text as _st
-            _d = _gsm()()
+        _last_err = None
+        for _attempt in range(4):
             try:
-                _rows = _d.execute(
-                    _st("select id, slug, source_refs from wiki_page "
-                        "where kb_id=:k and source_refs like :p"),
-                    {'k': kb_id, 'p': '%' + kid + '%'}).all()
-                _db_deleted, _db_shared = [], []
-                for _pid, _slug, _refs_raw in _rows:
-                    try:
-                        _refs = _json.loads(_refs_raw) if isinstance(_refs_raw, str) else (_refs_raw or [])
-                    except Exception:
-                        _refs = []
-                    if not isinstance(_refs, list):
-                        _refs = []
-                    _mine = [r for r in _refs if _ref_kid(str(r)) == kid]
-                    if not _mine:
-                        continue
-                    _others = [r for r in _refs if _ref_kid(str(r)) != kid]
-                    if _others:
-                        _d.execute(_st("update wiki_page set source_refs=:r where id=:i"),
-                                   {'r': _json.dumps(_others, ensure_ascii=False), 'i': _pid})
-                        _db_shared.append(_slug)
-                    else:
-                        _d.execute(_st("delete from wiki_link where from_page_id=:i or to_page_id=:i"), {'i': _pid})
-                        _d.execute(_st("delete from wiki_page_folder where page_id=:i"), {'i': _pid})
-                        _d.execute(_st("delete from wiki_page where id=:i"), {'i': _pid})
-                        _db_deleted.append(_slug)
-                _d.commit()
-                if verbose:
-                    print(f'[{file_label}] DB 硬清: 物理删除专属页 {len(_db_deleted)} 个, '
-                          f'共享页摘关联 {len(_db_shared)} 个')
-                return (_db_deleted, _db_shared)
-            finally:
-                _d.close()
-        except Exception as _e:
-            print(f'[{file_label}] DB 硬清失败，回退 API 清理: {_e}')
+                import json as _json
+                from api.db import get_sessionmaker as _gsm
+                from sqlalchemy import text as _st
+                _d = _gsm()()
+                try:
+                    _rows = _d.execute(
+                        _st("select id, slug, source_refs from wiki_page "
+                            "where kb_id=:k and source_refs like :p order by id"),
+                        {'k': kb_id, 'p': '%' + kid + '%'}).all()
+                    _db_deleted, _db_shared = [], []
+                    for _pid, _slug, _refs_raw in _rows:
+                        try:
+                            _refs = _json.loads(_refs_raw) if isinstance(_refs_raw, str) else (_refs_raw or [])
+                        except Exception:
+                            _refs = []
+                        if not isinstance(_refs, list):
+                            _refs = []
+                        _mine = [r for r in _refs if _ref_kid(str(r)) == kid]
+                        if not _mine:
+                            continue
+                        _others = [r for r in _refs if _ref_kid(str(r)) != kid]
+                        if _others:
+                            _d.execute(_st("update wiki_page set source_refs=:r where id=:i"),
+                                       {'r': _json.dumps(_others, ensure_ascii=False), 'i': _pid})
+                            _db_shared.append(_slug)
+                        else:
+                            _d.execute(_st("delete from wiki_link where from_page_id=:i or to_page_id=:i"), {'i': _pid})
+                            _d.execute(_st("delete from wiki_page_folder where page_id=:i"), {'i': _pid})
+                            _d.execute(_st("delete from wiki_page where id=:i"), {'i': _pid})
+                            _db_deleted.append(_slug)
+                    _d.commit()
+                    if verbose:
+                        print(f'[{file_label}] DB 硬清: 物理删除专属页 {len(_db_deleted)} 个, '
+                              f'共享页摘关联 {len(_db_shared)} 个')
+                    return (_db_deleted, _db_shared)
+                finally:
+                    _d.close()
+            except Exception as _e:
+                _last_err = _e
+                _txt = str(_e)
+                if ('1213' in _txt or 'Deadlock' in _txt) and _attempt < 3:
+                    print(f'[{file_label}] DB 硬清死锁，重试 {_attempt + 1}/3')
+                    time.sleep(2.0 * (_attempt + 1))
+                    continue
+                print(f'[{file_label}] DB 硬清失败，回退 API 清理: {_e}')
+                break
 
     pages = []
     page_no = 1
