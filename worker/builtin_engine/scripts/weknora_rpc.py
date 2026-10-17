@@ -150,9 +150,42 @@ DEFAULT_MODEL = _default_model()  # 全技能 LLM 统一默认模型
 
 def llm_config():
     """LLM 统一配置来源：返回 (base_url, api_key)。
-    优先级：任务级 WEKNORA_LLM_BASE_URL/WEKNORA_LLM_API_KEY > 容器 LLM_*/AI_CHAT_*
-    > 技能 config.yaml model 段 > 默认 https://inferaiapi.com/v1（key 兜底
-    /home/ctyun/kb_compilation/deploy/.env 的 AI_CHAT_API_KEY）。"""
+
+    2026-10-17 改造：**优先使用调用编排时那个知识库绑定的模型**
+    （kb_datasource.summary_model_id → kb_model，api_key AES 解密）；
+    知识库未绑定则用系统默认 chat 模型（kb_model.is_default=1/state=1）；
+    平台不可用才回落 env（历史兜底，不再作为主路径）。
+    """
+    kb = globals().get('KB') or _env('WEKNORA_KB_ID') or ''
+    try:
+        from api.db import get_sessionmaker
+        from sqlalchemy import text as _sql_text
+        from api.services.models import decrypt_secret
+        _db = get_sessionmaker()()
+        try:
+            _mid = None
+            if kb:
+                _row = _db.execute(_sql_text(
+                    "select summary_model_id from kb_datasource where id = :k"), {"k": kb}).first()
+                if _row and _row[0]:
+                    _mid = _row[0]
+            _m = None
+            if _mid:
+                _m = _db.execute(_sql_text(
+                    "select base_url, api_key, name from kb_model where id = :i and state = '1'"),
+                    {"i": _mid}).first()
+            if not _m:
+                _m = _db.execute(_sql_text(
+                    "select base_url, api_key, name from kb_model where type = 'chat' "
+                    "and is_default = 1 and state = '1' order by updated_at desc limit 1")).first()
+            if _m and _m[0] and _m[1]:
+                return str(_m[0]).rstrip('/'), decrypt_secret(_m[1])
+        finally:
+            _db.close()
+    except Exception as _e:  # noqa: BLE001 - 平台模型不可用时回落 env，不中断构建
+        print('[llm_config] platform model unavailable, fallback to env: %s' % _e, flush=True)
+
+    # ---------- 历史 env 兜底 ----------
     cfg = _skill_config().get('model', {}) or {}
     base = (_env('WEKNORA_LLM_BASE_URL') or _env('WIKI_LLM_BASE_URL') or _env('LLM_BASE_URL')
             or _env('AI_CHAT_API_ENDPOINT') or str(cfg.get('base_url') or '').strip()
@@ -161,7 +194,6 @@ def llm_config():
            or _env('AI_CHAT_API_KEY')
            or os.path.expandvars(str(cfg.get('api_key') or '')).strip())
     if not key or '${' in key:
-        # 平台部署 .env（宿主机路径；容器内不存在时静默跳过）+ WIKI_LLM_API_KEY 兜底
         key = (_env_file('/home/ctyun/kb_compilation/deploy/.env', 'AI_CHAT_API_KEY')
                or _env_file(os.path.expanduser('~/kb_compilation/deploy/.env'), 'AI_CHAT_API_KEY')
                or _env('WIKI_LLM_API_KEY')

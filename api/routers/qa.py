@@ -207,6 +207,7 @@ def _run_generation(
 
                 client = get_embedding_client(
                     db,
+                    kb_id=(kb.id if kb is not None else (kbs[0].id if kbs else "")),
                     user_id=ctx_user_id,
                     team_name=ctx_team_name,
                     is_sys_admin=ctx_is_admin,

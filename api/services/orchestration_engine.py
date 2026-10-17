@@ -434,6 +434,24 @@ class KbLlmChatStep(BaseStep):
         model = None
         if model_raw and "{{" not in model_raw:
             model = model_raw
+        if not model:
+            # 2026-10-17 改造：未显式指定模型时，优先用知识库绑定的摘要/对话模型
+            try:
+                _kb_id = str(context.bindings.get("kb_id") or "").strip()
+                if _kb_id:
+                    from api.db import get_sessionmaker as _gsm2
+                    from sqlalchemy import text as _sqlt2
+                    _dbm = _gsm2()()
+                    try:
+                        _mr = _dbm.execute(_sqlt2(
+                            "select summary_model_id from kb_datasource where id = :k"),
+                            {"k": _kb_id}).first()
+                        if _mr and _mr[0]:
+                            model = _mr[0]
+                    finally:
+                        _dbm.close()
+            except Exception:
+                pass
         temperature = float(self.config.get("temperature") or 0.2)
         max_tokens = int(self.config.get("max_tokens") or 2048)
         json_mode = bool(self.config.get("json_mode"))

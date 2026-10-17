@@ -197,7 +197,8 @@ def build_full_tool_context(
         if not keyword_only and retrieval_cfg and getattr(retrieval_cfg, "vector_enabled", True):
             try:
                 from api.services.embedding import get_embedding_client
-                emb = get_embedding_client(db, user_id=caller_user_id, team_name=caller_team_name,
+                emb = get_embedding_client(db, kb_id=(kb.id if kb else ""), user_id=caller_user_id,
+                                            team_name=caller_team_name,
                                             is_sys_admin=is_sys_admin).embed_query(query)
             except Exception:  # noqa: BLE001
                 emb = None

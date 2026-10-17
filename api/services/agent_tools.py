@@ -106,6 +106,7 @@ def agent_kbsearch_tool_context(
 
                     query_embedding = get_embedding_client(
                         db,
+                        kb_id=(kb.id if kb else ""),
                         user_id=caller_user_id,
                         team_name=caller_team_name,
                         is_sys_admin=is_sys_admin,

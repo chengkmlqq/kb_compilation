@@ -303,6 +303,20 @@ def ingest_document(
         ).scalars().first()
         if kb_row and kb_row.vlm_config:
             vlm_server_url = (kb_row.vlm_config or {}).get("server_url", "") or ""
+            # 2026-10-17: VLM 改为知识库绑定的视觉模型(不再依赖旧 server_url/env)
+            _vlm = kb_row.vlm_config or {}
+            if _vlm.get("enabled"):
+                _vlm_mid = str(_vlm.get("model_id") or "").strip()
+                _vlm_url = ""
+                try:
+                    from api.services.models import resolve_vision_model_config
+                    _vcfg = resolve_vision_model_config(db=kb_db, model_id=_vlm_mid) if _vlm_mid else None
+                    if _vcfg and _vcfg.get("base_url"):
+                        _vlm_url = str(_vcfg["base_url"])
+                except Exception:  # noqa: BLE001
+                    logger.warning("resolve vision model failed for kb %s", document.kb_id, exc_info=True)
+                if _vlm_url:
+                    vlm_server_url = _vlm_url
     except Exception:  # noqa: BLE001 - config lookup must not block ingest
         engine_rules = None
 

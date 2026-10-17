@@ -81,6 +81,31 @@ def load_embedding_config(
                 is_sys_admin=is_sys_admin,
                 model_id=bound_model_id or None,
             )
+            if not (resolved and resolved.get("base_url")):
+                # 2026-10-17 兜底：无 kb / scoped 默认解析不到时，取全局任一启用的 embedding 模型
+                try:
+                    from sqlalchemy import select as _sel_fb
+
+                    from api.models.model import KbModel as _KbModel_fb
+
+                    _fb = (
+                        db.execute(
+                            _sel_fb(_KbModel_fb)
+                            .where(
+                                _KbModel_fb.state == "1",
+                                _KbModel_fb.type == "embedding",
+                            )
+                            .order_by(_KbModel_fb.is_default.desc(), _KbModel_fb.updated_at.desc())
+                        )
+                        .scalars()
+                        .first()
+                    )
+                    if _fb is not None:
+                        from api.services.models import _model_to_config as _m2c_fb
+
+                        resolved = _m2c_fb(_fb)
+                except Exception:  # noqa: BLE001
+                    logger.warning("global embedding fallback failed", exc_info=True)
             if resolved and resolved.get("base_url"):
                 return EmbeddingConfig(
                     base_url=resolved["base_url"],

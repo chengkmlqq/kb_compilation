@@ -1696,7 +1696,7 @@ def search_route(
     query_embedding = None
     if req.embed_query:
         try:
-            query_embedding = get_embedding_client(db).embed_query(req.query)
+            query_embedding = get_embedding_client(db, kb_id=kb_id).embed_query(req.query)
         except Exception:  # noqa: BLE001
             logger.exception("query embedding failed; keyword-only search")
     hits = json_search(

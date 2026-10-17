@@ -635,7 +635,8 @@ def resolve_vision_model_config(
     """
     if model_id:
         m = get_model(db, model_id)
-        if not m or m.state != "1" or m.type != "chat" or not m.supports_vision:
+        # 2026-10-17: 视觉模型可为 chat（多模态对话）或 vllm（专用视觉模型）
+        if not m or m.state != "1" or m.type not in ("chat", "vllm") or not m.supports_vision:
             return None
         return _model_to_config(m)
 
@@ -662,7 +663,7 @@ def resolve_vision_model_config(
             and_(
                 KbModel.state == "1",
                 KbModel.scope == scope,
-                KbModel.type == "chat",
+                KbModel.type.in_(("chat", "vllm")),
                 KbModel.supports_vision.is_(True),
                 (
                     (KbModel.owner_user_id == caller_user_id)
@@ -676,6 +677,25 @@ def resolve_vision_model_config(
             )
         ).order_by(KbModel.is_default.desc())
         row = db.execute(stmt).scalars().first()
+        if row is not None:
+            return _model_to_config(row)
+    # 2026-10-17 兜底：管理员/无身份调用方（后台任务、未选知识库）取全局任一启用的视觉模型
+    if is_sys_admin or not caller_user_id:
+        row = (
+            db.execute(
+                select(KbModel)
+                .where(
+                    and_(
+                        KbModel.state == "1",
+                        KbModel.type.in_(("chat", "vllm")),
+                        KbModel.supports_vision.is_(True),
+                    )
+                )
+                .order_by(KbModel.is_default.desc(), KbModel.updated_at.desc())
+            )
+            .scalars()
+            .first()
+        )
         if row is not None:
             return _model_to_config(row)
     return None
