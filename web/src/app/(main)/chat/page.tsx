@@ -2149,14 +2149,14 @@ function AssistantThink({
         <span style={{ fontSize: 12 }}>{thinkVisible ? "▾" : "▸"}</span>
       </button>
       {thinkVisible && (
-        <div className={`kb-chat-think-view${thinkVisible ? "" : " think-hide"}`}>
+        <div className="kb-chat-think-view">
           {/* 思考过程打字机打印（复用回答同款 TypewriterText：流式期间平滑追平，静态内容零开销） */}
           <div className="kb-chat-think-md">
             <TypewriterText text={thinking} active={!!streaming} />
           </div>
         </div>
       )}
-      <div className={`kb-chat-content-view${thinkVisible ? " think-hide" : ""}`}>
+      <div className="kb-chat-content-view">
         {answer ? (
           <TypewriterText
             text={answer}

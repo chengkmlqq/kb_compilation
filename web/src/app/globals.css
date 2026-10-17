@@ -3980,12 +3980,6 @@ html[data-theme="dark"] .kb-citation-web:hover {
   color: rgba(121, 135, 156, 1);
   border-left: 1px solid rgba(227, 233, 239, 1);
 }
-.kb-chat-think-view.think-hide {
-  max-height: 0;
-  overflow: hidden;
-  visibility: hidden;
-  margin-bottom: 0;
-}
 .kb-chat-think-view .kb-chat-think-md {
   font-size: 14px;
   line-height: 22px;
@@ -4000,14 +3994,11 @@ html[data-theme="dark"] .kb-citation-web:hover {
   margin: 0 0 0.25em;
 }
 
-/* 内容区（思考展开时隐藏 / 折叠时显示） */
+/* 内容区（思考区展开/折叠不影响正文，始终渲染） */
 .kb-chat-content-view {
   font-size: 12px;
   line-height: 22px;
   color: rgba(36, 46, 67, 1);
-}
-.kb-chat-content-view.think-hide {
-  display: none;
 }
 
 /* ── 引用文档列表（对齐 DSB .resource-content：oper-title 14/600、item 链接色、默认收起）── */
