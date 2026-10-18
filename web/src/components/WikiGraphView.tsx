@@ -648,7 +648,7 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     }
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
-    const pad = 80;
+    const pad = 48;
     const bw = Math.max(maxX - minX, 120) + pad * 2;
     const bh = Math.max(maxY - minY, 120) + pad * 2;
     const s = Math.min(W / bw, H / bh, 1.5);
@@ -710,7 +710,7 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
       // 2026-10-18：布点间距按节点直径算（最大半径 24 → 直径 48，再留间隙）。
       // 原来 26*sqrt(N) 在 200+ 节点时每节点可用面积小于节点本身面积 →
       // 首帧就大面积重叠；WeKnora 用固定圆环 + 抖动，这里改用「按面积均匀的螺旋」并放大间距。
-      const R = 30 + 58 * Math.sqrt(Math.max(nodeList.length, 1));
+      const R = 30 + 30 * Math.sqrt(Math.max(nodeList.length, 1));
       nodeList.forEach((n, i) => {
         const r = R * Math.sqrt((i + 0.5) / Math.max(nodeList.length, 1));
         const ang = i * goldenAngle;
@@ -746,8 +746,13 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         });
       });
     }
+    // 2026-10-18：半径改对数缩放（对齐 WeKnora nodeRadius：8 + log(deg+1)*k，clamp 8~20）。
+    // 原线性 14~26 在大图上视觉过大，是"看起来全都叠在一起"的主因之一。
     const radiusOf = new Map<string, number>(
-      nodeList.map((n) => [n.slug, 14 + Math.min(10, n.link_count || 0) * 1.2]),
+      nodeList.map((n) => [
+        n.slug,
+        Math.max(8, Math.min(20, 8 + Math.log((n.link_count || 0) + 1) * 3.2)),
+      ]),
     );
 
     // 力计算邻接表：每节点只遍历相连边（O(Σdeg)，而非原实现的每帧 O(n×E)）
@@ -760,7 +765,7 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     }
 
     // 力导向模拟：斥力 + 弹簧（常量与 SVG 版一致，保证布局行为不变）
-    const repulsion = 900;
+    const repulsion = 1400;
     const spring = 0.008;
     const restLen = 90;
     // 向心力（gravity）：把整体向世界原点收束，使布局收敛到与视口无关的有限尺度。
@@ -859,7 +864,10 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         const isFocus = isHover || isSelected;
         const isNeighbor = focusSlug ? (focusNeighbors?.includes(n.slug) ?? false) : false;
         const baseRadius = radiusOf.get(n.slug) || 14;
-        const radius = isFocus ? baseRadius + 3 : baseRadius;
+        // 2026-10-18：半径按视图缩放补偿（0.5~1）。否则 fitToView 缩小后
+        // 世界间距变小而节点像素不变 → 视觉上必然重叠。
+        const rScale = Math.min(1, Math.max(0.5, st.scale));
+        const radius = (isFocus ? baseRadius + 3 : baseRadius) * rScale;
         ctx.globalAlpha = focusSlug ? (isFocus || isNeighbor ? 1 : 0.22) : 0.85;
         // 选中环（对齐 WeKnora activeRing：外圈同类型色描边）
         if (isSelected) {
