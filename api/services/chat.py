@@ -111,7 +111,9 @@ def load_chat_config(
     )
     api_key = _resolve("AI_CHAT_API_KEY", ["AI_CHAT_API_KEY"], "")
     model = _resolve("AI_CHAT_MODEL", ["AI_CHAT_MODEL"], "")
-    return ChatConfig(base_url=base_url, api_key=api_key, model=model)
+    # 2026-10-18: env 路径回落的模型不声明视觉能力 → 明确 supports_vision=False，
+    # 图片问答走 describe/vision 回退（此前 None=不设门禁直传, 非视觉模型静默丢图）
+    return ChatConfig(base_url=base_url, api_key=api_key, model=model, supports_vision=False)
 
 
 def serialize_context(hits: list[ChunkHit]) -> str:

@@ -351,7 +351,9 @@ async def api_upload_attachment(
     ext = Path(file_name).suffix.lower()
 
     if is_image_ext(ext):
-        # 图片门禁（对齐 WeKnora：Web 端仅开启图片上传的智能体会话可传图）
+        # 图片门禁（对齐 WeKnora）：智能体会话需该智能体开启「图片上传」；
+        # 普通会话（无 agent）放行——非 Agent 图片问答由平台视觉模型兜底
+        # （image_qa.fallback_enabled(None)=True，对齐 WeKnora 非智能体会话放开）
         from api.models.chat_session import ChatSession
         from api.models.knowledge import KbAgent
         from sqlalchemy import select
@@ -361,15 +363,14 @@ async def api_upload_attachment(
         ).scalars().first()
         if not session:
             raise _HTTPException(status_code=404, detail="会话不存在")
-        if not session.agent_id:
-            raise _HTTPException(status_code=400, detail="仅智能体会话支持图片上传，请为会话绑定智能体")
-        agent = db.execute(select(KbAgent).where(KbAgent.id == session.agent_id)).scalars().first()
-        cfg = config_from_dict(agent.config or {}) if agent else None
-        if not agent or not cfg.image_upload_enabled:
-            raise _HTTPException(
-                status_code=400,
-                detail=f"智能体「{agent.name if agent else '未知'}」未开启图片上传，请在智能体配置中打开",
-            )
+        if session.agent_id:
+            agent = db.execute(select(KbAgent).where(KbAgent.id == session.agent_id)).scalars().first()
+            cfg = config_from_dict(agent.config or {}) if agent else None
+            if not agent or not cfg.image_upload_enabled:
+                raise _HTTPException(
+                    status_code=400,
+                    detail=f"智能体「{agent.name if agent else '未知'}」未开启图片上传，请在智能体配置中打开",
+                )
         # 图片落对象存储（对齐 WeKnora：图片存 chat-images 前缀下，DB 只留 key）；
         # 未配置 MinIO / 写入失败时回落把字节存进 file_data 列。
         att_id = new_attachment_id()

@@ -131,7 +131,11 @@ def resolve_vision_config(
                     is_sys_admin=is_sys_admin,
                     model_id=vlm_id,
                 )
-                if cfg.base_url:
+                # 2026-10-18: 显式 vlm_model_id 解析失败会静默回落 env 非视觉模型 →
+                # describe_images 用非视觉模型产出「未检测到图片」垃圾描述。显式声明
+                # 的视觉模型若判定不支持视觉（supports_vision=False）不得采用；None
+                # （未登记能力）保持放行（用户显式指定视为视觉声明）。
+                if cfg.base_url and cfg.supports_vision is not False:
                     return cfg
             except Exception:  # noqa: BLE001
                 logger.warning("agent vlm_model_id=%s unresolvable", vlm_id, exc_info=True)
