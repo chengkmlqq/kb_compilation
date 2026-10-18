@@ -2057,43 +2057,50 @@ export default function ChatPage() {
       >
         <Space direction="vertical" style={{ display: "flex" }} size={12}>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            共 {refDrawer.refs.length} 条引用 · 点击跳转 wiki 页面
+            共 {refGroupCount(refDrawer.refs, refDrawer.activeChunk).length} 篇文档 · {refDrawer.refs.length} 条命中片段 · 点击跳转 wiki 页面
           </Text>
-          {refDrawer.refs.map((r, i) => (
+          {refGroupCount(refDrawer.refs, refDrawer.activeChunk).map((g, gi) => (
             <Card
-              key={i}
+              key={gi}
               size="small"
-              title={`引用 ${i + 1} · 相似度 ${(r.score || 0).toFixed(2)}`}
+              title={`引用 ${gi + 1} · ${g.title}`}
               style={
-                r.chunk_id && r.chunk_id === refDrawer.activeChunk
+                g.active
                   ? { borderColor: "#1677ff", boxShadow: "0 0 0 2px rgba(22,119,255,.12)" }
                   : undefined
               }
             >
-              <Space direction="vertical" size={4} style={{ display: "flex" }}>
-                {r.content && (
-                  <Text style={{ fontSize: 13 }}>{r.content.slice(0, 400)}{r.content.length > 400 ? "…" : ""}</Text>
-                )}
-                <Space size={8} wrap>
-                  {(r.document_title || r.meta?.source_file) && (
-                    <Tag color="geekblue">
-                      <FileTextOutlined /> {r.document_title || r.meta?.source_file}
-                    </Tag>
-                  )}
-                  <Button
-                    size="small"
-                    type="link"
-                    style={{ fontSize: 12 }}
-                    disabled={!r.kb_id || !r.chunk_id}
-                    onClick={() => {
-                      if (r.kb_id && r.chunk_id) {
-                        void router.push(`/kbs/${r.kb_id}/wiki/${r.chunk_id}`);
-                      }
-                    }}
-                  >
-                    跳转原文 →
-                  </Button>
-                </Space>
+              <Space direction="vertical" size={8} style={{ display: "flex" }}>
+                {g.items.map((item, ii) => (
+                  <div key={ii}>
+                    {item.content && (
+                      <Text style={{ fontSize: 13 }}>
+                        {item.content.slice(0, 400)}
+                        {item.content.length > 400 ? "…" : ""}
+                      </Text>
+                    )}
+                    <Space size={8} wrap style={{ marginTop: 4 }}>
+                      <Tag color="geekblue">
+                        <FileTextOutlined /> {g.title}
+                      </Tag>
+                      <Tag color="blue">相似度 {item.bestScore.toFixed(2)}</Tag>
+                      {item.count > 1 && <Tag>含 {item.count} 条相同片段</Tag>}
+                      <Button
+                        size="small"
+                        type="link"
+                        style={{ fontSize: 12 }}
+                        disabled={!item.kbId || !item.chunkId}
+                        onClick={() => {
+                          if (item.kbId && item.chunkId) {
+                            void router.push(`/kbs/${item.kbId}/wiki/${item.chunkId}`);
+                          }
+                        }}
+                      >
+                        跳转原文 →
+                      </Button>
+                    </Space>
+                  </div>
+                ))}
               </Space>
             </Card>
           ))}
@@ -2105,6 +2112,67 @@ export default function ChatPage() {
       `}</style>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// 引用文档分组（2026-10-18）：按文档归并 + 同内容片段合并计数。
+// 修复「引用 N 篇文档」按 refs 条数统计的误导：多条命中可能同属一篇文档，
+// 且父子分块会把多条子块提升为同一父块全文（内容完全相同）。
+// ---------------------------------------------------------------------------
+
+interface RefGroupItem {
+  content: string;
+  bestScore: number;
+  count: number;
+  kbId: string;
+  chunkId: string;
+}
+
+interface RefGroup {
+  title: string;
+  active: boolean;
+  items: RefGroupItem[];
+}
+
+/** 把 refs 按文档标题分组，组内按内容去重合并（同内容取最高分、计数）。 */
+export function refGroupCount(refs: ChatRefItem[], activeChunk?: string): RefGroup[] {
+  const byTitle = new Map<string, ChatRefItem[]>();
+  for (const r of refs || []) {
+    const title = r.document_title || r.meta?.source_file || "其他";
+    const arr = byTitle.get(title) || [];
+    arr.push(r);
+    byTitle.set(title, arr);
+  }
+  const groups: RefGroup[] = [];
+  for (const [title, chunks] of byTitle) {
+    const byContent = new Map<string, RefGroupItem>();
+    let active = false;
+    for (const c of chunks) {
+      if (c.chunk_id && c.chunk_id === activeChunk) active = true;
+      const key = c.content || "";
+      const score = c.score || 0;
+      const existing = byContent.get(key);
+      if (existing) {
+        existing.count += 1;
+        if (score > existing.bestScore) {
+          existing.bestScore = score;
+          existing.kbId = c.kb_id || "";
+          existing.chunkId = c.chunk_id || "";
+        }
+      } else {
+        byContent.set(key, {
+          content: key,
+          bestScore: score,
+          count: 1,
+          kbId: c.kb_id || "",
+          chunkId: c.chunk_id || "",
+        });
+      }
+    }
+    const items = Array.from(byContent.values()).sort((a, b) => b.bestScore - a.bestScore);
+    groups.push({ title, active, items });
+  }
+  return groups;
 }
 
 // ---------------------------------------------------------------------------
@@ -2183,7 +2251,7 @@ function AssistantRefs({
   onChunkClick?: (ref: ChatRefItem) => void;
 }) {
   const [open, setOpen] = useState(false);
-  // 按文档分组去重
+  // 按文档分组（同文档多 chunk 归并；标题统计用文档数，避免「7 条片段=7 篇文档」误导）
   const groups = useMemo(() => {
     const map = new Map<string, ChatRefItem[]>();
     for (const r of refs) {
@@ -2196,10 +2264,16 @@ function AssistantRefs({
   }, [refs]);
 
   if (!refs || refs.length === 0) return null;
+  const docCount = groups.length;
   return (
     <div className="kb-chat-resource">
       <div className="kb-chat-resource-oper" onClick={() => setOpen((v) => !v)}>
-        <div className="kb-chat-resource-oper-title">引用{refs.length}篇文档作为参考</div>
+        <div className="kb-chat-resource-oper-title">
+          引用{docCount} 篇文档作为参考
+          {refs.length > docCount && (
+            <span className="kb-chat-resource-oper-sub">（{refs.length} 条片段）</span>
+          )}
+        </div>
         <span className="kb-chat-resource-oper-arrow">{open ? "▾" : "▸"}</span>
       </div>
       {open && (
