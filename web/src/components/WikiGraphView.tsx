@@ -113,7 +113,7 @@ const GROW_FRONTIER_CONCURRENCY = 6;
 // 安全上限：即便未达速度阈值，最多模拟这么多帧后强制收停（防抖动不收敛长期占 CPU）
 const SIM_MAX_FRAMES = 1200;
 /** 首帧前预热的物理迭代次数（不绘制，仅让节点先散开） */
-const WARM_STEPS = 90;
+const WARM_STEPS = 150;
 // 缩放到该比例以下不再绘制标签（文字绘制最贵，且极小尺寸下本就不可读）
 const LABEL_MIN_SCALE = 0.4;
 // 全库索引类页面（index/log）：连线指向全库，参与单点扩展但不参与 frontier 批量生长
@@ -765,12 +765,14 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
     }
 
     // 力导向模拟：斥力 + 弹簧（常量与 SVG 版一致，保证布局行为不变）
-    const repulsion = 1400;
-    const spring = 0.008;
-    const restLen = 90;
+    // 2026-10-18：对齐 WeKnora 斥力量级（原 1400 的等价 1/d² 系数仅 140，弱近一个数量级）
+    const repulsion = 9000;
+    const spring = 0.005;
+    const restLen = 120;
     // 向心力（gravity）：把整体向世界原点收束，使布局收敛到与视口无关的有限尺度。
     // 原实现改用「夹到画布 20..W-20」代替，导致图被锁死在画布方块内（节点还会被挤到边界）。
-    const gravity = 0.0001;
+    // 与 WeKnora 一致：节点越多向心越强，防止图扩散过大（200 节点约 0.006）
+    const gravity = Math.min(0.008, 0.002 + nodeList.length * 0.00002);
 
     // 可见性守卫：切到隐藏页签（display:none）时停帧，避免后台空转。
     // antd Tabs 默认不销毁隐藏 pane，若不守卫则多开图页签会多实例满帧跑。
@@ -933,8 +935,8 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
           totalV += Math.abs(a.vx) + Math.abs(a.vy);
           continue;
         }
-        a.vx *= 0.85;
-        a.vy *= 0.85;
+        a.vx *= 0.65;
+        a.vy *= 0.65;
         // 斥力：Barnes-Hut 近似（远处子树以质心代替全量两两遍历）
         acc.fx = 0;
         acc.fy = 0;
@@ -951,6 +953,12 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
           const f = (d - restLen) * spring;
           a.vx += (dx / d) * f;
           a.vy += (dy / d) * f;
+        }
+        // 速度上限（对齐 WeKnora cap 20）：防初始爆炸时节点飞出视野
+        const _v = Math.sqrt(a.vx * a.vx + a.vy * a.vy);
+        if (_v > 20) {
+          a.vx = (a.vx / _v) * 20;
+          a.vy = (a.vy / _v) * 20;
         }
         a.x += a.vx;
         a.y += a.vy;
