@@ -1,197 +1,197 @@
 {
- "type": "kb.orchestration.draft",
- "schemaVersion": 1,
- "exportedAt": "2026-10-18T03:01:25.705179",
- "draft": {
-  "tapeName": "聚类知识-主题聚合",
-  "tapeLabel": "聚类知识（跨文档主题聚合）",
-  "tapeDescr": "读取知识库内全部制度文件的 wiki 页面与摘要，用 LLM 做跨文档主题聚类，为每个主题簇生成一篇综述页（page_type=topic_cluster），写入根目录「聚类知识」。用于「聚类知识 Wiki」Tab 展示。",
-  "tapeType": "general",
-  "category": "知识聚合",
-  "status": "effective",
-  "nodes": [
-   {
-    "id": "n1",
-    "data": {
-     "label": "收集全库语料",
-     "config": {
-      "code": "\nimport json as _json, os as _os\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st\nKB = str(bindings.get('kb_id') or '')\nif not KB:\n    raise RuntimeError('缺 kb_id')\nOUT = '/tmp/cluster'\n_os.makedirs(OUT, exist_ok=True)\ndb = _gsm()()\ntry:\n    docs = db.execute(_st(\"\"\"\n        select d.id, d.file_name,\n               (select count(*) from wiki_page p where p.kb_id = d.kb_id and p.status='active'\n                  and p.source_refs like concat('%', d.id, '%')) as cnt\n        from kb_document d\n        where d.kb_id = :k and d.parse_state = 'READY'\n        order by d.file_name\n    \"\"\"), {'k': KB}).all()\n    corpus = []\n    for did, fname, cnt in docs:\n        s = db.execute(_st(\"select coalesce(summary,'') from kb_document where id=:i\"), {'i': did}).scalar() or ''\n        rows = db.execute(_st(\"\"\"\n            select title from wiki_page\n            where kb_id=:k and status='active'\n              and source_refs like concat('%', :d, '%')\n              and page_type in ('business_ontology','rule_ontology','frequent_keyword','summary')\n            order by page_type, created_at\n            limit 40\n        \"\"\"), {'k': KB, 'd': did}).all()\n        corpus.append({'doc_id': did, 'name': fname, 'pages': int(cnt or 0),\n                       'summary': str(s)[:400], 'topics': [r[0] for r in rows][:40]})\nfinally:\n    db.close()\n_json.dump(corpus, open(_os.path.join(OUT, 'corpus.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)\nlines = []\nfor i, c in enumerate(corpus, 1):\n    lines.append('[%d] %s\\n  摘要: %s\\n  要点: %s' % (\n        i, c['name'], c['summary'][:240], '、'.join(c['topics'][:18])))\nprompt = (\n    '下面是某知识库中全部制度文件的清单与要点。请做跨文档主题聚类。\\n'\n    '要求：\\n'\n    '1. 归纳 6~12 个主题簇，尽量覆盖全部文件（同一文件可归属多个簇）；\\n'\n    '2. 每簇给出标题（不超过 14 个字）、一句话说明、成员文件序号；\\n'\n    '3. 只输出 JSON 数组，禁止任何解释、前言或 Markdown 代码块标记：\\n'\n    '[{\"title\":\"...\",\"desc\":\"...\",\"docs\":[1,2,5]}]\\n\\n'\n    '文件清单：\\n' + '\\n'.join(lines)\n)\nbindings['cluster_prompt'] = prompt\nbindings['corpus_count'] = len(corpus)\nprint('[n1] 语料 %d 份文档，prompt %d 字 → %s/corpus.json' % (len(corpus), len(prompt), OUT))\n"
-     },
-     "stepInst": "script"
-    },
-    "type": "custom"
-   },
-   {
-    "id": "n2",
-    "data": {
-     "label": "LLM主题聚类",
-     "config": {
-      "model": "{{summary_model_id}}",
-      "prompt": "{{cluster_prompt}}",
-      "system": "你是知识库主题聚类专家。只输出 JSON 数组，不要任何解释、前言或代码块标记。",
-      "thinking": "disabled",
-      "max_tokens": "6000",
-      "output_var": "cluster_raw",
-      "temperature": "0.2"
-     },
-     "stepInst": "kb_llm_chat"
-    },
-    "type": "custom"
-   },
-   {
-    "id": "n3",
-    "data": {
-     "label": "逐簇生成综述",
-     "config": {
-      "code": "import sys as _sys, os as _os, json as _json, re as _re\nSD = '/srv/kb/worker/builtin_engine/scripts'\nif SD not in _sys.path:\n    _sys.path.insert(0, SD)\n_os.environ.setdefault('KB_API_BASE_URL', 'http://api-server:8000')\nimport weknora_rpc as wr\nwr.load_config()\nKB = str(bindings.get('kb_id') or '')\nif KB:\n    wr.KB = KB\n    _os.environ['WEKNORA_KB_ID'] = KB\nwr.mcp_init()\n\nOUT = '/tmp/cluster'\nraw = str(bindings.get('cluster_raw') or '') or str(bindings.get('cluster_plan') or '')\nm = _re.search(r'\\[.*\\]', raw, _re.S)\nif not m:\n    raise RuntimeError('聚类方案解析失败: ' + raw[:200])\nplan = _json.loads(m.group(0))\nif not isinstance(plan, list) or not plan:\n    raise RuntimeError('聚类方案为空')\ncorpus = _json.load(open(_os.path.join(OUT, 'corpus.json'), encoding='utf-8'))\n\n# 根下「聚类知识」目录（不存在则创建）\nfid = ''\ntry:\n    for f in wr.list_all_folders_cached(kb_id=KB):\n        if f.get('name') == '聚类知识' and not (f.get('parent_id') or ''):\n            fid = f.get('id') or ''\n            break\nexcept Exception as e:\n    print('[n3] 目录缓存不可用:', e)\nif not fid:\n    r = wr.create_folder('聚类知识', parent_id='', kb_id=KB)\n    fid = ((r.get('data') or {}) if isinstance(r, dict) else {}).get('id') or ''\nif not fid:\n    raise RuntimeError('创建「聚类知识」目录失败')\nbindings['cluster_folder_id'] = fid\nprint('[n3] 聚类目录:', fid)\n\npages = []\nfor i, cl in enumerate(plan, 1):\n    if not isinstance(cl, dict):\n        continue\n    title = str(cl.get('title') or ('主题%d' % i)).strip()[:40]\n    idxs = []\n    for x in (cl.get('docs') or []):\n        try:\n            idxs.append(int(x))\n        except Exception:\n            pass\n    members = [corpus[j - 1] for j in idxs if 1 <= j <= len(corpus)]\n    if not members:\n        print('[n3] 簇 %d「%s」无有效成员，跳过' % (i, title))\n        continue\n    src = '\\n\\n'.join('### %s\\n%s\\n要点：%s' % (\n        mm['name'], mm['summary'], '、'.join(mm['topics'][:20])) for mm in members)\n    prompt = (\n        '以下是同一主题簇「%s」下的 %d 份制度文件要点。\\n' % (title, len(members)) +\n        '请写一篇跨文档主题综述，用于知识库 wiki：\\n'\n        '1. 首段一句话说明该主题的制度体系构成；\\n'\n        '2. 正文分「制度沿革」「核心规定」「执行要点」「相关文件」四部分；\\n'\n        '3. 中文 Markdown，600~1200 字，只输出正文，不要输出任何解释或思考过程；\\n\\n' + src\n    )\n    try:\n        content = str(wr.llm_call([{'role': 'user', 'content': prompt}],\n                                  max_tokens=2600, temperature=0.3) or '').strip()\n    except Exception as e:\n        print('[n3] 簇 %d 生成失败: %s' % (i, e))\n        continue\n    if not content:\n        print('[n3] 簇 %d 内容为空，跳过' % i)\n        continue\n    pages.append({\n        'title': title,\n        'content': '# %s\\n\\n%s\\n\\n%s' % (title, str(cl.get('desc') or '').strip(), content),\n        'source_refs': ['%s|%s' % (mm['doc_id'], mm['name']) for mm in members],\n    })\n    print('[n3] 簇 %d/%d: %s (%d 文件, %d 字)' % (i, len(plan), title, len(members), len(content)))\n\n_json.dump(pages, open(_os.path.join(OUT, 'cl_pages.json'), 'w', encoding='utf-8'),\n           ensure_ascii=False, indent=1)\nbindings['cluster_pages'] = len(pages)\nprint('[n3] 生成 %d 个聚类页 → %s/cl_pages.json' % (len(pages), OUT))"
-     },
-     "stepInst": "script"
-    },
-    "type": "custom"
-   },
-   {
-    "id": "n4",
-    "data": {
-     "label": "写入聚类知识页",
-     "config": {
-      "queue": "build",
-      "source": "/tmp/cluster/cl_pages.json",
-      "folder_id": "{{cluster_folder_id}}",
-      "page_type": "topic_cluster",
-      "slug_prefix": "topiccluster",
-      "title_field": "title",
-      "content_field": "content",
-      "slug_hash_field": "title",
-      "source_refs_field": "source_refs"
-     },
-     "stepInst": "wiki_publish"
-    },
-    "type": "custom"
-   },
-   {
-    "id": "n5",
-    "data": {
-     "label": "完成汇总",
-     "config": {
-      "code": "\nn = bindings.get('cluster_pages')\nfid = bindings.get('cluster_folder_id')\nprint('[n5] 聚类知识构建完成: 生成 %s 页，目录 %s' % (n, fid))\n"
-     },
-     "stepInst": "print"
-    },
-    "type": "custom"
-   }
-  ],
-  "edges": [
-   {
-    "source": "n1",
-    "target": "n2"
-   },
-   {
-    "source": "n2",
-    "target": "n3"
-   },
-   {
-    "source": "n3",
-    "target": "n4"
-   },
-   {
-    "source": "n4",
-    "target": "n5"
-   }
-  ],
-  "execParams": {
-   "kb_id": ""
-  },
-  "steps": [
-   {
-    "step_id": "n1",
-    "step_inst": "script",
-    "step_label": "收集全库语料",
-    "step_config": {
-     "code": "\nimport json as _json, os as _os\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st\nKB = str(bindings.get('kb_id') or '')\nif not KB:\n    raise RuntimeError('缺 kb_id')\nOUT = '/tmp/cluster'\n_os.makedirs(OUT, exist_ok=True)\ndb = _gsm()()\ntry:\n    docs = db.execute(_st(\"\"\"\n        select d.id, d.file_name,\n               (select count(*) from wiki_page p where p.kb_id = d.kb_id and p.status='active'\n                  and p.source_refs like concat('%', d.id, '%')) as cnt\n        from kb_document d\n        where d.kb_id = :k and d.parse_state = 'READY'\n        order by d.file_name\n    \"\"\"), {'k': KB}).all()\n    corpus = []\n    for did, fname, cnt in docs:\n        s = db.execute(_st(\"select coalesce(summary,'') from kb_document where id=:i\"), {'i': did}).scalar() or ''\n        rows = db.execute(_st(\"\"\"\n            select title from wiki_page\n            where kb_id=:k and status='active'\n              and source_refs like concat('%', :d, '%')\n              and page_type in ('business_ontology','rule_ontology','frequent_keyword','summary')\n            order by page_type, created_at\n            limit 40\n        \"\"\"), {'k': KB, 'd': did}).all()\n        corpus.append({'doc_id': did, 'name': fname, 'pages': int(cnt or 0),\n                       'summary': str(s)[:400], 'topics': [r[0] for r in rows][:40]})\nfinally:\n    db.close()\n_json.dump(corpus, open(_os.path.join(OUT, 'corpus.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)\nlines = []\nfor i, c in enumerate(corpus, 1):\n    lines.append('[%d] %s\\n  摘要: %s\\n  要点: %s' % (\n        i, c['name'], c['summary'][:240], '、'.join(c['topics'][:18])))\nprompt = (\n    '下面是某知识库中全部制度文件的清单与要点。请做跨文档主题聚类。\\n'\n    '要求：\\n'\n    '1. 归纳 6~12 个主题簇，尽量覆盖全部文件（同一文件可归属多个簇）；\\n'\n    '2. 每簇给出标题（不超过 14 个字）、一句话说明、成员文件序号；\\n'\n    '3. 只输出 JSON 数组，禁止任何解释、前言或 Markdown 代码块标记：\\n'\n    '[{\"title\":\"...\",\"desc\":\"...\",\"docs\":[1,2,5]}]\\n\\n'\n    '文件清单：\\n' + '\\n'.join(lines)\n)\nbindings['cluster_prompt'] = prompt\nbindings['corpus_count'] = len(corpus)\nprint('[n1] 语料 %d 份文档，prompt %d 字 → %s/corpus.json' % (len(corpus), len(prompt), OUT))\n"
-    },
-    "step_seq": 0,
-    "pre_step_ids": [],
-    "next_step_ids": [
-     "bcfb6fd37497::n2"
+  "type": "kb.orchestration.draft",
+  "schemaVersion": 1,
+  "exportedAt": "2026-10-18T03:01:25.705179",
+  "draft": {
+    "tapeName": "聚类知识-主题聚合",
+    "tapeLabel": "聚类知识（跨文档主题聚合）",
+    "tapeDescr": "读取知识库内全部制度文件的 wiki 页面与摘要，用 LLM 做跨文档主题聚类，为每个主题簇生成一篇综述页（page_type=topic_cluster），写入根目录「聚类知识」。用于「聚类知识 Wiki」Tab 展示。",
+    "tapeType": "general",
+    "category": "知识聚合",
+    "status": "effective",
+    "nodes": [
+      {
+        "id": "n1",
+        "data": {
+          "label": "收集全库语料",
+          "config": {
+            "code": "\nimport json as _json, os as _os\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st\nKB = str(bindings.get('kb_id') or '')\nif not KB:\n    raise RuntimeError('缺 kb_id')\nOUT = '/tmp/cluster'\n_os.makedirs(OUT, exist_ok=True)\ndb = _gsm()()\ntry:\n    docs = db.execute(_st(\"\"\"\n        select d.id, d.file_name,\n               (select count(*) from wiki_page p where p.kb_id = d.kb_id and p.status='active'\n                  and p.source_refs like concat('%', d.id, '%')) as cnt\n        from kb_document d\n        where d.kb_id = :k and d.parse_state = 'READY'\n        order by d.file_name\n    \"\"\"), {'k': KB}).all()\n    corpus = []\n    for did, fname, cnt in docs:\n        s = db.execute(_st(\"select coalesce(summary,'') from kb_document where id=:i\"), {'i': did}).scalar() or ''\n        rows = db.execute(_st(\"\"\"\n            select title from wiki_page\n            where kb_id=:k and status='active'\n              and source_refs like concat('%', :d, '%')\n              and page_type in ('business_ontology','rule_ontology','frequent_keyword','summary')\n            order by page_type, created_at\n            limit 40\n        \"\"\"), {'k': KB, 'd': did}).all()\n        corpus.append({'doc_id': did, 'name': fname, 'pages': int(cnt or 0),\n                       'summary': str(s)[:400], 'topics': [r[0] for r in rows][:40]})\nfinally:\n    db.close()\n_json.dump(corpus, open(_os.path.join(OUT, 'corpus.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)\nlines = []\nfor i, c in enumerate(corpus, 1):\n    lines.append('[%d] %s\\n  摘要: %s\\n  要点: %s' % (\n        i, c['name'], c['summary'][:240], '、'.join(c['topics'][:18])))\nprompt = (\n    '下面是某知识库中全部制度文件的清单与要点。请做跨文档主题聚类。\\n'\n    '要求：\\n'\n    '1. 归纳 6~12 个主题簇，尽量覆盖全部文件（同一文件可归属多个簇）；\\n'\n    '2. 每簇给出标题（不超过 14 个字）、一句话说明、成员文件序号；\\n'\n    '3. 只输出 JSON 数组，禁止任何解释、前言或 Markdown 代码块标记：\\n'\n    '[{\"title\":\"...\",\"desc\":\"...\",\"docs\":[1,2,5]}]\\n\\n'\n    '文件清单：\\n' + '\\n'.join(lines)\n)\nbindings['cluster_prompt'] = prompt\nbindings['corpus_count'] = len(corpus)\nprint('[n1] 语料 %d 份文档，prompt %d 字 → %s/corpus.json' % (len(corpus), len(prompt), OUT))\n"
+          },
+          "stepInst": "script"
+        },
+        "type": "custom"
+      },
+      {
+        "id": "n2",
+        "data": {
+          "label": "LLM主题聚类",
+          "config": {
+            "model": "{{summary_model_id}}",
+            "prompt": "{{cluster_prompt}}",
+            "system": "你是知识库主题聚类专家。只输出 JSON 数组，不要任何解释、前言或代码块标记。",
+            "thinking": "disabled",
+            "max_tokens": "6000",
+            "output_var": "cluster_raw",
+            "temperature": "0.2"
+          },
+          "stepInst": "kb_llm_chat"
+        },
+        "type": "custom"
+      },
+      {
+        "id": "n3",
+        "data": {
+          "label": "逐簇生成综述",
+          "config": {
+            "code": "import sys as _sys, os as _os, json as _json, re as _re\nSD = '/srv/kb/worker/builtin_engine/scripts'\nif SD not in _sys.path:\n    _sys.path.insert(0, SD)\n_os.environ.setdefault('KB_API_BASE_URL', 'http://api-server:8000')\nimport weknora_rpc as wr\nwr.load_config()\nKB = str(bindings.get('kb_id') or '')\nif KB:\n    wr.KB = KB\n    _os.environ['WEKNORA_KB_ID'] = KB\nwr.mcp_init()\n\nOUT = '/tmp/cluster'\nraw = str(bindings.get('cluster_raw') or '') or str(bindings.get('cluster_plan') or '')\nm = _re.search(r'\\[.*\\]', raw, _re.S)\nif not m:\n    raise RuntimeError('聚类方案解析失败: ' + raw[:200])\nplan = _json.loads(m.group(0))\nif not isinstance(plan, list) or not plan:\n    raise RuntimeError('聚类方案为空')\ncorpus = _json.load(open(_os.path.join(OUT, 'corpus.json'), encoding='utf-8'))\n\n# 根下「聚类知识」目录（不存在则创建）\nfid = ''\ntry:\n    for f in wr.list_all_folders_cached(kb_id=KB):\n        if f.get('name') == '聚类知识' and not (f.get('parent_id') or ''):\n            fid = f.get('id') or ''\n            break\nexcept Exception as e:\n    print('[n3] 目录缓存不可用:', e)\nif not fid:\n    r = wr.create_folder('聚类知识', parent_id='', kb_id=KB)\n    fid = ((r.get('data') or {}) if isinstance(r, dict) else {}).get('id') or ''\nif not fid:\n    raise RuntimeError('创建「聚类知识」目录失败')\nbindings['cluster_folder_id'] = fid\nprint('[n3] 聚类目录:', fid)\n\npages = []\nfor i, cl in enumerate(plan, 1):\n    if not isinstance(cl, dict):\n        continue\n    title = str(cl.get('title') or ('主题%d' % i)).strip()[:40]\n    idxs = []\n    for x in (cl.get('docs') or []):\n        try:\n            idxs.append(int(x))\n        except Exception:\n            pass\n    members = [corpus[j - 1] for j in idxs if 1 <= j <= len(corpus)]\n    if not members:\n        print('[n3] 簇 %d「%s」无有效成员，跳过' % (i, title))\n        continue\n    src = '\\n\\n'.join('### %s\\n%s\\n要点：%s' % (\n        mm['name'], mm['summary'], '、'.join(mm['topics'][:20])) for mm in members)\n    prompt = (\n        '以下是同一主题簇「%s」下的 %d 份制度文件要点。\\n' % (title, len(members)) +\n        '请写一篇跨文档主题综述，用于知识库 wiki：\\n'\n        '1. 首段一句话说明该主题的制度体系构成；\\n'\n        '2. 正文分「制度沿革」「核心规定」「执行要点」「相关文件」四部分；\\n'\n        '3. 中文 Markdown，600~1200 字，只输出正文，不要输出任何解释或思考过程；\\n\\n' + src\n    )\n    try:\n        content = str(wr.llm_call([{'role': 'user', 'content': prompt}],\n                                  max_tokens=2600, temperature=0.3) or '').strip()\n    except Exception as e:\n        print('[n3] 簇 %d 生成失败: %s' % (i, e))\n        continue\n    if not content:\n        print('[n3] 簇 %d 内容为空，跳过' % i)\n        continue\n    pages.append({\n        'title': title,\n        'content': '# %s\\n\\n%s\\n\\n%s' % (title, str(cl.get('desc') or '').strip(), content),\n        'source_refs': ['%s|%s' % (mm['doc_id'], mm['name']) for mm in members],\n    })\n    print('[n3] 簇 %d/%d: %s (%d 文件, %d 字)' % (i, len(plan), title, len(members), len(content)))\n\n_json.dump(pages, open(_os.path.join(OUT, 'cl_pages.json'), 'w', encoding='utf-8'),\n           ensure_ascii=False, indent=1)\nbindings['cluster_pages'] = len(pages)\nprint('[n3] 生成 %d 个聚类页 → %s/cl_pages.json' % (len(pages), OUT))"
+          },
+          "stepInst": "script"
+        },
+        "type": "custom"
+      },
+      {
+        "id": "n4",
+        "data": {
+          "label": "写入聚类知识页",
+          "config": {
+            "queue": "build",
+            "source": "/tmp/cluster/cl_pages.json",
+            "folder_id": "{{cluster_folder_id}}",
+            "page_type": "topic_cluster",
+            "slug_prefix": "topiccluster",
+            "title_field": "title",
+            "content_field": "content",
+            "slug_hash_field": "title",
+            "source_refs_field": "source_refs"
+          },
+          "stepInst": "wiki_publish"
+        },
+        "type": "custom"
+      },
+      {
+        "id": "n5",
+        "data": {
+          "label": "完成汇总",
+          "config": {
+            "code": "\nn = bindings.get('cluster_pages')\nfid = bindings.get('cluster_folder_id')\nprint('[n5] 聚类知识构建完成: 生成 %s 页，目录 %s' % (n, fid))\n"
+          },
+          "stepInst": "print"
+        },
+        "type": "custom"
+      }
     ],
-    "queue_name": "build"
-   },
-   {
-    "step_id": "n2",
-    "step_inst": "kb_llm_chat",
-    "step_label": "LLM主题聚类",
-    "step_config": {
-     "model": "{{summary_model_id}}",
-     "prompt": "{{cluster_prompt}}",
-     "system": "你是知识库主题聚类专家。只输出 JSON 数组，不要任何解释、前言或代码块标记。",
-     "thinking": "disabled",
-     "max_tokens": "6000",
-     "output_var": "cluster_raw",
-     "temperature": "0.2"
+    "edges": [
+      {
+        "source": "n1",
+        "target": "n2"
+      },
+      {
+        "source": "n2",
+        "target": "n3"
+      },
+      {
+        "source": "n3",
+        "target": "n4"
+      },
+      {
+        "source": "n4",
+        "target": "n5"
+      }
+    ],
+    "execParams": {
+      "kb_id": ""
     },
-    "step_seq": 1,
-    "pre_step_ids": [
-     "bcfb6fd37497::n1"
-    ],
-    "next_step_ids": [
-     "bcfb6fd37497::n3"
-    ],
-    "queue_name": ""
-   },
-   {
-    "step_id": "n3",
-    "step_inst": "script",
-    "step_label": "逐簇生成综述",
-    "step_config": {
-     "code": "import sys as _sys, os as _os, json as _json, re as _re\nSD = '/srv/kb/worker/builtin_engine/scripts'\nif SD not in _sys.path:\n    _sys.path.insert(0, SD)\n_os.environ.setdefault('KB_API_BASE_URL', 'http://api-server:8000')\nimport weknora_rpc as wr\nwr.load_config()\nKB = str(bindings.get('kb_id') or '')\nif KB:\n    wr.KB = KB\n    _os.environ['WEKNORA_KB_ID'] = KB\nwr.mcp_init()\n\nOUT = '/tmp/cluster'\nraw = str(bindings.get('cluster_raw') or '') or str(bindings.get('cluster_plan') or '')\nm = _re.search(r'\\[.*\\]', raw, _re.S)\nif not m:\n    raise RuntimeError('聚类方案解析失败: ' + raw[:200])\nplan = _json.loads(m.group(0))\nif not isinstance(plan, list) or not plan:\n    raise RuntimeError('聚类方案为空')\ncorpus = _json.load(open(_os.path.join(OUT, 'corpus.json'), encoding='utf-8'))\n\n# 根下「聚类知识」目录（不存在则创建）\nfid = ''\ntry:\n    for f in wr.list_all_folders_cached(kb_id=KB):\n        if f.get('name') == '聚类知识' and not (f.get('parent_id') or ''):\n            fid = f.get('id') or ''\n            break\nexcept Exception as e:\n    print('[n3] 目录缓存不可用:', e)\nif not fid:\n    r = wr.create_folder('聚类知识', parent_id='', kb_id=KB)\n    fid = ((r.get('data') or {}) if isinstance(r, dict) else {}).get('id') or ''\nif not fid:\n    raise RuntimeError('创建「聚类知识」目录失败')\nbindings['cluster_folder_id'] = fid\nprint('[n3] 聚类目录:', fid)\n\npages = []\nfor i, cl in enumerate(plan, 1):\n    if not isinstance(cl, dict):\n        continue\n    title = str(cl.get('title') or ('主题%d' % i)).strip()[:40]\n    idxs = []\n    for x in (cl.get('docs') or []):\n        try:\n            idxs.append(int(x))\n        except Exception:\n            pass\n    members = [corpus[j - 1] for j in idxs if 1 <= j <= len(corpus)]\n    if not members:\n        print('[n3] 簇 %d「%s」无有效成员，跳过' % (i, title))\n        continue\n    src = '\\n\\n'.join('### %s\\n%s\\n要点：%s' % (\n        mm['name'], mm['summary'], '、'.join(mm['topics'][:20])) for mm in members)\n    prompt = (\n        '以下是同一主题簇「%s」下的 %d 份制度文件要点。\\n' % (title, len(members)) +\n        '请写一篇跨文档主题综述，用于知识库 wiki：\\n'\n        '1. 首段一句话说明该主题的制度体系构成；\\n'\n        '2. 正文分「制度沿革」「核心规定」「执行要点」「相关文件」四部分；\\n'\n        '3. 中文 Markdown，600~1200 字，只输出正文，不要输出任何解释或思考过程；\\n\\n' + src\n    )\n    try:\n        content = str(wr.llm_call([{'role': 'user', 'content': prompt}],\n                                  max_tokens=2600, temperature=0.3) or '').strip()\n    except Exception as e:\n        print('[n3] 簇 %d 生成失败: %s' % (i, e))\n        continue\n    if not content:\n        print('[n3] 簇 %d 内容为空，跳过' % i)\n        continue\n    pages.append({\n        'title': title,\n        'content': '# %s\\n\\n%s\\n\\n%s' % (title, str(cl.get('desc') or '').strip(), content),\n        'source_refs': ['%s|%s' % (mm['doc_id'], mm['name']) for mm in members],\n    })\n    print('[n3] 簇 %d/%d: %s (%d 文件, %d 字)' % (i, len(plan), title, len(members), len(content)))\n\n_json.dump(pages, open(_os.path.join(OUT, 'cl_pages.json'), 'w', encoding='utf-8'),\n           ensure_ascii=False, indent=1)\nbindings['cluster_pages'] = len(pages)\nprint('[n3] 生成 %d 个聚类页 → %s/cl_pages.json' % (len(pages), OUT))"
-    },
-    "step_seq": 2,
-    "pre_step_ids": [
-     "bcfb6fd37497::n2"
-    ],
-    "next_step_ids": [
-     "bcfb6fd37497::n4"
-    ],
-    "queue_name": "build"
-   },
-   {
-    "step_id": "n4",
-    "step_inst": "wiki_publish",
-    "step_label": "写入聚类知识页",
-    "step_config": {
-     "queue": "build",
-     "source": "/tmp/cluster/cl_pages.json",
-     "folder_id": "{{cluster_folder_id}}",
-     "page_type": "topic_cluster",
-     "slug_prefix": "topiccluster",
-     "title_field": "title",
-     "content_field": "content",
-     "slug_hash_field": "title",
-     "source_refs_field": "source_refs"
-    },
-    "step_seq": 3,
-    "pre_step_ids": [
-     "bcfb6fd37497::n3"
-    ],
-    "next_step_ids": [
-     "bcfb6fd37497::n5"
-    ],
-    "queue_name": "build"
-   },
-   {
-    "step_id": "n5",
-    "step_inst": "print",
-    "step_label": "完成汇总",
-    "step_config": {
-     "code": "\nn = bindings.get('cluster_pages')\nfid = bindings.get('cluster_folder_id')\nprint('[n5] 聚类知识构建完成: 生成 %s 页，目录 %s' % (n, fid))\n"
-    },
-    "step_seq": 4,
-    "pre_step_ids": [
-     "bcfb6fd37497::n4"
-    ],
-    "next_step_ids": [],
-    "queue_name": ""
-   }
-  ]
- }
+    "steps": [
+      {
+        "step_id": "n1",
+        "step_inst": "script",
+        "step_label": "收集全库语料",
+        "step_config": {
+          "code": "import json as _json, os as _os\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st\nKB = str(bindings.get('kb_id') or '')\nif not KB:\n    raise RuntimeError('缺 kb_id')\nOUT = '/tmp/cluster'\n_os.makedirs(OUT, exist_ok=True)\ndb = _gsm()()\ntry:\n    docs = db.execute(_st(\"\"\"\n        select d.id, d.file_name,\n               (select count(*) from wiki_page p where p.kb_id = d.kb_id and p.status='active'\n                  and p.source_refs like concat('%', d.id, '%')) as cnt\n        from kb_document d\n        where d.kb_id = :k and d.parse_state = 'READY'\n        order by d.file_name\n    \"\"\"), {'k': KB}).all()\n    corpus = []\n    for did, fname, cnt in docs:\n        s = db.execute(_st(\"select coalesce(summary,'') from kb_document where id=:i\"), {'i': did}).scalar() or ''\n        # 通用化：不限定 page_type，取该文档全部 active 页（标题按类型聚合 + 原文页 slug 素材）\n        rows = db.execute(_st(\"\"\"\n            select slug, title, page_type from wiki_page\n            where kb_id=:k and status='active'\n              and source_refs like concat('%', :d, '%')\n            order by page_type, created_at\n            limit 80\n        \"\"\"), {'k': KB, 'd': did}).all()\n        titles = [r[1] for r in rows]\n        src_pages = [{'slug': r[0], 'title': r[1], 'type': r[2]} for r in rows\n                     if r[2] not in ('summary',)]\n        corpus.append({'doc_id': did, 'name': fname, 'pages': int(cnt or 0),\n                       'summary': str(s)[:400], 'topics': titles[:60],\n                       'src_pages': src_pages[:40]})\nfinally:\n    db.close()\n_json.dump(corpus, open(_os.path.join(OUT, 'corpus.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)\nlines = []\nfor i, c in enumerate(corpus, 1):\n    lines.append('[%d] %s\\n  摘要: %s\\n  要点: %s' % (\n        i, c['name'], c['summary'][:240], '、'.join(c['topics'][:18])))\nprompt = (\n    '下面是某知识库中全部文件的清单与要点。请做跨文档主题聚类。\\n'\n    '要求：\\n'\n    '1. 归纳 6~12 个主题簇，尽量覆盖全部文件（同一文件可归属多个簇）；\\n'\n    '2. 每簇给出标题（不超过 14 个字）、一句话说明、成员文件序号；\\n'\n    '3. 只输出 JSON 数组，禁止任何解释、前言或 Markdown 代码块标记：\\n'\n    '[{\"title\":\"...\",\"desc\":\"...\",\"docs\":[1,2,5]}]\\n\\n'\n    '文件清单：\\n' + '\\n'.join(lines)\n)\nbindings['cluster_prompt'] = prompt\nbindings['corpus_count'] = len(corpus)\nprint('[n1] 语料 %d 份文档，prompt %d 字 → %s/corpus.json' % (len(corpus), len(prompt), OUT))"
+        },
+        "step_seq": 0,
+        "pre_step_ids": [],
+        "next_step_ids": [
+          "bcfb6fd37497::n2"
+        ],
+        "queue_name": "build"
+      },
+      {
+        "step_id": "n2",
+        "step_inst": "kb_llm_chat",
+        "step_label": "LLM主题聚类",
+        "step_config": {
+          "model": "{{summary_model_id}}",
+          "prompt": "{{cluster_prompt}}",
+          "system": "你是知识库主题聚类专家。只输出 JSON 数组，不要任何解释、前言或代码块标记。",
+          "thinking": "disabled",
+          "max_tokens": "6000",
+          "output_var": "cluster_raw",
+          "temperature": "0.2"
+        },
+        "step_seq": 1,
+        "pre_step_ids": [
+          "bcfb6fd37497::n1"
+        ],
+        "next_step_ids": [
+          "bcfb6fd37497::n3"
+        ],
+        "queue_name": ""
+      },
+      {
+        "step_id": "n3",
+        "step_inst": "script",
+        "step_label": "逐簇生成综述",
+        "step_config": {
+          "code": "import sys as _sys, os as _os, json as _json, re as _re\nSD = '/srv/kb/worker/builtin_engine/scripts'\nif SD not in _sys.path:\n    _sys.path.insert(0, SD)\n_os.environ.setdefault('KB_API_BASE_URL', 'http://api-server:8000')\nimport weknora_rpc as wr\nwr.load_config()\nKB = str(bindings.get('kb_id') or '')\nif KB:\n    wr.KB = KB\n    _os.environ['WEKNORA_KB_ID'] = KB\nwr.mcp_init()\n\nOUT = '/tmp/cluster'\nraw = str(bindings.get('cluster_raw') or '') or str(bindings.get('cluster_plan') or '')\nm = _re.search(r'\\[.*\\]', raw, _re.S)\nif not m:\n    raise RuntimeError('聚类方案解析失败: ' + raw[:200])\nplan = _json.loads(m.group(0))\nif not isinstance(plan, list) or not plan:\n    raise RuntimeError('聚类方案为空')\ncorpus = _json.load(open(_os.path.join(OUT, 'corpus.json'), encoding='utf-8'))\n\n# 根下「聚类知识」目录（不存在则创建）\nfid = ''\ntry:\n    for f in wr.list_all_folders_cached(kb_id=KB):\n        if f.get('name') == '聚类知识' and not (f.get('parent_id') or ''):\n            fid = f.get('id') or ''\n            break\nexcept Exception as e:\n    print('[n3] 目录缓存不可用:', e)\nif not fid:\n    r = wr.create_folder('聚类知识', parent_id='', kb_id=KB)\n    fid = ((r.get('data') or {}) if isinstance(r, dict) else {}).get('id') or ''\nif not fid:\n    raise RuntimeError('创建「聚类知识」目录失败')\nbindings['cluster_folder_id'] = fid\nprint('[n3] 聚类目录:', fid)\n\n# 全库真实 slug 集合（双链校验：LLM 自造 slug → 降级纯文本显示名，防 broken_link）\nknown_slugs = set()\ntry:\n    page_no = 1\n    while True:\n        rg = wr.list_wiki_pages(kb_id=KB, page=page_no, page_size=300)\n        pages = rg.get('pages') or []\n        if not pages:\n            break\n        for p in pages:\n            known_slugs.add(str(p.get('slug') or ''))\n        if len(pages) < 300:\n            break\n        page_no += 1\nexcept Exception as e:\n    print('[n3] slug 集合拉取失败:', e)\n\n\ndef _link_rep(mm):\n    slug = mm.group(1)\n    disp = mm.group(2) or slug\n    return ('[[%s|%s]]' % (slug, disp)) if slug in known_slugs else disp\n\n\ndef _fix_links(text):\n    return _re.sub(r'\\[\\[([^\\[\\]\\|]+)(?:\\|([^\\[\\]]*))?\\]\\]', _link_rep, text)\n\n\npages = []\nfor i, cl in enumerate(plan, 1):\n    if not isinstance(cl, dict):\n        continue\n    title = str(cl.get('title') or ('主题%d' % i)).strip()[:40]\n    idxs = []\n    for x in (cl.get('docs') or []):\n        try:\n            idxs.append(int(x))\n        except Exception:\n            pass\n    members = [corpus[j - 1] for j in idxs if 1 <= j <= len(corpus)]\n    if not members:\n        print('[n3] 簇 %d「%s」无有效成员，跳过' % (i, title))\n        continue\n    # 素材：成员摘要 + 可引用原文页（真实 slug + 标题）\n    src_parts = []\n    for mm in members:\n        src_parts.append('### %s' % mm['name'])\n        if mm.get('summary'):\n            src_parts.append(mm['summary'])\n        sp_list = mm.get('src_pages') or []\n        if sp_list:\n            src_parts.append('可引用原文页（slug 全部真实，双链必须用这些 slug）：')\n            for sp in sp_list[:12]:\n                src_parts.append('- %s：[[%s|%s]]' % (sp['type'], sp['slug'], sp['title']))\n        for t in (mm.get('topics') or [])[:25]:\n            src_parts.append('- 要点：%s' % t)\n    src = '\\n'.join(src_parts)\n\n    prompt = (\n        '以下是同一主题簇「%s」下的 %d 份文件要点与可引用原文页。\\n' % (title, len(members)) +\n        '请写一篇跨文档主题综述 wiki 页（通用业务主题，不限于任何行业），结构如下：\\n'\n        '1. 首段一句话说明该主题的知识体系构成（覆盖哪些文件与维度）；\\n'\n        '2. ## 关联文件清单：表格 | 文件 | 摘要页链接 | 版本状态 | 关联点 |。'\n        '摘要页链接用材料中给出的真实 [[summary/...|文件名]] 双链；'\n        '版本状态：仅在文件摘要/标题明显含版本或废止信息（如“已废止/已被……替代/历史版本/旧版/某某版”）时标注，其余一律“现行”；无版本概念的文件也标“现行”；\\n'\n        '3. ## 核心知识与实操要点：分条归纳，每条能落到原文的必须用材料中给定 slug 双链（original_sentence/实体/关键词页均可）；\\n'\n        '4. 若簇内文件含同一主题的多版本或在关键口径上互相矛盾，加 ## 版本差异/矛盾点凸显（对比表：维度 | 版本A | 版本B | 差异解读，各格链原文）；无多版本或矛盾则省略该节；\\n'\n        '5. ## 知识推导过程：按 检索→聚类→溯源→归纳 简述本页知识如何得出，链到本簇成员文件；\\n'\n        '中文 Markdown，800~1500 字，只输出正文部分（不含标题）。双链只能用材料中出现的真实 slug，禁止自造或猜测 slug。\\n\\n' + src\n    )\n    try:\n        content = str(wr.llm_call([{'role': 'user', 'content': prompt}],\n                                  max_tokens=3800, temperature=0.3) or '').strip()\n    except Exception as e:\n        print('[n3] 簇 %d 生成失败: %s' % (i, e))\n        continue\n    if not content:\n        print('[n3] 簇 %d 内容为空，跳过' % i)\n        continue\n    content = _fix_links(content)\n    pages.append({\n        'title': title,\n        'content': '# %s\\n\\n%s\\n\\n%s' % (title, str(cl.get('desc') or '').strip(), content),\n        'source_refs': ['%s|%s' % (mm['doc_id'], mm['name']) for mm in members],\n    })\n    print('[n3] 簇 %d/%d: %s (%d 文件, %d 字)' % (\n        i, len(plan), title, len(members), len(content)))\n\n_json.dump(pages, open(_os.path.join(OUT, 'cl_pages.json'), 'w', encoding='utf-8'),\n           ensure_ascii=False, indent=1)\nbindings['cluster_pages'] = len(pages)\nprint('[n3] 生成 %d 个聚类页 → %s/cl_pages.json' % (len(pages), OUT))"
+        },
+        "step_seq": 2,
+        "pre_step_ids": [
+          "bcfb6fd37497::n2"
+        ],
+        "next_step_ids": [
+          "bcfb6fd37497::n4"
+        ],
+        "queue_name": "build"
+      },
+      {
+        "step_id": "n4",
+        "step_inst": "wiki_publish",
+        "step_label": "写入聚类知识页",
+        "step_config": {
+          "queue": "build",
+          "source": "/tmp/cluster/cl_pages.json",
+          "folder_id": "{{cluster_folder_id}}",
+          "page_type": "topic_cluster",
+          "slug_prefix": "topiccluster",
+          "title_field": "title",
+          "content_field": "content",
+          "slug_hash_field": "title",
+          "source_refs_field": "source_refs"
+        },
+        "step_seq": 3,
+        "pre_step_ids": [
+          "bcfb6fd37497::n3"
+        ],
+        "next_step_ids": [
+          "bcfb6fd37497::n5"
+        ],
+        "queue_name": "build"
+      },
+      {
+        "step_id": "n5",
+        "step_inst": "print",
+        "step_label": "完成汇总",
+        "step_config": {
+          "code": "\nn = bindings.get('cluster_pages')\nfid = bindings.get('cluster_folder_id')\nprint('[n5] 聚类知识构建完成: 生成 %s 页，目录 %s' % (n, fid))\n"
+        },
+        "step_seq": 4,
+        "pre_step_ids": [
+          "bcfb6fd37497::n4"
+        ],
+        "next_step_ids": [],
+        "queue_name": ""
+      }
+    ]
+  }
 }
