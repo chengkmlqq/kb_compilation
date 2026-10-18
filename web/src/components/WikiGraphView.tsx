@@ -112,6 +112,8 @@ const BLOOM_MAX_NODES = 1500;
 const GROW_FRONTIER_CONCURRENCY = 6;
 // 安全上限：即便未达速度阈值，最多模拟这么多帧后强制收停（防抖动不收敛长期占 CPU）
 const SIM_MAX_FRAMES = 1200;
+/** 首帧前预热的物理迭代次数（不绘制，仅让节点先散开） */
+const WARM_STEPS = 90;
 // 缩放到该比例以下不再绘制标签（文字绘制最贵，且极小尺寸下本就不可读）
 const LABEL_MIN_SCALE = 0.4;
 // 全库索引类页面（index/log）：连线指向全库，参与单点扩展但不参与 frontier 批量生长
@@ -705,7 +707,10 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
       // 世界坐标与视口解耦：布点半径只由节点数决定（世界原点即图中心）。
       // 原实现用 min(W,H)/2 作半径并以画布中心为原点，导致节点永远被限制在
       // 首次打开时视口大小的方块内。
-      const R = 40 + 26 * Math.sqrt(Math.max(nodeList.length, 1));
+      // 2026-10-18：布点间距按节点直径算（最大半径 24 → 直径 48，再留间隙）。
+      // 原来 26*sqrt(N) 在 200+ 节点时每节点可用面积小于节点本身面积 →
+      // 首帧就大面积重叠；WeKnora 用固定圆环 + 抖动，这里改用「按面积均匀的螺旋」并放大间距。
+      const R = 30 + 58 * Math.sqrt(Math.max(nodeList.length, 1));
       nodeList.forEach((n, i) => {
         const r = R * Math.sqrt((i + 0.5) / Math.max(nodeList.length, 1));
         const ang = i * goldenAngle;
@@ -909,6 +914,11 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
       );
       for (const [slug, p] of entries) bhInsert(root, slug, p.x, p.y);
 
+      // 2026-10-18：首帧前先跑 WARM_STEPS 次纯物理迭代（不 fitToView / 不 render），
+      // 让节点在首次可见前就散开，避免「刚打开时一大坨重叠」。
+      let _iters = (st as { warmed?: boolean }).warmed ? 1 : WARM_STEPS;
+      (st as { warmed?: boolean }).warmed = true;
+      while (_iters-- > 0) {
       const acc = { fx: 0, fy: 0 };
       for (const [slug, a] of entries) {
         if (a.pinned) {
@@ -938,6 +948,7 @@ export default function WikiGraphView({ kbId, focusSlug }: Props) {
         a.y += a.vy;
         totalV += Math.abs(a.vx) + Math.abs(a.vy);
       }
+      }  // end while (_iters) — 预热迭代结束
       // 布点期间持续自动适应屏幕：图随迭代扩张时视图同步跟随，避免节点跑到视口外；
       // 用户一旦拖拽/平移/缩放即停止（尊重用户视图）。
       if (!viewUserControlledRef.current) fitToView();
