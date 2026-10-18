@@ -427,7 +427,7 @@ def qa_stream(
                 for ev in tail:
                     yield _sse(ev)
                 return
-            time.sleep(0.15)
+            time.sleep(0.05)
 
     return StreamingResponse(
         generator(),
@@ -480,7 +480,7 @@ def resume_stream(
             if idle_polls > 2000:  # ~5 min with no event at all
                 yield _sse({"type": "error", "message": "流已失活"})
                 return
-            time.sleep(0.15)
+            time.sleep(0.05)
 
     return StreamingResponse(
         generator(),
