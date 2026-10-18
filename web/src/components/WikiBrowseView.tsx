@@ -25,6 +25,7 @@ import {
   App,
   Button,
   Empty,
+  Segmented,
   Form,
   Input,
   Modal,
@@ -97,6 +98,34 @@ const TYPE_OPTIONS = [
   { value: "entity", label: "实体" },
   { value: "concept", label: "概念" },
   { value: "summary", label: "摘要" },
+];
+
+/**
+ * wiki 详情左侧两个 Tab —— 对齐 WeKnora WikiBrowser.wikiTabOptions：
+ *   original_doc       原始文档 Wiki：按文档/本体抽出的页面
+ *   clustered_knowledge 聚类知识 Wiki：跨文档聚合产物
+ * 分类完全由 page_type 决定，不新增数据库字段。
+ */
+const ORIGINAL_DOC_TYPES = [
+  "summary",
+  "entity",
+  "concept",
+  "original_sentence",
+  "frequent_keyword",
+  "business_ontology",
+  "rule_ontology",
+];
+const CLUSTERED_KNOWLEDGE_TYPES = [
+  "synthesis",
+  "comparison",
+  "topic_cluster",
+  "knowledge_graph_summary",
+  "cross_document_insight",
+];
+type WikiTab = "original_doc" | "clustered_knowledge";
+const WIKI_TABS: { key: WikiTab; label: string; types: string[] }[] = [
+  { key: "original_doc", label: "原始文档 Wiki", types: ORIGINAL_DOC_TYPES },
+  { key: "clustered_knowledge", label: "聚类知识 Wiki", types: CLUSTERED_KNOWLEDGE_TYPES },
 ];
 
 /** page_type → 图标（对齐 WeKnora getPageIcon：entity=tag / concept=lightbulb / synthesis=relativity …） */
@@ -198,6 +227,9 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
   const router = useRouter();
   const { message } = App.useApp();
 
+  // wiki 分类 Tab（原始文档 / 聚类知识）
+  const [wikiTab, setWikiTab] = useState<WikiTab>("original_doc");
+
   // 已加载的分支：folderId（"" = 根）→ 子目录 + 子页面
   const [branches, setBranches] = useState<Record<string, BranchData>>({});
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
@@ -248,15 +280,55 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
 
   const fetchBranch = useCallback(
     async (folderId: string): Promise<BranchData> => {
-      const res = await apiWikiBranch(kbId, folderId);
+      const tabTypes = WIKI_TABS.find((t) => t.key === wikiTab)?.types;
+      const res = await apiWikiBranch(kbId, folderId, 1, 50, tabTypes);
       if (!res.success || !res.data) return { folders: [], pages: [] };
       const d = res.data;
       const folders = [...(d.folders || [])].sort((a, b) => a.name.localeCompare(b.name));
       const pages = [...(d.pages || [])].sort((a, b) => a.title.localeCompare(b.title));
       return { folders, pages };
     },
-    [kbId],
+    [kbId, wikiTab],
   );
+
+  /** 切换 Tab：清空树与选中，重新加载根级（原初始加载 effect 保持不变，深链仍走 focusSlug） */
+  const switchWikiTab = (tab: WikiTab) => {
+    if (tab === wikiTab) return;
+    setWikiTab(tab);
+    setBranches({});
+    setExpandedKeys([]);
+    setSelectedSlug("");
+    selectedRef.current = "";
+    setPage(null);
+    setSearchText("");
+    setSearchResults(null);
+    setNavStack([]);
+  };
+
+  // Tab 切换后重新加载根级（跳过首次渲染；初始加载由下面的 effect 负责）
+  const tabInitRef = useRef(false);
+  useEffect(() => {
+    if (!tabInitRef.current) {
+      tabInitRef.current = true;
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const rootBranch = await fetchBranch("");
+      if (cancelled) return;
+      setBranches({ "": rootBranch });
+      const first = rootBranch.pages[0];
+      if (first) {
+        setSelectedSlug(first.slug);
+        selectedRef.current = first.slug;
+        void loadPage(first.slug);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wikiTab]);
 
   // 初始加载：根级分支 + focusSlug 深链定位（沿父链逐级加载并展开）
   useEffect(() => {
@@ -542,6 +614,14 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
       {/* ── 左栏：wiki-sidebar ── */}
       <aside className="kb-wiki-sidebar">
         <div className="kb-wiki-sidebar-header">
+          <Segmented
+            block
+            size="small"
+            value={wikiTab}
+            onChange={(v) => switchWikiTab(v as WikiTab)}
+            options={WIKI_TABS.map((t) => ({ label: t.label, value: t.key }))}
+            style={{ marginBottom: 8 }}
+          />
           <div className="kb-wiki-search-row">
             <Input
               className="kb-wiki-search-input"

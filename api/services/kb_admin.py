@@ -1325,18 +1325,32 @@ def _wiki_child_counts(db: Session, kb_id: str) -> dict[str, int]:
     return counts
 
 
-def _wiki_page_counts(db: Session, kb_id: str) -> dict[str, int]:
-    """每个 folder 的直接 active 页面数（对齐 WeKnora 目录胶囊的页面数语义）。"""
-    rows = db.execute(
+def _wiki_page_counts(
+    db: Session, kb_id: str, page_types: list[str] | None = None
+) -> dict[str, int]:
+    """每个 folder 的直接 active 页面数（对齐 WeKnora 目录胶囊的页面数语义）。
+
+    2026-10-18：支持 page_types 过滤 —— wiki 详情按 WeKnora 分「原始文档 Wiki /
+    聚类知识 Wiki」两个 Tab，目录上的页数也要跟着 Tab 变，否则聚类 Tab 下会
+    显示原始文档类别的大数字。
+    """
+    q = (
         select(func.coalesce(WikiPage.folder_id, ""), func.count())
         .where(WikiPage.kb_id == kb_id, WikiPage.status == "active")
-        .group_by(func.coalesce(WikiPage.folder_id, ""))
-    ).all()
+    )
+    if page_types:
+        q = q.where(WikiPage.page_type.in_(page_types))
+    rows = db.execute(q.group_by(func.coalesce(WikiPage.folder_id, ""))).all()
     return {str(fid or ""): int(n) for fid, n in rows}
 
 
 def wiki_branch(
-    db: Session, kb_id: str, folder_id: str = "", page: int = 1, page_size: int = 50
+    db: Session,
+    kb_id: str,
+    folder_id: str = "",
+    page: int = 1,
+    page_size: int = 50,
+    page_types: list[str] | None = None,
 ) -> dict:
     """懒加载分支（对齐 WeKnora 侧栏按需展开）。
 
@@ -1355,17 +1369,21 @@ def wiki_branch(
         WikiPage.status == "active",
         func.coalesce(WikiPage.folder_id, "") == fid,
     )
+    if page_types:
+        pages_q = pages_q.where(WikiPage.page_type.in_(page_types))
     total_pages = len(db.execute(pages_q).scalars().all())
     rows = db.execute(
         pages_q.order_by(WikiPage.created_at).offset((page - 1) * page_size).limit(page_size)
     ).scalars().all()
     counts = _wiki_child_counts(db, kb_id)
-    page_counts = _wiki_page_counts(db, kb_id)
+    page_counts = _wiki_page_counts(db, kb_id, page_types)
     totals = _subtree_file_totals(db, kb_id, WikiFolder, page_counts)
-    return {
-        "kb_id": kb_id,
-        "folder_id": fid,
-        "folders": [
+    folder_items = []
+    for f in folders:
+        # 按类型过滤时，子树内没有匹配页的目录直接隐藏（否则聚类 Tab 下满是空目录）
+        if page_types and totals.get(f.id, 0) <= 0:
+            continue
+        folder_items.append(
             {
                 "id": f.id,
                 "name": f.name,
@@ -1374,8 +1392,11 @@ def wiki_branch(
                 "page_count": page_counts.get(f.id, 0),
                 "page_total": totals.get(f.id, 0),
             }
-            for f in folders
-        ],
+        )
+    return {
+        "kb_id": kb_id,
+        "folder_id": fid,
+        "folders": folder_items,
         "pages": [
             {
                 "id": p.id,

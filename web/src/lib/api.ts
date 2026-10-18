@@ -682,12 +682,20 @@ export interface WikiBranchData {
 }
 
 /** 懒加载目录分支（对齐 WeKnora 侧栏按需展开）；folderId='' 表示根级 */
-export function apiWikiBranch(kbId: string, folderId = "", page = 1, pageSize = 50) {
+export function apiWikiBranch(
+  kbId: string,
+  folderId = "",
+  page = 1,
+  pageSize = 50,
+  pageTypes?: string[],
+) {
   const params = new URLSearchParams({
     folder_id: folderId,
     page: String(page),
     page_size: String(pageSize),
   });
+  // 2026-10-18：wiki 详情分「原始文档 Wiki / 聚类知识 Wiki」两个 Tab，按 page_type 过滤
+  if (pageTypes && pageTypes.length) params.set("page_types", pageTypes.join(","));
   return request<WikiBranchData>(`/api/v1/kbs/${encodeURIComponent(kbId)}/wiki/branch?${params.toString()}`);
 }
 

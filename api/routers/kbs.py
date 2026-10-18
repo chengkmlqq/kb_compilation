@@ -1407,13 +1407,18 @@ def get_wiki_branch(
     folder_id: str = "",
     page: int = Query(1, ge=1),
     page_size: int = 50,
+    page_types: str = "",
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    """懒加载目录分支（对齐 WeKnora 侧栏）：folder_id='' 返回根级直接子项，展开时按 folder 取。"""
+    """懒加载目录分支（对齐 WeKnora 侧栏）：folder_id='' 返回根级直接子项，展开时按 folder 取。
+
+    page_types：逗号分隔的 page_type 白名单，用于「原始文档 Wiki / 聚类知识 Wiki」Tab 过滤。
+    """
     _kb_visible(kb_id, caller, db)
     page_size = min(max(page_size, 1), 200)
-    data = wiki_branch(db, kb_id, folder_id or "", max(page, 1), page_size)
+    types = [t.strip() for t in page_types.split(",") if t.strip()]
+    data = wiki_branch(db, kb_id, folder_id or "", max(page, 1), page_size, types or None)
     return {"success": True, "data": data}
 
 
