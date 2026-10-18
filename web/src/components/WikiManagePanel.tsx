@@ -40,6 +40,10 @@ import {
 } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 import {
+  WIKI_PAGE_TYPE_LABELS as TYPE_LABEL,
+  WIKI_PAGE_TYPE_TAG_COLORS as TYPE_COLOR,
+} from "@/lib/wikiTypes";
+import {
   apiWikiCreateFolder,
   apiWikiCreatePage,
   apiWikiDeleteFolder,
@@ -96,17 +100,7 @@ const ACTION_COLOR: Record<string, string> = {
   rebuild_links: "cyan",
 };
 
-const TYPE_LABEL: Record<string, string> = {
-  entity: "实体",
-  concept: "概念",
-  summary: "摘要",
-};
 
-const TYPE_COLOR: Record<string, string> = {
-  entity: "purple",
-  concept: "blue",
-  summary: "gold",
-};
 
 export default function WikiManagePanel({ kbId }: { kbId: string }) {
   const { message } = App.useApp();
@@ -439,8 +433,8 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
             {
               title: "类型",
               dataIndex: "page_type",
-              width: 90,
-              render: (v: string) => <Tag>{v}</Tag>,
+              width: 110,
+              render: (v: string) => <Tag color={TYPE_COLOR[v] || "default"}>{TYPE_LABEL[v] || v}</Tag>,
             },
             {
               title: "目录",

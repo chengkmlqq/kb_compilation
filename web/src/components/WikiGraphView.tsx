@@ -57,6 +57,7 @@ import {
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { WIKI_PAGE_TYPE_LABELS as PAGE_TYPE_LABELS } from "@/lib/wikiTypes";
 
 const { Text } = Typography;
 
@@ -89,20 +90,6 @@ const PAGE_TYPE_COLORS: Record<string, string> = {
   cross_document_insight: "#ec4899",
 };
 
-const PAGE_TYPE_LABELS: Record<string, string> = {
-  summary: "摘要",
-  entity: "实体",
-  concept: "概念",
-  synthesis: "综合",
-  comparison: "对比",
-  business_ontology: "业务本体",
-  rule_ontology: "规则本体",
-  original_sentence: "原句",
-  frequent_keyword: "高频关键词",
-  topic_cluster: "主题簇",
-  knowledge_graph_summary: "图谱摘要",
-  cross_document_insight: "跨文档洞察",
-};
 
 const TYPE_ORDER = Object.keys(PAGE_TYPE_COLORS);
 

@@ -22,6 +22,10 @@ import { useParams, useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
+  WIKI_PAGE_TYPE_TAG_COLORS as TYPE_COLOR,
+  wikiTypeLabel,
+} from "@/lib/wikiTypes";
+import {
   apiWikiListFeedback,
   apiWikiPage,
   apiWikiSubmitFeedback,
@@ -30,11 +34,6 @@ import {
   WikiPageDetail,
 } from "@/lib/api";
 
-const TYPE_COLOR: Record<string, string> = {
-  entity: "purple",
-  concept: "blue",
-  summary: "gold",
-};
 
 // 把内容里的 [[slug]] 双链转成 markdown 链接（渲染成可点击的 wiki 页跳转）
 // 转义已有 markdown 链接避免破坏，且只处理未被 [](...) 包裹的双链
@@ -199,7 +198,7 @@ export default function WikiPageDetailPage() {
               <Typography.Title level={3} style={{ margin: 0 }}>
                 {page.title}
               </Typography.Title>
-              <Tag color={TYPE_COLOR[page.page_type] || "default"}>{page.page_type}</Tag>
+              <Tag color={TYPE_COLOR[page.page_type] || "default"}>{wikiTypeLabel(page.page_type)}</Tag>
             </Space>
             <Space>
               <Button size="small" icon={<EditOutlined />} onClick={openEdit}>

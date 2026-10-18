@@ -55,6 +55,7 @@ import {
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { WIKI_PAGE_TYPE_LABELS as TYPE_LABEL } from "@/lib/wikiTypes";
 import {
   apiWikiBranch,
   apiWikiFolders,
@@ -71,16 +72,6 @@ import {
 } from "@/lib/api";
 
 /** page_type → 中文标签（对齐 WeKnora getTypeLabel） */
-const TYPE_LABEL: Record<string, string> = {
-  entity: "实体",
-  concept: "概念",
-  synthesis: "综合",
-  comparison: "对比",
-  summary: "摘要",
-  topic_cluster: "主题聚类",
-  knowledge_graph_summary: "图谱摘要",
-  cross_document_insight: "跨文档洞察",
-};
 
 /** page_type → antd Tag 颜色 */
 const TYPE_COLOR: Record<string, string> = {
