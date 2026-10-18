@@ -1030,9 +1030,44 @@ def tool_call(name, arguments, timeout=None):
 
 
 def _list_wiki_pages(kb, args):
-    """分页拉取 wiki 页面并补齐 content。平台 /wiki 全量无正文 → 逐页 GET 补齐（缓存）。"""
+    """分页拉取 wiki 页面并补齐 content。平台 /wiki 全量无正文 → 逐页 GET 补齐（缓存）。
+
+    直连模式（KB_INTERNAL_DIRECT=1）：一次 SQL 分页直取（含 content），绕开
+    GET /wiki → wiki_tree 的全库 20911 页全量加载卡死（2026-10-18 实测 n11 卡根因）。
+    """
     page = max(1, int(args.get('page', 1)))
     ps = int(args.get('page_size', 200))
+    if _DIRECT:
+        from api.db import get_sessionmaker
+        from sqlalchemy import text as _t
+
+        db = get_sessionmaker()()
+        try:
+            total = db.execute(
+                _t("SELECT COUNT(*) FROM wiki_page WHERE kb_id=:k AND status='active'"),
+                {"k": kb},
+            ).scalar() or 0
+            rows = db.execute(
+                _t("SELECT slug, title, page_type, folder_id, summary, content, source_refs "
+                   "FROM wiki_page WHERE kb_id=:k AND status='active' "
+                   "ORDER BY id LIMIT :n OFFSET :o"),
+                {"k": kb, "n": ps, "o": (page - 1) * ps},
+            ).fetchall()
+            out = []
+            for slug, title, ptype, fid, summary, content, srefs in rows:
+                out.append({
+                    "slug": _script_slug(slug),
+                    "title": title,
+                    "page_type": ptype,
+                    "folder_id": fid or "",
+                    "summary": summary or "",
+                    "content": content or "",
+                    "source_refs": srefs or [],
+                    "status": "active",
+                })
+            return {"pages": out, "total": total}
+        finally:
+            db.close()
     r = api_get(f'/api/v1/kbs/{kb}/wiki')
     all_pages = (r.get('data') or {}).get('pages') or []
     start = (page - 1) * ps
