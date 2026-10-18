@@ -299,6 +299,8 @@ def wiki_publish(cfg: dict[str, Any]) -> dict[str, Any]:
     with_kid = cfg.get("slug_with_kid_prefix", True)
     title_field = cfg.get("title_field") or "title"
     sref = cfg.get("source_ref")
+    # 2026-10-18：聚类知识页来自多篇文档，支持从记录里取列表字段作为 source_refs
+    srefs_field = cfg.get("source_refs_field")
     status = cfg.get("status") or "published"
     content_tpl = cfg.get("content_template")
     content_field = cfg.get("content_field")
@@ -352,7 +354,11 @@ def wiki_publish(cfg: dict[str, Any]) -> dict[str, Any]:
         exists = not (isinstance(r, dict) and r.get("error"))
         kw = {"slug": slug, "title": title, "content": content,
               "folder_id": folder_id, "page_type": page_type}
-        if sref:
+        if srefs_field:
+            _refs = rec.get(srefs_field)
+            if isinstance(_refs, list) and _refs:
+                kw["source_refs"] = [str(x) for x in _refs]
+        elif sref:
             kw["source_refs"] = [sref]
         try:
             if exists:
