@@ -2236,13 +2236,13 @@ function AssistantThink({
 }) {
   const [thinkVisible, setThinkVisible] = useState(true);
   const [thinkEnded, setThinkEnded] = useState(false);
-  // DSB：isThinkEnd 变 true（agent_message 开始）自动收起思考区
+  // 2026-10-20 对齐 WeKnora AgentStreamDisplay：思考结束不自动收起——
+  // 打字机追平后保持展开，用户可点击 think-btn 折叠/展开回顾完整思考过程。
+  // （旧行为：流结束瞬间 thinkEnded→setThinkVisible(false)，思考区刚出现就被
+  // 折叠，TypewriterText 追平未完成，用户几乎看不到思考内容。）
   useEffect(() => {
     if (!streaming && !thinkEnded) setThinkEnded(true);
   }, [streaming, thinkEnded]);
-  useEffect(() => {
-    if (thinkEnded && thinkVisible) setThinkVisible(false);
-  }, [thinkEnded]);
 
   return (
     <div className="kb-chat-answer">
