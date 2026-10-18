@@ -100,6 +100,31 @@ def test_chat_client_serializes_images_as_content_array(monkeypatch):
     assert captured2["json"]["messages"][0]["content"] == "hi"
 
 
+def test_chat_client_thinking_payload_propagation(monkeypatch):
+    """2026-10-20 深度思考：thinking=True/False 写入请求 payload，None 不写。
+
+    非 Agent 问答（qa.py）与 Agent 模式（agents.py）都经 answer_question
+    透传 thinking 到 stream_events，此用例锁住 wire 层的三态语义。
+    """
+    captured: dict = {}
+
+    def _mk_client():
+        _fake_httpx(monkeypatch, captured)
+        return ChatClient(ChatConfig(base_url="https://x/v1", api_key="", model="m"))
+
+    # True -> {"type": "enabled"}
+    list(_mk_client().stream_events([ChatMessage(role="user", content="hi")], thinking=True))
+    assert captured["json"]["thinking"] == {"type": "enabled"}
+
+    # False -> {"type": "disabled"}
+    list(_mk_client().stream_events([ChatMessage(role="user", content="hi")], thinking=False))
+    assert captured["json"]["thinking"] == {"type": "disabled"}
+
+    # None -> 不写字段（沿用网关默认）
+    list(_mk_client().stream_events([ChatMessage(role="user", content="hi")]))
+    assert "thinking" not in captured["json"]
+
+
 def test_chat_client_thinking_payload(monkeypatch):
     captured: dict = {}
     _fake_httpx(monkeypatch, captured)
@@ -107,6 +132,11 @@ def test_chat_client_thinking_payload(monkeypatch):
     list(client.stream_events([ChatMessage(role="user", content="hi")], thinking=True, top_p=0.9))
     assert captured["json"]["thinking"] == {"type": "enabled"}
     assert captured["json"]["top_p"] == 0.9
+    # False -> {"type": "disabled"}（2026-10-20 深度思考显式关闭）
+    captured_false: dict = {}
+    _fake_httpx(monkeypatch, captured_false)
+    list(client.stream_events([ChatMessage(role="user", content="hi")], thinking=False))
+    assert captured_false["json"]["thinking"] == {"type": "disabled"}
     # None thinking/top_p are omitted
     captured2: dict = {}
     _fake_httpx(monkeypatch, captured2)

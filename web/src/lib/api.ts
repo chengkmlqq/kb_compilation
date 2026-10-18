@@ -2552,6 +2552,8 @@ export interface ChatSessionItem {
     kb_id?: string | null;
     model_id?: string | null;
     web_search_enabled?: boolean;
+    /** 2026-10-20 深度思考开关（会话输入态快照） */
+    thinking?: boolean;
     at_target?: { kind: "kb" | "agent"; id: string; name: string } | null;
   } | null;
   created_at: string;

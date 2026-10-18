@@ -109,6 +109,8 @@ class AgentQARequest(BaseModel):
     model_id: str | None = None
     # 2026-10-12 对齐 WeKnora 输入区联网开关：请求级显式开关（None=跟随 agent 配置）
     web_search_enabled: bool | None = None
+    # 2026-10-20 深度思考：请求级显式开启 thinking（与 qa.py QARequest.thinking 同语义）
+    thinking: bool | None = None
     # 2026-10-18 对齐 WeKnora「图片仅随当轮请求注入」：本轮上传的图片附件 id。
     # None（未传）= 回落会话级全部图片；[]= 本轮无图。
     image_attachment_ids: list[str] | None = None
@@ -456,6 +458,7 @@ def agent_qa_stream(
                     is_sys_admin=ctx_is_admin,
                     tools=per_kb_tools or None,
                     tool_executor=per_kb_executor,
+                    thinking=req.thinking,  # 2026-10-20 深度思考开关（None=跟随 agent 配置）
                     max_tool_iterations=per_kb_iterations,
                 ):
                     event["kb_id"] = kb.id

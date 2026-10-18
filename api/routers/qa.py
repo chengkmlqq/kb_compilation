@@ -71,6 +71,9 @@ class QARequest(BaseModel):
     model_id: str | None = None
     # 2026-10-12 对齐 WeKnora 输入区联网开关：请求级开启联网搜索（注入 web_search 工具）
     web_search_enabled: bool = False
+    # 2026-10-20 深度思考：请求级显式开启 thinking（reasoning_content 流式透出）。
+    # None/不传 = 沿用网关默认（不发 thinking 参数），True = 显式 enabled，False = disabled。
+    thinking: bool | None = None
     # 2026-10-18 对齐 WeKnora「图片仅随当轮请求注入」：本轮上传的图片附件 id。
     # None（旧客户端未传）= 回落会话级全部图片；[]= 本轮无图。
     image_attachment_ids: list[str] | None = None
@@ -327,6 +330,7 @@ def _run_generation(
                 chat_cfg=requested_cfg if req.model_id else None,  # 2026-10-06: 指定模型时复用解析结果
                 tools=ws_tools or None,
                 tool_executor=ws_executor,
+                thinking=req.thinking,  # 2026-10-20 深度思考开关（None=网关默认）
                 max_tool_iterations=3,
             ):
                 if event.get("type") == "context":

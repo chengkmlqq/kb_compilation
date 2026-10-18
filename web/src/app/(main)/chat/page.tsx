@@ -155,6 +155,8 @@ export default function ChatPage() {
   const kbBtnRef = useRef<HTMLButtonElement | null>(null);
   // 2026-10-12 对齐 WeKnora 输入区联网搜索开关（普通问答/agent 模式通用，请求级生效）
   const [webSearch, setWebSearch] = useState(false);
+  // 2026-10-20 深度思考开关（请求级 thinking 透传；模型支持 reasoning_content 时流式打印思考过程）
+  const [deepThinking, setDeepThinking] = useState(false);
   // 2026-10-12 对齐 WeKnora embeddedMode：iframe 嵌入 / ?embed=1 / ?noframe=1 时
   // 隐藏左侧会话列表，问答区满宽沉浸式展示（宿主页面嵌入问答小窗场景）
   const [embeddedMode, setEmbeddedMode] = useState(false);
@@ -357,9 +359,10 @@ export default function ChatPage() {
       kb_id: kbId || null,
       model_id: modelId || null,
       web_search_enabled: webSearch,
+      thinking: deepThinking, // 2026-10-20 深度思考开关随会话快照恢复
       at_target: atTarget,
     }),
-    [agentMode, kbId, modelId, webSearch, atTarget],
+    [agentMode, kbId, modelId, webSearch, deepThinking, atTarget],
   );
 
   // 打开会话：加载历史 + 推荐问题
@@ -393,6 +396,7 @@ export default function ChatPage() {
           if (st.agent_id) setAgentMode(st.agent_id);
           if (st.model_id) setModelId(st.model_id);
           if (st.web_search_enabled != null) setWebSearch(!!st.web_search_enabled);
+          if (st.thinking != null) setDeepThinking(!!st.thinking); // 2026-10-20 深度思考快照
           if (st.at_target) setAtTarget(st.at_target);
           else setAtTarget(null);
         }
@@ -712,6 +716,7 @@ export default function ChatPage() {
           embed_query: true,
           model_id: modelId || undefined, // 2026-10-06: 模型切换（空=默认模型）
           web_search_enabled: webSearch, // 2026-10-12 对齐 WeKnora 输入区联网开关
+          thinking: deepThinking || undefined, // 2026-10-20 深度思考（空=网关默认）
           // 2026-10-18 对齐 WeKnora 图片仅随当轮注入：本轮图片附件 id（[]=本轮无图）
           image_attachment_ids: turnImageIds,
         }),
@@ -1719,6 +1724,21 @@ export default function ChatPage() {
                 <GlobalOutlined />
               </button>
             )}
+            {/* 2026-10-20 深度思考开关：开启后请求级透传 thinking，模型支持
+                reasoning_content 时思考过程流式打印（非 Agent/Agent 均生效） */}
+            <button
+              type="button"
+              className={`kb-chat-input-icon-btn${deepThinking ? " active" : ""}`}
+              title={
+                deepThinking
+                  ? "深度思考已开启：回答前先流式展示推理过程"
+                  : "深度思考已关闭（开启后先展示推理过程再回答）"
+              }
+              aria-pressed={deepThinking}
+              onClick={() => setDeepThinking((v) => !v)}
+            >
+              <BulbOutlined />
+            </button>
             {canUploadImage && (
               <button
                 type="button"

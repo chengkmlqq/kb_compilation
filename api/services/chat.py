@@ -648,6 +648,7 @@ def answer_question(
     is_sys_admin: bool = False,
     tools: list[dict] | None = None,
     tool_executor: Callable[[dict], str] | None = None,
+    thinking: bool | None = None,
     max_tool_iterations: int = 3,
 ) -> Iterator[dict]:
     """Full RAG QA stream: retrieve -> build messages -> stream deltas.
@@ -773,7 +774,7 @@ def answer_question(
     # 无工具：与接入前逐字一致的单轮流式
     if not tools:
         yield {"type": "stage", "stage": "generation", "status": "running", "title": "正在生成回答…"}
-        yield from _stream_once(client, messages, usage_ctx)
+        yield from _stream_once(client, messages, usage_ctx, thinking=thinking)
         # 2026-10-12: 此前只发 running 从不发 done，前端步骤树的
         # 「正在生成回答…」永远转 loading（收到回复后仍显示）。结束补发 done。
         yield {"type": "stage", "stage": "generation", "status": "done", "title": "回答完成"}
@@ -788,7 +789,7 @@ def answer_question(
             "status": "running",
             "title": f"正在生成回答…（第 {round_idx + 1} 轮）" if round_idx > 0 else "正在生成回答…",
         }
-        for ev in client.stream_events(messages, tools=tools, usage_ctx=usage_ctx):
+        for ev in client.stream_events(messages, tools=tools, usage_ctx=usage_ctx, thinking=thinking):
             etype = ev.get("type")
             if etype == "tool_call":
                 tool_calls.append(ev)
@@ -850,8 +851,8 @@ def answer_question(
     yield {"type": "stage", "stage": "generation", "status": "done", "title": "回答完成"}
 
 
-def _stream_once(client: ChatClient, messages: list[ChatMessage], usage_ctx: dict | None = None) -> Iterator[dict]:
+def _stream_once(client: ChatClient, messages: list[ChatMessage], usage_ctx: dict | None = None, thinking: bool | None = None) -> Iterator[dict]:
     """单轮流式：只透传 delta / thinking（done 由 answer_question 之前的循环收尾）。"""
-    for ev in client.stream_events(messages, usage_ctx=usage_ctx):
+    for ev in client.stream_events(messages, usage_ctx=usage_ctx, thinking=thinking):
         if ev.get("type") in ("delta", "thinking"):
             yield ev
