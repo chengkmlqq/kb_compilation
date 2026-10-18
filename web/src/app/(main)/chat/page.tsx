@@ -274,7 +274,8 @@ export default function ChatPage() {
       if (res.success) {
         const items = res.data?.items || [];
         setKbs(items);
-        if (items.length > 0 && !kbId) setKbId(items[0].id);
+        // 2026-10-20 对齐 DSB 门户问答（DataSupplyPortalRecordNew）：默认不自动选中任何知识库，
+        // 保持空选择，由用户手动选择；会话打开时由会话绑定/输入态快照恢复。
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -620,6 +621,12 @@ export default function ChatPage() {
     // @提及：本条消息级目标覆盖（kb / agent），未提及则沿用顶部选择
     const effectiveKbId = atTarget?.kind === "kb" ? atTarget.id : kbId;
     const effectiveAgent = atTarget?.kind === "agent" ? atTarget.id : agentMode;
+    // 2026-10-20 对齐 DSB 门户问答（反思模式）：深度思考需至少选一个知识库或上传附件，
+    // 空选择时拦截并提示（普通问答仍走纯 LLM 对话）
+    if (deepThinking && !effectiveKbId && attachments.length === 0) {
+      toast.warning("深度思考需要至少选择一个知识库或上传文档附件");
+      return;
+    }
     // 2026-10-15 纯对话模式：知识库与智能体都未选择时直接走纯 LLM 对话（不再拦截）
     const userMsg: UiMessage = {
       id: `local-user-${Date.now()}`,
