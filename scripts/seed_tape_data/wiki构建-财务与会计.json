@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T16:48:00.443140",
+ "exportedAt": "2026-10-18T02:29:09.281169",
  "draft": {
   "tapeName": "wiki构建-财务与会计",
   "tapeLabel": "财务与会计文档转wiki（编排化全链路）",

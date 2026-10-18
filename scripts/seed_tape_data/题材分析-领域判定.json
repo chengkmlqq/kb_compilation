@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T16:48:00.481902",
+ "exportedAt": "2026-10-18T02:29:09.325047",
  "draft": {
   "tapeName": "题材分析-领域判定",
   "tapeLabel": "题材分析（自动选择领域构建编排）",

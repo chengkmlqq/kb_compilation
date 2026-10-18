@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T16:48:00.476664",
+ "exportedAt": "2026-10-18T02:29:09.317356",
  "draft": {
   "tapeName": "摘要-Stuff（全文直塞）",
   "tapeLabel": "文档摘要（Stuff：全文一次直塞 LLM，适合中小文档）",

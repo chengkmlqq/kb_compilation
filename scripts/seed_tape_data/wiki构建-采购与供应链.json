@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T16:48:00.454536",
+ "exportedAt": "2026-10-18T02:29:09.293451",
  "draft": {
   "tapeName": "wiki构建-采购与供应链",
   "tapeLabel": "采购与供应链文档转wiki（编排化全链路）",

@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T16:48:00.437446",
+ "exportedAt": "2026-10-18T02:29:09.274962",
  "draft": {
   "tapeName": "wiki构建-行业监管与公共政策",
   "tapeLabel": "行业监管与公共政策文档转wiki（编排化全链路）",

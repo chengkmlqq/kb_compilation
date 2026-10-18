@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T16:48:00.383107",
+ "exportedAt": "2026-10-18T02:29:09.217338",
  "draft": {
   "tapeName": "wiki构建-培训与教育",
   "tapeLabel": "培训与教育文档转wiki（编排化全链路）",

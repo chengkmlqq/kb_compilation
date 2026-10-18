@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T16:48:00.417967",
+ "exportedAt": "2026-10-18T02:29:09.256001",
  "draft": {
   "tapeName": "wiki构建-物流与仓储",
   "tapeLabel": "物流与仓储文档转wiki（编排化全链路）",

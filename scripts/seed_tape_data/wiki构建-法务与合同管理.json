@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T16:48:00.411459",
+ "exportedAt": "2026-10-18T02:29:09.249503",
  "draft": {
   "tapeName": "wiki构建-法务与合同管理",
   "tapeLabel": "法务与合同管理文档转wiki（编排化全链路）",

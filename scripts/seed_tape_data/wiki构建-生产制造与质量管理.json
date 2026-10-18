@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T16:48:00.424370",
+ "exportedAt": "2026-10-18T02:29:09.262353",
  "draft": {
   "tapeName": "wiki构建-生产制造与质量管理",
   "tapeLabel": "生产制造与质量管理文档转wiki（编排化全链路）",

@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T16:48:00.479033",
+ "exportedAt": "2026-10-18T02:29:09.321874",
  "draft": {
   "tapeName": "质量评估-QA",
   "tapeLabel": "文档构建质量评估（切片/wiki/图数据三维度）",

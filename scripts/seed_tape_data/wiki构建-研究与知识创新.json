@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T16:48:00.431039",
+ "exportedAt": "2026-10-18T02:29:09.268738",
  "draft": {
   "tapeName": "wiki构建-研究与知识创新",
   "tapeLabel": "研究与知识创新文档转wiki（编排化全链路）",

@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T16:48:00.448871",
+ "exportedAt": "2026-10-18T02:29:09.287233",
  "draft": {
   "tapeName": "wiki构建-通用办公与综合管理",
   "tapeLabel": "通用办公与综合管理文档转wiki（编排化全链路）",

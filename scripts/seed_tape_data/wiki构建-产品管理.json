@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T16:48:00.359946",
+ "exportedAt": "2026-10-18T02:29:09.190527",
  "draft": {
   "tapeName": "wiki构建-产品管理",
   "tapeLabel": "产品管理文档转wiki（编排化全链路）",
