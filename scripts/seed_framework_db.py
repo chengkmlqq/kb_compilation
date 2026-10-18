@@ -2524,6 +2524,9 @@ def _seed_summary_tapes(db) -> None:
     from api.services.orchestration import save_tape_design
 
     for i, (name, label, descr, tape_dict) in enumerate(tapes, start=10):
+        if name in SKIP_SEED:
+            print(f"[seed-tapes] 编排「{name}」属按需应用（apply_code_repo_tape.py），跳过播种")
+            continue
         existing = db.execute(select(Tape).where(Tape.tape_name == name)).scalars().first()
         if existing:
             print(f"[{i}/12] 种子编排「{name}」已存在 (skip)")
@@ -2653,6 +2656,10 @@ def _seed_tapes_from_exports(db) -> None:
         print("[seed-tapes] 无 seed_tape_data/ 目录，跳过编排种子")
         return
     files = sorted(data_dir.glob("*.json"))
+    # 2026-10-18：这些种子文件不参与自动播种。
+    #   wiki构建-代码仓库：DB 里没有该编排，文件仅供 scripts/apply_code_repo_tape.py
+    #   在需要时手动应用（代码仓库知识库专用），播种会自动建出不该有的空壳编排。
+    SKIP_SEED = {"wiki构建-代码仓库"}
     created = skipped = 0
     resolve_tape_id = ""
     for fp in files:
