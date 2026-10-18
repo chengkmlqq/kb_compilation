@@ -1371,8 +1371,19 @@ export default function ChatPage() {
                   </div>
                 ) : (
                 <div className="kb-chat-assistant">
-                    {/* 2026-10-16 DSB 对齐：RAG 步骤树/工具卡移除，思考折叠为 think-btn + think-view */}
-                    {m.thinking ? (
+                    {/* 2026-10-20 对齐 WeKnora AgentStreamDisplay：智能体模式的
+                        思考过程 + 工具调用按 action-card 时间线展示在答案之前
+                        （thinking 卡 → 工具卡 → 正文；普通问答无工具事件不受影响） */}
+                    {m.agent && m.thinking ? (
+                      <AgentThinkingRow thinking={m.thinking} streaming={!!m.streaming} />
+                    ) : null}
+                    {m.toolEvents && m.toolEvents.length > 0 ? (
+                      <AgentToolCalls events={m.toolEvents} />
+                    ) : null}
+                    {/* 2026-10-16 DSB 对齐：RAG 步骤树/工具卡移除，思考折叠为 think-btn + think-view
+                        2026-10-20：智能体模式（m.agent）的思考已在顶部 AgentThinkingRow 展示，
+                        这里只渲染正文；普通问答才用 AssistantThink（思考折叠条 + 正文一体） */}
+                    {!m.agent && m.thinking ? (
                       <AssistantThink
                         thinking={m.thinking}
                         streaming={!!m.streaming}
