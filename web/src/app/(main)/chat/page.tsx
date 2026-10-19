@@ -85,6 +85,7 @@ import MarkdownViewer from "@/components/MarkdownViewer";
 import TypewriterText from "@/components/TypewriterText";
 import { RagStep } from "@/components/RagPipelineProgress";
 import AgentToolCalls, { ToolCallEvent } from "@/components/AgentToolCalls";
+import { FolderIcon } from "@/components/kb/KbsIcons";
 import { copyText } from "@/lib/clipboard";
 
 const { Text } = Typography;
@@ -1893,31 +1894,39 @@ export default function ChatPage() {
           </div>
           <div className="kb-chat-kb-selector-layout">
             <div className="kb-chat-kb-selector-tree">
+              {/* 根节点「全部」：一级 600 字重 + 常显文件夹图标（对齐 DSB 文档库左树，同 kbs 页分类树） */}
               <div
-                className="kb-kbs-tree-node"
+                className={`kb-doc-tree-row kb-doc-tree-row--root${
+                  kbCategory === "all" ? " active" : ""
+                }`}
+                style={{ paddingLeft: 8 }}
                 onClick={() => setKbCategory("all")}
                 title="全部"
               >
-                <span className="kb-kbs-tree-indent" aria-hidden="true" />
-                <span className="kb-kbs-tree-switcher" />
-                <span className={`kb-kbs-tree-title${kbCategory === "all" ? " active" : ""}`}>
-                  全部
+                <span className="kb-doc-tree-icon">
+                  <span className="kb-doc-tree-node-icon kb-doc-tree-node-icon--visible">
+                    <FolderIcon />
+                  </span>
                 </span>
+                <span className="kb-doc-tree-title">全部</span>
+                {kbs.length > 0 && <span className="kb-doc-tree-count">{kbs.length}</span>}
               </div>
               {categories.map((c) => (
                 <div
                   key={c.name}
-                  className="kb-kbs-tree-node"
+                  className={`kb-doc-tree-row${kbCategory === c.name ? " active" : ""}`}
+                  style={{ paddingLeft: 20 }}
                   onClick={() => setKbCategory(c.name)}
                   title={c.name}
                 >
-                  <span className="kb-kbs-tree-indent" aria-hidden="true">
-                    <span className="kb-kbs-tree-indent-block" />
+                  <span className="kb-doc-tree-icon">
+                    {/* 二级分类为叶子节点：图标常显（DSB 叶子节点 .node-icon.visible） */}
+                    <span className="kb-doc-tree-node-icon kb-doc-tree-node-icon--visible">
+                      <FolderIcon />
+                    </span>
                   </span>
-                  <span className="kb-kbs-tree-switcher" />
-                  <span className={`kb-kbs-tree-title${kbCategory === c.name ? " active" : ""}`}>
-                    {c.name}
-                  </span>
+                  <span className="kb-doc-tree-title">{c.name}</span>
+                  {c.count > 0 && <span className="kb-doc-tree-count">{c.count}</span>}
                 </div>
               ))}
             </div>
