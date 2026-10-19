@@ -55,6 +55,9 @@ class ChunkHit:
     # 文档文件名（kb_document.file_name）——引用胶囊的显示名，对齐 WeKnora
     # 的 <kb doc="文件名"/>：模型看不到 UUID，只能拿到可读文件名。
     document_title: str = ""
+    # 2026-10-20 向量臂原始余弦相似度（融合后 score 被 RRF 分覆盖，保留此字段
+    # 做统一的相关性门槛；关键词-only 命中为 None）。0-1，越高越相关。
+    vector_score: float | None = None
 
 
 @dataclass
@@ -63,6 +66,10 @@ class RetrievalConfig:
 
     top_k: int = 10
     threshold: float = 0.2  # similarity threshold -> distance cutoff 1 - threshold
+    # 2026-10-20 向量弱命中门槛：向量得分低于该值且无关键词背书的命中不进
+    # 上下文（寒暄/无关问题的低相似度命中不再被引用）。None/<=0 关闭。
+    # 可经全局 RETRIEVAL_CONFIG 或 KB 策略覆盖调参。
+    weak_hit_cutoff: float | None = 0.55
     rrf_k: int = DEFAULT_RRF_K
     vector_weight: float = DEFAULT_VECTOR_WEIGHT
     keyword_weight: float = DEFAULT_KEYWORD_WEIGHT
@@ -167,6 +174,7 @@ def vector_search(
                 kb_id=kb_id,
                 score=hit.score,
                 vector_rank=rank,
+                vector_score=hit.score,  # 2026-10-20 保留原始余弦分供弱命中过滤
             )
         )
     return out
@@ -441,6 +449,33 @@ def _fill_document_titles(db: Session, hits: list[ChunkHit]) -> None:
             h.document_title = titles.get(h.document_id, "")
 
 
+def _filter_weak_hits(hits: list[ChunkHit], cfg: RetrievalConfig) -> list[ChunkHit]:
+    """2026-10-20 检索结果相关性过滤（在 hydrate 之后、返回之前）。
+
+    两层：
+    1. 脏引用：content/document_id 为空（幽灵 chunk，业务库查不到）一律丢弃——
+       否则向量臂命中幽灵 id 会以「空内容引用」形式进上下文（曾实踩）。
+    2. 向量弱命中：vector_score 低于 weak_hit_cutoff 且无关键词背书的命中丢弃
+       （寒暄/无关问题的低相似度命中不再被引用）。关键词命中的字面词即相关性
+       背书，不受此门槛限制；关键词-only 命中 vector_score=None 天然豁免。
+    """
+    cutoff = cfg.weak_hit_cutoff
+    out: list[ChunkHit] = []
+    for h in hits:
+        if not (h.content or "").strip() or not (h.document_id or ""):
+            continue
+        if (
+            cutoff is not None
+            and cutoff > 0
+            and h.vector_score is not None
+            and h.vector_score < cutoff
+            and h.keyword_rank is None
+        ):
+            continue
+        out.append(h)
+    return out
+
+
 def hybrid_search(
     db: Session,
     kb_id: str,
@@ -470,7 +505,9 @@ def hybrid_search(
         keyword_hits = keyword_search(db, kb_id, query, cfg)
 
     fused = fuse_rrf(vector_hits, keyword_hits, cfg)
-    return hydrate_metadata(db, fused)
+    hydrated = hydrate_metadata(db, fused)
+    # 2026-10-20 相关性过滤：幽灵空引用 + 向量弱命中（寒暄问题不再引用无关片段）
+    return _filter_weak_hits(hydrated, cfg)
 
 
 def search_knowledge_base(

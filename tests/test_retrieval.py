@@ -12,6 +12,7 @@ import pytest
 from api.services.retrieval import (
     ChunkHit,
     RetrievalConfig,
+    _filter_weak_hits,
     fuse_rrf,
     hybrid_search,
 )
@@ -78,6 +79,51 @@ def test_fuse_rrf_dedup_prefers_vector_meta() -> None:
     result = fuse_rrf([v], [k], cfg)
     assert len(result) == 1
     assert result[0].meta == {"src": "vector"}  # vector metadata wins ties
+
+
+def _weak_hit(chunk_id: str, vec: float | None, krank: int | None = None) -> ChunkHit:
+    h = _hit(chunk_id, 0.5, vrank=1, krank=krank)
+    h.vector_score = vec
+    return h
+
+
+def test_filter_weak_hits_drops_low_vector_no_keyword() -> None:
+    """向量弱命中（< cutoff）且无关键词背书 → 丢弃（寒暄问题不再引用无关片段）。"""
+    cfg = RetrievalConfig(weak_hit_cutoff=0.55)
+    hits = [
+        _weak_hit("low", 0.51),           # 弱向量、无关键词 → 丢
+        _weak_hit("high", 0.58),          # 强向量 → 保留
+        _weak_hit("kw_backed", 0.49, krank=2),  # 弱向量但有关键词背书 → 保留
+        _weak_hit("kw_only", None),       # 关键词-only（vector_score=None）→ 保留
+    ]
+    kept = [h.chunk_id for h in _filter_weak_hits(hits, cfg)]
+    assert kept == ["high", "kw_backed", "kw_only"]
+
+
+def test_filter_weak_hits_drops_empty_content_or_doc() -> None:
+    """幽灵 chunk（content/document_id 空）→ 丢弃，不再产生空引用。"""
+    cfg = RetrievalConfig()
+    ghost = _hit("ghost", 0.9, vrank=1)
+    ghost.content = ""
+    ghost.document_id = ""
+    ghost.vector_score = 0.9
+    no_doc = _hit("no_doc", 0.9, vrank=2)
+    no_doc.content = "有内容"
+    no_doc.document_id = ""
+    no_doc.vector_score = 0.9
+    ok = _hit("ok", 0.9, vrank=3)
+    ok.content = "有内容"
+    ok.vector_score = 0.9
+    kept = [h.chunk_id for h in _filter_weak_hits([ghost, no_doc, ok], cfg)]
+    assert kept == ["ok"]
+
+
+def test_filter_weak_hits_cutoff_disabled() -> None:
+    """weak_hit_cutoff = None 关闭弱命中过滤（脏引用过滤仍生效）。"""
+    cfg = RetrievalConfig(weak_hit_cutoff=None)
+    hits = [_weak_hit("low", 0.3)]
+    kept = [h.chunk_id for h in _filter_weak_hits(hits, cfg)]
+    assert kept == ["low"]
 
 
 def test_fuse_rrf_top_k_cap() -> None:

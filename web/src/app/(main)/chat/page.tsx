@@ -2150,6 +2150,9 @@ interface RefGroup {
 export function refGroupCount(refs: ChatRefItem[], activeChunk?: string): RefGroup[] {
   const byTitle = new Map<string, ChatRefItem[]>();
   for (const r of refs || []) {
+    // 2026-10-20 幽灵引用兜底：无文档归属（document_id 空且无源文件名）的
+    // 引用不参与分组/计数——历史消息里残留的脏 ref 不再显示成「第 N 篇文档」。
+    if (!r.document_id && !r.meta?.source_file) continue;
     const title = r.document_title || r.meta?.source_file || "其他";
     const arr = byTitle.get(title) || [];
     arr.push(r);
