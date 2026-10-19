@@ -912,7 +912,45 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
             "Neo4j 图谱清理失败(doc=%s): %s", document_id, exc
         )
 
+    # 6) 任务监控残留清理（2026-10-21 用户反馈：删文档后任务监控仍有任务数据）。
+    #    链头 DOC_{id}（含重解析轮次 DOC_{id}_R2）、其子任务、task_params 含
+    #    该文档的 WIKI/VERIFY 任务、该文档的编排 run 一并删除——文档已删，
+    #    这些任务行失去意义，留在任务监控里是噪音（审计价值 < 页面干净）。
+    try:
+        _cleanup_document_jobs(db, document_id)
+    except Exception:  # noqa: BLE001 - 任务行清理失败不阻断文档删除
+        logging.getLogger(__name__).warning(
+            "任务行清理失败(doc=%s)", document_id, exc_info=True
+        )
+
     return {"success": True, "data": {"id": document_id}}
+
+
+def _cleanup_document_jobs(db: Session, document_id: str) -> None:
+    """删除文档时清理其任务监控记录（链头/子任务/编排 run）。
+
+    2026-10-21 用户反馈「删文档后任务监控还有任务数据残留」——此前只
+    _cancel_related_wiki_tasks 置 STOPPED/failed，任务行全保留，文档已删的
+    历史任务堆积在任务监控页。文档都删了任务行无审计意义，直接删。
+    """
+    from api.models.framework import Job
+    from api.models.orchestration import TapeRun
+
+    # 链头 DOC_{document_id}（含 DOC_{document_id}_R2 轮次）
+    heads = list(
+        db.execute(
+            select(Job.id).where(Job.id.like(f"DOC_{document_id}%"))
+        ).scalars()
+    )
+    if heads:
+        # 子任务（parent_id 指向链头）先删，再删链头
+        db.execute(delete(Job).where(Job.parent_id.in_(heads)))
+        db.execute(delete(Job).where(Job.id.in_(heads)))
+    # task_params 含该文档 id 的其他任务（WIKI_*/VERIFY_* 等）
+    db.execute(delete(Job).where(Job.task_params.like(f"%{document_id}%")))
+    # 该文档的编排 run（含被取消的 failed 残留）
+    db.execute(delete(TapeRun).where(TapeRun.inputs.like(f"%{document_id}%")))
+    db.commit()
 
 
 def _cancel_related_wiki_tasks(db: Session, document_id: str) -> None:
@@ -921,19 +959,63 @@ def _cancel_related_wiki_tasks(db: Session, document_id: str) -> None:
 
     # 2026-10-17：编排化 wiki 构建（kb_tape_run）此前不会被取消 —— 文档删除后
     # run 仍继续执行，切片拉取 0 字 → 切片门禁 failed，任务监控/编排列表留失败记录。
+    # 2026-10-21 追加：仅置 failed 不够 —— 已投递/正在执行的节点任务（run_node）
+    # 不会因 run 状态变化而停止，写页节点照样把 keyword 页写库（实测 43 页孤儿）。
+    # 因此除置 failed 外，还需 revoke 该 run 在途节点的 celery 任务。
     try:
         from sqlalchemy import text as _sql_text
+        from api.models.orchestration import TapeRun
 
-        _n = db.execute(
-            _sql_text(
-                "update kb_tape_run set status = 'failed', "
-                "error = '文档已删除，wiki 构建自动取消', updated_at = now() "
-                "where status in ('queued', 'running') and inputs like :p"
-            ),
-            {"p": f"%{document_id}%"},
-        ).rowcount
+        # 先取该文档关联的 queued/running run（inputs 含 document_id）
+        run_ids = list(
+            db.execute(
+                select(TapeRun.id).where(
+                    TapeRun.status.in_(["queued", "running"]),
+                    TapeRun.inputs.like(f"%{document_id}%"),
+                )
+            ).scalars()
+        )
+        _n = 0
+        if run_ids:
+            _res = db.execute(
+                _sql_text(
+                    "update kb_tape_run set status = 'failed', "
+                    "error = '文档已删除，wiki 构建自动取消', updated_at = now() "
+                    "where id in :ids and status in ('queued', 'running')"
+                ),
+                {"ids": tuple(run_ids)},
+            )
+            _n = getattr(_res, "rowcount", 0) or 0
         if _n:
             logger.info("cancel %s orchestration run(s) for deleted document %s", _n, document_id)
+        # revoke 在途节点任务（terminate=True：杀正在执行的写页节点，防删后写页）
+        if run_ids:
+            _celery = None
+            node_task_id = None
+            try:
+                from worker.celery_app import celery_app as _celery
+                from worker.tasks.orch_runner import node_task_id
+            except Exception:  # noqa: BLE001 - 无 celery 环境时跳过 revoke
+                _celery = None
+                node_task_id = None
+            if _celery is not None and node_task_id is not None:
+                # 在途节点 = step_results 中 status=running 的节点（已投递未结束）；
+                # 未投递节点由 _advance_impl 的 run 状态守卫自然拦住。
+                revoked: list[str] = []
+                for rid in run_ids:
+                    row = db.execute(
+                        select(TapeRun.step_results).where(TapeRun.id == rid)
+                    ).scalar()
+                    for r in (row or []):
+                        if r.get("status") == "running":
+                            revoked.append(node_task_id(rid, str(r.get("step_id") or ""), int(r.get("round") or 0)))
+                for tid in revoked:
+                    try:
+                        _celery.control.revoke(tid, terminate=True)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("revoke node %s failed: %s", tid, exc)
+                if revoked:
+                    logger.info("revoked %d in-flight node(s) for deleted document %s", len(revoked), document_id)
     except Exception:  # noqa: BLE001 - 取消失败不阻断删除
         logger.warning("cancel orchestration runs for document %s failed", document_id, exc_info=True)
 
@@ -2210,12 +2292,54 @@ def _sync_page_folders(db: Session, kb_id: str, page: WikiPage, folder_ids: list
         page.folder_ids = [page.folder_id] if page.folder_id else []
 
 
+def _filter_alive_doc_refs(db: Session, kb_id: str, refs: list) -> list:
+    """过滤 source_refs：剔除引用的文档已被删除的条目。
+
+    平台契约 source_refs 形如 ``{document_id}|{file_name}``。文档删除后编排
+    在途节点仍可能写入该文档的专属页（实测：删完文档后 keyword 页继续落库
+    43 页孤儿）——写页入口统一过本函数，引用文档全已删则返回空列表，
+    调用方据此拒绝写入；部分已删则只保留存活引用（防残留引用死 id）。
+    非 ``document_id|`` 形态的引用不参与校验（历史数据兼容）。
+    """
+    if not refs:
+        return refs
+    doc_ids = {
+        str(r).split("|", 1)[0]
+        for r in refs
+        if isinstance(r, str) and "|" in r and str(r).split("|", 1)[0]
+    }
+    if not doc_ids:
+        return refs
+    alive = set(
+        db.execute(
+            select(KbDocument.id).where(
+                KbDocument.kb_id == kb_id, KbDocument.id.in_(doc_ids)
+            )
+        ).scalars()
+    )
+    kept = [
+        r
+        for r in refs
+        if not (isinstance(r, str) and "|" in r and str(r).split("|", 1)[0] in doc_ids
+                and str(r).split("|", 1)[0] not in alive)
+    ]
+    return kept
+
+
 def wiki_create_page(db: Session, kb_id: str, data: dict, user_id: str | None = None) -> dict:
     """创建 wiki 页面。slug 缺省由 title 生成（保证 kb 内唯一，重复加序号）。"""
     title = str(data.get("title") or "").strip()
     if not title:
         raise ValueError("title 不能为空")
     slug = str(data.get("slug") or "").strip() or slugify(title)
+    # 2026-10-21：删文档后编排在途节点写页兜底——source_refs 引用的文档已全删
+    # 则拒绝写入（否则删文档后仍生成孤儿页，删文档时的级联清理又查不到它）。
+    refs_in = data.get("source_refs") or []
+    if refs_in:
+        refs_alive = _filter_alive_doc_refs(db, kb_id, refs_in)
+        if not refs_alive:
+            raise ValueError("source_refs 引用的文档已删除，跳过写页")
+        data = {**data, "source_refs": refs_alive}
     existing = db.execute(
         select(WikiPage).where(WikiPage.kb_id == kb_id, WikiPage.slug == slug)
     ).scalars().first()

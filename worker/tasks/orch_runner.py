@@ -169,11 +169,19 @@ def _bindings_from_run(run_id: str, env: str | None = None) -> dict:
 def _send_node(run_id: str, sid: str, bindings: dict, round_no: int, queue: str, env: str | None = None) -> None:
     from worker.celery_app import celery_app
 
+    # 固定 task_id（2026-10-21）：删除文档取消编排时能精确 revoke 在途节点任务，
+    # 否则已投递/正在执行的写页节点照跑，删文档后仍生成孤儿 wiki 页。
     celery_app.send_task(
         "worker.tasks.orch_runner.run_node",
         args=[run_id, sid, bindings, round_no, env] if env else [run_id, sid, bindings, round_no],
         queue=queue,
+        task_id=node_task_id(run_id, sid, round_no),
     )
+
+
+def node_task_id(run_id: str, sid: str, round_no: int) -> str:
+    """节点任务的确定性 task_id（与 send_task 同规则生成，供取消编排时 revoke）。"""
+    return f"node_{run_id[:12]}_{sid[-20:]}_{round_no}"
 
 
 def _advance_impl(run_id: str, env: str | None = None) -> None:
