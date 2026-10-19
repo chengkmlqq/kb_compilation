@@ -185,11 +185,15 @@ export const AppSider: React.FC = () => {
   const hasSub = (currentGroup?.children?.length ?? 0) > 0;
   const subItems = hasSub ? (currentGroup!.children ?? []) : [];
 
-  // 一级卡片点击：有子菜单 → 展开第二列；叶子一级（无子菜单）→ 收起第二列（对齐 DSB childMenuHide），有路由则直接跳转
+  // 一级卡片点击：有子菜单 → 展开第二列并自动选中/跳转到第一个二级菜单；
+  // 叶子一级（无子菜单）→ 收起第二列（对齐 DSB childMenuHide），有路由则直接跳转
   const handleGroupClick = (menu: MenuTreeNode) => {
-    const hasChildren = (menu.children?.length ?? 0) > 0;
-    if (hasChildren) {
+    const children = menu.children ?? [];
+    if (children.length > 0) {
       setGroupOverride(menu.menu_id as string);
+      // 有二级菜单时自动选中第一个二级菜单（携带路由则跳转）
+      const first = children[0];
+      if (first?.route) router.push(first.route);
     } else {
       setGroupOverride(null);
       if (menu.route) router.push(menu.route);
