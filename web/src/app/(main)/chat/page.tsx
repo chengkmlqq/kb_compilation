@@ -9,6 +9,7 @@ import {
   Drawer,
   Dropdown,
   Empty,
+  Image,
   Input,
   List,
   Modal,
@@ -69,6 +70,7 @@ import {
   apiUpdateSession,
   apiUploadAttachment,
   ChatAttachmentItem,
+  ChatImageItem,
   ChatMessageItem,
   ChatRefItem,
   QaStreamEvent,
@@ -684,16 +686,34 @@ export default function ChatPage() {
     // 对齐 WeKnora：图片随发送上传到当前会话（作为问答上下文附件）。
     // 收集本轮附件 id 传给问答接口：后端按当轮 id 注入图片（不再重发会话内历史图片）
     let turnImageIds: string[] = [];
+    // 2026-10-20 图片交互改造：发送当轮的图片立即展示在用户消息气泡侧
+    // （本地 objectURL 挂 userMsg.images，点击可放大；刷新后由后端 data URL 回带）
+    const localImages: ChatImageItem[] = [];
     if (imagePreviews.length) {
       const pending = imagePreviews;
       setImagePreviews([]);
       for (const p of pending) {
         try {
-          const attId = await uploadAttachment(p.file, sessionId);
-          if (attId) turnImageIds.push(attId);
-        } finally {
+          const attId = await uploadAttachment(p.file, sessionId, { silent: true });
+          if (attId) {
+            turnImageIds.push(attId);
+            localImages.push({
+              id: attId,
+              file_name: p.file.name,
+              file_size: p.file.size,
+              url: p.url,
+            });
+          } else {
+            URL.revokeObjectURL(p.url);
+          }
+        } catch (e) {
           URL.revokeObjectURL(p.url);
         }
+      }
+      if (localImages.length) {
+        setMsgs((prev) =>
+          prev.map((m) => (m.id === userMsg.id ? { ...m, images: localImages } : m)),
+        );
       }
     }
 
@@ -976,8 +996,14 @@ export default function ChatPage() {
     await loadSessions();
   };
 
-  // L3：附件上传/删除。返回新附件 id（图片问答按当轮 id 注入，见 send()）
-  const uploadAttachment = async (file: File, sid?: string): Promise<string | null> => {
+  // L3：附件上传/删除。返回新附件 id（图片问答按当轮 id 注入，见 send()）。
+  // opts.silent：图片随发送上传时静默（不追加输入框附件 Tag、不弹 toast——
+  // 图片改由用户消息气泡展示，见 send() 的 localImages 逻辑）
+  const uploadAttachment = async (
+    file: File,
+    sid?: string,
+    opts?: { silent?: boolean },
+  ): Promise<string | null> => {
     let sessionId = sid ?? activeSession;
     if (!sessionId) {
       const created = agentMode
@@ -988,17 +1014,19 @@ export default function ChatPage() {
         setActiveSession(sessionId);
         await loadSessions();
       } else {
-        toast.error("创建会话失败，无法上传附件");
+        if (!opts?.silent) toast.error("创建会话失败，无法上传附件");
         return null;
       }
     }
     const res = await apiUploadAttachment(sessionId!, file);
     if (res.success && res.data) {
-      setAttachments((prev) => [...prev, res.data!]);
-      toast.success(`附件已上传：${res.data.file_name}`);
+      if (!opts?.silent) {
+        setAttachments((prev) => [...prev, res.data!]);
+        toast.success(`附件已上传：${res.data.file_name}`);
+      }
       return res.data.id;
     }
-    toast.error(res.message || "附件上传失败");
+    if (!opts?.silent) toast.error(res.message || "附件上传失败");
     return null;
   };
 
@@ -1333,20 +1361,38 @@ export default function ChatPage() {
                     <span className="user-content-html">{m.content}</span>
                     {m.images && m.images.length > 0 && (
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", maxWidth: 360, marginTop: 6 }}>
-                        {m.images.map((img) =>
-                          img.url ? (
-                            <img
-                              key={img.id}
-                              src={img.url}
-                              alt={img.file_name || "图片"}
-                              style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 6, border: "1px solid rgba(0,0,0,0.08)" }}
-                            />
-                          ) : (
-                            <span key={img.id} style={{ fontSize: 11, color: "rgba(0,0,0,0.45)", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 6, padding: "4px 8px" }}>
-                              📷 {img.file_name || "图片"}
-                            </span>
-                          ),
-                        )}
+                        {/* 2026-10-20 图片交互改造：antd Image 点击放大（PreviewGroup 支持多图切换缩放） */}
+                        <Image.PreviewGroup>
+                          {m.images.map((img) =>
+                            img.url ? (
+                              <Image
+                                key={img.id}
+                                src={img.url}
+                                alt={img.file_name || "图片"}
+                                width={72}
+                                height={72}
+                                style={{
+                                  objectFit: "cover",
+                                  borderRadius: 6,
+                                  border: "1px solid rgba(0,0,0,0.08)",
+                                }}
+                              />
+                            ) : (
+                              <span
+                                key={img.id}
+                                style={{
+                                  fontSize: 11,
+                                  color: "rgba(0,0,0,0.45)",
+                                  border: "1px solid rgba(0,0,0,0.08)",
+                                  borderRadius: 6,
+                                  padding: "4px 8px",
+                                }}
+                              >
+                                📷 {img.file_name || "图片"}
+                              </span>
+                            ),
+                          )}
+                        </Image.PreviewGroup>
                       </div>
                     )}
                   </div>
@@ -1495,7 +1541,9 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </div>
 
-        <div className={`kb-chat-footer${attachments.length > 0 || imagePreviews.length > 0 ? " has-file" : ""}`}>
+        {/* 2026-10-20 图片交互改造：has-file 只在「非图片附件条或发送前图片预览」时触发——
+            图片已改由用户消息气泡展示，不再撑高输入框（对齐 DSB .chat-footer.file） */}
+        <div className={`kb-chat-footer${attachments.some((a) => a.media_type !== "image") || imagePreviews.length > 0 ? " has-file" : ""}`}>
           {/* 输入卡片：对齐 DSB .chat-footer > @ant-design/x Sender（卡片描边/圆角/阴影 + 内容区 + 底栏） */}
           <div className="kb-chat-footer-inner">
       {/* 2026-10-08 对齐 WeKnora：图片 / 附件双入口 + 输入卡片式布局；2026-10-12 支持整文件拖放 */}
@@ -1517,18 +1565,22 @@ export default function ChatPage() {
         onDrop={handleChatDrop}
       >
         <div className="kb-chat-input-body">
-        {/* 附件区（会话级已上传附件；对齐 DSB Sender prefix 附件条） */}
-        {attachments.length > 0 && (
+        {/* 附件区（会话级已上传附件；对齐 DSB Sender prefix 附件条）。
+            2026-10-20 图片交互改造：图片附件不再在此展示（图片在用户消息气泡侧
+            展示并支持点击放大），此条只保留非图片附件 */ }
+        {attachments.some((a) => a.media_type !== "image") && (
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {attachments.map((a) => (
+        {attachments
+          .filter((a) => a.media_type !== "image")
+          .map((a) => (
           <Tag
             key={a.id}
             closable
             onClose={() => void removeAttachment(a.id)}
             style={{ maxWidth: 240 }}
-            title={a.media_type === "image" ? `图片：${a.file_name}` : a.file_name}
+            title={a.file_name}
           >
-            {a.media_type === "image" ? <PictureOutlined /> : <PaperClipOutlined />} {a.file_name}
+            <PaperClipOutlined /> {a.file_name}
           </Tag>
         ))}
       </div>
