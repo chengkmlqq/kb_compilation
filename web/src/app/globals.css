@@ -3965,6 +3965,23 @@ html[data-theme="dark"] .kb-citation-web:hover {
   padding: 0;
   margin: 0 0 0.25em;
 }
+/* 思考内容 markdown（MarkdownViewer 最外层 .kb-chat-md 自带深色 var(--kb-c-text)，
+   会覆盖 .kb-chat-think-md 的继承浅灰——这里在思考视图内显式压回浅灰，
+   与回答正文 .kb-chat-content-view 深色区分） */
+.kb-chat-think-view .kb-chat-md {
+  font-size: 14px;
+  line-height: 22px;
+  color: rgba(121, 135, 156, 1);
+  background: #fff;
+  padding: 0;
+}
+.kb-chat-think-view .kb-chat-md p,
+.kb-chat-think-view .kb-chat-md-p {
+  font-size: 14px;
+  background: #fff;
+  padding: 0;
+  margin: 0 0 0.25em;
+}
 
 /* 内容区（思考区展开/折叠不影响正文，始终渲染） */
 .kb-chat-content-view {
