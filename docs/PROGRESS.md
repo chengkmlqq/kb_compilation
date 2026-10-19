@@ -2,7 +2,20 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-20（Wiki 维护中心 + 高频词管理，对齐 WeKnora）
+最后更新：2026-10-20（模型注册表 max_tokens 配置，修复思考型模型空答案）
+
+## 28. 当前状态（2026-10-20 模型注册表 max_tokens 配置，修复思考型模型空答案）
+
+- **需求**：智能问答最近会话（sess_aae0fb3d，2026-10-19）「什么是小额采购」助手正文为空。根因 = deepseek-v4-pro（思考型）reasoning 3853 字符吃满 max_tokens=2048 预算（kb_llm_usage 记录 output_tokens=2048 恰好等于上限）→ 正文 0 token。链路 `chat.py:289/302` max_tokens 恒为默认 2048，模型注册表此前无该字段（模型页的 max_tokens 只是**调试抽屉临时参数**，api/routers/models.py:716-720 仅作用于单次 debug 请求，不落库）
+- **代码改动（commit c170b94）**：
+  1. 迁移 `0033_model_max_tokens.py`（revises 0032_merge_0030_heads，新增 kb_model.max_tokens Integer 列，幂等 _table_exists+列检查）
+  2. `api/models/model.py` KbModel.max_tokens + `api/services/models.py` 全链（model_to_dict/create/update/copy/_model_to_config）+ `api/routers/models.py` ModelPayload/export
+  3. `api/services/chat.py`：ChatConfig.max_tokens；stream/stream_events/chat 三处 max_tokens 默认值 2048 → None（None=未显式指定 → cfg.max_tokens or 2048）；load_chat_config 传入 resolved["max_tokens"]；image_qa.py / image_chunks.py 的 ChatConfig 构造同步带 max_tokens
+  4. 前端：models/page.tsx 配置表单「最大输出 Token（空=默认 2048）」表单项（chat/vllm，tooltip 提示思考模型建议 8192，min 256/max 131072）；编辑回填+提交 payload；调试抽屉打开/切换模型时 maxTokens 跟随模型配置（显式传参仍优先）；api.ts ModelItem/ModelPayload/ModelExportItem 加 max_tokens
+  5. 测试：test_models.py create(8192)/0 清空/copy 断言 + test_chat_client.py `test_chat_client_max_tokens_from_model_config`（未配置→2048 / cfg 8192→8192 / 显式传参 4096 优先）
+- **验证**：定向 38 passed；`tsc --noEmit` exit 0；alembic heads 仅 0033；全量 763 passed / **12 failed 全部为既有基线**（test_chat_image_qa 2 + test_doc_download_fallback 6 + test_engine_admin 1 + test_env_isolation 2，HEAD d364eeb 干净 worktree 复现同样 12 failed）
+- **部署+配置注意**：① api 端改动需重建 kb-api-server（迁移自动 upgrade）；前端需重建 kb-web；② **新列默认 NULL = 问答链路仍走 2048——若要修复空答案，部署后须在模型配置页把默认 chat 模型 deepseek-v4-pro 的「最大输出 Token」改为 8192 并保存**；③ 调试抽屉默认值随所选模型配置，但手动改过就保持手动值
+- **坑位**：① 模型页「调试」的 Max Tokens 与「配置表单」的 max_tokens 是两个东西，前者是请求参数不落库；② max_tokens 0/空串 → 不落库（None）；③ stream_events 显式传参会覆盖 cfg（调试接口行为，页面值 > 模型配置）
 
 ## 27. 当前状态（2026-10-20 Wiki 反馈维护中心 + 高频词管理，对齐 WeKnora）
 
