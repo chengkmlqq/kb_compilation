@@ -24,6 +24,8 @@ interface Props {
   refs?: CitationRef[] | null;
   /** 是否正在流式生成（影响追平速度） */
   active?: boolean;
+  /** 追平完成回调（shown 已到全文）。用于串联动画：思考区追平后才允许正文区开打 */
+  onSettled?: () => void;
   onCitationClick?: (payload: CitationPayload, ref?: CitationRef) => void;
 }
 
@@ -92,7 +94,7 @@ function nextTypewriterReveal(
 }
 // ----------------------------------------------------------------
 
-export default function TypewriterText({ text, refs, active, onCitationClick }: Props) {
+export default function TypewriterText({ text, refs, active, onSettled, onCitationClick }: Props) {
   const [shown, setShown] = useState(text);
   const shownRef = useRef(text);
   const rafRef = useRef<number | null>(null);
@@ -133,6 +135,8 @@ export default function TypewriterText({ text, refs, active, onCitationClick }: 
       // 已追平：无须定时器（静态消息 / 相同文本）
       initializedRef.current = true;
       stop();
+      // 静态文本（active=false）一次性到达：立即视为追平完成（历史消息回看）
+      if (!active && onSettled && text.length > 0) onSettled();
       return;
     }
     // 文本回退（例如重试/清空）：重置打字机
@@ -158,6 +162,7 @@ export default function TypewriterText({ text, refs, active, onCitationClick }: 
       }
       if (shownRef.current.length >= target) {
         stop();
+        if (onSettled) onSettled();
         return;
       }
       const dt = lastTsRef.current

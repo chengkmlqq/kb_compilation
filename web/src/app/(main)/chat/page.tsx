@@ -2265,6 +2265,13 @@ function AssistantThink({
 }) {
   const [thinkVisible, setThinkVisible] = useState(true);
   const [thinkEnded, setThinkEnded] = useState(false);
+  // 2026-10-20 思考/正文动画串联：正文区等思考区打字机追平完成后再挂载——
+  // 此前正文 TypewriterText 与思考区并行开打，长思考时两段文字同时在屏幕上
+  // 增长（用户报「思考和结果一起在打印」）。thinkSettled = 思考区打字机已
+  // 追平当前思考文本（onSettled 置位）；contentVisible = 思考追平且正文已
+  // 开始到达（answer 非空，即思考流已结束）→ 才挂载正文打字机。
+  const [thinkSettled, setThinkSettled] = useState(false);
+  const [contentVisible, setContentVisible] = useState(false);
   // 2026-10-20 对齐 WeKnora AgentStreamDisplay：思考结束不自动收起——
   // 打字机追平后保持展开，用户可点击 think-btn 折叠/展开回顾完整思考过程。
   // （旧行为：流结束瞬间 thinkEnded→setThinkVisible(false)，思考区刚出现就被
@@ -2272,6 +2279,13 @@ function AssistantThink({
   useEffect(() => {
     if (!streaming && !thinkEnded) setThinkEnded(true);
   }, [streaming, thinkEnded]);
+
+  // 放行正文：思考区已追平（thinkSettled）且正文已开始到达（answer 非空，
+  // 后端先 thinking 后 delta，answer 有内容 = 思考流已结束）；历史消息回看
+  // （非流式）思考区立即追平，answer 存在即放行。
+  useEffect(() => {
+    if (thinkSettled && (answer || !answerStreaming)) setContentVisible(true);
+  }, [thinkSettled, answer, answerStreaming]);
 
   return (
     <div className="kb-chat-answer">
@@ -2287,14 +2301,18 @@ function AssistantThink({
         <div className="kb-chat-think-view">
           {/* 思考过程打字机打印（复用回答同款 TypewriterText：流式期间平滑追平，静态内容零开销） */}
           <div className="kb-chat-think-md">
-            <TypewriterText text={thinking} active={!!streaming} />
+            <TypewriterText
+              text={thinking}
+              active={!!streaming}
+              onSettled={() => setThinkSettled(true)}
+            />
           </div>
         </div>
       )}
       <div className="kb-chat-content-view">
-        {answer ? (
+        {contentVisible ? (
           <TypewriterText
-            text={answer}
+            text={answer || ""}
             refs={refs}
             active={!!answerStreaming}
             onCitationClick={onCitationClick}
