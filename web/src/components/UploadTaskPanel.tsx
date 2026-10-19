@@ -116,16 +116,16 @@ export default function UploadTaskPanel() {
                 key={t.id}
                 style={{ padding: "6px 0 4px", borderBottom: "1px solid rgba(0, 0, 0, 0.06)" }}
               >
-                <Space size={8} style={{ width: "100%" }} align="center">
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                   <Tooltip title={t.name}>
                     <Typography.Text ellipsis style={{ flex: 1, minWidth: 0 }}>
                       {t.name}
                     </Typography.Text>
                   </Tooltip>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  <Typography.Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
                     {formatBytes(t.size)}
                   </Typography.Text>
-                  <Tag color={meta.color} style={{ marginInlineEnd: 0 }}>
+                  <Tag color={meta.color} style={{ marginInlineEnd: 0, flexShrink: 0 }}>
                     {meta.label}
                   </Tag>
                   {t.status === "error" && t.retry && (
@@ -134,6 +134,7 @@ export default function UploadTaskPanel() {
                       type="text"
                       icon={<ReloadOutlined />}
                       title="重试"
+                      style={{ flexShrink: 0 }}
                       onClick={() => t.retry?.()}
                     />
                   )}
@@ -142,9 +143,10 @@ export default function UploadTaskPanel() {
                     type="text"
                     icon={<CloseOutlined />}
                     title="移除"
+                    style={{ flexShrink: 0 }}
                     onClick={() => removeTask(t.id)}
                   />
-                </Space>
+                </div>
                 <Progress
                   percent={t.progress}
                   size="small"
