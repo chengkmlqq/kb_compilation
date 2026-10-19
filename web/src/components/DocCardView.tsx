@@ -58,19 +58,11 @@ export const WIKI_STAGE_LABEL: Record<string, { text: string; color: string }> =
 
 const IN_FLIGHT = new Set(["PENDING", "PARSING", "EMBEDDING"]);
 
-/** Tag 颜色严重度（取最严重者作为合并标签颜色） */
-const COLOR_SEVERITY: Record<string, number> = {
-  error: 3,
-  processing: 2,
-  warning: 2,
-  default: 1,
-  success: 0,
-};
-
 /**
- * 文档状态标签（解析/摘要/构建三段合并为单个标签，卡片视图与列表视图「状态」列共用）。
- * 解析未就绪 → 单解析标签；READY → 解析/摘要/构建三段合并为一个标签，
- * 颜色取最严重者（如「摘要失败」整体呈 error）。
+ * 卡片右上角状态标签（2026-10-20：原 footer 左侧的三段状态文本合并为单个标签，
+ * 移到标题行右侧；2026-10-19 再归一为单一状态词——解析/摘要/构建三段只取一个
+ * 整体状态展示：失败 > 处理中 > 已就绪，三段详情放 title 悬浮提示）。
+ * 解析未就绪 → 单解析标签；READY → 按摘要/构建进度归一为一个状态。
  */
 export function docStageTag(d: DocItem): ReactNode {
   if (IN_FLIGHT.has(d.parse_state)) {
@@ -83,15 +75,26 @@ export function docStageTag(d: DocItem): ReactNode {
   if (d.parse_state === "FAILED") {
     return <Tag color="error">失败</Tag>;
   }
+  // READY：把摘要/构建两段归一成单一状态词（失败优先，其次处理中，最后已就绪）
   const sum = SUMMARY_STAGE_LABEL[d.summary_status || ""] || SUMMARY_STAGE_LABEL[""];
   const wiki = WIKI_STAGE_LABEL[d.wiki_build?.state || ""] || { text: "构建未生成", color: "default" };
-  const color =
-    (COLOR_SEVERITY[wiki.color] ?? 0) > (COLOR_SEVERITY[sum.color] ?? 0) ? wiki.color : sum.color;
-  return (
-    <Tag color={color}>
-      已就绪 · {sum.text} · {wiki.text}
-    </Tag>
-  );
+  const summaryDetail = sum.text; // 摘要完成/摘要失败/摘要未生成
+  const wikiDetail = wiki.text; // 构建完成/构建失败/构建中/构建未生成
+  const detail = `已就绪 · ${summaryDetail} · ${wikiDetail}`;
+  const anyFailed = sum.color === "error" || wiki.color === "error";
+  const anyRunning = sum.color === "processing" || wiki.color === "processing";
+  if (anyFailed) {
+    return <Tag color="error">处理失败</Tag>;
+  }
+  if (anyRunning) {
+    return <Tag color="processing">处理中</Tag>;
+  }
+  const bothDone = sum.color === "success" && wiki.color === "success";
+  if (bothDone) {
+    return <Tag color="success">已就绪</Tag>;
+  }
+  // 摘要/构建未生成（未配置或未触发）——视为就绪但未走完整管线
+  return <Tag color="default">已就绪</Tag>;
 }
 
 /**
