@@ -90,6 +90,9 @@ class ChatMessage(Base):
     feedback_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # JSON 字符串：该条 user 消息携带的图片附件 id 数组（对齐 WeKnora 用户消息图片展示）
     images: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSON 字符串：该条 user 消息携带的全部附件 id 数组（图片 + 文档），
+    # 供前端在用户消息侧展示附件入口（2026-10-20 附件问答交互改造）
+    attachment_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32), default=_now_iso)
 
 

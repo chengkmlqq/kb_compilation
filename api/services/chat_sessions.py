@@ -218,8 +218,44 @@ def _message_dict(db: Session, m: ChatMessage) -> dict:
         "feedback": m.feedback or None,
         "feedback_at": m.feedback_at or None,
         "images": _message_images(db, m),
+        # 2026-10-20 附件问答交互改造：user 消息携带的全部附件（图片+文档）
+        # 供前端在用户消息侧展示附件区（图片走 images 缩略图，文档走附件列表）
+        "attachments": _message_attachments(db, m),
         "created_at": m.created_at,
     }
+
+
+def _message_attachments(db: Session, m: ChatMessage) -> list[dict]:
+    """该条消息携带的附件（不限于图片）。
+
+    与 _message_images 的区别：图片只给缩略图（<=300KB data URL），
+    这里返回全部附件的元信息（含下载/预览入口），供消息侧附件卡片使用。
+    """
+    if not (m.images or m.attachment_ids):
+        return []
+    try:
+        if m.attachment_ids:
+            ids = json.loads(m.attachment_ids) or []
+        else:
+            raw_images = m.images or "[]"
+            ids = json.loads(raw_images) or []
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not ids:
+        return []
+    rows = (
+        db.execute(select(ChatAttachment).where(ChatAttachment.id.in_(ids)))
+        .scalars()
+        .all()
+    )
+    by_id = {a.id: a for a in rows}
+    out = []
+    for aid in ids:
+        att = by_id.get(aid)
+        if not att:
+            continue
+        out.append(_attachment_dict(att))
+    return out
 
 
 def _message_images(db: Session, m: ChatMessage) -> list[dict]:
@@ -323,6 +359,7 @@ def append_message(
     refs: list[dict] | None = None,
     thinking: str | None = None,
     images: list[str] | None = None,
+    attachment_ids: list[str] | None = None,
 ) -> dict:
     get_session(db, user_id, session_id)
     max_seq = db.execute(
@@ -337,6 +374,11 @@ def append_message(
         refs=json.dumps(refs or [], ensure_ascii=False) if refs else None,
         thinking=thinking or None,
         images=json.dumps(images or [], ensure_ascii=False) if images else None,
+        attachment_ids=(
+            json.dumps(attachment_ids or [], ensure_ascii=False)
+            if attachment_ids
+            else None
+        ),
     )
     db.add(msg)
     s = db.execute(select(ChatSession).where(ChatSession.id == session_id)).scalars().first()
@@ -796,6 +838,26 @@ def delete_attachment(db: Session, user_id: str, session_id: str, attachment_id:
             storage_delete(object_key)
         except Exception:  # noqa: BLE001
             logger.warning("delete attachment object failed: %s", object_key, exc_info=True)
+
+
+def get_attachment_content(db: Session, user_id: str, session_id: str, attachment_id: str) -> dict:
+    """附件内容预览（2026-10-20 附件问答交互改造）。
+
+    文档附件（media_type=text）返回解析后的 markdown 全文；
+    图片附件无文本内容，返回空 content（前端走 images 缩略图放大）。
+    """
+    get_session(db, user_id, session_id)
+    a = db.execute(
+        select(ChatAttachment).where(
+            ChatAttachment.id == attachment_id, ChatAttachment.session_id == session_id
+        )
+    ).scalars().first()
+    if not a:
+        raise HTTPException(status_code=404, detail=f"附件不存在: {attachment_id}")
+    return {
+        **(_attachment_dict(a)),
+        "content": (a.content or "") if a.media_type != "image" else "",
+    }
 
 
 def attachment_contents(db: Session, session_id: str, max_chars: int = 6000) -> str:

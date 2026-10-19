@@ -114,6 +114,9 @@ class AgentQARequest(BaseModel):
     # 2026-10-18 对齐 WeKnora「图片仅随当轮请求注入」：本轮上传的图片附件 id。
     # None（未传）= 回落会话级全部图片；[]= 本轮无图。
     image_attachment_ids: list[str] | None = None
+    # 2026-10-20 附件问答交互改造：本轮上传的全部附件 id（图片+文档），
+    # 持久化到 user 消息 attachment_ids，供前端在用户消息侧展示附件。
+    attachment_ids: list[str] | None = None
 
     @field_validator("question")
     @classmethod
@@ -212,6 +215,11 @@ def agent_qa_stream(
                 persisted = append_message(
                     db, user_id, req.session_id, "user", req.question,
                     images=(turn_image_ids if images_scoped else attachment_image_ids(db, req.session_id)) or None,
+                    attachment_ids=(
+                        [str(i) for i in (req.attachment_ids or [])]
+                        if req.attachment_ids is not None
+                        else None
+                    ),
                 )
                 user_message_id = persisted.get("id") or ""
             except Exception as e:  # noqa: BLE001

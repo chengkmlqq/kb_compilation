@@ -41,6 +41,7 @@ from api.services.chat_sessions import (
     delete_session,
     follow_up_suggestions,
     generate_title,
+    get_attachment_content,
     get_session,
     list_attachments,
     list_sessions,
@@ -336,6 +337,7 @@ async def api_upload_attachment(
     from api.services.agents import config_from_dict
     from api.services.chat_sessions import (
         create_attachment,
+        get_attachment_content,
         is_image_ext,
         new_attachment_id,
         store_attachment_image,
@@ -403,6 +405,22 @@ def api_delete_attachment(
 ) -> dict:
     delete_attachment(db, user_id, session_id, attachment_id)
     return {"success": True, "data": {"deleted": attachment_id}}
+
+
+@router.get("/{session_id}/attachments/{attachment_id}/content")
+def api_get_attachment_content(
+    session_id: str,
+    attachment_id: str,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(_require_user_id),
+) -> dict:
+    """附件内容预览（2026-10-20 附件问答交互改造）。
+
+    文档附件返回解析后的 markdown 全文，供前端消息侧附件卡片点击预览；
+    图片附件返回空 content（图片走 images 缩略图放大，不需要文本预览）。
+    """
+    data = get_attachment_content(db, user_id, session_id, attachment_id)
+    return {"success": True, "data": data}
 
 
 __all__ = ["router"]

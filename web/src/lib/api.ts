@@ -2684,6 +2684,9 @@ export interface ChatMessageItem {
   feedback_at?: string | null;
   /** user 消息携带的图片附件（对齐 WeKnora usermsg 缩略图展示） */
   images?: ChatImageItem[];
+  /** 2026-10-20 附件问答交互改造：user 消息携带的全部附件（图片+文档），
+   *  文档附件在消息侧展示卡片，点击调 apiGetAttachmentContent 预览 markdown */
+  attachments?: ChatAttachmentItem[];
   created_at: string;
 }
 
@@ -2868,13 +2871,27 @@ export function apiListAttachments(sessionId: string) {
   return request<{ items: ChatAttachmentItem[] }>(`/api/v1/sessions/${sessionId}/attachments`);
 }
 
-export function apiUploadAttachment(sessionId: string, file: File) {
+export function apiUploadAttachment(
+  sessionId: string,
+  file: File,
+  onProgress?: (percent: number) => void,
+) {
   const form = new FormData();
   form.append("file", file);
-  return request<ChatAttachmentItem>(`/api/v1/sessions/${sessionId}/attachments`, {
-    method: "POST",
-    body: form,
-  });
+  // 2026-10-20 附件问答交互改造：走 XHR requestUpload 上报上传进度
+  // （fetch 无法监听 upload.onprogress）
+  return requestUpload<ChatAttachmentItem>(
+    `/api/v1/sessions/${sessionId}/attachments`,
+    form,
+    onProgress,
+  );
+}
+
+/** 附件内容预览（2026-10-20）：文档附件返回解析后的 markdown 全文。 */
+export function apiGetAttachmentContent(sessionId: string, attachmentId: string) {
+  return request<ChatAttachmentItem & { content: string }>(
+    `/api/v1/sessions/${sessionId}/attachments/${attachmentId}/content`,
+  );
 }
 
 export function apiDeleteAttachment(sessionId: string, attachmentId: string) {

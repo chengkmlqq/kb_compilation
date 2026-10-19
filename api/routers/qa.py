@@ -77,6 +77,10 @@ class QARequest(BaseModel):
     # 2026-10-18 对齐 WeKnora「图片仅随当轮请求注入」：本轮上传的图片附件 id。
     # None（旧客户端未传）= 回落会话级全部图片；[]= 本轮无图。
     image_attachment_ids: list[str] | None = None
+    # 2026-10-20 附件问答交互改造：本轮上传的全部附件 id（图片+文档），
+    # 持久化到 user 消息 attachment_ids，供前端在用户消息侧展示附件。
+    # None = 旧客户端未传（回落 images 语义）；[] = 本轮无附件。
+    attachment_ids: list[str] | None = None
 
 
 def _sse(event: dict) -> str:
@@ -216,7 +220,17 @@ def _run_generation(
                     else attachment_image_ids(db, req.session_id)
                 )
                 persisted = append_message(
-                    db, user_id, req.session_id, "user", req.question, images=image_ids or None
+                    db,
+                    user_id,
+                    req.session_id,
+                    "user",
+                    req.question,
+                    images=image_ids or None,
+                    attachment_ids=(
+                        [str(i) for i in (req.attachment_ids or [])]
+                        if req.attachment_ids is not None
+                        else None
+                    ),
                 )
                 user_message_id = persisted.get("id") or ""
             except Exception as e:  # noqa: BLE001
