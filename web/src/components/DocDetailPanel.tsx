@@ -288,9 +288,12 @@ export default function DocDetailPanel({ kbId, doc, onDocReparsed }: Props) {
           </div>
         )}
 
-        {/* 预览视图（内嵌；表源 = 实时样例表格） */}
+        {/* 预览视图（内嵌；表源 = 实时样例表格）
+            高度对齐 DocPreviewModal 弹窗的 78vh：本面板内容区随内容撑高（内层 minHeight:100%），
+            flex:1 在不定高父容器里拿不到可分配空间，pdf iframe 高度会塌到 minHeight。
+            故给预览容器显式高度，保证 pdf/图片等全高预览有足够空间。 */}
         {viewMode === "preview" && !isAudio && (
-          <div style={{ flex: 1, minHeight: 300, display: "flex", flexDirection: "column" }}>
+          <div style={{ flex: 1, height: "78vh", minHeight: 300, display: "flex", flexDirection: "column" }}>
             {isTable ? (
               <TableSampleView loading={sampleLoading} data={sampleData} />
             ) : (

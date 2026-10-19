@@ -6,7 +6,7 @@
  * 悬浮 Popover 保留原有的完整信息（大小/分块/时间/失败原因）与操作入口。
  */
 import type { ReactNode } from "react";
-import { Button, Dropdown, Popover, Space, Tag, Typography } from "antd";
+import { Button, Dropdown, Popover, Tag, Typography } from "antd";
 import {
   DeleteOutlined,
   DownloadOutlined,
@@ -56,33 +56,6 @@ export const WIKI_STAGE_LABEL: Record<string, { text: string; color: string }> =
   QUEUED: { text: "构建中", color: "processing" },
 };
 
-/**
- * 文档处理三段阶段标签（解析/摘要/构建，方案A 展示层聚合，2026-10-16）：
- * parse_state=READY 时在「已就绪」主标签旁附加摘要与构建两个阶段小标签，
- * 使用户一眼看到整条管线（解析+向量化 / 摘要 / wiki 构建）的完成度，
- * 而不仅是解析就绪。parse_state 非 READY 时只返回解析主标签。
- * （列表视图表格「状态」列仍使用彩色 Tag；卡片视图改为右上角合并的单一标签，见 docStageTag）
- */
-export function docStageTags(d: DocItem): ReactNode {
-  if (d.parse_state !== "READY") {
-    return (
-      <Tag color={PARSE_STATE_COLOR[d.parse_state] || "default"}>
-        {STATE_LABEL[d.parse_state] || d.parse_state}
-      </Tag>
-    );
-  }
-  const sum = SUMMARY_STAGE_LABEL[d.summary_status || ""] || SUMMARY_STAGE_LABEL[""];
-  const wikiState = d.wiki_build?.state || "";
-  const wiki = WIKI_STAGE_LABEL[wikiState] || { text: "构建未生成", color: "default" };
-  return (
-    <Space size={4} wrap>
-      <Tag color={PARSE_STATE_COLOR.READY}>已就绪</Tag>
-      <Tag color={sum.color}>{sum.text}</Tag>
-      <Tag color={wiki.color}>{wiki.text}</Tag>
-    </Space>
-  );
-}
-
 const IN_FLIGHT = new Set(["PENDING", "PARSING", "EMBEDDING"]);
 
 /** Tag 颜色严重度（取最严重者作为合并标签颜色） */
@@ -95,8 +68,8 @@ const COLOR_SEVERITY: Record<string, number> = {
 };
 
 /**
- * 卡片右上角状态标签（2026-10-20：原 footer 左侧的三段状态文本合并为单个标签，
- * 移到标题行右侧）。解析未就绪 → 单解析标签；READY → 解析/摘要/构建三段合并为一个标签，
+ * 文档状态标签（解析/摘要/构建三段合并为单个标签，卡片视图与列表视图「状态」列共用）。
+ * 解析未就绪 → 单解析标签；READY → 解析/摘要/构建三段合并为一个标签，
  * 颜色取最严重者（如「摘要失败」整体呈 error）。
  */
 export function docStageTag(d: DocItem): ReactNode {

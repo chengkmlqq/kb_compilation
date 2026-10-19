@@ -4820,7 +4820,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
 }
 .kb-doc-tree-count {
   flex-shrink: 0;
-  margin-right: 4px;
+  margin-right: 12px;
   font-size: 12px;
   color: #79879c;
 }
