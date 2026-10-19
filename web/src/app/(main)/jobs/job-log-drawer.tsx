@@ -471,16 +471,18 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
             >
               <span>子任务执行步骤流</span>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                {childrenKind === "orchestration" ? "编排节点" : "文档处理链"}
-                {childrenKind === "orchestration" ? "，点击节点看执行详情" : "，点击子任务查看具体日志"}
+                {childrenKind === "orchestration" ? "编排执行" : "文档处理链"}
+                {childrenKind === "orchestration" ? "，点击查看执行详情" : "，点击子任务查看具体日志"}
               </Text>
             </div>
             <Timeline
               style={{ marginTop: 4 }}
               items={children.map((c: Record<string, unknown>, idx) => {
                 const cid = String(c.id || c.step_id || "");
+                // 2026-10-20：编排 run 的 children 为 run 概要一行（tape_name 取名），
+                // 不再是 step_results 节点——编排内部节点归编排详情视图查看。
                 const cname =
-                  String(c.step_label || c.task_class || "") ||
+                  String(c.tape_name || c.step_label || c.task_class || "") ||
                   (childrenKind === "orchestration" ? String(c.step_inst || cid) : cid);
                 const st = String(c.status || c.state || "");
                 const color =
@@ -526,7 +528,7 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
                       }}
                       onClick={() => {
                         if (childrenKind === "orchestration") {
-                          // 编排节点：无 modo_job 行，内联展示该步 step_results 详情
+                          // 编排执行：children 为 run 概要一行，点击展开编排执行详情（概要 JSON）
                           setOrchStepDetail(orchStepDetail && (orchStepDetail.step_id || orchStepDetail.id) === cid ? null : c);
                         } else if (cid) {
                           setActiveJobId(cid);
@@ -552,7 +554,7 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
                 };
               })}
             />
-            {/* 编排节点详情（step_results 单步展开） */}
+            {/* 编排执行详情（run 概要展开，2026-10-20 起 children 为 run 概要而非节点数组） */}
             {orchStepDetail ? (
               <div
                 style={{
@@ -564,8 +566,8 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
                 }}
               >
                 <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 8 }}>
-                  节点详情：{String(orchStepDetail.step_label || orchStepDetail.step_inst || orchStepDetail.step_id || "step")}
-                  {getStateTag(String(orchStepDetail.status || ""))}
+                  执行详情：{String(orchStepDetail.tape_name || orchStepDetail.step_label || orchStepDetail.step_inst || orchStepDetail.id || "编排运行")}
+                  {getStateTag(String(orchStepDetail.status || orchStepDetail.state || ""))}
                 </div>
                 <pre
                   style={{

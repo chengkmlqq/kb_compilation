@@ -662,11 +662,17 @@ def test_parent_child_jobs_view(monkeypatch) -> None:
         d = r.json()["data"]
         assert d["kind"] == "job" and d["total"] == 2
 
-        # /children：编排 run → step_results 节点
+        # /children：编排 run → run 概要一行（2026-10-20 粒度修正：节点不再作为子任务，
+        # 返回编排自身概要，total=1）
         r = client.get("/api/v1/jobs/run1/children")
         assert r.status_code == 200
         d = r.json()["data"]
-        assert d["kind"] == "orchestration" and d["total"] == 2
+        assert d["kind"] == "orchestration" and d["total"] == 1
+        run_child = d["items"][0]
+        assert run_child["id"] == "run1"
+        assert run_child["task_class"] == "OrchestrationRun"
+        assert run_child["tape_name"] == "编排A"
+        assert "step_results" not in run_child
 
         # 子任务不带 parent_id 的父任务：child_count=0
         assert by_id["DOC_doc2"]["child_count"] == 0
@@ -720,16 +726,17 @@ def test_parents_attached_run_not_top_level(monkeypatch) -> None:
         assert "DOC_doc1" in by_id
         assert "DOC_doc2" in by_id
 
-        # children：链头下能看到编排放种子任务，且带 run 节点信息
+        # children：链头下能看到编排放种子任务；2026-10-20 粒度修正后不再附带
+        # step_results/run_tape_name/run_id（节点归编排详情视图），仅状态跟随 run
         r = client.get("/api/v1/jobs/DOC_doc1/children")
         assert r.status_code == 200
         d = r.json()["data"]
         assert d["kind"] == "job" and d["total"] == 1
         child = d["items"][0]
         assert child["id"] == "SUMMARY_RUN_abc"
-        assert child["run_id"] == "run_summary"
-        assert child["run_tape_name"] == "摘要-Map-Reduce（分块合并）"
-        assert len(child["step_results"]) == 2
+        assert "step_results" not in child
+        assert "run_id" not in child
+        assert "run_tape_name" not in child
     finally:
         app.dependency_overrides.clear()
 

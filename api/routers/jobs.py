@@ -295,10 +295,12 @@ def list_job_children(
     _user_id: str = Depends(_require_user_id),
     db: Session = Depends(get_db),
 ) -> dict:
-    """父任务的子任务列表（2026-10-12）：
+    """父任务的子任务列表（2026-10-12；2026-10-20 编排粒度修正）：
 
     - modo_job 父任务 → 其 parent_id 指向它的所有子任务
-    - 编排 run（虚拟父任务）→ 其 step_results 节点执行记录
+    - 编排 run（虚拟父任务）→ 该编排 run 自身一行概要（**不再把编排内部
+      step_results 节点拆成子任务**——编排节点是 run 内部执行步骤，
+      归编排详情/日志视图，不作为任务监控子任务粒度）
     """
     from api.models.orchestration import TapeRun
 
@@ -309,8 +311,8 @@ def list_job_children(
             "success": True,
             "data": {
                 "kind": "orchestration",
-                "items": (run.step_results or []),
-                "total": len(run.step_results or []),
+                "items": [_run_to_job_dict(run)],
+                "total": 1,
             },
         }
     # modo_job 父任务
@@ -322,9 +324,11 @@ def list_job_children(
         .scalars()
         .all()
     )
-    # 2026-10-14：子任务是 KbOrchestrationRunTask（摘要/构建编排触发 job）时，
-    # 把 task_params.runId 对应的 kb_tape_run 的 step_results 一并附加——任务监控页
-    # 展开链头（如 DOC_xxx）能看到摘要任务内部的编排节点，而不只是一行 job。
+    # 2026-10-14 编排子任务真实状态：job 状态是「投递成功」语义（建完 run 即
+    # SUCCESS），展示层改用编排 run 的真实状态（大写归一化），否则子任务还在
+    # 后台跑就显示「成功」（用户反馈）。原 job 状态保留在 job_state 供排障对比。
+    # 2026-10-20 粒度修正：不再向子任务列表注入 step_results/run_tape_name——
+    # 编排内部节点归编排详情/日志视图，不作为任务监控子任务粒度。
     items: list[dict] = []
     for c in children:
         d = _job_to_dict(c)
@@ -334,13 +338,6 @@ def list_job_children(
                 if rid:
                     run = db.execute(select(TapeRun).where(TapeRun.id == rid)).scalars().first()
                     if run:
-                        d["run_id"] = run.id
-                        d["step_results"] = run.step_results or []
-                        d["run_tape_name"] = run.tape_name
-                        # 2026-10-15 语义修正：job 状态是「投递成功」语义（建完 run 即
-                        # SUCCESS），展示层改用编排 run 的真实状态（大写归一化），否则
-                        # 子任务还在后台跑就显示「成功」（用户反馈）。原 job 状态保留
-                        # 在 job_state 供排障对比。
                         d["job_state"] = d["state"]
                         d["state"] = _run_state_to_job(run.status)
             except (TypeError, json.JSONDecodeError):
@@ -394,6 +391,7 @@ def _run_to_job_dict(run: TapeRun) -> dict:
         "id": run.id,
         "task_id": run.id,
         "task_class": "OrchestrationRun",  # 虚拟任务类（前端按此渲染「编排执行」）
+        "tape_name": run.tape_name,  # 2026-10-20：顶层附带编排名，子任务行/日志时间线直接取名
         "queue_name": "orch",
         "trigger_type": "API",
         "state": _run_state_to_job(run.status),

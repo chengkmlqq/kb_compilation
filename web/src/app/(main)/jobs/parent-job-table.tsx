@@ -3,7 +3,8 @@
 /**
  * 父任务表格（2026-10-12 任务监控首屏）：
  * 主任务列表（文档处理链头 + 编排执行虚拟父任务），每行可展开看子任务执行过程。
- * 子任务 = modo_job 子任务（文档链）或 编排 step_results 节点（编排）。
+ * 子任务 = modo_job 子任务（文档链）或 编排 run 概要一行（编排）。
+ * （2026-10-20：编排内部 step_results 节点不再作为子任务呈现——节点归编排详情/日志视图）
  */
 import React, { useCallback, useEffect, useState } from "react";
 import { App, Button, Space, Table, Tag, Tooltip, Typography } from "antd";
@@ -159,43 +160,11 @@ function effectiveState(record: ParentJobItem): string {
   return pending > 0 ? "RUNNING" : own;
 }
 
-/** 展开行：子任务列表（文档链子任务 或 编排节点） */
-/** 编排节点明细列（模块级，一级展开的子任务表与二级展开的节点明细表共用）。 */
-const ORCH_STEP_COLS: ColumnsType<Record<string, unknown>> = [
-  { title: "节点", dataIndex: "step_label", width: 150, ellipsis: true, render: (v, r) => <Tooltip title={String(v || (r as Record<string, unknown>).step_id || "")}>{v || String((r as Record<string, unknown>).step_id || "")}</Tooltip> },
-  { title: "指令", dataIndex: "step_inst", width: 140, ellipsis: true, render: (v) => <Tooltip title={String(v || "")}><Text code>{v || "-"}</Text></Tooltip> },
-  { title: "状态", dataIndex: "status", width: 110, render: (v) => renderStateTag(String(v || "")) },
-  { title: "耗时", dataIndex: "duration_ms", width: 100, render: (v) => fmtDur(v as number | null) },
-  { title: "信息", dataIndex: "error", ellipsis: true, render: (v, r) => v ? <Text type="danger">{String(v).slice(0, 80)}</Text> : <Text type="secondary">{((r as Record<string, unknown>).stdout_tail as string) || "-"}</Text> },
-];
+/** 展开行：子任务列表（文档链子任务；编排 run 虚拟父任务 → 编排自身概要一行）。
 
-/** 子任务行是否带 step_results（KbOrchestrationRunTask 附加的编排节点明细，可二级展开）。 */
-function hasStepResults(r: Record<string, unknown>): boolean {
-  return Array.isArray(r.step_results) && (r.step_results as Array<Record<string, unknown>>).length > 0;
-}
-
-/** 二级展开：编排子任务（KbOrchestrationRunTask）内部的 step_results 节点明细。 */
-function OrchStepsTable({ row }: { row: Record<string, unknown> }) {
-  const steps = (row.step_results as Array<Record<string, unknown>> | undefined) || [];
-  const tapeName = (row.run_tape_name as string | undefined) || "";
-  return (
-    <div style={{ padding: "4px 8px 4px 32px", background: "#F5F7FA" }}>
-      <div style={{ fontSize: 12, color: "rgba(0,0,0,.45)", marginBottom: 4 }}>
-        {tapeName ? `编排「${tapeName}」节点明细` : "编排节点明细"}
-      </div>
-      <Table<Record<string, unknown>>
-        rowKey={(s) => String((s as Record<string, unknown>).step_id || "")}
-        size="small"
-        dataSource={steps}
-        columns={ORCH_STEP_COLS}
-        pagination={false}
-        tableLayout="fixed"
-        scroll={{ x: "100%" }}
-        locale={{ emptyText: "暂无节点明细" }}
-      />
-    </div>
-  );
-}
+ * 2026-10-20：编排内部 step_results 节点不再作为子任务呈现——节点是编排内部
+ * 执行步骤，归编排详情/日志视图（tape-run-log-drawer / 日志抽屉），任务监控
+ * 子任务粒度只到「编排 run」这一级。 */
 
 function ChildTable({ parent }: { parent: ParentJobItem }) {
   const { message } = App.useApp();
@@ -216,8 +185,9 @@ function ChildTable({ parent }: { parent: ParentJobItem }) {
     };
   }, [parent.id, message]);
 
-  // 编排节点：step_results 结构 {step_id, step_inst, step_label, status, duration_ms, error}
-  const isOrch = parent.task_class === "OrchestrationRun";
+  // 2026-10-20：编排 run（OrchestrationRun 虚拟父任务）的 children 由后端返回
+  // 编排自身一行概要（不再返回 step_results 节点）——统一用 jobCols 渲染，
+  // 子任务粒度只到「编排 run」这一级。
   const jobCols: ColumnsType<Record<string, unknown>> = [
     { title: "子任务ID", dataIndex: "id", ellipsis: true, render: (v) => <Tooltip title={String(v)}><Text style={{ fontFamily: "monospace", fontSize: 12 }}>{String(v).slice(0, 12)}</Text></Tooltip> },
     { title: "任务类", dataIndex: "task_class", ellipsis: true, render: (v) => taskClassLabel(String(v || "")) },
@@ -228,28 +198,14 @@ function ChildTable({ parent }: { parent: ParentJobItem }) {
       title: "信息 / 错误",
       dataIndex: "error_message",
       ellipsis: true,
-      // 2026-10-14：编排放种子任务（KbOrchestrationRunTask）由 children 端点附带
-      // step_results/run_tape_name——信息列展示编排节点进度摘要，方便在链头下
-      // 直接看到摘要/构建编排的执行情况。
-      render: (v, row) => {
-        const steps = (row.step_results as Array<Record<string, unknown>> | undefined) || [];
-        const tapeName = (row.run_tape_name as string | undefined) || "";
-        if (steps.length > 0) {
-          const done = steps.filter((s) => String(s.status || "") === "success").length;
-          return (
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {tapeName ? `${tapeName} · ` : ""}编排节点 {done}/{steps.length}
-            </Text>
-          );
-        }
-        return v ? (
+      render: (v, row) =>
+        v ? (
           <Text type={row.state === "FAILED" || row.state === "failed" ? "danger" : "secondary"} style={{ fontSize: 12 }}>
             {String(v).length > 70 ? `${String(v).slice(0, 70)}…` : String(v)}
           </Text>
         ) : (
           <Text type="secondary">-</Text>
-        );
-      },
+        ),
     },
   ];
 
@@ -257,22 +213,17 @@ function ChildTable({ parent }: { parent: ParentJobItem }) {
     // 2026-10-14: 子表宽度对齐所在单元格（x: "100%"），避免展开行内嵌套表格横向溢出。
     <div style={{ padding: "4px 8px", background: "#FAFBFC" }}>
       <Table<Record<string, unknown>>
-        rowKey={(r) => String(r.step_id || r.id || "")}
+        rowKey={(r) => String(r.id || "")}
         size="small"
         loading={loading}
         dataSource={rows}
-        columns={isOrch ? ORCH_STEP_COLS : jobCols}
+        columns={jobCols}
         pagination={false}
         // 2026-10-15: tableLayout fixed——子表宽度锁 100% 展开区，列宽固定、多余空间由
         // 省略号列吸收；此前子表按内容最小宽度撑开，窄视口下溢出展开区域。
         tableLayout="fixed"
         scroll={{ x: "100%" }}
         locale={{ emptyText: "暂无子任务" }}
-        // 2026-10-14 二级展开：编排子任务（KbOrchestrationRunTask）行带 step_results 时可再展开看节点明细
-        expandable={{
-          rowExpandable: (r) => !isOrch && hasStepResults(r),
-          expandedRowRender: (r) => <OrchStepsTable row={r} />,
-        }}
       />
     </div>
   );
