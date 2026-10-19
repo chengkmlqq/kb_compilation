@@ -143,3 +143,33 @@ def test_chat_client_thinking_payload(monkeypatch):
     list(client.stream_events([ChatMessage(role="user", content="hi")]))
     assert "thinking" not in captured2["json"]
     assert "top_p" not in captured2["json"]
+
+
+def test_chat_client_max_tokens_from_model_config(monkeypatch):
+    """2026-10-19 模型注册表 max_tokens：cfg.max_tokens 覆盖链路默认 2048。
+
+    思考型模型 reasoning 吃满 2048 预算时正文为空（output_tokens=2048 实锤），
+    模型配置页新增「最大输出 Token」后，问答链路（qa/agent 不显式传
+    max_tokens）应自动用 cfg.max_tokens；未配置回落 2048。
+    """
+    captured: dict = {}
+
+    def _mk_client(**cfg_kw):
+        _fake_httpx(monkeypatch, captured)
+        return ChatClient(ChatConfig(base_url="https://x/v1", api_key="", model="m", **cfg_kw))
+
+    # 未配置（None）→ 默认 2048
+    list(_mk_client().stream_events([ChatMessage(role="user", content="hi")]))
+    assert captured["json"]["max_tokens"] == 2048
+
+    # 模型注册表配置 8192 → 覆盖默认
+    list(_mk_client(max_tokens=8192).stream_events([ChatMessage(role="user", content="hi")]))
+    assert captured["json"]["max_tokens"] == 8192
+
+    # 显式传参优先于 cfg（调试接口行为：页面值 > 模型配置）
+    list(
+        _mk_client(max_tokens=8192).stream_events(
+            [ChatMessage(role="user", content="hi")], max_tokens=4096
+        )
+    )
+    assert captured["json"]["max_tokens"] == 4096

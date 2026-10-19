@@ -38,6 +38,8 @@ class ChatConfig:
     interface_type: str = "openai"
     # 模型登记表里的视觉能力标记（None=未知/未登记，不做门禁）
     supports_vision: bool | None = None
+    # 单次回答最大输出 token（None = 链路默认 2048；模型注册表可配置，思考型模型建议调大）
+    max_tokens: int | None = None
 
 
 # 非视觉模型的图片描述注入前缀（WeKnora into_chat_message.go 同款文案）
@@ -93,6 +95,7 @@ def load_chat_config(
                     custom_headers=resolved.get("custom_headers") or None,
                     interface_type=(resolved.get("interface_type") or "openai"),
                     supports_vision=resolved.get("supports_vision"),
+                    max_tokens=resolved.get("max_tokens"),
                 )
         except Exception:
             logger.warning("failed to resolve scoped chat model; using legacy config", exc_info=True)
@@ -286,7 +289,7 @@ class ChatClient:
         self,
         messages: list[ChatMessage],
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int | None = None,
         top_p: float | None = None,
         thinking: bool | None = None,
         usage_ctx: dict | None = None,
@@ -299,7 +302,7 @@ class ChatClient:
         self,
         messages: list[ChatMessage],
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int | None = None,
         top_p: float | None = None,
         thinking: bool | None = None,
         usage_ctx: dict | None = None,
@@ -326,6 +329,9 @@ class ChatClient:
         """
         # 接口协议 = oip：KServe Open Inference Protocol（/v2 非流式）
         oip_taken = (self.cfg.interface_type or "openai").lower() == "oip"
+        # max_tokens: None = 未显式指定 → 模型注册表配置（cfg.max_tokens）或链路默认 2048
+        if max_tokens is None:
+            max_tokens = self.cfg.max_tokens or 2048
         t0 = time.time()
         usage_acc: dict[str, int] = {"input": 0, "output": 0, "read": 0, "creation": 0}
         # 埋点统计（_stream_openai_stream 内原地更新，finally 读取）
@@ -587,7 +593,7 @@ class ChatClient:
         self,
         messages: list[ChatMessage],
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int | None = None,
         top_p: float | None = None,
         thinking: bool | None = None,
     ) -> str:

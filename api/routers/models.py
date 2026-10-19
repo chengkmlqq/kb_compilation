@@ -104,6 +104,7 @@ class ModelPayload(BaseModel):
     is_default: bool = False
     max_concurrency: int | None = None
     thinking_control: str | None = None
+    max_tokens: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +173,7 @@ def export_models(
                 "is_default": bool(m.is_default),
                 "max_concurrency": m.max_concurrency,
                 "thinking_control": m.thinking_control or "",
+                "max_tokens": m.max_tokens,
             }
         )
     return {"success": True, "data": {"models": items, "count": len(items)}}

@@ -62,6 +62,9 @@ class KbModel(Base):
     max_concurrency: Mapped[int | None] = mapped_column(Integer)
     # chat 深度思考控制（off / auto / on，映射到请求参数）
     thinking_control: Mapped[str | None] = mapped_column(String(16))
+    # chat 单次回答最大输出 token（None = 沿用链路默认 2048；思考型模型建议调大，
+    # 否则思考过程吃满预算导致正文为空）
+    max_tokens: Mapped[int | None] = mapped_column(Integer)
     # active | downloading | download_failed（Ollama 预留；remote 恒 active）
     status: Mapped[str] = mapped_column(String(32), default="active")
     # 1=active 0=deleted

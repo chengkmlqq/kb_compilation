@@ -136,18 +136,21 @@ def test_create_with_concurrency_and_thinking(model_db):
         type="chat",
         max_concurrency=8,
         thinking_control="auto",
+        max_tokens=8192,
     )
     assert m["max_concurrency"] == 8
     assert m["thinking_control"] == "auto"
+    assert m["max_tokens"] == 8192
     # 0/空 → 不落库（None）
-    m2 = _create(model_db, "personal", type="chat", max_concurrency=0)
+    m2 = _create(model_db, "personal", type="chat", max_concurrency=0, max_tokens=0)
     assert m2["max_concurrency"] is None
+    assert m2["max_tokens"] is None
 
 
 def test_copy_model(model_db):
     from api.services.models import copy_model
 
-    orig = _create(model_db, "personal", type="chat", name="deepseek-v4-pro")
+    orig = _create(model_db, "personal", type="chat", name="deepseek-v4-pro", max_tokens=8192)
     clone = copy_model(
         model_db,
         orig["id"],
@@ -162,6 +165,7 @@ def test_copy_model(model_db):
     assert clone["display_name"] == "deepseek-v4-pro-copy"
     assert clone["type"] == "chat"
     assert clone["is_default"] is False
+    assert clone["max_tokens"] == 8192
     # 复制第二次 → 显示名去重递增
     clone2 = copy_model(
         model_db,

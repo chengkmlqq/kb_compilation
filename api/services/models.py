@@ -138,6 +138,7 @@ def model_to_dict(m: KbModel) -> dict:
         "is_default": bool(m.is_default),
         "max_concurrency": m.max_concurrency,
         "thinking_control": m.thinking_control,
+        "max_tokens": m.max_tokens,
         "status": m.status,
         "state": m.state,
         "api_key_masked": mask_api_key(m.api_key),
@@ -282,6 +283,11 @@ def create_model(
             if payload.get("thinking_control") not in (None, "")
             else None
         ),
+        max_tokens=(
+            int(payload["max_tokens"])
+            if payload.get("max_tokens") not in (None, "", 0)
+            else None
+        ),
         status="active",
         state="1",
     )
@@ -377,6 +383,12 @@ def update_model(
             if payload.get("thinking_control") not in (None, "")
             else None
         )
+    if "max_tokens" in payload:
+        m.max_tokens = (
+            int(payload["max_tokens"])
+            if payload.get("max_tokens") not in (None, "", 0)
+            else None
+        )
     db.commit()
     return model_to_dict(m)
 
@@ -437,6 +449,7 @@ def copy_model(
         is_default=False,
         max_concurrency=src.max_concurrency,
         thinking_control=src.thinking_control,
+        max_tokens=src.max_tokens,
         status="active",
         state="1",
     )
@@ -585,6 +598,8 @@ def _model_to_config(m) -> dict:
         "custom_headers": m.custom_headers or {},
         "interface_type": m.interface_type or "openai",
         "supports_vision": bool(m.supports_vision),
+        # chat 链路据此覆盖默认 max_tokens（None = 沿用链路默认 2048）
+        "max_tokens": m.max_tokens,
     }
 
 

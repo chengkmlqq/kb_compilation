@@ -161,6 +161,7 @@ def resolve_vision_config(
         custom_headers=resolved.get("custom_headers") or None,
         interface_type=(resolved.get("interface_type") or "openai"),
         supports_vision=True,
+        max_tokens=resolved.get("max_tokens"),
     )
 
 

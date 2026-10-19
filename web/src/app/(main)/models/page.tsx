@@ -609,6 +609,7 @@ function ModelEditorModal({
         is_default: item.is_default,
         max_concurrency: item.max_concurrency ?? undefined,
         thinking_control: item.thinking_control ?? undefined,
+        max_tokens: item.max_tokens ?? undefined,
         custom_headers:
           item.custom_headers && Object.keys(item.custom_headers).length > 0
             ? JSON.stringify(item.custom_headers, null, 2)
@@ -703,6 +704,7 @@ function ModelEditorModal({
         is_default: !!v.is_default,
         max_concurrency: v.max_concurrency || null,
         thinking_control: v.thinking_control || null,
+        max_tokens: v.max_tokens || null,
       };
       if (v.api_key) payload.api_key = v.api_key;
       if (v.custom_headers && String(v.custom_headers).trim()) {
@@ -840,6 +842,16 @@ function ModelEditorModal({
             <InputNumber min={0} placeholder="如 8" style={{ width: "100%" }} />
           </Form.Item>
         )}
+        {["chat", "vllm"].includes(watchType) && (
+          <Form.Item
+            name="max_tokens"
+            label="最大输出 Token（空=默认 2048）"
+            tooltip="单次回答的输出上限。思考型模型（如 deepseek-v4-pro）会把预算先给思考过程，过小会导致正文为空——建议 8192。"
+            style={{ maxWidth: 240 }}
+          >
+            <InputNumber min={256} max={131072} step={1024} placeholder="如 8192" style={{ width: "100%" }} />
+          </Form.Item>
+        )}
         <Form.Item name="is_default" label="设为默认" valuePropName="checked">
           <Switch />
         </Form.Item>
@@ -934,7 +946,7 @@ function ModelDebugDrawer({
     setThinking(false);
     setTemperature(0.7);
     setTopP(1);
-    setMaxTokens(1024);
+    setMaxTokens(target.max_tokens ?? 1024);
     setSystemPrompt("");
     setResult(null);
     setHistory([]);
@@ -962,6 +974,8 @@ function ModelDebugDrawer({
     setSelectedId(id);
     setFile(null);
     resetResult();
+    const m = models.find((x) => x.id === id);
+    if (m?.type === "chat" || m?.type === "vllm") setMaxTokens(m.max_tokens ?? 1024);
   };
 
   const canRun = useMemo(() => {

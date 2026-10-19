@@ -222,6 +222,10 @@ export interface PageList<T> {
 }
 
 export interface KbUpdatePayload {
+  /** 知识库名称（2026-10-20 配置弹窗基本信息分区新增） */
+  name?: string;
+  /** 知识库描述（2026-10-20 配置弹窗基本信息分区新增） */
+  description?: string;
   type?: "document";
   /** 所属分类（与分类树 name 对应；空字符串 = 移出分类/未分类） */
   label?: string | null;
@@ -2064,6 +2068,7 @@ export interface ModelItem {
   is_default: boolean;
   max_concurrency: number | null;
   thinking_control: string | null;
+  max_tokens: number | null;
   status: string;
   api_key_masked: string;
   api_key_configured: boolean;
@@ -2144,6 +2149,7 @@ export interface ModelPayload {
   is_default?: boolean;
   max_concurrency?: number | null;
   thinking_control?: string | null;
+  max_tokens?: number | null;
 }
 
 export function apiCreateModel(payload: ModelPayload) {
@@ -2177,6 +2183,7 @@ export interface ModelExportItem {
   is_default?: boolean;
   max_concurrency?: number;
   thinking_control?: string;
+  max_tokens?: number;
 }
 
 export function apiModelExport() {
