@@ -866,26 +866,31 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
     )
     db.execute(delete(DocChunk).where(DocChunk.document_id == document_id))
     db.delete(doc)
-    db.commit()
 
-    # 3) 向量索引（该文档 chunks 的 embedding，best-effort 不阻塞）
+    # 3) 向量索引清理——挪到业务提交之前并 fail-closed（2026-10-20）：
+    #    原实现先 commit 业务库、再 best-effort 清向量（失败仅 warning），
+    #    曾致「切片已删、向量残留」的孤儿向量累积（kb_embedding 幽灵 id，
+    #    检索命中空内容）。现在先清向量再提交业务删除；清理失败抛异常
+    #    中止删除（业务事务回滚、文档保留），从源头杜绝孤儿产生。
     if chunk_ids:
         try:
             from api.services.vector_store import get_vector_store
 
             # vector_store_id 是 KB 级列（KbDatasource），文档行没有——
             # 对齐 ingest.py 的取法，否则 doc.vector_store_id 运行时
-            # AttributeError 被吞 → 向量清理静默失效
+            # AttributeError 被吞 → 向量清理静默失效（曾实踩）
             kb_row = db.execute(
                 select(KbDatasource).where(KbDatasource.id == kb_id)
             ).scalars().first()
             get_vector_store(
                 kb_row.vector_store_id if kb_row else None
             ).delete_by_chunks(chunk_ids)
-        except Exception as exc:  # pragma: no cover - 向量清理尽力而为
-            logging.getLogger(__name__).warning(
-                "向量清理失败(doc=%s): %s", document_id, exc
+        except Exception as exc:  # fail-closed：向量清理失败则不删文档
+            logging.getLogger(__name__).exception(
+                "向量清理失败(doc=%s)，中止文档删除: %s", document_id, exc
             )
+            raise
+    db.commit()
 
     # 4) 本地/对象存储文件清理（_remove_local_file 内部已 try/except，幂等）
     _remove_local_file(doc.storage_path)

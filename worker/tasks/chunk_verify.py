@@ -29,24 +29,54 @@ def _params(task_params: str | None) -> dict:
 
 
 def _handle_chunk_verify(job_id: str, task_params: str | None = None) -> dict:
-    """execute_modo_job 分发的 handler：核对/修复向量切片。"""
+    """execute_modo_job 分发的 handler：核对/修复向量切片。
+
+    单个 KB：task_params 带 kb_id；缺省 kb_id = 全部可见知识库
+    （state='1'，供 cron 每日核对修复用，避免孤儿向量长期累积）。
+    """
     from api.services.chunk_verify import fix_kb, verify_kb
 
     params = _params(task_params)
-    kb_id = params.get("kb_id")
-    if not kb_id:
-        return {"success": False, "error": "missing kb_id in task_params"}
-
     action = params.get("action") or "check"
-    if action == "fix":
-        result = fix_kb(
-            kb_id,
-            fix_orphans=bool(params.get("fix_orphans", True)),
-            fix_missing=bool(params.get("fix_missing", True)),
-        )
+    fix_orphans = bool(params.get("fix_orphans", True))
+    fix_missing = bool(params.get("fix_missing", True))
+
+    kb_id = params.get("kb_id")
+    if kb_id:
+        targets = [str(kb_id).strip()]
     else:
-        result = verify_kb(kb_id)
-    return {"success": True, "output": f"chunk verify {action} kb={kb_id}: {result}"}
+        # 全库模式：遍历 state=1 的知识库（对齐 qa 全库问答的可见范围口径）
+        from api.db import get_sessionmaker
+        from api.models.knowledge import KbDatasource
+        from sqlalchemy import select
+
+        db = get_sessionmaker()()
+        try:
+            targets = [
+                str(r[0])
+                for r in db.execute(
+                    select(KbDatasource.id).where(KbDatasource.state == "1")
+                ).all()
+            ]
+        finally:
+            db.close()
+
+    results: dict = {}
+    for kid in targets:
+        try:
+            if action == "fix":
+                results[kid] = fix_kb(
+                    kid, fix_orphans=fix_orphans, fix_missing=fix_missing
+                )
+            else:
+                results[kid] = verify_kb(kid)
+        except Exception as exc:  # noqa: BLE001 - 单库失败不阻断全库批跑
+            logger.exception("chunk verify failed for kb=%s", kid)
+            results[kid] = {"error": str(exc)}
+    return {
+        "success": True,
+        "output": f"chunk verify {action} kb={','.join(targets) or '无'}: {results}",
+    }
 
 
 # 注册到 execute_modo_job 分发器（cron 表 / 手动投递均可触发）

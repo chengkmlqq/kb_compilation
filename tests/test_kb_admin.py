@@ -131,7 +131,18 @@ def test_create_list_delete_document(kb_db) -> None:
     assert list_documents(kb_db, kb.id)["total"] == 0
 
 
-def test_delete_document_cascades_chunks(kb_db) -> None:
+def test_delete_document_cascades_chunks(kb_db, monkeypatch) -> None:
+    # 2026-10-20: delete_document 向量清理改为「commit 前 + fail-closed」——
+    # 测试环境无 PG 向量库，须 mock VectorStore 避免删除被中止
+    calls: dict = {}
+
+    class _FakeStore:
+        def delete_by_chunks(self, chunk_ids):  # noqa: ARG002
+            calls["chunk_ids"] = chunk_ids
+
+    monkeypatch.setattr(
+        "api.services.vector_store.get_vector_store", lambda *a, **k: _FakeStore()
+    )
     kb = create_kb(kb_db, "库")
     doc = create_document(kb_db, kb.id, "t.md")
     kb_db.add_all(
@@ -144,6 +155,8 @@ def test_delete_document_cascades_chunks(kb_db) -> None:
     result = delete_document(kb_db, kb.id, doc.id)
     assert result["success"] is True
     assert kb_db.query(DocChunk).count() == 0
+    # 向量清理在提交前执行且拿到全部 chunk id（防孤儿残留的回归护栏）
+    assert set(calls.get("chunk_ids") or []) == {"c1", "c2"}
 
 
 def test_delete_document_missing(kb_db) -> None:
