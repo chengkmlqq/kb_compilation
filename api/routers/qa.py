@@ -89,6 +89,25 @@ def _fail(stream_id: str, message: str) -> None:
     store.mark_done(stream_id)
 
 
+def visible_kbs_for_qa(
+    db: Session,
+    ctx_user_id: str,
+    ctx_team_name: str,
+    ctx_is_admin: bool,
+) -> list[KbDatasource]:
+    """全库问答可见范围（2026-10-19 统一口径，对齐知识库列表）。
+
+    admin 全量（state=1）；非 admin 按 visible_clauses 并集
+    （own ∪ team ∪ system），保证「列表里看得到 → 全库问答也能检到」。
+    """
+    stmt = select(KbDatasource).where(KbDatasource.state == "1")
+    if not ctx_is_admin:
+        from api.services.scope import visible_clauses
+
+        _clauses = visible_clauses(ctx_user_id, ctx_team_name, ctx_is_admin, KbDatasource)
+        if _clauses:
+            stmt = stmt.where(*_clauses)
+    return list(db.execute(stmt).scalars().all())
 
 
 def _run_generation(
@@ -133,12 +152,13 @@ def _run_generation(
             except Exception:  # noqa: BLE001
                 ctx_is_admin = False
 
-        # 2026-10-16 全库问答：未选知识库时解析可见范围（state=1；非管理员限定团队）
+        # 2026-10-16 全库问答：未选知识库时解析可见范围（state=1）。
+        # 2026-10-19 统一口径：admin 全量；非 admin 按 visible_clauses 并集
+        # （own ∪ team ∪ system），与知识库列表 kb_visible_clauses 一致——
+        # 此前按 team_name 精确匹配，导致自己建的 personal 库 / system 预置库
+        # 在全库问答中检索不到（列表可见但检索范围不含）。
         if not req.kb_id:
-            _stmt = select(KbDatasource).where(KbDatasource.state == "1")
-            if not ctx_is_admin and ctx_team_name:
-                _stmt = _stmt.where(KbDatasource.team_name == ctx_team_name)
-            kbs = list(db.execute(_stmt).scalars().all())
+            kbs = visible_kbs_for_qa(db, ctx_user_id, ctx_team_name, ctx_is_admin)
 
         # Session mode: validate + load history, persist user msg
         session = None
