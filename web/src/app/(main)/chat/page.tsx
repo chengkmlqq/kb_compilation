@@ -49,7 +49,6 @@ import {
   DsbIconModelMgr,
   DsbIconOperate,
   DsbIconRefresh,
-  DsbIconSwapRight,
   DsbStopLoading,
 } from "@/components/DsbIcons";
 import {
@@ -66,7 +65,6 @@ import {
   apiListKbs,
   apiListSessions,
   apiLoadSessionMessages,
-  apiRecommendQuestions,
   apiSearchMessages,
   apiUpdateSession,
   apiUploadAttachment,
@@ -116,8 +114,6 @@ export default function ChatPage() {
   const [sessions, setSessions] = useState<ChatSessionItem[]>([]);
   const [activeSession, setActiveSession] = useState<string>();
   const [streaming, setStreaming] = useState(false);
-  const [recommendations, setRecommendations] = useState<string[]>([])
-  const [recommendLoading, setRecommendLoading] = useState(false);;
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -366,11 +362,10 @@ export default function ChatPage() {
     [agentMode, kbId, modelId, webSearch, deepThinking, atTarget],
   );
 
-  // 打开会话：加载历史 + 推荐问题
+  // 打开会话：加载历史消息
   const openSession = useCallback(
     async (sessionId: string) => {
       setActiveSession(sessionId);
-      setRecommendations([]);
       setLoadingMsgs(true);
       try {
         const res = await apiLoadSessionMessages(sessionId);
@@ -583,11 +578,7 @@ export default function ChatPage() {
       setActiveSession(res.data.id);
       setActiveSessionTitle("新对话");
       setMsgs([]);
-      setRecommendations([]);
       await loadSessions();
-      // 拉推荐问题（新会话，无消息）
-      const rec = await apiRecommendQuestions(kbId);
-      if (rec.success) setRecommendations(rec.data?.questions || []);
       scrollBottom();
     } else {
       toast.error(res.message || "创建会话失败");
@@ -646,7 +637,6 @@ export default function ChatPage() {
     };
     setMsgs((prev) => [...prev, userMsg, placeholder]);
     setInput("");
-    setRecommendations([]);
     setStreaming(true);
     if (atTarget) setAtTarget(null);
     scrollBottom();
@@ -980,7 +970,6 @@ export default function ChatPage() {
     if (activeSession === id) {
       setActiveSession(undefined);
       setMsgs([]);
-      setRecommendations([]);
       setAttachments([]);
       setAgentMode(undefined);
     }
@@ -1334,21 +1323,6 @@ export default function ChatPage() {
             <div className="kb-chat-home">
               {/* 2026-10-19 DSB 对齐：问候大标题（对齐 Portal .header-title .home-title：30px/600 居中） */}
               <div className="kb-chat-home-greeting">{homeGreeting}</div>
-              {(recommendations.length > 0 || recommendLoading) && (
-                  <div className="kb-chat-home-recommend">
-                    <div className="kb-chat-home-recommend-title">你可以这样问我：</div>
-                    {recommendLoading && recommendations.length === 0
-                      ? Array.from({ length: 3 }).map((_, i) => (
-                          <div className="kb-chat-home-rela-item" key={`rela-skel-${i}`} style={{ opacity: 0.5 }}>加载中…</div>
-                        ))
-                      : recommendations.map((q, i) => (
-                          <div className="kb-chat-home-rela-item" key={i} onClick={() => void send(q)}>
-                            <span style={{ flex: 1, minWidth: 0 }}>{q}</span>
-                            <DsbIconSwapRight size={14} className="kb-chat-home-rela-arrow" />
-                          </div>
-                        ))}
-                  </div>
-                )}
             </div>
           ) : (
           <div className="kb-chat-ai-list">

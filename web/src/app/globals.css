@@ -3792,42 +3792,6 @@ html[data-theme="dark"] .kb-citation-web:hover {
   line-height: 22px;
   color: rgba(36, 46, 67, 1);
 }
-.kb-chat-home-recommend {
-  display: flex;
-  align-items: center;
-  flex-direction: column;
-  row-gap: 8px;
-  width: 100%;
-  margin-bottom: 24px;
-}
-.kb-chat-home-recommend-title {
-  line-height: 20px;
-  color: rgba(121, 135, 156, 1);
-}
-.kb-chat-home-rela-item {
-  display: flex;
-  align-items: center;
-  column-gap: 12px;
-  width: fit-content;
-  max-width: 100%;
-  padding: 6px 12px;
-  font-size: 14px;
-  line-height: 22px;
-  cursor: pointer;
-  background: #fff;
-  border-radius: 8px;
-  color: rgba(36, 46, 67, 1);
-}
-.kb-chat-home-rela-item:hover {
-  background: rgba(239, 244, 249, 1);
-}
-/* DSB .rela-item .moda-icon：flex 0 0 14px / width 14px / color text-2 */
-.kb-chat-home-rela-item .kb-chat-home-rela-arrow {
-  flex: 0 0 14px;
-  width: 14px;
-  color: rgba(77, 94, 125, 1);
-  font-size: 14px;
-}
 
 /* ── 消息区（对齐 .chat-content：padding 20px 15%、row-gap 30px）── */
 .kb-chat-content {
