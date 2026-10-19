@@ -138,7 +138,6 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
   const [debugOpen, setDebugOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [section, setSection] = useState("basic");
-  const customWiki = Form.useWatch("custom_wiki_generation", form) ?? false;
   const enableParentChild = Form.useWatch("enable_parent_child", form);
   const strategy = Form.useWatch("strategy", form);
 
@@ -178,16 +177,14 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
       vector_enabled: !!strat.vector_enabled,
       keyword_enabled: !!strat.keyword_enabled,
       graph_enabled: !!strat.graph_enabled,
-      custom_wiki_generation: !!kb.custom_wiki_generation,
       build_engine: kb.build_tape_id || undefined,
-      wiki_skill: kb.wiki_config?.skill || undefined,
-      extraction_granularity: kb.wiki_config?.extraction_granularity || "standard",
+      // 自定义 Wiki 生成表单已移除（2026-10-20）：保存不传该字段，后端保留原值
+      // （custom_wiki_generation=true 的老库仍按手动模式，不被动切换）
       embedding_model_id: kb.embedding_model_id || undefined,
       summary_model_id: kb.wiki_config?.synthesis_model_id || kb.summary_model_id || undefined,
       // 摘要策略固定 auto（系统按文档规模自动路由），不出现在表单中
       graph_extract: !!kb.extract_config?.enabled,
-      question_generation: !!kb.question_generation_config?.enabled,
-      question_count: kb.question_generation_config?.question_count || 3,
+      // 问题生成表单已移除（2026-10-20）：保存不传该字段，后端保留原值
       // 图片处理：对齐 WeKnora vlm_config（EnableMultimodel + 绑定的视觉模型）
       vlm_enabled: !!kb.vlm_config?.enabled,
       vlm_model_id: (kb.vlm_config?.model_id as string) || undefined,
@@ -268,7 +265,9 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
         // 不走 !!v.graph_enabled（undefined→false 会误关已开启图谱的存量 KB）。
         graph_enabled: !!kb.indexing_strategy?.graph_enabled,
       },
-      custom_wiki_generation: v.custom_wiki_generation,
+      // 自定义 Wiki 生成 / 问题生成表单已移除（2026-10-20）：
+      // 不传 custom_wiki_generation / question_generation_config / wiki_config，
+      // 后端「字段在 payload 才更新」→ 存量值保持不变（老库手动模式不被动切换、问题生成不被动关闭）
       // 构建引擎（2026-10-16 配置弹窗补入口）：回填保证未动时表单值=原绑定；
       // allowClear 清空 → null = 解除绑定（后端「字段在 payload 才更新」语义）
       build_tape_id: (v.build_engine as string | undefined) || null,
@@ -277,15 +276,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
       // 摘要策略固定 auto：系统按文档规模自动路由（小文档全文直塞 / 大文档分块合并）
       summary_strategy: "auto",
       configs: {
-        wiki_config: {
-          skill: v.wiki_skill || "",
-          extraction_granularity: v.extraction_granularity || "standard",
-        },
         extract_config: kb.extract_config ?? { enabled: false },
-        question_generation_config: {
-          enabled: !!v.question_generation,
-          question_count: v.question_count || 3,
-        },
         // 图片处理（对齐 WeKnora vlm_config）：开关 + 绑定的视觉模型 + 描述语言
         vlm_config: {
           enabled: !!v.vlm_enabled,
@@ -624,39 +615,8 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                       options={groupBuildEngineOptions(buildEngines)}
                     />
                   </Form.Item>
-                  <Form.Item
-                    name="custom_wiki_generation"
-                    label="自定义 Wiki 生成"
-                    valuePropName="checked"
-                    extra="关闭自动构建、改为手动触发（配置了构建引擎时仍会自动构建）"
-                  >
-                    <Switch />
-                  </Form.Item>
-                  {customWiki && (
-                    <>
-                      <Form.Item name="wiki_skill" hidden>
-                        <Select />
-                      </Form.Item>
-                      <Form.Item name="extraction_granularity" label="抽取粒度">
-                        <Select
-                          options={[
-                            { label: "聚焦（focused）", value: "focused" },
-                            { label: "标准（standard）", value: "standard" },
-                            { label: "详尽（exhaustive）", value: "exhaustive" },
-                          ]}
-                        />
-                      </Form.Item>
-                    </>
-                  )}
                   <Form.Item name="summary_model_id" label="Wiki 合成模型（LLM）">
                     <Select allowClear placeholder="留空 = 系统默认" options={modelOptions("chat")} />
-                  </Form.Item>
-
-                  <Form.Item name="question_generation" label="问题生成" valuePropName="checked">
-                    <Switch />
-                  </Form.Item>
-                  <Form.Item name="question_count" label="每文档问题数">
-                    <InputNumber min={0} max={20} style={{ width: 120 }} />
                   </Form.Item>
                 </>
               )}
