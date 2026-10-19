@@ -75,6 +75,9 @@ from api.services.kb_admin import (
     wiki_update_folder,
     wiki_update_page,
     wiki_update_feedback_status,
+    wiki_delete_feedback,
+    wiki_keyword_overview,
+    wiki_keyword_mark,
     get_document_detail,
     list_wiki_pages,
     tokenize_text,
@@ -236,12 +239,14 @@ class DocMoveRequest(BaseModel):
 
 
 class WikiFeedbackCreate(BaseModel):
-    feedback_type: str = Field(default="issue", pattern="^(helpful|issue)$")
+    feedback_type: str = Field(default="comment", pattern="^(comment|question|helpful|issue)$")
+    # 快捷标注预设键（内容类 5 键 + 高频词 kw_* 3 键 + custom 自定义），服务层按白名单校验
+    preset: str = Field(default="")
     content: str = Field(default="", max_length=2000)
 
 
 class WikiFeedbackStatusUpdate(BaseModel):
-    status: str = Field(..., pattern="^(open|resolved|ignored)$")
+    status: str = Field(..., pattern="^(pending|resolved|ignored)$")
 
 
 @router.get("")
@@ -1745,16 +1750,25 @@ def get_wiki_index(kb_id: str, caller: dict = Depends(_require_kb_caller),
 @router.get("/{kb_id}/wiki/feedback")
 def list_all_wiki_feedback(
     kb_id: str,
+    slug: str | None = None,
+    feedback_type: str | None = None,
     status: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    """全库反馈列表（可按状态过滤，倒序）。"""
+    """全库反馈列表（slug/feedback_type/status 过滤 + 分页，倒序；维护中心）。"""
     _kb_visible(kb_id, caller, db)
-    data = wiki_list_feedback(db, kb_id, slug="")
-    if status:
-        data["items"] = [it for it in data["items"] if it["status"] == status]
-        data["total"] = len(data["items"])
+    data = wiki_list_feedback(
+        db,
+        kb_id,
+        slug=slug or "",
+        feedback_type=feedback_type or "",
+        status=status or "",
+        page=page,
+        page_size=page_size,
+    )
     return {"success": True, "data": data}
 
 
@@ -1767,11 +1781,14 @@ def submit_wiki_feedback(
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    """提交页面反馈（helpful=有帮助 / issue=问题上报）。"""
-    _kb_manage(kb_id, caller, db)
-    data = wiki_submit_feedback(
-        db, kb_id, slug, user_id, req.feedback_type, req.content
-    )
+    """提交页面反馈（comment=评论 / question=问题，兼容 helpful/issue；preset 快捷标注）。"""
+    _kb_visible(kb_id, caller, db)
+    try:
+        data = wiki_submit_feedback(
+            db, kb_id, slug, user_id, req.feedback_type, req.content, req.preset
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"success": True, "data": data}
 
 
@@ -1782,9 +1799,10 @@ def list_wiki_feedback(
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    """某页面的反馈列表（倒序）。"""
+    """某页面的反馈列表（倒序；上限 200 条）。"""
     _kb_visible(kb_id, caller, db)
-    return {"success": True, "data": wiki_list_feedback(db, kb_id, slug=slug)}
+    data = wiki_list_feedback(db, kb_id, slug=slug, page=1, page_size=200)
+    return {"success": True, "data": data}
 
 
 @router.put("/{kb_id}/wiki/feedback/{feedback_id}/status")
@@ -1796,13 +1814,74 @@ def update_wiki_feedback_status(
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    """更新反馈状态（open/resolved/ignored）。"""
+    """更新反馈状态（pending/resolved/ignored）。"""
     _kb_manage(kb_id, caller, db)
     try:
         data = wiki_update_feedback_status(db, kb_id, feedback_id, req.status)
 
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.delete("/{kb_id}/wiki/feedback/{feedback_id}")
+def delete_wiki_feedback(
+    kb_id: str,
+    feedback_id: str,
+    user_id: str = Depends(_require_wiki_user),
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """软删反馈（deleted_at 置位，列表/统计不可见）。"""
+    _kb_manage(kb_id, caller, db)
+    try:
+        data = wiki_delete_feedback(db, kb_id, feedback_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"success": True, "data": data}
+
+
+@router.get("/{kb_id}/wiki/keywords/overview")
+def wiki_keywords_overview_route(
+    kb_id: str,
+    search: str = "",
+    sort: str = Query("freq", pattern="^(freq|keyword)$"),
+    order: str = Query("desc", pattern="^(asc|desc)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """高频词概览：聚合 frequent_keyword 页面按频次降序，含标注计数。"""
+    _kb_visible(kb_id, caller, db)
+    return {
+        "success": True,
+        "data": wiki_keyword_overview(
+            db, kb_id, search=search, sort_by=sort, order=order, page=page, page_size=page_size
+        ),
+    }
+
+
+class WikiKeywordMark(BaseModel):
+    slug: str = Field(..., max_length=255)
+    preset: str = Field(default="", max_length=40)
+    content: str = Field(default="", max_length=2000)
+
+
+@router.post("/{kb_id}/wiki/keywords/mark")
+def wiki_keyword_mark_ep(
+    kb_id: str,
+    req: WikiKeywordMark,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """高频词业务含义标注（独立通道，不与普通页面反馈耦合）。"""
+    _kb_visible(kb_id, caller, db)
+    user_id = str(caller.get("user_id") or caller.get("sub") or "")
+    try:
+        data = wiki_keyword_mark(db, kb_id, req.slug, user_id, req.preset, content=req.content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"success": True, "data": data}
 
 

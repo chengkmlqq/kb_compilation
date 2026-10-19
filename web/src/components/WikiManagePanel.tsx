@@ -156,7 +156,7 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
   const loadFeedbackList = useCallback(async (status = fbStatus) => {
     setFbLoading(true);
     try {
-      const res = await apiWikiListAllFeedback(kbId, status || undefined);
+      const res = await apiWikiListAllFeedback(kbId, { status: status || undefined, page: 1, page_size: 100 });
       if (res.success && res.data) setFbItems(res.data.items);
       else message.error(res.message || "加载反馈失败");
     } finally {
@@ -173,7 +173,7 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
     setFbStatus(v);
     setFbLoading(true);
     try {
-      const res = await apiWikiListAllFeedback(kbId, v || undefined);
+      const res = await apiWikiListAllFeedback(kbId, { status: v || undefined, page: 1, page_size: 100 });
       if (res.success && res.data) setFbItems(res.data.items);
       else message.error(res.message || "加载反馈失败");
     } finally {
@@ -687,7 +687,7 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
             size="small"
           >
             <Radio.Button value="">全部</Radio.Button>
-            <Radio.Button value="open">待处理</Radio.Button>
+            <Radio.Button value="pending">待处理</Radio.Button>
             <Radio.Button value="resolved">已解决</Radio.Button>
             <Radio.Button value="ignored">已忽略</Radio.Button>
           </Radio.Group>
@@ -721,8 +721,8 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
                 dataIndex: "status",
                 width: 90,
                 render: (v: string) => (
-                  <Tag color={v === "open" ? "orange" : v === "resolved" ? "green" : "default"}>
-                    {v === "open" ? "待处理" : v === "resolved" ? "已解决" : "已忽略"}
+                  <Tag color={v === "pending" ? "orange" : v === "resolved" ? "green" : "default"}>
+                    {v === "pending" ? "待处理" : v === "resolved" ? "已解决" : "已忽略"}
                   </Tag>
                 ),
               },
@@ -741,8 +741,8 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
                         忽略
                       </Button>
                     )}
-                    {r.status !== "open" && (
-                      <Button size="small" type="link" onClick={() => void changeFbStatus(r.id, "open")}>
+                    {r.status !== "pending" && (
+                      <Button size="small" type="link" onClick={() => void changeFbStatus(r.id, "pending")}>
                         重开
                       </Button>
                     )}

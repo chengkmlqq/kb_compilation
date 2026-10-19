@@ -2,7 +2,22 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-17（知识库文档图标改用 DSB 文档库逐类型图标）
+最后更新：2026-10-20（Wiki 维护中心 + 高频词管理，对齐 WeKnora）
+
+## 27. 当前状态（2026-10-20 Wiki 反馈维护中心 + 高频词管理，对齐 WeKnora）
+
+- **需求**：把 WeKnora 的 wiki 反馈维护中心（wiki_page_feedback + WikiMaintenance.vue）与高频词管理（wiki/keywords/overview + WikiFeedbackPresetKeys）迁到 kb——反馈支持 comment/question + 快捷预设标注 + 三态流转（pending/resolved/ignored）+ 软删 + 分页筛选；高频词按 frequent_keyword 页面聚合展示词频/文档数/标注计数，可独立标注（kw_meaningful/kw_noise/kw_mis_extracted/custom）
+- **代码改动（本次提交）**：
+  1. 迁移：`0030_wiki_feedback_preset`（加 preset 列，revises 0029_overview_trend_indexes）+ `0031_wiki_feedback_maintenance`（加 page_title/reported_by_name/updated_at/deleted_at 反规范化列 + 存量 open→pending 归并 + kb_id+slug / kb_id+type+status 复合索引，文件名 0031_wiki_feedback_maintenance.py）。⚠️ **versions 目录有两个 0029（code_repo_config → overview_trend_indexes 线性链）**，0030/0031 挂在链尾，无分叉
+  2. `api/models/knowledge.py`：WikiFeedback 对齐 WeKnora（feedback_type 默认 comment、status 默认 pending、preset/page_title/reported_by_name NOT NULL + server_default、updated_at/deleted_at）+ WIKI_FEEDBACK_PRESETS（内容类 5 键 + kw_* 3 键）/ TYPES / STATUSES 白名单
+  3. `api/services/kb_admin.py`：`wiki_submit_feedback` 支持 preset（白名单校验 + 空内容自动回填预设文案 + helpful 空内容回填「有帮助」）；`wiki_list_feedback` 改过滤+分页（slug/type/status，软删不可见）；`wiki_update_feedback_status` 白名单校验 + 软删行不可操作；新增 `wiki_delete_feedback`（软删）/ `wiki_keyword_overview`（frequent_keyword 页聚合，正则解析「在 N 篇文档中高频出现（总频次：M）」头部 + 旧规范分组频次累加兜底，标注计数**排除软删**）/ `wiki_keyword_mark`（独立标注通道，preset 白名单 + custom 必填内容）；`list_kbs` 附带 keyword_count/feedback_count（卡片统计）
+  4. `api/routers/kbs.py`：feedback 列表端点支持 slug/type/status/page/page_size；submit 校验 preset（400）；新增 DELETE 反馈（软删）、GET keywords/overview、POST keywords/mark；⚠️ **mark 端点返回注解不能写 `dict | JSONResponse`**（FastAPI 会当 response_model 推断 → collection 期 FastAPIError Invalid args for response field），400 分支用 HTTPException
+  5. 前端：`web/src/lib/api.ts`（WikiFeedbackItem 加 page_title/reported_by_name/preset/updated_at；apiWikiListAllFeedback 改参数对象；apiWikiDeleteFeedback / apiListWikiKeywords / apiMarkWikiKeyword）；新增 `lib/wikiFeedback.ts`（PRESET_LABELS/TYPE_OPTIONS 共享常量）；`wiki-maintenance/page.tsx`（独立页：知识库选择 + 汇总徽标 + 类型/状态/关键词筛选 + 表格 + 钉底分页 + 标记解决/重开/忽略/删除）；`wiki-keywords/page.tsx`（首 tab 知识库卡片列表带高频词计数 → 动态选项卡开列表）+ `components/kb/WikiKeywordsPane.tsx`（排名/关键词/含义/频次/文档数/标注列 + 详情抽屉 + 标注弹窗）；WikiBrowseView 与 kbs/[id]/wiki/[slug] 反馈弹窗加快捷标注 Select + comment/question/helpful 类型；kbs 卡片 meta 加「反馈 N」badge 点击进维护中心（?kb_id=）；WikiManagePanel 状态 open→pending 三处
+  6. 菜单：seed KB_MENUS 加一级「高频词」（/wiki-keywords，BarChartOutlined，sort 4）+ grp_ops 下「维护中心」（/wiki-maintenance，CommentOutlined，sort 9），其余分组 sort_num 顺延；AppSider ICON_MAP 补 BarChartOutlined；MenuContext FALLBACK_MENUS 补两条（兜底挂 grp_knowledge 下，与种子位置不同属既有简化结构差异）
+  7. chat/page.tsx + globals.css 的 .kb-chat-footer 改 min-height 自适应（图片预览条插入后 textarea 不被压缩至 0）——工作区遗留同批改动
+- **验证**：`tests/test_wiki_keywords.py` 7 用例（频次解析排序/search/旧规范兜底/标注计数含软删排除/分页/mark 校验）+ `tests/test_wiki_management.py` 状态断言改 pending（19 passed）；全量 `uv run pytest -q` **759 passed / 2 failed**（2 红 = test_chat_image_qa 图片门禁护栏，**HEAD f0903f0 干净 worktree 复现同样失败**，858b0b6 改了门禁行为未同步旧测试，属基线问题非本次回归）；`tsc --noEmit` exit 0；`bun run build` rc 0（/wiki-keywords、/wiki-maintenance 路由正常产出）
+- **部署注意**：api 端（模型/服务/路由/迁移）→ 重建 kb-api-server；前端（页面/组件/常量）→ 重建 kb-web；迁移由 api-server 启动自动 upgrade（容器热修需 cp 0030/0031 两个迁移文件）；菜单属库内数据 → docker cp seed_framework_db.py 跑（菜单幂等 upsert + 种子角色自动授权新菜单，**非种子角色需在菜单管理手动勾选**）
+- **坑位**：① mark 端点返回注解陷阱见上；② WikiManagePanel 旧状态 open 已全改 pending（radio/Tag/重开按钮），遗留 open 会导致筛选空列表/更新 422；③ 高频词词频解析依赖 kb 模板头部句格式，旧规范页面走分组累加兜底；④ 迁移文件名与 revision 号允许不同（alembic 按 revision id 链），但文件命名统一用 revision 前缀避免混乱；⑤ 并行会话在途文件（agent_tools_full.py / AgentEditorModal.tsx）未提交，勿误带
 
 ## 26. 当前状态（2026-10-17 知识库文档图标改用 DSB 文档库逐类型图标）
 

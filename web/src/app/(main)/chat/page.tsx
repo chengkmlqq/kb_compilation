@@ -1495,7 +1495,7 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </div>
 
-        <div className={`kb-chat-footer${attachments.length > 0 ? " has-file" : ""}`}>
+        <div className={`kb-chat-footer${attachments.length > 0 || imagePreviews.length > 0 ? " has-file" : ""}`}>
           {/* 输入卡片：对齐 DSB .chat-footer > @ant-design/x Sender（卡片描边/圆角/阴影 + 内容区 + 底栏） */}
           <div className="kb-chat-footer-inner">
       {/* 2026-10-08 对齐 WeKnora：图片 / 附件双入口 + 输入卡片式布局；2026-10-12 支持整文件拖放 */}
@@ -1535,7 +1535,7 @@ export default function ChatPage() {
         )}
         {/* 图片预览条（发送前本地预览） */}
         {imagePreviews.length > 0 && (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "8px 0 6px" }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "8px 0 6px", flexShrink: 0 }}>
             {imagePreviews.map((p, i) => (
               <div
                 key={p.url}

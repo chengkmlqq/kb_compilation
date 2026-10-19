@@ -378,7 +378,15 @@ class WikiOperationLog(Base):
 
 
 class WikiFeedback(Base):
-    """页面反馈：用户对 wiki 页面的评价/问题上报。"""
+    """页面反馈：用户对 wiki 页面的评价/问题上报。
+
+    对齐 WeKnora wiki_page_feedback（维护中心形态，迁移 0031）：
+    - feedback_type: comment（评论）| question（问题），兼容旧 helpful/issue
+    - status: pending | resolved | ignored（WeKnora 三态；旧 open 迁移为 pending）
+    - preset: 一键快捷标注键（内容类 + 高频词 kw_*），空串 = 自由输入
+    - page_title / reported_by_name: 写入时反规范化，列表免 join
+    - deleted_at: 软删
+    """
 
     __tablename__ = "wiki_feedback"
 
@@ -386,12 +394,37 @@ class WikiFeedback(Base):
     kb_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     slug: Mapped[str | None] = mapped_column(String(255), default="")
     user_id: Mapped[str | None] = mapped_column(String(64), default="")
-    feedback_type: Mapped[str] = mapped_column(String(32), default="issue")  # helpful/issue
+    feedback_type: Mapped[str] = mapped_column(String(32), default="comment")  # comment/question（旧 helpful/issue 兼容）
+    # 高频词业务含义标注预设键（对齐 WeKnora WikiFeedbackPresetKeys）：
+    # kw_meaningful=有意义 / kw_noise=噪声 / kw_mis_extracted=误提取 / custom=自定义
+    preset: Mapped[str] = mapped_column(String(32), default="", server_default="")
     content: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(32), default="open")  # open/resolved/ignored
+    status: Mapped[str] = mapped_column(String(32), default="pending")  # pending/resolved/ignored
+    page_title: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    reported_by_name: Mapped[str] = mapped_column(String(100), default="", server_default="")
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=text("CURRENT_TIMESTAMP")
     )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# 快捷标注预设白名单（键 -> 中文文案，与 WeKnora types.WikiFeedbackPresetKeys 对齐）
+WIKI_FEEDBACK_PRESETS: dict[str, str] = {
+    "content_error": "内容有误",
+    "outdated": "信息过时",
+    "broken_link": "链接失效",
+    "format_issue": "格式问题",
+    "incomplete": "信息不完整",
+    "kw_meaningful": "有业务含义",
+    "kw_noise": "无业务含义（噪音）",
+    "kw_mis_extracted": "提取不准确",
+}
+
+WIKI_FEEDBACK_TYPES = ("comment", "question")
+WIKI_FEEDBACK_STATUSES = ("pending", "resolved", "ignored")
 
 
 class WikiPageIssue(Base):

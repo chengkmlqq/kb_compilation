@@ -97,8 +97,9 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("chat", "chat", "智能问答", "/chat", None, "IconSemanticSearchColor", 1),
     ("kbs", "kbs", "知识库", "/kbs", None, "IconBook1Color", 2),
     ("agents", "agents", "智能体", "/agents", None, "IconSemanticSearchColor", 3),
+    ("wiki_keywords", "wiki_keywords", "高频词", "/wiki-keywords", None, "BarChartOutlined", 4),
     # ---- 运维监控（顶级目录：任务监控/任务管理/主机监控/操作日志/切片核对/元数据采集） ----
-    ("grp_ops", "grp_ops", "运维监控", None, None, "IconTaskMonitorColor", 4),
+    ("grp_ops", "grp_ops", "运维监控", None, None, "IconTaskMonitorColor", 5),
     ("jobs", "jobs", "任务监控", "/jobs", "grp_ops", "IconTaskMonitorColor", 1),
     ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_ops", "ScheduleOutlined", 2),
     ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_ops", "IconCloudServerColor", 3),
@@ -131,8 +132,18 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
         "BarChartOutlined",
         8,
     ),
+    # 2026-10-20 维护中心（Wiki 页面反馈汇总与处理；知识库卡片「反馈 N」也可进入）
+    (
+        "wiki_maintenance",
+        "wiki_maintenance",
+        "维护中心",
+        "/wiki-maintenance",
+        "grp_ops",
+        "CommentOutlined",
+        9,
+    ),
     # ---- 配置管理（顶级目录：数据源管理/模型/MCP/技能/参数/联网搜索） ----
-    ("grp_config", "grp_config", "配置管理", None, None, "ToolOutlined", 5),
+    ("grp_config", "grp_config", "配置管理", None, None, "ToolOutlined", 6),
     ("datasources", "datasources", "数据源管理", "/datasources", "grp_config", "IconDatabaseColor", 1),
     ("models", "models", "模型配置", "/models", "grp_config", "CloudServerOutlined", 2),
     ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "grp_config", "ApiOutlined", 3),
@@ -140,13 +151,13 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("sys_dims", "sys_dims", "参数管理", "/system/dims", "grp_config", "DatabaseOutlined", 5),
     ("d83aee0d1d8a4fce8a6bd121b6efc5fa", "websearch", "联网搜索", "/websearch", "grp_config", "SearchOutlined", 6),
     # ---- 系统管理（分组兼页面，顶级：点击自身跳 /system → 重定向到 /system/users） ----
-    ("system", "system", "系统管理", "/system", None, "IconSystemMgrColor", 6),
+    ("system", "system", "系统管理", "/system", None, "IconSystemMgrColor", 7),
     ("sys_users", "sys_users", "用户管理", "/system/users", "system", "TeamOutlined", 1),
     ("sys_roles", "sys_roles", "角色管理", "/system/roles", "system", "SafetyOutlined", 2),
     ("sys_teams", "sys_teams", "团队管理", "/system/teams", "system", "PartitionOutlined", 3),
     ("sys_menus", "sys_menus", "菜单管理", "/system/menus", "system", "MenuOutlined", 4),
     # ---- 调试工具（顶级目录：本体Schema/编排管理/编排模板/编排组件/文件管理/数据查询） ----
-    ("grp_debug", "grp_debug", "调试工具", None, None, "BugOutlined", 7),
+    ("grp_debug", "grp_debug", "调试工具", None, None, "BugOutlined", 8),
     (
         "ont_schemas",
         "ont_schemas",

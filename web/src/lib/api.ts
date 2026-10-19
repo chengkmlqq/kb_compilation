@@ -177,6 +177,10 @@ export interface KbItem {
   indexing_strategy?: IndexingStrategy;
   doc_count?: number;
   page_count?: number;
+  /** 高频词页面数（frequent_keyword，2026-10-20 高频词管理页卡片统计） */
+  keyword_count?: number;
+  /** 未软删反馈总数（维护中心卡片统计） */
+  feedback_count?: number;
   created_at?: string | null;
   type?: "document";
   question_generation_config?: QuestionGenerationConfig;
@@ -805,30 +809,106 @@ export function apiWikiIndex(kbId: string) {
 export interface WikiFeedbackItem {
   id: string;
   slug: string;
+  page_title: string;
   user_id: string;
+  reported_by_name: string;
   feedback_type: string;
+  preset: string;
   content: string;
   status: string;
   created_at: string | null;
+  updated_at: string | null;
 }
 
-export function apiWikiSubmitFeedback(kbId: string, slug: string, feedbackType: string, content: string) {
-  return request<{ id: string; feedback_type: string; status: string }>(
+export function apiWikiSubmitFeedback(
+  kbId: string,
+  slug: string,
+  feedbackType: string,
+  content: string,
+  preset?: string
+) {
+  return request<{ id: string; feedback_type: string; preset: string; status: string }>(
     `/api/v1/kbs/${kbId}/wiki/pages/${encodeURIComponent(slug)}/feedback`,
-    { method: "POST", body: JSON.stringify({ feedback_type: feedbackType, content }) }
+    { method: "POST", body: JSON.stringify({ feedback_type: feedbackType, content, preset: preset ?? "" }) }
   );
 }
 
 export function apiWikiListFeedback(kbId: string, slug: string) {
-  return request<{ total: number; items: WikiFeedbackItem[] }>(
+  return request<{ total: number; page: number; page_size: number; items: WikiFeedbackItem[] }>(
     `/api/v1/kbs/${kbId}/wiki/pages/${encodeURIComponent(slug)}/feedback`
   );
 }
 
-export function apiWikiListAllFeedback(kbId: string, status?: string) {
-  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
-  return request<{ total: number; items: WikiFeedbackItem[] }>(
-    `/api/v1/kbs/${kbId}/wiki/feedback${qs}`
+export interface WikiFeedbackListParams {
+  slug?: string;
+  feedback_type?: string;
+  status?: string;
+  page?: number;
+  page_size?: number;
+}
+
+// ── 高频词管理（迁移自 WeKnora wiki/keywords/overview，2026-10-20）──
+
+export interface WikiKeywordStat {
+  slug: string;
+  keyword: string;
+  /** 业务含义；kb 模板不含释义段，恒空，前端显示 — */
+  meaning: string;
+  total_freq: number;
+  doc_count: number;
+  /** 快捷标注计数: preset 键 → 条数(如 {"kw_meaningful":3}) */
+  feedback_counts: Record<string, number>;
+}
+
+export interface WikiKeywordOverviewResponse {
+  items: WikiKeywordStat[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export function apiListWikiKeywords(
+  kbId: string,
+  params: { search?: string; sort?: "freq" | "keyword"; order?: "asc" | "desc"; page?: number; page_size?: number } = {}
+) {
+  const qs = new URLSearchParams();
+  if (params.search) qs.set("search", params.search);
+  if (params.sort) qs.set("sort", params.sort);
+  if (params.order) qs.set("order", params.order);
+  if (params.page !== undefined) qs.set("page", String(params.page));
+  if (params.page_size !== undefined) qs.set("page_size", String(params.page_size));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request<WikiKeywordOverviewResponse>(
+    `/api/v1/kbs/${kbId}/wiki/keywords/overview${suffix}`
+  );
+}
+
+/** 高频词业务含义标注（独立通道，不与普通页面反馈耦合）。 */
+export function apiMarkWikiKeyword(
+  kbId: string,
+  slug: string,
+  preset: string,
+  content = ""
+) {
+  return request<{ id: string; preset: string; status: string }>(
+    `/api/v1/kbs/${kbId}/wiki/keywords/mark`,
+    {
+      method: "POST",
+      body: JSON.stringify({ slug, preset, content }),
+    }
+  );
+}
+
+export function apiWikiListAllFeedback(kbId: string, params: WikiFeedbackListParams = {}) {
+  const qs = new URLSearchParams();
+  if (params.slug) qs.set("slug", params.slug);
+  if (params.feedback_type) qs.set("feedback_type", params.feedback_type);
+  if (params.status) qs.set("status", params.status);
+  if (params.page) qs.set("page", String(params.page));
+  if (params.page_size) qs.set("page_size", String(params.page_size));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request<{ total: number; page: number; page_size: number; items: WikiFeedbackItem[] }>(
+    `/api/v1/kbs/${kbId}/wiki/feedback${suffix}`
   );
 }
 
@@ -836,6 +916,13 @@ export function apiWikiUpdateFeedbackStatus(kbId: string, feedbackId: string, st
   return request<{ id: string; status: string }>(
     `/api/v1/kbs/${kbId}/wiki/feedback/${feedbackId}/status`,
     { method: "PUT", body: JSON.stringify({ status }) }
+  );
+}
+
+export function apiWikiDeleteFeedback(kbId: string, feedbackId: string) {
+  return request<{ id: string; deleted: boolean }>(
+    `/api/v1/kbs/${kbId}/wiki/feedback/${feedbackId}`,
+    { method: "DELETE" }
   );
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   App,
   Button,
@@ -19,6 +20,7 @@ import {
 import {
   BookOutlined,
   CodeOutlined,
+  CommentOutlined,
   DeleteOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
@@ -234,6 +236,7 @@ type KbDocTab = {
 
 export default function KbsPage() {
   const { message, modal } = App.useApp();
+  const router = useRouter();
   const [kbs, setKbs] = useState<KbItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -859,6 +862,19 @@ export default function KbsPage() {
                         </div>
                         <div className="kb-kbs-card-meta">
                           {kb.doc_count ?? 0}个文件 · {kb.page_count ?? 0}个Wiki
+                          {(kb.feedback_count ?? 0) > 0 && (
+                            <span
+                              className="kb-kbs-card-feedback-badge"
+                              title="查看维护中心反馈"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                router.push(`/wiki-maintenance?kb_id=${encodeURIComponent(kb.id)}`);
+                              }}
+                            >
+                              <CommentOutlined style={{ fontSize: 12 }} />
+                              反馈 {kb.feedback_count}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>

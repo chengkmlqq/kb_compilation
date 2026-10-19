@@ -33,6 +33,12 @@ import {
   WikiFeedbackItem,
   WikiPageDetail,
 } from "@/lib/api";
+import {
+  PRESET_LABELS,
+  PRESET_OPTIONS,
+  feedbackPresetLabel,
+  feedbackTypeLabel,
+} from "@/lib/wikiFeedback";
 
 
 // 把内容里的 [[slug]] 双链转成 markdown 链接（渲染成可点击的 wiki 页跳转）
@@ -121,6 +127,7 @@ export default function WikiPageDetailPage() {
   // 反馈弹窗
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackType, setFeedbackType] = useState("helpful");
+  const [feedbackPreset, setFeedbackPreset] = useState("");
   const [feedbackContent, setFeedbackContent] = useState("");
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [pageFeedback, setPageFeedback] = useState<WikiFeedbackItem[]>([]);
@@ -139,10 +146,11 @@ export default function WikiPageDetailPage() {
     if (!page) return;
     setFeedbackSaving(true);
     try {
-      const res = await apiWikiSubmitFeedback(id, page.slug, feedbackType, feedbackContent);
+      const res = await apiWikiSubmitFeedback(id, page.slug, feedbackType, feedbackContent, feedbackPreset);
       if (res.success) {
         message.success("反馈已提交");
         setFeedbackContent("");
+        setFeedbackPreset("");
         void loadFeedback();
       } else {
         message.error(res.message || "提交失败");
@@ -304,15 +312,33 @@ export default function WikiPageDetailPage() {
           <Radio.Group
             value={feedbackType}
             onChange={(e) => setFeedbackType(e.target.value)}
-            optionType="button"
-            buttonStyle="solid"
-          >
-            <Radio.Button value="helpful">有帮助</Radio.Button>
-            <Radio.Button value="issue">问题上报</Radio.Button>
-          </Radio.Group>
+            options={[
+              { value: "comment", label: "评论" },
+              { value: "question", label: "提问" },
+              { value: "helpful", label: "有帮助" },
+            ]}
+          />
+          <Select
+            allowClear
+            style={{ width: "100%" }}
+            placeholder="快捷标注（可选）"
+            value={feedbackPreset || undefined}
+            options={PRESET_OPTIONS}
+            onChange={(v) => {
+              setFeedbackPreset(v ?? "");
+              // 选中预设且内容为空时自动填入对应文案（与后端 WIKI_FEEDBACK_PRESETS 一致）
+              if (v && !feedbackContent) setFeedbackContent(PRESET_LABELS[v]);
+            }}
+          />
           <Input.TextArea
             rows={3}
-            placeholder="补充说明（可选）"
+            placeholder={
+              feedbackType === "question"
+                ? "请输入你的问题"
+                : feedbackType === "helpful"
+                  ? "可补充说明（选填）"
+                  : "请输入评论内容"
+            }
             value={feedbackContent}
             onChange={(e) => setFeedbackContent(e.target.value)}
             maxLength={2000}
@@ -322,8 +348,9 @@ export default function WikiPageDetailPage() {
               <Typography.Text type="secondary">已有反馈：</Typography.Text>
               {pageFeedback.map((fb) => (
                 <div key={fb.id} style={{ marginTop: 4 }}>
-                  <Tag color={fb.feedback_type === "helpful" ? "green" : "red"}>
-                    {fb.feedback_type === "helpful" ? "有帮助" : "问题"}
+                  <Tag color={fb.feedback_type === "helpful" ? "green" : "blue"}>
+                    {feedbackTypeLabel(fb.feedback_type)}
+                    {fb.preset ? ` / ${feedbackPresetLabel(fb.preset)}` : ""}
                   </Tag>
                   <Tag>{fb.status}</Tag>
                   <Typography.Text>{fb.content}</Typography.Text>

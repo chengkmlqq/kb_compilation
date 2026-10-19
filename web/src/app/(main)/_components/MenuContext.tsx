@@ -47,6 +47,10 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "overview", menu_name: "overview", menu_label: "总览", route: "/overview", parent_id: null, menu_icon: "IconHomeColor", sort_num: 0, state: "1" },
   { menu_id: "grp_knowledge", menu_name: "grp_knowledge", menu_label: "知识管理", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 1, state: "1" },
   { menu_id: "kbs", menu_name: "kbs", menu_label: "知识库管理", route: "/kbs", parent_id: "grp_knowledge", menu_icon: "IconBook1Color", sort_num: 1, state: "1" },
+  // 2026-10-20 高频词管理（迁移自 WeKnora wiki/keywords/overview；种子为一级菜单，兜底挂知识管理下）
+  { menu_id: "wiki_keywords", menu_name: "wiki_keywords", menu_label: "高频词", route: "/wiki-keywords", parent_id: "grp_knowledge", menu_icon: "BarChartOutlined", sort_num: 2, state: "1" },
+  // 2026-10-20 维护中心（Wiki 页面反馈汇总与处理；知识库卡片「反馈 N」也可进入）
+  { menu_id: "wiki_maintenance", menu_name: "wiki_maintenance", menu_label: "维护中心", route: "/wiki-maintenance", parent_id: "grp_knowledge", menu_icon: "CommentOutlined", sort_num: 2, state: "1" },
   { menu_id: "files", menu_name: "files", menu_label: "文件管理", route: "/files", parent_id: "grp_knowledge", menu_icon: "IconCloudServerColor", sort_num: 2, state: "1" },
   { menu_id: "chunk_verify", menu_name: "chunk_verify", menu_label: "切片核对", route: "/chunk-verify", parent_id: "grp_knowledge", menu_icon: "SafetyOutlined", sort_num: 3, state: "1" },
   { menu_id: "grp_ai", menu_name: "grp_ai", menu_label: "智能应用", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 2, state: "1" },

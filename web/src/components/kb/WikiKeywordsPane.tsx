@@ -1,0 +1,305 @@
+"use client";
+
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Button, Drawer, Input, Modal, Pagination, Select, Table, message } from "antd";
+import type { ColumnsType } from "antd/es/table";
+import { SearchOutlined, SortAscendingOutlined } from "@ant-design/icons";
+import ReactMarkdown from "react-markdown";
+import {
+  apiListWikiKeywords,
+  apiMarkWikiKeyword,
+  apiWikiPage,
+  type WikiKeywordStat,
+} from "@/lib/api";
+
+/**
+ * 高频词管理列表（迁移自 WeKnora WikiKeywords.vue，2026-10-20）。
+ * - 表格：排名 / 关键词 / 含义 / 频次（点击开详情抽屉）/ 文档数 / 标注列
+ * - 标注：preset 三键（kw_meaningful ✅ / kw_noise ❌ / kw_mis_extracted ⚠️）+ 自定义，
+ *   走独立标注通道 POST /wiki/keywords/mark，计数回显在标注列。
+ */
+interface WikiKeywordsPaneProps {
+  kbId: string;
+  kbName?: string;
+}
+
+const PAGE_SIZE = 20;
+
+// 高频词标注预设（与后端 WIKI_FEEDBACK_PRESETS 的 kw_* 键对齐）
+const MARK_OPTIONS = [
+  { value: "kw_meaningful", label: "有业务含义", icon: "✅" },
+  { value: "kw_noise", label: "无业务含义（噪音）", icon: "❌" },
+  { value: "kw_mis_extracted", label: "提取不准确", icon: "⚠️" },
+  { value: "custom", label: "自定义", icon: "✏️" },
+];
+
+function presetIconOf(preset: string) {
+  return MARK_OPTIONS.find((o) => o.value === preset)?.icon ?? "✅";
+}
+
+export default function WikiKeywordsPane({ kbId, kbName }: WikiKeywordsPaneProps) {
+  const [items, setItems] = useState<WikiKeywordStat[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"freq" | "keyword">("freq");
+  const [order, setOrder] = useState<"desc" | "asc">("desc");
+  const [page, setPage] = useState(1);
+
+  // 详情抽屉
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerKeyword, setDrawerKeyword] = useState("");
+  const [drawerContent, setDrawerContent] = useState("");
+  const [drawerLoading, setDrawerLoading] = useState(false);
+
+  // 标注弹窗
+  const [markTarget, setMarkTarget] = useState<WikiKeywordStat | null>(null);
+  const [markPreset, setMarkPreset] = useState("kw_meaningful");
+  const [markContent, setMarkContent] = useState("");
+  const [markSubmitting, setMarkSubmitting] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiListWikiKeywords(kbId, {
+        search: search || undefined,
+        sort: sortBy,
+        order,
+        page,
+        page_size: PAGE_SIZE,
+      });
+      setItems(res.data?.items ?? []);
+      setTotal(res.data?.total ?? 0);
+    } catch {
+      message.error("高频词列表加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [kbId, search, sortBy, order, page]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const openDrawer = useCallback(
+    async (item: WikiKeywordStat) => {
+      setDrawerOpen(true);
+      setDrawerKeyword(item.keyword);
+      setDrawerLoading(true);
+      setDrawerContent("");
+      try {
+        const page = await apiWikiPage(kbId, item.slug);
+        setDrawerContent(page.data?.content ?? "");
+      } catch {
+        setDrawerContent("");
+      } finally {
+        setDrawerLoading(false);
+      }
+    },
+    [kbId]
+  );
+
+  const openMark = (item: WikiKeywordStat) => {
+    setMarkTarget(item);
+    setMarkPreset("kw_meaningful");
+    setMarkContent("");
+  };
+
+  const submitMark = async () => {
+    if (!markTarget) return;
+    if (markPreset === "custom" && !markContent.trim()) {
+      message.warning("自定义标注需填写内容");
+      return;
+    }
+    setMarkSubmitting(true);
+    try {
+      await apiMarkWikiKeyword(kbId, markTarget.slug, markPreset, markContent.trim());
+      message.success("标注已提交");
+      setMarkTarget(null);
+      void load();
+    } catch {
+      message.error("标注提交失败");
+    } finally {
+      setMarkSubmitting(false);
+    }
+  };
+
+  const columns: ColumnsType<WikiKeywordStat> = useMemo(
+    () => [
+      {
+        title: "排名",
+        width: 64,
+        render: (_v, _r, idx) => <span className="kb-wk-rank">{((page - 1) * PAGE_SIZE) + idx + 1}</span>,
+      },
+      {
+        title: "关键词",
+        dataIndex: "keyword",
+        width: 200,
+        ellipsis: true,
+      },
+      {
+        title: "含义",
+        dataIndex: "meaning",
+        width: 120,
+        render: (v: string) => (v ? v : <span className="kb-wk-empty">—</span>),
+      },
+      {
+        title: "频次",
+        dataIndex: "total_freq",
+        width: 90,
+        render: (v: number, r) => (
+          <Button type="link" size="small" className="kb-wk-freq-link" onClick={() => void openDrawer(r)}>
+            {v}
+          </Button>
+        ),
+      },
+      {
+        title: "文档数",
+        dataIndex: "doc_count",
+        width: 80,
+      },
+      {
+        title: "标注",
+        width: 260,
+        render: (_v, r) => (
+          <div className="kb-wk-mark-cell">
+            <Button size="small" type="default" onClick={() => openMark(r)}>
+              标注
+            </Button>
+            {Object.keys(r.feedback_counts ?? {}).length > 0 && (
+              <span className="kb-wk-mark-counts">
+                {MARK_OPTIONS.filter((o) => o.value !== "custom").map((o) => {
+                  const n = r.feedback_counts?.[o.value];
+                  if (!n) return null;
+                  return (
+                    <span key={o.value} className={`kb-wk-mark-count kb-wk-mark-${o.value}`} title={o.label}>
+                      {o.icon} {n}
+                    </span>
+                  );
+                })}
+              </span>
+            )}
+          </div>
+        ),
+      },
+    ],
+    [page, openDrawer, load]
+  );
+
+  return (
+    <div className="kb-wk-root">
+      <div className="kb-wk-toolbar">
+        <Input
+          className="kb-wk-search"
+          allowClear
+          prefix={<SearchOutlined />}
+          placeholder="搜索高频词"
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
+          onPressEnter={() => void load()}
+        />
+        <Select
+          className="kb-wk-sort"
+          value={sortBy}
+          onChange={(v) => {
+            setSortBy(v);
+            setPage(1);
+          }}
+          options={[
+            { value: "freq", label: "按频次" },
+            { value: "keyword", label: "按关键词" },
+          ]}
+        />
+        <Select
+          className="kb-wk-sort"
+          value={order}
+          onChange={(v) => {
+            setOrder(v);
+            setPage(1);
+          }}
+          options={[
+            { value: "desc", label: "降序" },
+            { value: "asc", label: "升序" },
+          ]}
+        />
+      </div>
+
+      <Table<WikiKeywordStat>
+        className="kb-wk-table"
+        rowKey="slug"
+        size="middle"
+        loading={loading}
+        columns={columns}
+        dataSource={items}
+        pagination={false}
+        locale={{ emptyText: "暂无高频词，上传文档并启用 Wiki 后将自动生成高频词页面" }}
+      />
+
+      <div className="kb-wk-pagination">
+        <Pagination
+          current={page}
+          pageSize={PAGE_SIZE}
+          total={total}
+          showSizeChanger={false}
+          showTotal={(t) => `共 ${t} 个高频词`}
+          onChange={(p) => setPage(p)}
+        />
+      </div>
+
+      {/* 详情抽屉：展示该高频词 wiki 页面内容 */}
+      <Drawer
+        title={drawerKeyword}
+        open={drawerOpen}
+        width={560}
+        onClose={() => setDrawerOpen(false)}
+      >
+        {drawerLoading ? (
+          <div className="kb-wk-drawer-loading">加载中…</div>
+        ) : drawerContent ? (
+          <div className="kb-wk-drawer-content">
+            <ReactMarkdown>{drawerContent}</ReactMarkdown>
+          </div>
+        ) : (
+          <div className="kb-wk-empty">暂无页面内容</div>
+        )}
+      </Drawer>
+
+      {/* 标注弹窗 */}
+      <Modal
+        title={`标注高频词${markTarget ? `：${markTarget.keyword}` : ""}`}
+        open={!!markTarget}
+        onOk={() => void submitMark()}
+        confirmLoading={markSubmitting}
+        onCancel={() => setMarkTarget(null)}
+        okText="提交"
+        cancelText="取消"
+      >
+        <div className="kb-wk-mark-form">
+          <div className="kb-wk-mark-row">
+            <span className="kb-wk-mark-label">标注类型</span>
+            <Select
+              style={{ flex: 1 }}
+              value={markPreset}
+              onChange={setMarkPreset}
+              options={MARK_OPTIONS}
+            />
+          </div>
+          {markPreset === "custom" && (
+            <div className="kb-wk-mark-row">
+              <span className="kb-wk-mark-label">内容</span>
+              <Input.TextArea
+                rows={3}
+                value={markContent}
+                onChange={(e) => setMarkContent(e.target.value)}
+                placeholder="填写该高频词的业务含义说明（必填）"
+              />
+            </div>
+          )}
+        </div>
+      </Modal>
+    </div>
+  );
+}

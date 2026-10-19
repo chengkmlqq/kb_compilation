@@ -30,6 +30,7 @@ import {
   Input,
   Modal,
   Radio,
+  Select,
   Space,
   Spin,
   Tag,
@@ -70,6 +71,12 @@ import {
   WikiPageItem,
   WikiSearchItem,
 } from "@/lib/api";
+import {
+  PRESET_LABELS,
+  PRESET_OPTIONS,
+  feedbackPresetLabel,
+  feedbackTypeLabel,
+} from "@/lib/wikiFeedback";
 
 /** page_type → 中文标签（对齐 WeKnora getTypeLabel） */
 
@@ -246,6 +253,7 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
   // 反馈
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackType, setFeedbackType] = useState("helpful");
+  const [feedbackPreset, setFeedbackPreset] = useState("");
   const [feedbackContent, setFeedbackContent] = useState("");
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [pageFeedback, setPageFeedback] = useState<WikiFeedbackItem[]>([]);
@@ -498,10 +506,11 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
     if (!page) return;
     setFeedbackSaving(true);
     try {
-      const res = await apiWikiSubmitFeedback(kbId, page.slug, feedbackType, feedbackContent);
+      const res = await apiWikiSubmitFeedback(kbId, page.slug, feedbackType, feedbackContent, feedbackPreset);
       if (res.success) {
         message.success("反馈已提交");
         setFeedbackContent("");
+        setFeedbackPreset("");
         void loadFeedback();
       } else {
         message.error(res.message || "提交失败");
@@ -812,23 +821,42 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
             value={feedbackType}
             onChange={(e) => setFeedbackType(e.target.value)}
             options={[
+              { value: "comment", label: "评论" },
+              { value: "question", label: "提问" },
               { value: "helpful", label: "有帮助" },
-              { value: "wrong", label: "内容有误" },
-              { value: "missing", label: "内容缺失" },
             ]}
+          />
+          <Select
+            allowClear
+            style={{ width: "100%" }}
+            placeholder="快捷标注（可选）"
+            value={feedbackPreset || undefined}
+            options={PRESET_OPTIONS}
+            onChange={(v) => {
+              setFeedbackPreset(v ?? "");
+              // 选中预设且内容为空时自动填入对应文案（与后端 WIKI_FEEDBACK_PRESETS 一致）
+              if (v && !feedbackContent) setFeedbackContent(PRESET_LABELS[v]);
+            }}
           />
           <Input.TextArea
             rows={4}
             value={feedbackContent}
             onChange={(e) => setFeedbackContent(e.target.value)}
-            placeholder="请描述问题或建议"
+            placeholder={
+              feedbackType === "question"
+                ? "请输入你的问题"
+                : feedbackType === "helpful"
+                  ? "可补充说明（选填）"
+                  : "请输入评论内容"
+            }
           />
           {pageFeedback.length > 0 && (
             <div>
               <Space direction="vertical" size={4} style={{ width: "100%" }}>
                 {pageFeedback.map((f) => (
                   <div key={f.id} style={{ fontSize: 12, color: "#888" }}>
-                    [{f.feedback_type}] {f.content}
+                    [{feedbackTypeLabel(f.feedback_type)}
+                    {f.preset ? ` / ${feedbackPresetLabel(f.preset)}` : ""}] {f.content}
                   </div>
                 ))}
               </Space>

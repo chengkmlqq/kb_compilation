@@ -16,18 +16,24 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from api.config import get_settings
+from api.models.framework import User
 from api.models.knowledge import (
     DocChunk,
     DocFolder,
     KbDatasource,
     KbDocument,
+    WIKI_FEEDBACK_PRESETS,
+    WIKI_FEEDBACK_STATUSES,
+    WIKI_FEEDBACK_TYPES,
     WikiFeedback,
     WikiFolder,
     WikiLink,
@@ -117,6 +123,8 @@ def list_kbs(
     kb_ids = [kb.id for kb in rows]
     doc_counts: dict[str, int] = {}
     page_counts: dict[str, int] = {}
+    keyword_counts: dict[str, int] = {}
+    feedback_counts: dict[str, int] = {}
     if kb_ids:
         doc_counts = dict(
             db.execute(
@@ -135,12 +143,34 @@ def list_kbs(
                 .group_by(WikiPage.kb_id)
             ).all()
         )
+        # 高频词页计数（page_type=frequent_keyword）：高频词管理页知识库卡片统计
+        keyword_counts = dict(
+            db.execute(
+                select(WikiPage.kb_id, func.count())
+                .where(
+                    WikiPage.kb_id.in_(kb_ids),
+                    WikiPage.status == "active",
+                    WikiPage.page_type == "frequent_keyword",
+                )
+                .group_by(WikiPage.kb_id)
+            ).all()
+        )
+        # 反馈计数（未软删）：知识库卡片「反馈 N」统计 → 维护中心
+        feedback_counts = dict(
+            db.execute(
+                select(WikiFeedback.kb_id, func.count())
+                .where(WikiFeedback.kb_id.in_(kb_ids), WikiFeedback.deleted_at.is_(None))
+                .group_by(WikiFeedback.kb_id)
+            ).all()
+        )
 
     items = [
         _kb_dict(
             kb,
             doc_count=doc_counts.get(kb.id, 0),
             page_count=page_counts.get(kb.id, 0),
+            keyword_count=keyword_counts.get(kb.id, 0),
+            feedback_count=feedback_counts.get(kb.id, 0),
         )
         for kb in rows
     ]
@@ -579,7 +609,7 @@ def delete_kb(db: Session, kb_id: str) -> dict:
     }
 
 
-def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0) -> dict:
+def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0, keyword_count: int = 0, feedback_count: int = 0) -> dict:
     return {
         "id": kb.id,
         "name": kb.name,
@@ -592,6 +622,8 @@ def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0) -> dict:
         "state": kb.state,
         "doc_count": doc_count,
         "page_count": page_count,
+        "keyword_count": keyword_count,
+        "feedback_count": feedback_count,
         "created_at": kb.created_at.isoformat() if kb.created_at else None,
         "updated_at": kb.updated_at.isoformat() if kb.updated_at else None,
         # ── WeKnora 对齐配置（详情页配置弹窗读取）──
@@ -1774,59 +1806,281 @@ def wiki_list_logs(db: Session, kb_id: str, limit: int = 100) -> dict:
     }
 
 
+def _wiki_page_title(db: Session, kb_id: str, slug: str) -> str:
+    """反规范化页面标题：提交反馈时查一次，维护中心列表免 join。"""
+    if not slug:
+        return ""
+    row = db.execute(
+        select(WikiPage.title).where(
+            WikiPage.kb_id == kb_id, WikiPage.slug == slug, WikiPage.status == "active"
+        )
+    ).scalar()
+    return row or ""
+
+
+def _wiki_user_name(db: Session, user_id: str) -> str:
+    """反规范化上报人姓名：user_name 优先，其次 email；查不到退回空串。"""
+    if not user_id:
+        return ""
+    row = db.execute(select(User.user_name).where(User.user_id == user_id)).scalar()
+    if row:
+        return row
+    row = db.execute(select(User.email).where(User.user_id == user_id)).scalar()
+    return row or ""
+
+
 def wiki_submit_feedback(
-    db: Session, kb_id: str, slug: str, user_id: str, feedback_type: str, content: str
+    db: Session, kb_id: str, slug: str, user_id: str, feedback_type: str, content: str, preset: str = ""
 ) -> dict:
-    """提交页面反馈（helpful=有帮助 / issue=问题上报）。"""
+    """提交页面反馈（comment=评论 / question=问题；兼容旧 helpful/issue）。
+
+    - preset 非空时按白名单校验；未填内容时自动回填预设中文文案（对齐 WeKnora）
+    - page_title / reported_by_name 写入时反规范化（维护中心列表免 join）
+    - 状态默认 pending（WeKnora 语义；旧 open 由迁移 0031 归并）
+    """
+    preset = (preset or "").strip()
+    if preset:
+        if preset == "custom":
+            # 高频词「自定义」标注：内容必填，直接透传
+            if not (content or "").strip():
+                raise ValueError("自定义标注需填写内容")
+        elif preset not in WIKI_FEEDBACK_PRESETS:
+            raise ValueError(f"无效的预设标注: {preset}")
+        else:
+            if not (content or "").strip():
+                content = WIKI_FEEDBACK_PRESETS[preset]
+            if not feedback_type:
+                feedback_type = "question"
+    if feedback_type not in (*WIKI_FEEDBACK_TYPES, "helpful", "issue"):
+        raise ValueError(f"无效的反馈类型: {feedback_type}")
+    if not (content or "").strip():
+        # 一键「有帮助」允许空内容（对齐 WeKnora 点赞语义），自动回填文案
+        if feedback_type == "helpful":
+            content = "有帮助"
+        else:
+            raise ValueError("反馈内容不能为空")
     fb = WikiFeedback(
         id=uuid.uuid4().hex,
         kb_id=kb_id,
         slug=slug,
         user_id=user_id,
         feedback_type=feedback_type,
+        preset=preset,
         content=content,
-        status="open",
+        status="pending",
+        page_title=_wiki_page_title(db, kb_id, slug),
+        reported_by_name=_wiki_user_name(db, user_id),
     )
     db.add(fb)
     db.commit()
-    return {"id": fb.id, "feedback_type": fb.feedback_type, "status": fb.status}
+    return {"id": fb.id, "feedback_type": fb.feedback_type, "preset": fb.preset, "status": fb.status}
 
 
-def wiki_list_feedback(db: Session, kb_id: str, slug: str = "", limit: int = 100) -> dict:
-    """页面反馈列表（可选按 slug 过滤，倒序）。"""
-    stmt = select(WikiFeedback).where(WikiFeedback.kb_id == kb_id)
+# ── 高频词管理（迁移自 WeKnora wiki/keywords/overview）──
+# kb 模板开头句格式：「本关键词在 N 篇文档中高频出现（总频次：M）。」
+# 分组标题：「**《来源文件名》**（频次：a）」。两条正则与 WeKnora wiki_page.go 逐字兼容。
+_FREQ_HEAD_RE = re.compile(r"在\s*(\d+)\s*篇文档中高频出现（总频次：\s*(\d+)\s*）")
+_FREQ_GROUP_RE = re.compile(r"（频次：(\d+)）")
+
+
+def _parse_keyword_head(head: str) -> tuple[int, int]:
+    """从高频词页 content 前段解析 (文档数, 总频次)。"""
+    if m := _FREQ_HEAD_RE.search(head or ""):
+        docs = int(m.group(1))
+        freq = int(m.group(2))
+        return docs, freq
+    # 旧规范页面无标准开头句：按分组频次累加兜底
+    freq = sum(int(x) for x in _FREQ_GROUP_RE.findall(head or ""))
+    return (1 if freq else 0), freq
+
+
+def wiki_keyword_overview(
+    db: Session,
+    kb_id: str,
+    search: str = "",
+    sort_by: str = "freq",
+    order: str = "desc",
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
+    """知识库高频词概览：聚合 frequent_keyword 页面，按总频次降序排列。
+
+    词频从页面 content 头部结构解析（不加载全文）。标注计数按 preset 聚合，
+    供前端展示 ✅/❌/⚠️。
+    """
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 50
+    if page_size > 200:
+        page_size = 200
+
+    rows = (
+        db.execute(
+            select(WikiPage.slug, WikiPage.title, func.substr(WikiPage.content, 1, 500).label("content_head"))
+            .where(WikiPage.kb_id == kb_id, WikiPage.page_type == "frequent_keyword", WikiPage.status == "active")
+        )
+        .all()
+    )
+
+    # 每词页的快捷标注计数（preset → 条数；软删标注不计入）
+    fb_rows = (
+        db.execute(
+            select(WikiFeedback.slug, WikiFeedback.preset, func.count().label("cnt"))
+            .where(
+                WikiFeedback.kb_id == kb_id,
+                WikiFeedback.preset != "",
+                WikiFeedback.deleted_at.is_(None),
+            )
+            .group_by(WikiFeedback.slug, WikiFeedback.preset)
+        )
+        .all()
+    )
+    feedback_counts: dict[str, dict[str, int]] = {}
+    for slug, preset, cnt in fb_rows:
+        key = preset or ""
+        if not key:
+            continue
+        feedback_counts.setdefault(slug or "", {})[key] = int(cnt)
+
+    stats: list[dict] = []
+    for slug, title, head in rows:
+        keyword = (title or "").strip()
+        if not keyword:
+            keyword = (slug or "").strip()
+        if search and search not in keyword:
+            continue
+        docs, freq = _parse_keyword_head(head or "")
+        stats.append(
+            {
+                "slug": slug,
+                "keyword": keyword,
+                "meaning": "",  # kb 模板不含释义段（市场域 filter_terms_llm 无 meaning 字段）
+                "total_freq": freq,
+                "doc_count": docs,
+                "feedback_counts": feedback_counts.get(slug, {}),
+            }
+        )
+
+    asc = order == "asc"
+    if sort_by == "keyword":
+        stats.sort(key=lambda s: s["keyword"], reverse=not asc)
+    else:  # freq
+        stats.sort(
+            key=lambda s: (s["total_freq"], s["doc_count"], -ord(s["keyword"][0]) if s["keyword"] else 0),
+            reverse=not asc,
+        )
+
+    total = len(stats)
+    start = (page - 1) * page_size
+    end = start + page_size
+    items = stats[start:end]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+# 高频词标注预设白名单（独立通道，字面量——不与并行会话的 WIKI_FEEDBACK_PRESETS 耦合）
+_KEYWORD_MARK_PRESETS = ("kw_meaningful", "kw_noise", "kw_mis_extracted", "custom")
+
+
+def wiki_keyword_mark(
+    db: Session, kb_id: str, slug: str, user_id: str, preset: str, content: str = ""
+) -> dict:
+    """高频词业务含义标注（迁移自 WeKnora WikiFeedbackPresetKeys）。
+
+    独立于普通页面反馈通道：preset 白名单校验 + custom 必填内容，
+    落 wiki_feedback 表（feedback_type=question，status 用模型默认）。
+    """
+    preset = (preset or "").strip()
+    if preset not in _KEYWORD_MARK_PRESETS:
+        raise ValueError(f"无效的预设标注: {preset}")
+    if preset == "custom" and not (content or "").strip():
+        raise ValueError("自定义标注需填写内容")
+    fb = WikiFeedback(
+        id=uuid.uuid4().hex,
+        kb_id=kb_id,
+        slug=slug,
+        user_id=user_id,
+        feedback_type="question",
+        preset=preset,
+        content=content,
+    )
+    db.add(fb)
+    db.commit()
+    return {"id": fb.id, "preset": fb.preset, "status": fb.status}
+
+
+def _feedback_item(r: WikiFeedback) -> dict:
+    """反馈行序列化（维护中心列表展示字段）。"""
+    return {
+        "id": r.id,
+        "slug": r.slug,
+        "page_title": r.page_title or "",
+        "user_id": r.user_id or "",
+        "reported_by_name": r.reported_by_name or "",
+        "feedback_type": r.feedback_type,
+        "preset": r.preset or "",
+        "content": r.content or "",
+        "status": r.status,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+    }
+
+
+def wiki_list_feedback(
+    db: Session,
+    kb_id: str,
+    slug: str = "",
+    feedback_type: str = "",
+    status: str = "",
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
+    """页面反馈列表（slug/feedback_type/status 过滤 + 分页，倒序；软删不可见）。"""
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 50
+    if page_size > 200:
+        page_size = 200
+    stmt = select(WikiFeedback).where(
+        WikiFeedback.kb_id == kb_id, WikiFeedback.deleted_at.is_(None)
+    )
     if slug:
         stmt = stmt.where(WikiFeedback.slug == slug)
+    if feedback_type:
+        stmt = stmt.where(WikiFeedback.feedback_type == feedback_type)
+    if status:
+        stmt = stmt.where(WikiFeedback.status == status)
+    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
     rows = (
-        db.execute(stmt.order_by(WikiFeedback.created_at.desc(), WikiFeedback.id.desc()).limit(limit))
+        db.execute(
+            stmt.order_by(WikiFeedback.created_at.desc(), WikiFeedback.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
         .scalars()
         .all()
     )
     return {
         "kb_id": kb_id,
-        "total": len(rows),
-        "items": [
-            {
-                "id": r.id,
-                "slug": r.slug,
-                "user_id": r.user_id,
-                "feedback_type": r.feedback_type,
-                "content": r.content,
-                "status": r.status,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            }
-            for r in rows
-        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [_feedback_item(r) for r in rows],
     }
 
 
 def wiki_update_feedback_status(
     db: Session, kb_id: str, feedback_id: str, status: str
 ) -> dict:
-    """更新反馈状态（open/resolved/ignored）。"""
+    """更新反馈状态（pending/resolved/ignored；软删行不可操作）。"""
+    if status not in WIKI_FEEDBACK_STATUSES:
+        raise ValueError(f"无效的反馈状态: {status}")
     fb = db.execute(
         select(WikiFeedback).where(
-            WikiFeedback.kb_id == kb_id, WikiFeedback.id == feedback_id
+            WikiFeedback.kb_id == kb_id,
+            WikiFeedback.id == feedback_id,
+            WikiFeedback.deleted_at.is_(None),
         )
     ).scalars().first()
     if not fb:
@@ -1834,6 +2088,22 @@ def wiki_update_feedback_status(
     fb.status = status
     db.commit()
     return {"id": fb.id, "status": fb.status}
+
+
+def wiki_delete_feedback(db: Session, kb_id: str, feedback_id: str) -> dict:
+    """软删反馈（对齐 WeKnora soft-delete；deleted_at 置位）。"""
+    fb = db.execute(
+        select(WikiFeedback).where(
+            WikiFeedback.kb_id == kb_id,
+            WikiFeedback.id == feedback_id,
+            WikiFeedback.deleted_at.is_(None),
+        )
+    ).scalars().first()
+    if not fb:
+        raise ValueError(f"反馈不存在: {feedback_id}")
+    fb.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
+    return {"id": fb.id, "deleted": True}
 
 
 def wiki_index(db: Session, kb_id: str) -> dict:
@@ -2552,6 +2822,7 @@ __all__ = [
     "wiki_submit_feedback",
     "wiki_list_feedback",
     "wiki_update_feedback_status",
+    "wiki_delete_feedback",
     "wiki_index",
     "get_document_detail",
     "list_wiki_pages",

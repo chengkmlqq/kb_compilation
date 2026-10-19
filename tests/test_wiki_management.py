@@ -237,9 +237,9 @@ def test_wiki_logs_and_feedback(db: Session) -> None:
     assert logs2["total"] == 2
     assert any(it["action"] == "page_update" for it in logs2["items"])
 
-    # 反馈
+    # 反馈（默认状态 pending，对齐 WeKnora 三态）
     fb = kb_admin.wiki_submit_feedback(db, kb, "日志页", "u1", "issue", "内容有误")
-    assert fb["status"] == "open"
+    assert fb["status"] == "pending"
     fblist = kb_admin.wiki_list_feedback(db, kb, slug="日志页")
     assert fblist["total"] == 1
     assert fblist["items"][0]["feedback_type"] == "issue"
