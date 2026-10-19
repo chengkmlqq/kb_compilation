@@ -505,18 +505,54 @@ html[data-theme="dark"] body {
   min-height: 0;
 }
 
-/* ===== kb chat thinking 脉冲指示器（对齐 WeKnora deepThink） ===== */
+/* ===== kb chat thinking 脉冲指示器（对齐 WeKnora deepThink.vue） =====
+   WeKnora 结构：16px 容器内 6px 圆点（pulse-dot 缩放+透明度 1.8s 循环）
+   + 绝对定位扩散圆环（pulse-ring scale 0.5→1.2 渐隐 1.8s 循环）。
+   kb 旧版为 box-shadow 单点脉冲（2026-10-16 曾去掉），现按 WeKnora 恢复。 */
 .kb-think-indicator {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #fa8c16;
-  animation: kb-think-pulse 1.2s ease-in-out infinite;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  flex-shrink: 0;
 }
-@keyframes kb-think-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(250, 140, 22, 0.45); }
-  50% { box-shadow: 0 0 0 5px rgba(250, 140, 22, 0); }
+.kb-think-indicator .indicator-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #1677ff;
+  animation: kb-think-pulse-dot 1.8s ease-in-out infinite;
+}
+.kb-think-indicator .indicator-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid #1677ff;
+  opacity: 0;
+  animation: kb-think-pulse-ring 1.8s ease-out infinite;
+}
+@keyframes kb-think-pulse-dot {
+  0%, 100% {
+    transform: scale(0.85);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+}
+@keyframes kb-think-pulse-ring {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.2);
+    opacity: 0;
+  }
 }
 
 /* ===== 全局细滚动条（对齐 data-synth globals.css） ===== */

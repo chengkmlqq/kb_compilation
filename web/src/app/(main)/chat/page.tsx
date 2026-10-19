@@ -1480,7 +1480,9 @@ export default function ChatPage() {
                             }
                           />
                         ) : m.streaming ? (
-                          <span style={{ color: "rgba(121,135,156,1)", fontSize: 14 }}>思考中…</span>
+                          <span style={{ color: "rgba(121,135,156,1)", fontSize: 14, display: "inline-flex", alignItems: "center" }}>
+                            <ThinkingIndicator />思考中…
+                          </span>
                         ) : (
                           ""
                         )}
@@ -2292,6 +2294,16 @@ export function refGroupCount(refs: ChatRefItem[], activeChunk?: string): RefGro
 // 基准：data_supply_base DataSupplyPortalRecordNew ChatMessageItem
 // ---------------------------------------------------------------------------
 
+/** 思考中脉冲指示器（对齐 WeKnora deepThink.vue：6px 圆点脉冲 + 扩散圆环，1.8s 循环）。 */
+function ThinkingIndicator() {
+  return (
+    <span className="kb-think-indicator" aria-label="思考中">
+      <span className="indicator-dot" />
+      <span className="indicator-ring" />
+    </span>
+  );
+}
+
 /** AI 回答块：think-btn（已完成思考/思考中）+ think-view 左竖线 + 答案正文 */
 function AssistantThink({
   thinking,
@@ -2339,7 +2351,7 @@ function AssistantThink({
         className={`kb-chat-think-btn${streaming ? " thinking" : ""}`}
         onClick={() => setThinkVisible((v) => !v)}
       >
-        <span>{streaming ? "思考中…" : thinkEnded ? "已完成思考" : "思考过程"}</span>
+        <span>{streaming ? <><ThinkingIndicator />思考中…</> : thinkEnded ? "已完成思考" : "思考过程"}</span>
         <span style={{ fontSize: 12 }}>{thinkVisible ? "▾" : "▸"}</span>
       </button>
       {thinkVisible && (
@@ -2363,7 +2375,7 @@ function AssistantThink({
             onCitationClick={onCitationClick}
           />
         ) : answerStreaming ? (
-          <span style={{ color: "rgba(121,135,156,1)" }}>思考中…</span>
+          <span style={{ color: "rgba(121,135,156,1)", display: "inline-flex", alignItems: "center" }}><ThinkingIndicator />思考中…</span>
         ) : (
           ""
         )}
@@ -2458,8 +2470,8 @@ function ThinkingBlock({ thinking, streaming }: { thinking: string; streaming?: 
           userSelect: "none",
         }}
       >
-        {/* 2026-10-16：思考中不再显示脉冲 loading 圆点（用户要求去掉），仅保留「思考中…」文字 */}
-        <span>{streaming ? "思考中…" : <><BulbOutlined /> 思考过程</>}</span>
+        {/* 2026-10-19：思考中脉冲圆点（对齐 WeKnora deepThink，用户要求恢复闪烁效果） */}
+        <span>{streaming ? <><ThinkingIndicator />思考中…</> : <><BulbOutlined /> 思考过程</>}</span>
         <span style={{ fontSize: 10 }}>{expanded ? "▾" : "▸"}</span>
       </div>
       {expanded && (
@@ -2502,7 +2514,7 @@ function AgentThinkingRow({ thinking, streaming }: { thinking: string; streaming
         style={streaming ? { cursor: "default" } : undefined}
       >
         <BulbOutlined className="kb-agent-tool-tool" style={streaming ? undefined : { color: "#fa8c16" }} />
-        <span className="kb-agent-tool-name">{streaming ? "思考中…" : "思考过程"}</span>
+        <span className="kb-agent-tool-name">{streaming ? <><ThinkingIndicator />思考中…</> : "思考过程"}</span>
         <span className="kb-agent-tool-status">
           {streaming ? "进行中" : open ? "收起" : "展开"}
         </span>
