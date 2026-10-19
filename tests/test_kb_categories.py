@@ -212,3 +212,26 @@ def test_put_kb_label_null_keeps_existing(env) -> None:
     r = client.put("/api/v1/kbs/mine", json={"label": None})
     assert r.status_code == 200
     assert db.get(KbDatasource, "mine").label == "技术"
+
+
+def test_put_kb_basic_info_updates_name_description(env) -> None:
+    """配置弹窗基本信息分区：PUT /kbs/{id} 更新 name / description。"""
+    db, client = env
+    _add_kb(db, "mine", None)
+    r = client.put(
+        "/api/v1/kbs/mine",
+        json={"name": "监管制度知识库", "description": "收录集团市场监督管理相关制度文件"},
+    )
+    assert r.status_code == 200
+    kb = db.get(KbDatasource, "mine")
+    assert kb.name == "监管制度知识库"
+    assert kb.description == "收录集团市场监督管理相关制度文件"
+
+
+def test_put_kb_basic_info_blank_name_keeps_existing(env) -> None:
+    """配置弹窗名称留空（前端已 required 拦截，后端兜底）：空名不覆盖原名。"""
+    db, client = env
+    _add_kb(db, "mine", None)
+    r = client.put("/api/v1/kbs/mine", json={"name": "   "})
+    assert r.status_code == 200
+    assert db.get(KbDatasource, "mine").name == "库-mine"

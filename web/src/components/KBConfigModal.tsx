@@ -6,6 +6,7 @@ import {
   Col,
   Drawer,
   Form,
+  Input,
   InputNumber,
   Row,
   Select,
@@ -20,6 +21,7 @@ import {
   ExperimentOutlined,
   FileTextOutlined,
   PictureOutlined,
+  ProfileOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
 import {
@@ -47,6 +49,7 @@ const { Text } = Typography;
 
 // 分区导航（对齐智能体编辑器 AgentEditorModal 的左侧分区模式）
 const KB_SECTIONS = [
+  { key: "basic", label: "基本信息", icon: <ProfileOutlined /> },
   { key: "parse", label: "文档解析", icon: <FileTextOutlined /> },
   { key: "image", label: "图片处理", icon: <PictureOutlined /> },
   { key: "wiki", label: "Wiki 构建", icon: <BookOutlined /> },
@@ -134,7 +137,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
   const [chunkLoading, setChunkLoading] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [section, setSection] = useState("parse");
+  const [section, setSection] = useState("basic");
   const customWiki = Form.useWatch("custom_wiki_generation", form) ?? false;
   const enableParentChild = Form.useWatch("enable_parent_child", form);
   const strategy = Form.useWatch("strategy", form);
@@ -169,6 +172,8 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
     if (!open || !kb) return;
     const strat = kb.indexing_strategy || {};
     form.setFieldsValue({
+      name: kb.name || "",
+      description: kb.description || "",
       label: kb.label || undefined,
       vector_enabled: !!strat.vector_enabled,
       keyword_enabled: !!strat.keyword_enabled,
@@ -246,6 +251,9 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
     const v = await form.validateFields().catch(() => null);
     if (!v) return;
     const payload: KbUpdatePayload = {
+      // 基本信息（2026-10-20）：名称 / 描述 / 分类
+      name: (v.name as string | undefined)?.trim() || kb.name,
+      description: (v.description as string | undefined) ?? "",
       // 分类（2026-10-20）：空 = 移出分类（后端 exclude_none 丢 null，必须传空串清空）
       label: (v.label as string | undefined) ?? "",
       type: "document",
@@ -357,18 +365,6 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
         }
       >
         <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
-          {/* 基本信息（2026-10-20 分类入口）：分区导航上方的常驻项，新建/编辑共用 */}
-          <Form.Item
-            name="label"
-            label="所属分类"
-            extra="选择左侧分类树中的已有分类；留空 = 未分类"
-          >
-            <Select
-              allowClear
-              placeholder="选择分类"
-              options={categories.map((c) => ({ label: c.name, value: c.name }))}
-            />
-          </Form.Item>
           <div style={{ display: "flex", gap: 16, minHeight: 440 }}>
             {/* 左侧分区导航（对齐智能体编辑器 AgentEditorModal） */}
             <div
@@ -404,6 +400,55 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
 
             {/* 右侧分区内容 */}
             <div style={{ flex: 1, overflowY: "auto", maxHeight: 560 }}>
+              {section === "basic" && (
+                <>
+                  <Form.Item
+                    name="name"
+                    label="知识库名称"
+                    rules={[{ required: true, whitespace: true, message: "请输入知识库名称" }]}
+                  >
+                    <Input placeholder="如：监管制度知识库" maxLength={255} />
+                  </Form.Item>
+                  <Form.Item
+                    name="description"
+                    label="知识库描述"
+                    extra="一句话说明知识库内容范围，供问答/检索场景展示"
+                  >
+                    <Input.TextArea
+                      placeholder="如：收录集团市场监督管理相关制度文件"
+                      rows={3}
+                      maxLength={1000}
+                      showCount
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="label"
+                    label="所属分类"
+                    extra="选择左侧分类树中的已有分类；留空 = 未分类"
+                  >
+                    <Select
+                      allowClear
+                      placeholder="选择分类"
+                      options={categories.map((c) => ({ label: c.name, value: c.name }))}
+                    />
+                  </Form.Item>
+                  <div
+                    style={{
+                      marginTop: 16,
+                      paddingTop: 12,
+                      borderTop: "1px solid #f0f0f0",
+                      fontSize: 12,
+                      color: "#79879c",
+                      lineHeight: "22px",
+                    }}
+                  >
+                    <div>知识库 ID：<Text copyable={{ text: kb?.id ?? "" }} style={{ fontSize: 12 }}>{kb?.id ?? ""}</Text></div>
+                    <div>文档数：{kb?.doc_count ?? 0} 篇{kb?.page_count ? ` · Wiki 页面 ${kb.page_count} 个` : ""}</div>
+                    {kb?.created_at ? <div>创建时间：{new Date(kb.created_at).toLocaleString()}</div> : null}
+                  </div>
+                </>
+              )}
+
               {section === "parse" && (
                 <>
                   <Spin spinning={chunkLoading}>

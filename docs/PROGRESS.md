@@ -2,7 +2,19 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-20（模型注册表 max_tokens 配置，修复思考型模型空答案）
+最后更新：2026-10-20（知识库配置新增基本信息维护分区）
+
+## 29. 当前状态（2026-10-20 知识库配置弹窗新增「基本信息」维护）
+
+- **需求**：「知识库配置增加知识库基本信息的维护」——配置弹窗此前只在分区导航上方常驻一个「所属分类」，名称/描述无处编辑（新建后不可改）
+- **代码改动（纯前端 + 回归测试）**：
+  1. `web/src/components/KBConfigModal.tsx`：分区导航顶部新增「基本信息」分区（ProfileOutlined，默认选中）；内含 知识库名称（Input，required+whitespace 校验）/ 知识库描述（TextArea rows=3 maxLength=1000）/ 所属分类（Select，原常驻项移入本分区）；分区底部只读元信息（知识库 ID 可复制 / 文档数 / Wiki 页面数 / 创建时间）；`onSave` payload 加 `name`（trim 空则保留原名）/ `description`（空串可清空）
+  2. `web/src/lib/api.ts`：`KbUpdatePayload` 增 `name?` / `description?` 字段
+  3. 后端零改动：`update_kb`（api/services/kb_admin.py:404-409）原生支持 name/description/label，PUT 端点走 model_dump
+  4. `tests/test_kb_categories.py` 增 2 用例（PUT 更新 name/description / 空白名保留原名），12 passed
+- **验证**：`tsc --noEmit --incremental false` rc 0；`bun run build` rc 0；`uv run pytest tests/test_kb_categories.py` 12 passed；全量 `uv run pytest -q` **765 passed / 12 failed 全部为既有基线**（test_chat_image_qa 2 + test_doc_download_fallback 6 + test_engine_admin 1 + test_env_isolation 2，与 §28 记录的 HEAD d364eeb 基线一致：后 10 条缺 DATABASE_URL 环境、前 2 条图片门禁护栏与实现不同步，均与本次改动无关）
+- **部署注意**：纯前端 → 重建 kb-web；无迁移、无库内数据
+- **坑位**：JSX 里直接 `kb.id` 报 TS18047（kb 可能 null）→ 必须 `kb?.id ?? ""`；`Input`/`ProfileOutlined` 需补 import
 
 ## 28. 当前状态（2026-10-20 模型注册表 max_tokens 配置，修复思考型模型空答案）
 
