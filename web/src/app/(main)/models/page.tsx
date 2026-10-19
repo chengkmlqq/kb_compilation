@@ -110,7 +110,7 @@ const MODEL_BRAND_ICONS: { keywords: string[]; file: string }[] = [
   { keywords: ["moonshot", "kimi", "月之暗面"], file: "moonshotai_new.png" },
   { keywords: ["minimax", "abab"], file: "minimax-color.svg" },
   { keywords: ["零一", "01-ai", "01ai", "yi-"], file: "Yi.svg" },
-  { keywords: ["xiaomi", "小米"], file: "xiaomi.svg" },
+  { keywords: ["xiaomi", "小米", "mimo"], file: "xiaomi.svg" },
   { keywords: ["baai", "bge", "aquila", "智源"], file: "BAAI.svg" },
   { keywords: ["longcat", "长猫"], file: "longcat-bright.svg" },
 ];
