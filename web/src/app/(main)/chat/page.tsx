@@ -59,6 +59,7 @@ import {
   apiDeleteAttachment,
   apiDeleteSession,
   apiGenerateTitle,
+  apiGetAttachmentContent,
   apiListAgents,
   apiListAttachments,
   apiListModels,
@@ -140,6 +141,20 @@ export default function ChatPage() {
   // 2026-10-08 对齐 WeKnora：图片独立入口 + 发送前预览（本地对象 URL）
   const [imagePreviews, setImagePreviews] = useState<{ file: File; url: string }[]>([]);
   const MAX_IMAGES = 5;
+  // 2026-10-20 附件问答交互改造：待发送附件（非图片）——上传中显示进度，
+  // 发送后挂 userMsg.attachments 展示在用户消息侧（点击调预览接口）
+  const [pendingFiles, setPendingFiles] = useState<
+    {
+      file: File;
+      progress: number; // 0-100
+      att?: ChatAttachmentItem; // 上传成功后的附件元信息（用于挂消息）
+      status: "uploading" | "done" | "error";
+    }[]
+  >([]);
+  // 2026-10-20 附件内容预览（文档附件点击预览 markdown）
+  const [previewAtt, setPreviewAtt] = useState<ChatAttachmentItem | null>(null);
+  const [previewContent, setPreviewContent] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
   // 2026-10-12 对齐 WeKnora：整文件拖放上传（拖入时输入卡片高亮）
   const [dragActive, setDragActive] = useState(false);
   // 2026-10-15 联网搜索按钮显隐由参数表控制（PLATFORM_CONFIG.CHAT_WEB_SEARCH_ENABLED，默认隐藏）
@@ -717,6 +732,24 @@ export default function ChatPage() {
       }
     }
 
+    // 2026-10-20 附件问答交互改造：待发送附件（非图片）——取已完成上传的
+    // 附件挂到 userMsg.attachments（用户消息侧展示附件卡片，点击预览），
+    // 同时把附件 id 传给后端持久化（_message_dict 回带，刷新后仍在）
+    const pendingDone = pendingFiles.filter((f) => f.status === "done" && f.att);
+    let turnAttachmentIds: string[] = [];
+    if (pendingDone.length) {
+      const doneAtts = pendingDone.map((f) => f.att!);
+      turnAttachmentIds = doneAtts.map((a) => a.id);
+      setMsgs((prev) =>
+        prev.map((m) =>
+          m.id === userMsg.id
+            ? { ...m, attachments: [...(m.attachments || []), ...doneAtts] }
+            : m,
+        ),
+      );
+      setPendingFiles((prev) => prev.filter((f) => f.status !== "done" && f.att));
+    }
+
     try {
       const endpoint = effectiveAgent
         ? `/api/v1/agents/${effectiveAgent}/qa/stream`
@@ -736,6 +769,9 @@ export default function ChatPage() {
           thinking: deepThinking || undefined, // 2026-10-20 深度思考（空=网关默认）
           // 2026-10-18 对齐 WeKnora 图片仅随当轮注入：本轮图片附件 id（[]=本轮无图）
           image_attachment_ids: turnImageIds,
+          // 2026-10-20 附件问答交互改造：本轮全部附件 id（图片+文档），
+          // 后端持久化到 user 消息 attachment_ids 供消息侧展示（[]=本轮无附件）
+          attachment_ids: turnAttachmentIds,
         }),
         signal: controller.signal,
       });
@@ -996,14 +1032,14 @@ export default function ChatPage() {
     await loadSessions();
   };
 
-  // L3：附件上传/删除。返回新附件 id（图片问答按当轮 id 注入，见 send()）。
-  // opts.silent：图片随发送上传时静默（不追加输入框附件 Tag、不弹 toast——
-  // 图片改由用户消息气泡展示，见 send() 的 localImages 逻辑）
+  // L3：附件上传/删除。返回上传成功后的附件对象（null=失败）。
+  // opts.silent：图片随发送上传时静默（不追加输入框附件 Tag、不弹 toast——图片/附件
+  // 改由用户消息气泡展示）；opts.onProgress：上传进度回调（0-100，附件问答交互改造）。
   const uploadAttachment = async (
     file: File,
     sid?: string,
-    opts?: { silent?: boolean },
-  ): Promise<string | null> => {
+    opts?: { silent?: boolean; onProgress?: (percent: number) => void },
+  ): Promise<ChatAttachmentItem | null> => {
     let sessionId = sid ?? activeSession;
     if (!sessionId) {
       const created = agentMode
@@ -1018,13 +1054,13 @@ export default function ChatPage() {
         return null;
       }
     }
-    const res = await apiUploadAttachment(sessionId!, file);
+    const res = await apiUploadAttachment(sessionId!, file, opts?.onProgress);
     if (res.success && res.data) {
       if (!opts?.silent) {
         setAttachments((prev) => [...prev, res.data!]);
         toast.success(`附件已上传：${res.data.file_name}`);
       }
-      return res.data.id;
+      return res.data;
     }
     if (!opts?.silent) toast.error(res.message || "附件上传失败");
     return null;
@@ -1309,7 +1345,7 @@ export default function ChatPage() {
             )}
             <Tooltip title="新对话">
               <span className="kb-chat-header-icon" onClick={() => void newSession()}>
-                <img src="/images/dsb/record-new-chat-icon.png" alt="" width={18} height={18} />
+                <img src="/wiki/images/dsb/record-new-chat-icon.png" alt="" width={18} height={18} />
               </span>
             </Tooltip>
           </div>
