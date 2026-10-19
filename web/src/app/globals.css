@@ -2654,11 +2654,17 @@ html[data-theme="dark"] .kb-citation-web:hover {
   flex-direction: column;
   gap: 2px;
   margin: 4px 0 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 .kb-agent-tool-card {
   border-left: 2px solid var(--kb-c-border, #e5e6eb);
   padding-left: 10px;
   transition: border-color 0.2s ease;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 .kb-agent-tool-card--pending {
   border-left-color: #1677ff;
@@ -2668,6 +2674,8 @@ html[data-theme="dark"] .kb-citation-web:hover {
   align-items: center;
   gap: 6px;
   min-height: 24px;
+  width: 100%;
+  min-width: 0;
   cursor: pointer;
   user-select: none;
   font-size: 13px;
