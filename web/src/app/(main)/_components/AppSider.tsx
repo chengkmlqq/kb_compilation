@@ -105,33 +105,37 @@ const DEFAULT_ICON = <AppstoreOutlined />;
  *   1. 带 query 的完整匹配（routeKey 精确相等）优先——保证 /system?tab=roles
  *      不会误命中 /system 分组本身；
  *   2. 其次 pathname 精确匹配；
- *   3. 最后 pathname 前缀匹配（/kbs/xxx 命中 /kbs）。
+ *   3. 最后 pathname 前缀匹配，且取 route 最长者——父子路径冲突时
+ *      （编排管理 /orchestrations vs 编排组件 /orchestrations/steps）
+ *      长路径优先，避免短的父路径先被遍历命中导致高亮错位。
+ * 三阶段均为全树扫描（不提前返回子树），保证优先级全局成立。
  */
 function findMenuIdByPath(menus: SysMenuItem[], pathname: string, routeKey?: string): string | null {
   const key = routeKey ?? pathname;
-  // 第一轮：带 query 的完整匹配
-  for (const menu of menus) {
-    if (menu.route && menu.route.includes("?") && key === menu.route) {
-      return menu.menu_id as string;
+  // 先扁平化整棵树，三阶段均全局扫描（顺序无关），保证优先级全局成立
+  const flat: SysMenuItem[] = [];
+  const walk = (list: SysMenuItem[]) => {
+    for (const menu of list) {
+      flat.push(menu);
+      const kids = (menu as MenuTreeNode).children;
+      if (kids) walk(kids);
     }
-    const kids = (menu as MenuTreeNode).children;
-    if (kids) {
-      const hit = findMenuIdByPath(kids, pathname, key);
-      if (hit) return hit;
-    }
+  };
+  walk(menus);
+  // 1) 带 query 的完整匹配
+  const queryHit = flat.find((m) => !!m.route && m.route.includes("?") && key === m.route);
+  if (queryHit) return queryHit.menu_id as string;
+  // 2) pathname 精确匹配
+  const exactHit = flat.find((m) => !!m.route && pathname === m.route);
+  if (exactHit) return exactHit.menu_id as string;
+  // 3) pathname 前缀匹配：取 route 最长者
+  let best: SysMenuItem | null = null;
+  for (const m of flat) {
+    const route = m.route;
+    if (!route || route.includes("?") || !pathname.startsWith(route + "/")) continue;
+    if (!best || !best.route || route.length > best.route.length) best = m;
   }
-  // 第二轮：pathname 精确 / 前缀
-  for (const menu of menus) {
-    if (menu.route && (pathname === menu.route || pathname.startsWith(menu.route + "/"))) {
-      return menu.menu_id as string;
-    }
-    const kids = (menu as MenuTreeNode).children;
-    if (kids) {
-      const hit = findMenuIdByPath(kids, pathname, key);
-      if (hit) return hit;
-    }
-  }
-  return null;
+  return best ? (best.menu_id as string) : null;
 }
 
 function findParentKeys(menus: SysMenuItem[], targetId: string, parents: string[] = []): string[] {
