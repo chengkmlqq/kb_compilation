@@ -1956,8 +1956,15 @@ html[data-theme="dark"] body {
   height: 32px;
   font-size: 20px;
 }
-.kb-model-card-icon > .anticon {
+.kb-model-card-icon .anticon {
   font-size: 28px;
+}
+/* 品牌图标（icons.zip）：32px 槽内 28px 方形圆角图，object-fit 等比不裁切 */
+.kb-model-card-icon .kb-model-card-brand {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  border-radius: 4px;
 }
 .kb-model-card-detail {
   width: calc(100% - 40px);

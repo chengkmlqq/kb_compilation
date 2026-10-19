@@ -99,6 +99,31 @@ const TYPE_COLOR: Record<ModelType, string> = {
   asr: "gold",
 };
 
+// 模型品牌图标（assets: web/public/model-icons/，来源 icons.zip）：
+// 按 provider / 模型名 / 显示名 关键词匹配官方品牌标识，未命中回退类型图标。
+// 注：next.config.ts basePath=/wiki，静态资源引用必须带 /wiki 前缀。
+const MODEL_BRAND_ICONS: { keywords: string[]; file: string }[] = [
+  { keywords: ["deepseek", "深度求索"], file: "DeepSeek.svg" },
+  { keywords: ["qwen", "tongyi", "通义", "千问", "dashscope"], file: "Tongyi.svg" },
+  { keywords: ["zhipu", "glm", "智谱"], file: "zhipu.svg" },
+  { keywords: ["hunyuan", "混元"], file: "hunyuan.svg" },
+  { keywords: ["moonshot", "kimi", "月之暗面"], file: "moonshotai_new.png" },
+  { keywords: ["minimax", "abab"], file: "minimax-color.svg" },
+  { keywords: ["零一", "01-ai", "01ai", "yi-"], file: "Yi.svg" },
+  { keywords: ["xiaomi", "小米"], file: "xiaomi.svg" },
+  { keywords: ["baai", "bge", "aquila", "智源"], file: "BAAI.svg" },
+  { keywords: ["longcat", "长猫"], file: "longcat-bright.svg" },
+];
+
+/** 按模型 provider/名称匹配品牌图标 URL；未命中返回 null（走类型图标兜底） */
+function modelBrandIcon(item: ModelItem): string | null {
+  const hay = `${item.provider ?? ""} ${item.name ?? ""} ${item.display_name ?? ""}`.toLowerCase();
+  for (const b of MODEL_BRAND_ICONS) {
+    if (b.keywords.some((k) => hay.includes(k.toLowerCase()))) return `/wiki/model-icons/${b.file}`;
+  }
+  return null;
+}
+
 const SCOPE_COLOR: Record<ModelScope, string> = {
   personal: "blue",
   team: "green",
@@ -354,11 +379,19 @@ export default function ModelRegistryPage() {
                 onClick={() => openEdit(item)}
               >
                 <div className="kb-model-card-header">
-                  <div
-                    className="kb-model-card-icon"
-                    style={{ color: TYPE_COLOR[item.type as ModelType] }}
-                  >
-                    {TYPE_ICON[item.type as ModelType]}
+                  <div className="kb-model-card-icon">
+                    {modelBrandIcon(item) ? (
+                      <img
+                        className="kb-model-card-brand"
+                        src={modelBrandIcon(item) ?? ""}
+                        alt={item.display_name || item.name}
+                        title={item.display_name || item.name}
+                      />
+                    ) : (
+                      <span style={{ color: TYPE_COLOR[item.type as ModelType] }}>
+                        {TYPE_ICON[item.type as ModelType]}
+                      </span>
+                    )}
                   </div>
                   <div className="kb-model-card-detail">
                     <div className="kb-model-card-title-row">
