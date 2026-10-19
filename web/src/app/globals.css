@@ -505,53 +505,40 @@ html[data-theme="dark"] body {
   min-height: 0;
 }
 
-/* ===== kb chat thinking 脉冲指示器（对齐 WeKnora deepThink.vue） =====
-   WeKnora 结构：16px 容器内 6px 圆点（pulse-dot 缩放+透明度 1.8s 循环）
-   + 绝对定位扩散圆环（pulse-ring scale 0.5→1.2 渐隐 1.8s 循环）。
-   kb 旧版为 box-shadow 单点脉冲（2026-10-16 曾去掉），现按 WeKnora 恢复。 */
-.kb-think-indicator {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  margin-right: 8px;
-  flex-shrink: 0;
-}
-.kb-think-indicator .indicator-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #1677ff;
-  animation: kb-think-pulse-dot 1.8s ease-in-out infinite;
-}
-.kb-think-indicator .indicator-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 1.5px solid #1677ff;
-  opacity: 0;
-  animation: kb-think-pulse-ring 1.8s ease-out infinite;
-}
-@keyframes kb-think-pulse-dot {
-  0%, 100% {
-    transform: scale(0.85);
-    opacity: 0.6;
-  }
-  50% {
-    transform: scale(1.1);
-    opacity: 1;
-  }
-}
-@keyframes kb-think-pulse-ring {
+/* ===== kb chat thinking 文字闪烁（对齐 WeKnora chat-timeline-loading.less
+   chatStreamShimmer：浅灰底文字上扫过一条亮色光带，1.5s 循环） =====
+   WeKnora 结构：background-clip:text + text-fill-color:transparent，
+   亮带 = linear-gradient(100deg, placeholder 0/36/64/100%, primary 50%)，
+   background-position 100%→-100% 横向扫过（background-size 200% 保证无缝循环）。 */
+@keyframes kb-think-shimmer-sweep {
   0% {
-    transform: scale(0.5);
-    opacity: 0.6;
+    background-position: 100% 50%;
   }
   100% {
-    transform: scale(1.2);
-    opacity: 0;
+    background-position: -100% 50%;
+  }
+}
+.kb-think-shimmer {
+  background-image: linear-gradient(100deg,
+      rgba(121, 135, 156, 0.55) 0%,
+      rgba(121, 135, 156, 0.55) 36%,
+      rgba(50, 97, 206, 1) 50%,
+      rgba(121, 135, 156, 0.55) 64%,
+      rgba(121, 135, 156, 0.55) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: kb-think-shimmer-sweep 1.5s linear infinite;
+  will-change: background-position;
+}
+@media (prefers-reduced-motion: reduce) {
+  .kb-think-shimmer {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: rgba(121, 135, 156, 1);
+    color: rgba(121, 135, 156, 1);
   }
 }
 
