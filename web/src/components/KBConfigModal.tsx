@@ -19,6 +19,7 @@ import {
   BookOutlined,
   ExperimentOutlined,
   FileTextOutlined,
+  PictureOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
 import {
@@ -47,6 +48,7 @@ const { Text } = Typography;
 // 分区导航（对齐智能体编辑器 AgentEditorModal 的左侧分区模式）
 const KB_SECTIONS = [
   { key: "parse", label: "文档解析", icon: <FileTextOutlined /> },
+  { key: "image", label: "图片处理", icon: <PictureOutlined /> },
   { key: "wiki", label: "Wiki 构建", icon: <BookOutlined /> },
   { key: "retrieval", label: "检索配置", icon: <SearchOutlined /> },
 ];
@@ -181,6 +183,11 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
       graph_extract: !!kb.extract_config?.enabled,
       question_generation: !!kb.question_generation_config?.enabled,
       question_count: kb.question_generation_config?.question_count || 3,
+      // 图片处理：对齐 WeKnora vlm_config（EnableMultimodel + 绑定的视觉模型）
+      vlm_enabled: !!kb.vlm_config?.enabled,
+      vlm_model_id: (kb.vlm_config?.model_id as string) || undefined,
+      vlm_description_language:
+        (kb.vlm_config?.description_language as string) || "",
     });
   }, [open, kb, form]);
 
@@ -271,6 +278,13 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
           enabled: !!v.question_generation,
           question_count: v.question_count || 3,
         },
+        // 图片处理（对齐 WeKnora vlm_config）：开关 + 绑定的视觉模型 + 描述语言
+        vlm_config: {
+          enabled: !!v.vlm_enabled,
+          model_id: (v.vlm_model_id as string | undefined) || "",
+          description_language:
+            (v.vlm_description_language as string | undefined) || "",
+        },
       },
     };
     setSaving(true);
@@ -295,10 +309,22 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
   };
 
   const modelOptions = (type: string) =>
-    models.filter((m) => m.type === type).map((m) => ({
-      label: m.name,
-      value: m.id,
-    }));
+      models.filter((m) => m.type === type).map((m) => ({
+        label: m.name,
+        value: m.id,
+      }));
+
+    // 视觉模型下拉（图片处理）：chat / vllm 类型且标记支持视觉（对齐 models 侧
+    // resolve_vision_model_config 的 type in (chat, vllm) + supports_vision 门禁）
+    const visionModelOptions = models
+      .filter(
+        (m) =>
+          (m.type === "chat" || m.type === "vllm") && m.supports_vision,
+      )
+      .map((m) => ({
+        label: `${m.name}${m.type === "vllm" ? "（视觉）" : ""}`,
+        value: m.id,
+      }));
 
   // 可选模型唯一时默认选上（仅在字段为空时填充，不覆盖已保存配置或用户已选）
   useEffect(() => {
@@ -501,6 +527,45 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                       提示：不可用的引擎已置灰，鼠标悬停查看原因（如 MinerU endpoint 未配置）。
                     </Text>
                   </Spin>
+                </>
+              )}
+
+              {section === "image" && (
+                <>
+                  <Form.Item
+                    name="vlm_enabled"
+                    label="文档图片理解（VLM OCR + 描述）"
+                    valuePropName="checked"
+                    extra="开启后，文档解析时对提取的图片调用视觉模型生成 OCR 文本与内容描述，作为可检索的子块入库（对齐 WeKnora 多模态图片处理）"
+                  >
+                    <Switch checkedChildren="开" unCheckedChildren="关" />
+                  </Form.Item>
+                  <Form.Item
+                    name="vlm_model_id"
+                    label="视觉模型（图片理解）"
+                    extra="需支持视觉能力的 chat 或 vllm 模型；留空 = 系统默认视觉模型"
+                  >
+                    <Select
+                      allowClear
+                      placeholder="选择视觉模型"
+                      options={visionModelOptions}
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="vlm_description_language"
+                    label="图片描述语言"
+                    extra="留空 = 中文（Chinese）"
+                  >
+                    <Select
+                      allowClear
+                      placeholder="Chinese"
+                      options={[
+                        { label: "中文（Chinese）", value: "Chinese" },
+                        { label: "英语（English）", value: "English" },
+                        { label: "日语（Japanese）", value: "Japanese" },
+                      ]}
+                    />
+                  </Form.Item>
                 </>
               )}
 

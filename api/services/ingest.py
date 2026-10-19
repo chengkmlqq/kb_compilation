@@ -94,6 +94,8 @@ def replace_document_chunks(
     meta: dict | None = None,
     parent_seq_by_child: dict[int, int] | None = None,
     parent_texts: dict[int, str] | None = None,
+    image_chunks: list[dict] | None = None,
+    image_vectors: list[list[float]] | None = None,
 ) -> int:
     """Write chunks for a document, replacing any previous chunks (idempotent).
 
@@ -103,6 +105,10 @@ def replace_document_chunks(
     When `parent_seq_by_child`/`parent_texts` are supplied (parent-child mode),
     each child row's meta carries `parent_seq` + `parent_content` so retrieval
     can match on the child vector but return the parent text.
+
+    `image_chunks` (2026-10-19, 对齐 WeKnora image:multimodal)：解析期 VLM 生成
+    的图片语义子 chunk（chunk_type=image_ocr/image_caption），随文本 chunks
+    一并写库 + upsert embedding；`image_vectors` 与其一一对应。
 
     Returns the number of chunks written.
     """
@@ -144,6 +150,28 @@ def replace_document_chunks(
             }
         )
         store.upsert(kb_id, chunk_id, vec)
+    # 2026-10-19 图片语义子 chunk（image_ocr/image_caption）：与文本 chunks
+    # 同批写库 + 向量化（对齐 WeKnora image:multimodal 产出可检索图片 chunk）。
+    # image_vectors 与 image_chunks 一一对应；embed 降级时向量缺失 → 仅写业务库
+    # （keyword 检索仍可命中），有向量的才 upsert 向量库。
+    for idx, ic in enumerate(image_chunks or []):
+        cid = ic.get("id") or _doc_id()
+        row_meta = dict(ic.get("meta") or {})
+        row_meta.update(base_meta)
+        rows.append(
+            {
+                "id": cid,
+                "kb_id": kb_id,
+                "document_id": document_id,
+                "seq": ic.get("seq", 0),
+                "content": ic.get("content", ""),
+                "meta": row_meta,
+                "chunk_type": ic.get("chunk_type", "text"),
+                "enabled": True,
+            }
+        )
+        if image_vectors and idx < len(image_vectors):
+            store.upsert(kb_id, cid, image_vectors[idx])
     # 2026-10-16: 批量 INSERT 替代逐条 db.add——单条语句一次拿齐全部行锁，
     # 缩短事务持锁窗口，降低并发 ingest 时的 MySQL 1213 死锁概率
     # （此前逐条 add 的二级索引间隙锁竞争是死锁根因之一）。seq 与向量逐一对应，语义不变。
@@ -290,6 +318,7 @@ def ingest_document(
     # dispatcher, which also applies the availability fallback
     engine_rules: list[dict] | None = pc_rules
     vlm_server_url = ""
+    vlm_config_raw: dict = {}
     try:
         if engine_rules is None:
             from api.services.kb_chunking import load_engine_rules
@@ -302,6 +331,7 @@ def ingest_document(
             select(KbDatasource).where(KbDatasource.id == document.kb_id)
         ).scalars().first()
         if kb_row and kb_row.vlm_config:
+            vlm_config_raw = dict(kb_row.vlm_config or {})
             vlm_server_url = (kb_row.vlm_config or {}).get("server_url", "") or ""
             # 2026-10-17: VLM 改为知识库绑定的视觉模型(不再依赖旧 server_url/env)
             _vlm = kb_row.vlm_config or {}
@@ -399,6 +429,33 @@ def ingest_document(
         result["success"] = False
         return result
 
+    # 2026-10-19 图片语义子 chunk（对齐 WeKnora image:multimodal）：KB 开启
+    # vlm_config.enabled 且解析出图片 → VLM OCR + Caption，生成 image_ocr/
+    # image_caption chunk。失败不阻断 ingest（图片增强是尽力而为）。
+    image_chunks: list[dict] = []
+    if images:
+        try:
+            from api.services.image_chunks import build_image_chunks
+
+            image_chunks = build_image_chunks(
+                db=kb_db,
+                kb_id=document.kb_id,
+                document_id=document.id,
+                file_name=document.file_name,
+                file_ext=document.file_ext or "",
+                images=images,
+                vlm_config=vlm_config_raw,
+                start_seq=len(chunks),
+            )
+            if image_chunks:
+                logger.info(
+                    "doc %s: %d image chunks (image_ocr/image_caption) generated",
+                    document.id, len(image_chunks),
+                )
+        except Exception:  # noqa: BLE001 - 图片增强失败不阻断 ingest
+            logger.warning("image chunks generation failed for doc %s", document.id, exc_info=True)
+            image_chunks = []
+
     # 3. embed（失败必须显式 FAILED，否则文档停在 EMBEDDING 残留——历史坑）
     update_document_state(kb_db, document.id, "EMBEDDING")
     kb_db.commit()
@@ -412,6 +469,16 @@ def ingest_document(
         result["error"] = f"embed: {e}"
         result["success"] = False
         return result
+    # 图片子 chunk 向量化（失败降级：图片 chunk 不入向量库，仍写业务库）
+    image_vectors: list[list[float]] = []
+    if image_chunks:
+        try:
+            image_vectors = embed_chunks(
+                embedding_client, [ic["content"] for ic in image_chunks]
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("image chunks embed failed for doc %s", document.id, exc_info=True)
+            image_vectors = []
 
     # 4. store
     # MySQL 1213 死锁是瞬态错误（官方建议重启事务重试）：并发 ingest 时多个事务
@@ -424,10 +491,12 @@ def ingest_document(
     for attempt in range(3):
         try:
             written = replace_document_chunks(
-                kb_db, document.kb_id, document.id, chunks, vectors, meta,
-                parent_seq_by_child=parent_seq_by_child if chunk_cfg.enable_parent_child else None,
-                parent_texts=parent_texts if chunk_cfg.enable_parent_child else None,
-            )
+                            kb_db, document.kb_id, document.id, chunks, vectors, meta,
+                            parent_seq_by_child=parent_seq_by_child if chunk_cfg.enable_parent_child else None,
+                            parent_texts=parent_texts if chunk_cfg.enable_parent_child else None,
+                            image_chunks=image_chunks or None,
+                            image_vectors=image_vectors or None,
+                        )
             break
         except Exception as e:  # noqa: BLE001
             orig = getattr(e, "orig", None)

@@ -201,6 +201,11 @@ class DocChunk(Base):
         String(64), ForeignKey("kb_document.id"), nullable=False
     )
     seq: Mapped[int] = mapped_column(Integer, default=0)
+    # 2026-10-19 图片处理对齐 WeKnora：text=普通文本切片 / image_ocr=VLM OCR
+    # / image_caption=VLM 描述（解析期图片语义子 chunk，可检索）。
+    chunk_type: Mapped[str] = mapped_column(
+        String(32), default="text", server_default=text("'text'")
+    )
     # content 用 Text 变体：MySQL 落 MEDIUMTEXT（16MB），其余方言回退 Text。
     # 2026-10-12 扩列：xlsx 等大表格文本的超长块（实测 78687 字符）曾撞
     # TEXT 64KB 字节上限导致入库失败；MEDIUMTEXT 作为容量兜底（切片硬上限
