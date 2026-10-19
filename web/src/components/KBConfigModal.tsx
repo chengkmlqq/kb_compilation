@@ -4,10 +4,10 @@ import { useEffect, useState } from "react";
 import {
   Button,
   Col,
-  Drawer,
   Form,
   Input,
   InputNumber,
+  Modal,
   Row,
   Select,
   Slider,
@@ -350,19 +350,16 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
 
   return (
     <>
-      <Drawer
+      <Modal
         title={`知识库配置 · ${kb?.name ?? ""}`}
         open={open}
-        onClose={() => onClose()}
+        onCancel={() => onClose()}
         width={860}
-        extra={
-          <Space>
-            <Button onClick={() => onClose()}>取消</Button>
-            <Button type="primary" loading={saving} onClick={() => void onSave()}>
-              保存
-            </Button>
-          </Space>
-        }
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={saving}
+        onOk={() => void onSave()}
+        destroyOnClose
       >
         <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
           <div style={{ display: "flex", gap: 16, minHeight: 440 }}>
@@ -680,7 +677,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
             </div>
           </div>
         </Form>
-      </Drawer>
+      </Modal>
 
       <ChunkDebugDrawer
         open={debugOpen}

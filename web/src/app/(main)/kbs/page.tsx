@@ -22,6 +22,7 @@ import {
   CodeOutlined,
   CommentOutlined,
   DeleteOutlined,
+  ProfileOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
 import {
@@ -202,6 +203,7 @@ const CaretRightIcon = () => (
 
 /** 新建知识库弹窗分区导航（对齐智能体编辑器 AgentEditorModal 与配置弹窗 KBConfigModal） */
 const CREATE_SECTIONS = [
+  { key: "basic", label: "基本信息", icon: <ProfileOutlined /> },
   { key: "source", label: "知识来源", icon: <CodeOutlined /> },
   { key: "wiki", label: "Wiki 构建", icon: <BookOutlined /> },
   { key: "retrieval", label: "检索配置", icon: <SearchOutlined /> },
@@ -252,7 +254,7 @@ export default function KbsPage() {
   const [dragKbId, setDragKbId] = useState<string | null>(null);
   const [dropTargetLabel, setDropTargetLabel] = useState<string | null>(null);
   const [form] = Form.useForm();
-    const [createSection, setCreateSection] = useState("source");
+    const [createSection, setCreateSection] = useState("basic");
     // 代码仓库知识库（2026-10）：条件渲染依赖表单值，用 useWatch 订阅触发重渲染
     const repoType = Form.useWatch("repo_type", form);
     const repoAuthType = Form.useWatch("repo_auth_type", form);
@@ -608,7 +610,7 @@ export default function KbsPage() {
 
   const openCreate = () => {
     form.resetFields();
-    setCreateSection("source"); // 对齐智能体编辑器：每次打开回到首个分区
+    setCreateSection("basic"); // 对齐智能体编辑器：每次打开回到首个分区
     setCreateOpen(true);
   };
 
@@ -995,43 +997,7 @@ export default function KbsPage() {
           destroyOnClose
         >
           <Form form={form} layout="vertical" preserve={false}>
-            <Form.Item
-              name="name"
-              label="知识库名称"
-              rules={[{ required: true, message: "请输入知识库名称" }]}
-            >
-              <Input placeholder="如：监管制度知识库" />
-            </Form.Item>
-            <Form.Item name="description" label="描述（可选）">
-              <Input.TextArea rows={2} placeholder="知识库用途说明" />
-            </Form.Item>
-            <Form.Item
-              name="scope"
-              label="归属"
-              initialValue="personal"
-              extra="个人知识库仅自己可见，团队知识库团队成员可见，系统知识库所有用户可见（仅管理员可建）"
-            >
-              <Select
-                options={[
-                  { label: "个人", value: "personal" },
-                  { label: "团队", value: "team" },
-                  { label: "系统", value: "system" },
-                ]}
-              />
-            </Form.Item>
-            <Form.Item
-              name="label"
-              label="分类（可选）"
-              extra="选择左侧分类树中的已有分类；留空 = 未分类（可在知识库配置中或拖拽卡片调整）"
-            >
-              <Select
-                allowClear
-                placeholder="选择分类"
-                options={categories.map((c) => ({ label: c.name, value: c.name }))}
-              />
-            </Form.Item>
-
-            <div style={{ display: "flex", gap: 16, minHeight: 300 }}>
+            <div style={{ display: "flex", gap: 16, minHeight: 440 }}>
               {/* 左侧分区导航（对齐智能体编辑器 AgentEditorModal） */}
               <div
                 style={{
@@ -1065,7 +1031,46 @@ export default function KbsPage() {
               </div>
 
               {/* 右侧分区内容 */}
-              <div style={{ flex: 1, overflowY: "auto", maxHeight: 480 }}>
+              <div style={{ flex: 1, overflowY: "auto", maxHeight: 560 }}>
+                {createSection === "basic" && (
+                  <>
+                    <Form.Item
+                      name="name"
+                      label="知识库名称"
+                      rules={[{ required: true, whitespace: true, message: "请输入知识库名称" }]}
+                    >
+                      <Input placeholder="如：监管制度知识库" maxLength={255} />
+                    </Form.Item>
+                    <Form.Item name="description" label="描述（可选）">
+                      <Input.TextArea rows={3} placeholder="知识库用途说明" maxLength={1000} showCount />
+                    </Form.Item>
+                    <Form.Item
+                      name="scope"
+                      label="归属"
+                      initialValue="personal"
+                      extra="个人知识库仅自己可见，团队知识库团队成员可见，系统知识库所有用户可见（仅管理员可建）"
+                    >
+                      <Select
+                        options={[
+                          { label: "个人", value: "personal" },
+                          { label: "团队", value: "team" },
+                          { label: "系统", value: "system" },
+                        ]}
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      name="label"
+                      label="分类（可选）"
+                      extra="选择左侧分类树中的已有分类；留空 = 未分类（可在知识库配置中或拖拽卡片调整）"
+                    >
+                      <Select
+                        allowClear
+                        placeholder="选择分类"
+                        options={categories.map((c) => ({ label: c.name, value: c.name }))}
+                      />
+                    </Form.Item>
+                  </>
+                )}
                 {createSection === "source" && (
                   <>
                     <Form.Item
