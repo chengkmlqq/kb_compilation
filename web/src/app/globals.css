@@ -485,6 +485,15 @@ html[data-theme="dark"] body {
 .modo-running-row td {
   background: #f6f8fb !important;
 }
+
+/* 2026-10-19 展开子任务溢出修复：antd v6 嵌套表格负边距（.ant-table-tbody 内
+   .ant-table-wrapper:only-child > .ant-table 会加 margin-block: -cell-padding，
+   使 wrapper 高度塌陷、子表底部超出，被 expanded-row-fixed 的 overflow:hidden
+   裁切——表现为「wrapper 比里面表格矮、内容溢出」。仅任务监控展开行内嵌套子表
+   命中（其余展开行为 <pre> 文本，无 wrapper），归零 margin-block 即恢复。 */
+.jobs-page .ant-table-expanded-row .ant-table-wrapper:only-child .ant-table {
+  margin-block: 0 !important;
+}
 .kb-markdown a { color: #3261ce; }
 /* ===== 一屏自适应表格（data-synth 模式）辅助类 ===== */
 .kb-flex-col {
