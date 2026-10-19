@@ -18,8 +18,6 @@ import {
   Slider,
   Space,
   Switch,
-  Tabs,
-  Tooltip,
   Typography,
 } from "antd";
 import {
@@ -501,13 +499,13 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
               <>
                 <Form.Item
                   name="allowed_tools"
-                  label="可用工具白名单"
+                  label="可用工具"
                   extra={
                     <>
-                      留空 = 全部允许；勾选后仅启用勾选项。
-                      <Tooltip title="勾选后仅启用勾选项；留空 = 全部允许">
-                        <Typography.Text type="secondary"> ｜ 工具目录对齐 WeKnora 全量</Typography.Text>
-                      </Tooltip>
+                      留空 = 启用默认工具集（知识库检索、图谱、Wiki 查看、数据分析等只读工具，以及按开关生效的联网搜索与技能执行）；
+                      勾选 = 仅启用勾选项。Wiki 写入/修改/删除、问题处理等工具默认不启用，需勾选后生效。
+                      <br />
+                      联网搜索与技能执行除勾选外，还需在「联网搜索」「技能」分区开启对应配置后才会真正生效。
                     </>
                   }
                 >
@@ -520,24 +518,24 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
                         byGroup.get(t.group)!.push(t);
                       }
                       for (const [g, items] of byGroup) groups.push({ group: g, items });
-                      // 平台内置工具（routers 层装配，非知识库上下文）
-                      const platformTools: AgentToolCatalogItem[] = [
-                        { name: "web_search", group: "平台内置", description: "联网搜索（websearch provider）" },
-                        { name: "run_skill_script", group: "平台内置", description: "技能脚本执行（skill registry）" },
-                      ];
-                      groups.push({ group: "平台内置", items: platformTools });
                       return groups.map((g) => (
                         <div key={g.group} style={{ marginBottom: 12 }}>
                           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                             {g.group}
                           </Typography.Text>
-                          <div>
+                          <div style={{ marginTop: 2 }}>
                             {g.items.map((t) => (
-                              <Checkbox key={t.name} value={t.name} style={{ marginLeft: 8, marginBottom: 4 }}>
-                                <Tooltip title={t.description}>
-                                  <span>{t.name}</span>
-                                </Tooltip>
-                              </Checkbox>
+                              <div
+                                key={t.name}
+                                style={{ display: "flex", alignItems: "flex-start", marginBottom: 4 }}
+                              >
+                                <Checkbox value={t.name} style={{ marginRight: 8, flexShrink: 0 }}>
+                                  <span style={{ fontWeight: 500 }}>{t.name}</span>
+                                </Checkbox>
+                                <Typography.Text type="secondary" style={{ fontSize: 12, lineHeight: "22px" }}>
+                                  {t.description}
+                                </Typography.Text>
+                              </div>
                             ))}
                           </div>
                         </div>

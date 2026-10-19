@@ -34,7 +34,7 @@ TOOL_CATALOG: list[dict] = [
     {"name": "grep_chunks", "group": "RAG 检索", "description": "关键词精确检索当前知识库分块，返回命中片段。", "capability": "vector,keyword"},
     {"name": "list_knowledge_chunks", "group": "RAG 检索", "description": "分页列出知识库文档分块（可指定文档）。", "capability": "vector,keyword"},
     {"name": "get_document_info", "group": "RAG 检索", "description": "读取文档元信息（文件名/解析状态/分块数/摘要）。", "capability": "vector,keyword"},
-    {"name": "database_query", "group": "RAG 检索", "description": "对知识库元数据库执行只读 SELECT（安全表白名单+行数上限）。", "capability": "vector,keyword"},
+    {"name": "database_query", "group": "RAG 检索", "description": "对知识库元数据库执行只读查询（仅允许查询受信任的表：文档、分块、Wiki 页面等，自动限制结果行数）。", "capability": "vector,keyword"},
     {"name": "query_knowledge_graph", "group": "图谱", "description": "查询当前知识库的知识图谱（Neo4j，只读），返回节点与关系。", "capability": "graph"},
     {"name": "wiki_search", "group": "Wiki", "description": "在当前知识库 wiki 页面中检索。", "capability": "wiki"},
     {"name": "wiki_read_page", "group": "Wiki", "description": "读取 wiki 页面全文（slug）。", "capability": "wiki"},
@@ -47,9 +47,9 @@ TOOL_CATALOG: list[dict] = [
     {"name": "wiki_rename_page", "group": "Wiki 写", "description": "修改 wiki 页面标题（slug 不变）。", "capability": "wiki"},
     {"name": "wiki_delete_page", "group": "Wiki 写", "description": "软删除 wiki 页面（按 slug）。", "capability": "wiki"},
     {"name": "data_schema", "group": "数据分析", "description": "列出知识库中的表格文件（CSV/XLSX）及其表结构/列/样例。", "capability": "vector,keyword"},
-    {"name": "data_analysis", "group": "数据分析", "description": "对 CSV/Excel 文件执行 SQL 分析（DuckDB 内存表：所有 sheet 装载进 data 表，源 sheet 名在 __sheet_name 列，SQL 用 FROM data）。", "capability": "vector,keyword"},
-    {"name": "web_search", "group": "联网搜索", "description": "互联网搜索（需配置 web_search_enabled + 可用 provider；由开关控制装配）。", "capability": "web"},
-    {"name": "run_skill_script", "group": "技能", "description": "执行白名单技能脚本（需 skills_enabled + 技能白名单；由开关控制装配）。", "capability": "skill"},
+    {"name": "data_analysis", "group": "数据分析", "description": "对知识库中的表格文件（CSV/Excel）执行数据分析查询（所有工作表装载进 data 表，原工作表名存于 __sheet_name 列，查询语句使用 FROM data）。", "capability": "vector,keyword"},
+    {"name": "web_search", "group": "联网搜索", "description": "互联网搜索：联网检索实时信息（需在智能体「联网搜索」分区启用并配置搜索服务商后生效）。", "capability": "web"},
+    {"name": "run_skill_script", "group": "技能", "description": "执行已授权技能脚本并返回运行结果（需在智能体「技能」分区启用并选择技能后生效）。", "capability": "skill"},
 ]
 
 CATALOG_BY_NAME = {t["name"]: t for t in TOOL_CATALOG}
