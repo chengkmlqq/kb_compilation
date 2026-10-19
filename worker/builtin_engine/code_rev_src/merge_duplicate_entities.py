@@ -121,7 +121,7 @@ def merge_entities(kb_id, dry_run=False):
         main_title = main.get('title', '') or ''
         main_type = main.get('page_type', 'entity')
         main_status = main.get('status', '') or 'published'
-        main_fids = list(dict.fromkeys(main.get('folder_ids', []) or []))
+        main_fids = [f for f in dict.fromkeys(main.get('folder_ids', []) or []) if f]
         all_refs = []
         for p in pages:
             for r in p.get('source_refs', []) or []:
@@ -130,7 +130,7 @@ def merge_entities(kb_id, dry_run=False):
         all_fids = list(main_fids)
         for p in dups_to_delete:
             for f in p.get('folder_ids', []) or []:
-                if f not in all_fids:
+                if f and f not in all_fids:
                     all_fids.append(f)
         all_rel_entities = []
         all_key_rules = []
@@ -207,7 +207,19 @@ def merge_entities(kb_id, dry_run=False):
         qa_match = re.search('(## 可回答问题\\n\\n.*?)$', main_content, re.DOTALL)
         if qa_match:
             new_content += qa_match.group(1)
-        update_args = {'kb_id': kb_id, 'slug': main_slug, 'title': main_title, 'content': new_content, 'source_refs': all_refs, 'folder_ids': all_fids, 'folder_id': all_fids[0] if all_fids else main.get('folder_id', ''), 'status': main_status, 'page_type': main_type}
+        # 2026-10-20 修复：主目录取数防御——all_fids / 列表接口的 folder_id 可能为空
+        # （木业库实证：跨文档同名实体合并时 folder 字段缺失 → folder_id 被写成空串 →
+        # 平台 wiki_update_page 无条件清空页面主挂载列，页面从目录树消失）。
+        # 规则：有有效 id 用 id；否则单查 main 详情兜底；仍无 → 不传 folder_id
+        # （平台 PUT 不传即保留现值，防误清）。
+        _fid = next((f for f in all_fids if f), '')
+        if not _fid:
+            _fid = str(main.get('folder_id') or '').strip()
+        if not _fid:
+            _r = wr.read_page(**{'kb_id': kb_id, 'slug': main_slug})
+            if 'error' not in _r:
+                _fid = str((_r or {}).get('folder_id') or '').strip()
+        update_args = {'kb_id': kb_id, 'slug': main_slug, 'title': main_title, 'content': new_content, 'source_refs': all_refs, 'folder_ids': all_fids, 'folder_id': _fid or None, 'status': main_status, 'page_type': main_type}
         r = wr.update_page(**update_args)
         if r.get('isError') or 'error' in r:
             print(f'  [ERR] 更新 {main_slug}: {str(r)[:100]}')

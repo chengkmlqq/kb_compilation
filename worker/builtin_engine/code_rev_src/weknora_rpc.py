@@ -1157,7 +1157,11 @@ def update_page(slug, kb_id=None, content=None, folder_id=None, summary=None,
     args = {"kb_id": kb_id or _kb(), "slug": slug}
     if content is not None:
         args['content'] = _normalize_wikilinks(content)
-    if folder_id is not None:
+    # 2026-10-20 修复：空串 folder_id 会清空页面主目录列（merge 同名实体合并曾把
+    # 空串传入 → wiki_update_page 把 wiki_page.folder_id 清成 ''，页面从目录树消失）。
+    # 平台 PUT 仅更新传入字段，不传 folder_id = 保留现值；显式清空主列应通过
+    # folder_ids=[]（平台 _sync_page_folders 语义）。
+    if folder_id:
         args['folder_id'] = folder_id
     if summary is not None:
         args['summary'] = summary
