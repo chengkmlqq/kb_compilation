@@ -787,6 +787,56 @@ def test_orchestration_child_state_follows_run(monkeypatch) -> None:
         app.dependency_overrides.clear()
 
 
+def test_orchestration_child_duration_follows_run(monkeypatch) -> None:
+    """2026-10-19 耗时口径：编排子任务的耗时/起止时间跟随 run 真实执行时长。
+
+    KbOrchestrationRunTask 的 job 耗时是「投递」秒级（handler 建完 run 即返回，
+    实测 97ms），真实执行在 kb_tape_run（created_at → updated_at，分钟级）——
+    与 state 跟随 run 同口径，把 duration_ms/start_time/end_time 也覆盖为
+    run 时长；原始 job 投递耗时保留在 job_duration_ms/job_start_time/job_end_time。
+    """
+    from api.models.orchestration import TapeRun
+
+    db = _make_session()
+    db.query(Job).delete()
+    db.query(TapeRun).delete()
+    db.commit()
+
+    run_created = datetime(2026, 10, 19, 9, 28, 37)
+    db.add(Job(id="DOC_doc1", task_id="doc1", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"kbId": "kb1", "documentId": "doc1"}),
+               trigger_type="API", state="SUCCESS"))
+    db.add(Job(id="SUMMARY_RUN_abc", task_id="SUMMARY_RUN_abc", task_class="KbOrchestrationRunTask",
+               queue_name="orch", task_params=json.dumps({"runId": "run_sum", "env": "prod"}),
+               trigger_type="API", state="SUCCESS", parent_id="DOC_doc1",
+               start_time=run_created + timedelta(seconds=1),
+               end_time=run_created + timedelta(seconds=1),
+               duration_ms=97))
+    db.add(TapeRun(id="run_sum", tape_id="tape1", tape_name="摘要-Map-Reduce（分块合并）",
+                   status="success", inputs={"kb_id": "kb1"},
+                   created_at=run_created, updated_at=run_created + timedelta(seconds=164),
+                   step_results=[{"step_id": "n1", "step_inst": "kb_read_doc", "status": "success"}]))
+    db.commit()
+
+    client = _jobs_client(db, monkeypatch)
+    try:
+        r = client.get("/api/v1/jobs/DOC_doc1/children")
+        assert r.status_code == 200
+        child = r.json()["data"]["items"][0]
+        assert child["id"] == "SUMMARY_RUN_abc"
+        # 耗时/起止跟随 run 真实执行（164s），不再是投递的 97ms
+        assert child["duration_ms"] == 164000, child["duration_ms"]
+        assert child["start_time"] == "2026-10-19T09:28:37"
+        assert child["end_time"] == "2026-10-19T09:31:21"
+        # 原始 job 投递耗时/状态保留，供排障对比
+        assert child["job_duration_ms"] == 97
+        assert child["job_start_time"] == "2026-10-19T09:28:38"
+        assert child["job_end_time"] == "2026-10-19T09:28:38"
+        assert child["job_state"] == "SUCCESS"
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_parents_run_state_filter_mapping_and_mixed_paging(monkeypatch) -> None:
     """编排 run 与任务监控枚举对齐（2026-10-13）：
 

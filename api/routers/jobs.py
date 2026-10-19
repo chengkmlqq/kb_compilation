@@ -340,6 +340,17 @@ def list_job_children(
                     if run:
                         d["job_state"] = d["state"]
                         d["state"] = _run_state_to_job(run.status)
+                        # 2026-10-19 耗时口径：编排子任务的 job 耗时是「投递」秒级
+                        # （handler 建完 run 即返回），真实执行在 run 上——与 state
+                        # 同口径，把耗时/起止时间也按 run（created_at → updated_at）
+                        # 覆盖，否则「子任务耗时之和」与主任务总时长对不上账。
+                        # 原始 job 投递耗时保留在 job_* 字段供排障对比。
+                        d["job_start_time"] = d["start_time"]
+                        d["job_end_time"] = d["end_time"]
+                        d["job_duration_ms"] = d["duration_ms"]
+                        d["start_time"] = run.created_at.isoformat() if run.created_at else None
+                        d["end_time"] = run.updated_at.isoformat() if run.updated_at else None
+                        d["duration_ms"] = _run_duration_ms(run)
             except (TypeError, json.JSONDecodeError):
                 pass
         items.append(d)
@@ -378,6 +389,21 @@ def _run_state_to_job(state: str | None) -> str:
 def _job_state_to_run(state: str | None) -> str | None:
     """任务监控筛选值（大写）→ TapeRun.status（小写）；非编排状态返回 None。"""
     return _JOB_STATE_TO_RUN.get((state or "").upper())
+
+
+def _run_duration_ms(run: TapeRun) -> int | None:
+    """编排 run 真实耗时：updated_at − created_at（2026-10-19 子任务耗时口径）。
+
+    run 的 created_at/updated_at 与 modo_job 的 start_time/end_time 同为 MySQL
+    DATETIME 秒精度 naive 列（round-trip 后无 tzinfo）；防御 aware/naive 混用
+    （内存中写入时可能带 tzinfo），与 scheduler._update_duration 同款容错。
+    """
+    start, end = run.created_at, run.updated_at
+    if not start or not end:
+        return None
+    start = start.replace(tzinfo=None) if start.tzinfo else start
+    end = end.replace(tzinfo=None) if end.tzinfo else end
+    return max(0, int((end - start).total_seconds() * 1000))
 
 
 def _run_to_job_dict(run: TapeRun) -> dict:
