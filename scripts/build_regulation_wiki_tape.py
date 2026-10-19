@@ -1402,18 +1402,22 @@ except Exception as e:
 # ─────────────────────────────────────────────────────────────────────
 CODE_MERGE = WR_HEAD + '''
 # 2026-10-17: 清理本文件根目录下的空目录（无页面且无子目录）
+# 2026-10-20 保护：本体分类骨架目录（n05 建目录树产出的 cat_ids/leaf/root，及 N-xxx 命名规范
+# 分类目录）不参与清理——否则该分类本次无实体页面时，4-违法行为/9-时限要求 等标准分类目录会被误删。
 def _purge_empty_folders(_root):
     try:
         from api.db import get_sessionmaker as _gsm
         from sqlalchemy import text as _st2
         _d2 = _gsm()()
         try:
-            _rows = _d2.execute(_st2("select id, parent_id from wiki_folder where kb_id = :k"), {"k": wr.KB}).all()
+            _rows = _d2.execute(_st2("select id, parent_id, name from wiki_folder where kb_id = :k"), {"k": wr.KB}).all()
             _kids = {}
             _par = {}
-            for _fid, _pid in _rows:
+            _names = {}
+            for _fid, _pid, _fname in _rows:
                 _kids.setdefault(_pid or "", []).append(_fid)
                 _par[_fid] = _pid or ""
+                _names[_fid] = _fname or ""
             _sub, _depth = [], {}
             _stack = [(_root, 1)]
             while _stack:
@@ -1425,8 +1429,28 @@ def _purge_empty_folders(_root):
             if not _sub:
                 return 0
             _cnt = dict(_d2.execute(_st2("select folder_id, count(*) from wiki_page where kb_id = :k and folder_id is not null group by folder_id"), {"k": wr.KB}).all())
+            # 保护集 = n05 建树产出的骨架目录 id（cat_ids 全量 + leaf + root）
+            _protect = set()
+            _cid = bindings.get('cat_ids') or {}
+            for _m in (_cid.get('biz') or {}).values():
+                if _m:
+                    _protect.add(_m)
+            for _m in (_cid.get('rule') or {}).values():
+                if _m:
+                    _protect.add(_m)
+            for _v in (bindings.get('leaf') or {}).values():
+                if _v:
+                    _protect.add(_v)
+            if bindings.get('root_id'):
+                _protect.add(bindings['root_id'])
+            # 命名模式保护：本体分类目录统一为「N-名称」（1-法律法规/9-时限规则…）
+            import re as _re
             _rm = 0
             for _fid in sorted(_sub, key=lambda x: -_depth.get(x, 0)):
+                if _fid in _protect:
+                    continue
+                if _re.match(r"^\d+-", _names.get(_fid, "")):
+                    continue
                 if _cnt.get(_fid, 0) == 0 and not _kids.get(_fid):
                     _d2.execute(_st2("delete from wiki_page_folder where folder_id = :i"), {"i": _fid})
                     _d2.execute(_st2("delete from wiki_folder where id = :i"), {"i": _fid})
