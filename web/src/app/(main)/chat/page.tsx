@@ -31,7 +31,6 @@ import {
   FileTextOutlined,
   GlobalOutlined,
   PaperClipOutlined,
-  PictureOutlined,
   RobotOutlined,
   SearchOutlined,
   ArrowUpOutlined,
@@ -1115,10 +1114,8 @@ export default function ChatPage() {
     ? ".pdf,.doc,.docx,.md,.txt,.html,.xlsx,.pptx,.png,.jpg,.jpeg,.gif,.webp,.bmp"
     : ".pdf,.doc,.docx,.md,.txt,.html,.xlsx,.pptx";
 
-  // ── 2026-10-08 对齐 WeKnora：图片 / 附件两个独立入口 ─────────────────
-  const imageInputRef = useRef<HTMLInputElement>(null);
+  // ── 附件入口（图片 2026-10-20 起去掉上传按钮，走粘贴/拖放）───────────
   const attachmentInputRef = useRef<HTMLInputElement>(null);
-  const IMAGE_ACCEPT = "image/*";
 
   const addImageFiles = (files: FileList | File[] | null) => {
     if (!files || !files.length) return;
@@ -1854,16 +1851,6 @@ export default function ChatPage() {
             >
               <BulbOutlined />
             </button>
-            {canUploadImage && (
-              <button
-                type="button"
-                className="kb-chat-input-icon-btn"
-                title="上传图片（随问答发给模型识别）"
-                onClick={() => imageInputRef.current?.click()}
-              >
-                <PictureOutlined />
-              </button>
-            )}
           </div>
           <div className="kb-chat-input-actions-right">
             {/* 2026-10-19 DSB 对齐：知识库选择移到最右（.kb-select-btn 胶囊 + .chat-kb-list 浮层面板）
@@ -2018,17 +2005,6 @@ export default function ChatPage() {
             </div>
           </div>
         </div>
-        <input
-          ref={imageInputRef}
-          type="file"
-          accept={IMAGE_ACCEPT}
-          multiple
-          style={{ display: "none" }}
-          onChange={(e) => {
-            addImageFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
         <input
           ref={attachmentInputRef}
           type="file"
