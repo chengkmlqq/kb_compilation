@@ -46,6 +46,7 @@ celery_app.conf.update(
         "worker.tasks.agent_worker",
         "worker.tasks.orch_runner",
         "worker.tasks.table_ingest",
+        "worker.tasks.prechunk_ingest",
         "worker.tasks.code_repo",
     ],
     # 队列隔离（2026-10 WeKnora 对齐）：wiki 构建的 agent 任务投到独立 agent 队列，
@@ -77,6 +78,7 @@ try:
         metadata_collect,
         orch_runner,
         orphan_recovery,
+        prechunk_ingest,
         reg_cache_cleanup,
         table_ingest,
         wiki_build,

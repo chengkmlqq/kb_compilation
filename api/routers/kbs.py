@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from api.config import get_settings
 from api.db import get_db
 from api.models.framework import Job, SysFile
+from api.models.knowledge import KbDocument
 from api.services.embedding import get_embedding_client
 from api.services.identity import decode_identity_cookie
 from api.routers.files import (
@@ -874,6 +875,276 @@ def supported_file_types() -> dict:
             "types": list(SUPPORTED_UPLOAD_TYPES),
             "accept": SUPPORTED_UPLOAD_ACCEPT,
             "archive_types": list(SUPPORTED_ARCHIVE_TYPES),
+        },
+    }
+
+
+# --------------------------------------------------------------------------- #
+# 预制 markdown + 切片摄取（2026-10-20 方案B）
+# --------------------------------------------------------------------------- #
+
+
+def _parse_prechunked_payload(raw: str) -> list[dict]:
+    """解析预制切片入参。
+
+    接受三种形态（调用方可能是 shandong 侧 Java 或其他外部系统）：
+      - [{"seq": 0, "content": "..."}, ...]
+      - {"chunks": [...]} / {"items": [...]}
+    逐条校验：content 为空的条目剔除；seq 缺失/非法的按序补位。
+    """
+    try:
+        data = json.loads(raw or "")
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if isinstance(data, dict):
+        data = data.get("chunks") or data.get("items") or []
+    if not isinstance(data, list) or not data:
+        return []
+    out: list[dict] = []
+    for it in data:
+        if not isinstance(it, dict):
+            continue
+        content = str(it.get("content") or "").strip()
+        if not content:
+            continue
+        seq = it.get("seq")
+        if seq is None:
+            seq = it.get("chunk_index") or it.get("index")
+        if isinstance(seq, (int, str)):
+            try:
+                seq_int = int(seq)
+            except (TypeError, ValueError):
+                seq_int = len(out)
+        else:
+            seq_int = len(out)
+        out.append({"seq": seq_int, "content": content})
+    return out
+
+
+def _delete_documents_by_name(db: Session, kb_id: str, file_name: str) -> int:
+    """按文件名删除 kb 内已有同名文档（预切上传 replace 模式用）。
+
+    级联随 delete_document：取消关联 wiki 任务、清理专属 wiki 页/目录/链接/
+    向量/图谱。返回删除条数；单条失败仅告警不阻断（下一轮重试再清）。
+    """
+    from api.services.kb_admin import delete_document
+
+    rows = db.execute(
+        select(KbDocument).where(
+            KbDocument.kb_id == kb_id, KbDocument.file_name == file_name
+        )
+    ).scalars().all()
+    removed = 0
+    for doc in rows:
+        try:
+            delete_document(db, kb_id, doc.id)
+            removed += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "pre-chunked replace: delete old doc failed kb=%s doc=%s: %s",
+                kb_id, doc.id, exc,
+            )
+    if removed:
+        db.commit()
+    return removed
+
+
+def _enqueue_prechunked_ingest(
+    kb_id: str,
+    document_id: str,
+    chunks_path: str,
+    caller_identity: str = "",
+) -> None:
+    """建/重置 modo_job 行（KbPreChunkedIngestTask）并投 Celery。
+
+    与 _enqueue_document_process 同契约：Job 行先 commit、再投 broker
+    （否则 worker 空闲时会消费到未提交的 job 报 'job not found'）。
+    job_id = PRECHUNK_{document_id}（文档级唯一，重复入队为重置语义）。
+    """
+    from worker.celery_app import celery_app
+
+    job_id = f"PRECHUNK_{document_id}"
+    task_class = "KbPreChunkedIngestTask"
+    task_params = json.dumps(
+        {
+            "kbId": kb_id,
+            "documentId": document_id,
+            "chunksPath": chunks_path,
+            "cookie": caller_identity,
+        },
+        ensure_ascii=False,
+    )
+
+    from api.db import get_sessionmaker
+
+    framework_db = get_sessionmaker()()
+    try:
+        existing = framework_db.get(Job, job_id)
+        if existing is None:
+            framework_db.add(
+                Job(
+                    id=job_id,
+                    task_id=document_id,
+                    task_class=task_class,
+                    queue_name="default",
+                    task_params=task_params,
+                    trigger_type="API",
+                    state="PENDING",
+                )
+            )
+        else:
+            existing.task_id = document_id
+            existing.task_class = task_class
+            existing.queue_name = "default"
+            existing.task_params = task_params
+            existing.trigger_type = "API"
+            existing.state = "PENDING"
+            existing.start_time = None
+            existing.end_time = None
+            existing.duration_ms = None
+            existing.error_message = None
+            existing.log_path = None
+        framework_db.commit()
+    finally:
+        framework_db.close()
+
+    celery_app.send_task(
+        "worker.tasks.scheduler.execute_modo_job",
+        args=[job_id],
+        task_id=job_id,
+        queue="default",
+    )
+
+
+@router.post("/{kb_id}/documents/pre-chunked")
+async def upload_prechunked_document(
+    kb_id: str,
+    file: UploadFile,
+    chunks: str = Form(...),
+    folder_id: str = Query(default="", max_length=64),
+    build_tape_id: str = Form(default=""),
+    process_config: str = Form(default=""),
+    replace_existing: bool = Query(default=False),
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """预制 markdown + 切片摄取：跳过文档解析与文本切片，直接向量化落库。
+
+    适用场景（2026-10-20 方案B）：调用方本地已完成 doc→md 转换与切片
+    （如 data_supply_shandong 的 duowen 基座管线，产物为 convert md +
+    dasup_corpus_chunks），无需 kb 再跑一遍解析/切片——避免重复重解析
+    （docx/pdf 解析是整条链里最重的一步）与口径分裂。
+
+    入参：
+    - file: md 源文件（multipart）。不参与解析，仅作为文档原文留存
+      （preview / download 走它），文件名即文档名。
+    - chunks: 切片 JSON（multipart form 字段），形态见 _parse_prechunked_payload。
+    - folder_id / build_tape_id / process_config: 与普通上传同义。
+    - replace_existing: true 时按 file_name 先删 kb 内同名旧文档（级联清
+      wiki 页/任务/向量），再建新文档——供「原文件已上传过、切片就绪后
+      升级为预切版」的替换场景，避免同文件双份。
+
+    落库与下游：新建 kb_document（PENDING）→ 入队 KbPreChunkedIngestTask
+    → embed → 写 doc_chunk → READY → 触发摘要/构建引擎/题材分析
+    （与文件解析链同一规则，worker/tasks/prechunk_ingest.py）。
+    """
+    _kb_manage(kb_id, caller, db)
+
+    folder_id = (folder_id or "").strip()
+    if not doc_folder_exists(db, kb_id, folder_id):
+        raise HTTPException(status_code=400, detail=f"目录不存在: {folder_id}")
+
+    if file is None:
+        raise HTTPException(status_code=400, detail="请上传 md 文件")
+    fname = (file.filename or "untitled").strip()
+    if not fname or fname == "untitled":
+        raise HTTPException(status_code=400, detail="文件名不能为空")
+    doc_ext = ext_of(fname)
+    if not is_supported_ext(doc_ext):
+        raise HTTPException(status_code=400, detail=unsupported_type_detail(doc_ext))
+
+    md_bytes = await file.read()
+    if not md_bytes:
+        raise HTTPException(status_code=400, detail="md 文件内容为空")
+    if len(md_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件超过大小限制 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB",
+        )
+
+    parsed_chunks = _parse_prechunked_payload(chunks)
+    if not parsed_chunks:
+        raise HTTPException(
+            status_code=400,
+            detail='chunks 为空或格式非法（应为 [{"seq":0,"content":"..."}]）',
+        )
+
+    # --- persist md + 切片 sidecar（storage 层：本地磁盘或 MinIO）---
+    from api.services import storage as storage_svc
+
+    doc_id = uuid.uuid4().hex
+    ext = Path(fname).suffix or ""
+    md_path = storage_svc.resolve_new_path(f"kb_documents/{kb_id}/{doc_id}{ext}")
+    chunks_path = storage_svc.resolve_new_path(f"kb_documents/{kb_id}/{doc_id}.chunks.json")
+    try:
+        storage_svc.put_bytes(md_path, md_bytes)
+        storage_svc.put_bytes(
+            chunks_path,
+            json.dumps(parsed_chunks, ensure_ascii=False).encode("utf-8"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("failed to persist pre-chunked upload")
+        raise HTTPException(status_code=500, detail=f"文件存储失败: {exc}") from exc
+
+    # --- 替换模式：先清 kb 内同名旧文档（原文件版升级为预切版）---
+    if replace_existing:
+        removed = _delete_documents_by_name(db, kb_id, fname)
+        if removed:
+            logger.info(
+                "pre-chunked upload replaced %d old doc(s) by name in kb=%s name=%s",
+                removed, kb_id, fname,
+            )
+
+    # --- 文件级处理配置归一（非法 JSON 忽略，不阻塞上传）---
+    pc_json = ""
+    if (process_config or "").strip():
+        try:
+            parsed_pc = json.loads(process_config)
+            if isinstance(parsed_pc, dict) and parsed_pc:
+                pc_json = json.dumps(parsed_pc, ensure_ascii=False)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("pre-chunked upload %s: invalid process_config ignored", kb_id)
+
+    doc = create_document(
+        db,
+        kb_id=kb_id,
+        file_name=fname,
+        file_ext=ext,
+        file_size=len(md_bytes),
+        storage_path=md_path,
+        folder_id=folder_id,
+        process_config=pc_json or None,
+        build_tape_id=build_tape_id.strip() or None,
+    )
+
+    try:
+        _enqueue_prechunked_ingest(
+            kb_id, doc.id, chunks_path, caller_identity=x_next_identity or ""
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "failed to enqueue pre-chunked ingest; document kept as PENDING"
+        )
+
+    return {
+        "success": True,
+        "data": {
+            "id": doc.id,
+            "file_name": doc.file_name,
+            "parse_state": doc.parse_state,
+            "storage_path": doc.storage_path,
+            "chunk_count": len(parsed_chunks),
         },
     }
 
