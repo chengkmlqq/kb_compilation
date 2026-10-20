@@ -166,7 +166,13 @@ function effectiveState(record: ParentJobItem): string {
  * 执行步骤，归编排详情/日志视图（tape-run-log-drawer / 日志抽屉），任务监控
  * 子任务粒度只到「编排 run」这一级。 */
 
-function ChildTable({ parent }: { parent: ParentJobItem }) {
+function ChildTable({
+  parent,
+  onViewLog,
+}: {
+  parent: ParentJobItem;
+  onViewLog: (job: JobItem) => void;
+}) {
   const { message } = App.useApp();
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(false);
@@ -193,19 +199,27 @@ function ChildTable({ parent }: { parent: ParentJobItem }) {
     { title: "任务类", dataIndex: "task_class", ellipsis: true, render: (v) => taskClassLabel(String(v || "")) },
     { title: "状态", dataIndex: "state", width: 110, render: (v) => renderStateTag(String(v || "")) },
     { title: "开始时间", dataIndex: "start_time", width: 150, render: (v) => fmtTime(String(v || "")) },
+    { title: "结束时间", dataIndex: "end_time", width: 150, render: (v) => fmtTime(String(v || "")) },
     { title: "耗时", dataIndex: "duration_ms", width: 90, render: (v) => fmtDur(v as number | null) },
     {
-      title: "信息 / 错误",
-      dataIndex: "error_message",
-      ellipsis: true,
-      render: (v, row) =>
-        v ? (
-          <Text type={row.state === "FAILED" || row.state === "failed" ? "danger" : "secondary"} style={{ fontSize: 12 }}>
-            {String(v).length > 70 ? `${String(v).slice(0, 70)}…` : String(v)}
-          </Text>
-        ) : (
-          <Text type="secondary">-</Text>
-        ),
+      title: "操作",
+      key: "action",
+      width: 80,
+      render: (_, row) => {
+        // 编排 run 概要行（id 为 TapeRun id，非 modo_job id）：日志抽屉按 modo_job
+        // 查详情会 404 → 打开父任务日志（抽屉内正是编排时间线/详情视图）
+        const isRunSummary = String(row.task_class || "") === "OrchestrationRun";
+        return (
+          <Button
+            type="link"
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => onViewLog(isRunSummary ? (parent as JobItem) : (row as unknown as JobItem))}
+          >
+            日志
+          </Button>
+        );
+      },
     },
   ];
 
@@ -374,7 +388,9 @@ const ParentJobTable: React.FC<ParentJobTableProps> = ({
       pagination={false}
       scroll={{ x: 1220, y: scrollY }}
       expandable={{
-        expandedRowRender: (record) => <ChildTable parent={record} />,
+        expandedRowRender: (record) => (
+          <ChildTable parent={record} onViewLog={onViewLog} />
+        ),
         rowExpandable: (record) => (record.child_count || 0) > 0,
       }}
       rowClassName={(record) =>
