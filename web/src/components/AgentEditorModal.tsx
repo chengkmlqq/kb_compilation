@@ -27,6 +27,7 @@ import {
   FileTextOutlined,
   GlobalOutlined,
   PictureOutlined,
+  ProfileOutlined,
   SearchOutlined,
   StarOutlined,
   ThunderboltOutlined,
@@ -63,6 +64,7 @@ interface Props {
 // 分区定义（对齐 WeKnora navGroups：basic/prompts/model/conversation/suggestions/
 // knowledge/retrieval/websearch/multimodal/tools/mcp/skills）
 const SECTIONS = [
+  { key: "basic", label: "基本信息", icon: <ProfileOutlined /> },
   { key: "prompts", label: "提示词", icon: <FileTextOutlined /> },
   { key: "model", label: "模型设置", icon: <ThunderboltOutlined /> },
   { key: "conversation", label: "对话设置", icon: <CommentOutlined /> },
@@ -78,7 +80,7 @@ const SECTIONS = [
 export default function AgentEditorModal({ mode, open, initial, onClose, onSubmit }: Props) {
   const { message } = App.useApp();
   const [form] = Form.useForm();
-  const [section, setSection] = useState("prompts");
+  const [section, setSection] = useState("basic");
   const [models, setModels] = useState<ModelItem[]>([]);
   const [kbs, setKbs] = useState<KbItem[]>([]);
   const [mcpOptions, setMcpOptions] = useState<{ value: string; label: string }[]>([]);
@@ -169,7 +171,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
       selected_skills: c.selected_skills ?? [],
       question_suggestions: c.question_suggestions ?? { starters: { enabled: true, items: [] } },
     });
-    setSection("prompts");
+    setSection("basic");
   }, [open, initial, form]);
 
   const modelOptions = useMemo(
@@ -256,28 +258,6 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
       destroyOnClose
     >
       <Form form={form} layout="vertical">
-        <Row gutter={16}>
-          <Col span={12}>
-            <Form.Item
-              name="name"
-              label={
-                <Space size={6}>
-                  <AgentAvatar name={String(agentName || "").trim() || "?"} size="small" />
-                  <span>智能体名称</span>
-                </Space>
-              }
-              rules={[{ required: true, message: "请输入名称" }]}
-            >
-              <Input placeholder="如：制度问答助手" />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="description" label="描述（可选）">
-              <Input placeholder="一句话说明用途" />
-            </Form.Item>
-          </Col>
-        </Row>
-
         <div style={{ display: "flex", gap: 16, minHeight: 420 }}>
           {/* 左侧分区导航（对齐 WeKnora navGroups） */}
           <div
@@ -313,15 +293,41 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
 
           {/* 右侧分区内容 */}
           <div style={{ flex: 1, overflowY: "auto", maxHeight: 560 }}>
+            {section === "basic" && (
+              <>
+                <Form.Item
+                  name="name"
+                  label={
+                    <Space size={6}>
+                      <AgentAvatar name={String(agentName || "").trim() || "?"} size="small" />
+                      <span>智能体名称</span>
+                    </Space>
+                  }
+                  rules={[{ required: true, message: "请输入名称" }]}
+                  extra="用于列表展示与对话中的称呼，建议简洁易识别（如「制度问答助手」）"
+                >
+                  <Input placeholder="如：制度问答助手" />
+                </Form.Item>
+                <Form.Item name="description" label="描述（可选）" extra="一句话说明智能体的用途，展示在列表与详情中">
+                  <Input placeholder="一句话说明用途" />
+                </Form.Item>
+              </>
+            )}
+
             {section === "prompts" && (
               <>
-                <Form.Item name="use_custom_system_prompt" label="启用自定义系统提示词" valuePropName="checked">
+                <Form.Item
+                  name="use_custom_system_prompt"
+                  label="启用自定义系统提示词"
+                  valuePropName="checked"
+                  extra="关闭时使用平台默认提示词；开启后可自行设定智能体的角色、行为与回答风格"
+                >
                   <Switch />
                 </Form.Item>
-                <Form.Item name="system_prompt" label="系统提示词">
+                <Form.Item name="system_prompt" label="系统提示词" extra="设定智能体的角色定位、行为准则与回答风格，直接影响回答质量">
                   <TextArea rows={6} placeholder="设定智能体的角色、行为与回答风格…" />
                 </Form.Item>
-                <Form.Item name="context_template" label="上下文模板（可选）">
+                <Form.Item name="context_template" label="上下文模板（可选）" extra="高级选项，一般场景可留空；用于组织问答时的上下文结构">
                   <TextArea rows={3} />
                 </Form.Item>
               </>
@@ -329,53 +335,53 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
 
             {section === "model" && (
               <>
-                <Form.Item name="agent_mode" label="运行模式">
+                <Form.Item name="agent_mode" label="运行模式" extra="快速问答 = 直接回答；智能推理（Agent）= 多步规划并根据需要调用工具后再回答">
                   <Radio.Group optionType="button" buttonStyle="solid">
                     <Radio.Button value="quick-answer">快速问答</Radio.Button>
                     <Radio.Button value="smart-reasoning">智能推理（Agent）</Radio.Button>
                   </Radio.Group>
                 </Form.Item>
-                <Form.Item name="model_id" label="问答模型">
-                  <Select allowClear placeholder="留空 = 系统默认" options={modelOptions} />
+                <Form.Item name="model_id" label="问答模型" extra="负责生成回答的大语言模型；留空 = 系统默认">
+                  <Select allowClear showSearch optionFilterProp="label" placeholder="留空 = 系统默认" options={modelOptions} />
                 </Form.Item>
-                <Form.Item name="rerank_model_id" label="Rerank 模型">
-                  <Select allowClear placeholder="留空 = 不重排" options={rerankOptions} />
+                <Form.Item name="rerank_model_id" label="Rerank 模型" extra="对检索片段重新排序，提升答案相关性；留空 = 不重排">
+                  <Select allowClear showSearch optionFilterProp="label" placeholder="留空 = 不重排" options={rerankOptions} />
                 </Form.Item>
                 <Row gutter={16}>
                   <Col span={8}>
-                    <Form.Item name="temperature" label="温度">
+                    <Form.Item name="temperature" label="温度" extra="值越高回答越发散、值越低越稳定；默认 0.7">
                       <InputNumber min={0} max={2} step={0.1} style={{ width: "100%" }} />
                     </Form.Item>
                   </Col>
                   <Col span={8}>
-                    <Form.Item name="max_completion_tokens" label="最大输出 Tokens">
+                    <Form.Item name="max_completion_tokens" label="最大输出 Tokens" extra="单次回答的最大生成长度上限">
                       <InputNumber min={128} max={32768} step={128} style={{ width: "100%" }} />
                     </Form.Item>
                   </Col>
                   <Col span={8}>
-                    <Form.Item name="max_iterations" label="最大迭代轮数">
+                    <Form.Item name="max_iterations" label="最大迭代轮数" extra="智能推理模式下最多执行工具调用的轮数上限">
                       <InputNumber min={1} max={50} style={{ width: "100%" }} />
                     </Form.Item>
                   </Col>
                 </Row>
                 <Row gutter={16}>
                   <Col span={8}>
-                    <Form.Item name="thinking" label="思考模式" valuePropName="checked">
+                    <Form.Item name="thinking" label="思考模式" valuePropName="checked" extra="开启后回答前进行深度思考，答案更严谨但响应更慢">
                       <Switch />
                     </Form.Item>
                   </Col>
                   <Col span={8}>
-                    <Form.Item name="citation_enabled" label="来源引用" valuePropName="checked">
+                    <Form.Item name="citation_enabled" label="来源引用" valuePropName="checked" extra="回答中标注引用的知识库文档来源">
                       <Switch />
                     </Form.Item>
                   </Col>
                   <Col span={8}>
-                    <Form.Item name="reflection_enabled" label="反思校验" valuePropName="checked">
+                    <Form.Item name="reflection_enabled" label="反思校验" valuePropName="checked" extra="回答前对推理过程进行自查校验，减少错误">
                       <Switch />
                     </Form.Item>
                   </Col>
                 </Row>
-                <Form.Item name="llm_call_timeout" label="单次 LLM 调用超时（秒）">
+                <Form.Item name="llm_call_timeout" label="单次 LLM 调用超时（秒）" extra="单次模型调用的最大等待时长，超时后按失败处理">
                   <InputNumber min={10} max={3600} style={{ width: 160 }} />
                 </Form.Item>
               </>
@@ -383,10 +389,10 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
 
             {section === "conversation" && (
               <>
-                <Form.Item name="multi_turn_enabled" label="多轮对话" valuePropName="checked" extra="开启后保留历史上下文">
+                <Form.Item name="multi_turn_enabled" label="多轮对话" valuePropName="checked" extra="开启后保留历史上下文，支持追问与多轮连续对话">
                   <Switch />
                 </Form.Item>
-                <Form.Item name="history_turns" label="保留历史轮数">
+                <Form.Item name="history_turns" label="保留历史轮数" extra="多轮对话时带入上下文的最近对话轮数">
                   <InputNumber min={1} max={30} style={{ width: 160 }} />
                 </Form.Item>
               </>
@@ -394,8 +400,10 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
 
             {section === "knowledge" && (
               <>
-                <Form.Item name="kb_selection_mode" label="知识库范围">
+                <Form.Item name="kb_selection_mode" label="知识库范围" extra="全部 = 检索全部知识库；指定 = 仅检索选中的知识库；不绑定 = 不使用知识库检索">
                   <Select
+                    showSearch
+                    optionFilterProp="label"
                     options={[
                       { value: "all", label: "全部知识库" },
                       { value: "selected", label: "指定知识库" },
@@ -404,14 +412,15 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
                   />
                 </Form.Item>
                 {kbMode === "selected" && (
-                  <Form.Item name="knowledge_bases" label="指定知识库">
-                    <Select mode="multiple" options={kbOptions} placeholder="选择知识库" />
+                  <Form.Item name="knowledge_bases" label="指定知识库" extra="选择该智能体可检索的知识库（可多选）">
+                    <Select mode="multiple" showSearch optionFilterProp="label" options={kbOptions} placeholder="选择知识库" />
                   </Form.Item>
                 )}
                 <Form.Item
                   name="retrieve_kb_only_when_mentioned"
                   label="仅当问题提到知识库时检索"
                   valuePropName="checked"
+                  extra="开启后只有问题明确提到知识库时才会触发检索，减少无关召回"
                 >
                   <Switch />
                 </Form.Item>
@@ -422,39 +431,39 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
               <>
                 <Row gutter={16}>
                   <Col span={8}>
-                    <Form.Item name="embedding_top_k" label="向量 Top-K">
+                    <Form.Item name="embedding_top_k" label="向量 Top-K" extra="语义检索召回的片段数量">
                       <InputNumber min={1} max={50} style={{ width: "100%" }} />
                     </Form.Item>
                   </Col>
                   <Col span={8}>
-                    <Form.Item name="keyword_threshold" label="关键词阈值">
+                    <Form.Item name="keyword_threshold" label="关键词阈值" extra="关键词命中相似度下限（0-1）">
                       <InputNumber min={0} max={1} step={0.05} style={{ width: "100%" }} />
                     </Form.Item>
                   </Col>
                   <Col span={8}>
-                    <Form.Item name="vector_threshold" label="向量阈值">
+                    <Form.Item name="vector_threshold" label="向量阈值" extra="语义相似度下限，低于阈值的片段不参与回答">
                       <InputNumber min={0} max={1} step={0.05} style={{ width: "100%" }} />
                     </Form.Item>
                   </Col>
                 </Row>
                 <Row gutter={16}>
                   <Col span={8}>
-                    <Form.Item name="rerank_top_k" label="Rerank Top-K">
+                    <Form.Item name="rerank_top_k" label="Rerank Top-K" extra="重排后保留的片段数量">
                       <InputNumber min={1} max={20} style={{ width: "100%" }} />
                     </Form.Item>
                   </Col>
                   <Col span={8}>
-                    <Form.Item name="rerank_threshold" label="Rerank 阈值">
+                    <Form.Item name="rerank_threshold" label="Rerank 阈值" extra="重排分数下限，低于该分的片段不参与回答">
                       <InputNumber min={0} max={1} step={0.05} style={{ width: "100%" }} />
                     </Form.Item>
                   </Col>
                   <Col span={8}>
-                    <Form.Item name="enable_query_expansion" label="查询扩展" valuePropName="checked">
+                    <Form.Item name="enable_query_expansion" label="查询扩展" valuePropName="checked" extra="自动扩展同义词与相关词，提升召回率">
                       <Switch />
                     </Form.Item>
                   </Col>
                 </Row>
-                <Form.Item name="enable_rewrite" label="问题改写" valuePropName="checked">
+                <Form.Item name="enable_rewrite" label="问题改写" valuePropName="checked" extra="多轮对话中自动改写问题，补齐指代（如「它」「上面说的」）">
                   <Switch />
                 </Form.Item>
               </>
@@ -462,16 +471,16 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
 
             {section === "websearch" && (
               <>
-                <Form.Item name="web_search_enabled" label="启用联网搜索" valuePropName="checked">
+                <Form.Item name="web_search_enabled" label="启用联网搜索" valuePropName="checked" extra="开启后智能体可调用联网搜索获取实时信息">
                   <Switch />
                 </Form.Item>
                 {webSearch && (
                   <>
-                    <Form.Item name="web_search_max_results" label="最多返回结果数">
+                    <Form.Item name="web_search_max_results" label="最多返回结果数" extra="单次搜索返回的结果条数上限">
                       <InputNumber min={1} max={20} style={{ width: 160 }} />
                     </Form.Item>
-                    <Form.Item name="web_search_provider_id" label="搜索服务商">
-                      <Select allowClear placeholder="选择 WebSearch Provider（P1 上线后可选）" />
+                    <Form.Item name="web_search_provider_id" label="搜索服务商" extra="联网搜索服务提供商；P1 上线后可选">
+                      <Select allowClear showSearch optionFilterProp="label" placeholder="选择 WebSearch Provider（P1 上线后可选）" />
                     </Form.Item>
                   </>
                 )}
@@ -480,16 +489,16 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
 
             {section === "multimodal" && (
               <>
-                <Form.Item name="image_upload_enabled" label="图片上传" valuePropName="checked">
+                <Form.Item name="image_upload_enabled" label="图片上传" valuePropName="checked" extra="开启后会话中允许上传图片给智能体查看">
                   <Switch />
                 </Form.Item>
-                <Form.Item name="vlm_model_id" label="VLM 视觉模型（图片理解）">
-                  <Select allowClear placeholder="留空 = 系统默认" options={vlmOptions} />
+                <Form.Item name="vlm_model_id" label="VLM 视觉模型（图片理解）" extra="负责理解图片内容的视觉模型；留空 = 系统默认">
+                  <Select allowClear showSearch optionFilterProp="label" placeholder="留空 = 系统默认" options={vlmOptions} />
                 </Form.Item>
-                <Form.Item name="attachment_image_understanding" label="附件图片理解" valuePropName="checked">
+                <Form.Item name="attachment_image_understanding" label="附件图片理解" valuePropName="checked" extra="对附件中的图片自动生成描述并参与回答">
                   <Switch />
                 </Form.Item>
-                <Form.Item name="attachment_ocr_max_pages" label="附件 OCR 最大页数">
+                <Form.Item name="attachment_ocr_max_pages" label="附件 OCR 最大页数" extra="对附件图片执行 OCR 识别的最大页数；0 = 不限制">
                   <InputNumber min={0} max={100} style={{ width: 160 }} />
                 </Form.Item>
               </>
@@ -548,7 +557,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
 
             {section === "mcp" && (
               <>
-                <Form.Item name="mcp_selection_mode" label="MCP 工具范围">
+                <Form.Item name="mcp_selection_mode" label="MCP 工具范围" extra="不启用 = 不使用 MCP 工具；指定服务 = 仅使用选中的服务；全部可用 = 使用所有已连接的服务">
                   <Radio.Group optionType="button" buttonStyle="solid">
                     <Radio.Button value="none">不启用</Radio.Button>
                     <Radio.Button value="selected">指定服务</Radio.Button>
@@ -556,11 +565,11 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
                   </Radio.Group>
                 </Form.Item>
                 {mcpMode === "selected" && (
-                  <Form.Item name="mcp_services" label="选择 MCP 服务">
-                    <Select mode="multiple" options={mcpOptions} placeholder="选择 MCP 服务" />
+                  <Form.Item name="mcp_services" label="选择 MCP 服务" extra="勾选该智能体可调用的 MCP 服务（可多选）">
+                    <Select mode="multiple" showSearch optionFilterProp="label" options={mcpOptions} placeholder="选择 MCP 服务" />
                   </Form.Item>
                 )}
-                <Form.Item name="mcp_auth_wait_timeout" label="MCP 授权等待超时（秒）">
+                <Form.Item name="mcp_auth_wait_timeout" label="MCP 授权等待超时（秒）" extra="等待 MCP 服务完成授权的最大时长，超时视为不可用">
                   <InputNumber min={0} max={3600} style={{ width: 160 }} />
                 </Form.Item>
               </>
@@ -568,12 +577,12 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
 
             {section === "skills" && (
               <>
-                <Form.Item name="skills_enabled" label="启用技能" valuePropName="checked">
+                <Form.Item name="skills_enabled" label="启用技能" valuePropName="checked" extra="开启后该智能体可调用平台技能扩展能力">
                   <Switch />
                 </Form.Item>
                 {skillsEnabled && (
                   <>
-                    <Form.Item name="skills_selection_mode" label="技能范围">
+                    <Form.Item name="skills_selection_mode" label="技能范围" extra="全部已安装 = 使用所有已安装技能；指定技能 = 仅使用选中的技能">
                       <Radio.Group optionType="button" buttonStyle="solid">
                         <Radio.Button value="none">不启用</Radio.Button>
                         <Radio.Button value="selected">指定技能</Radio.Button>
@@ -581,8 +590,8 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
                       </Radio.Group>
                     </Form.Item>
                     {skillsMode === "selected" && (
-                      <Form.Item name="selected_skills" label="选择技能（白名单）">
-                        <Select mode="multiple" options={skillOptions} placeholder="选择技能" />
+                      <Form.Item name="selected_skills" label="选择技能（白名单）" extra="仅选中的技能对该智能体可用（可多选）">
+                        <Select mode="multiple" showSearch optionFilterProp="label" options={skillOptions} placeholder="选择技能" />
                       </Form.Item>
                     )}
                   </>
