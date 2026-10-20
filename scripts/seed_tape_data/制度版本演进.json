@@ -6,7 +6,7 @@
     "tapeName": "制度版本演进",
     "tapeLabel": "制度版本演进（多版本迭代总览）",
     "tapeDescr": "识别知识库中同名多版本文件家族（按核心名聚类），用 LLM 判定版本链（现行/废止/替代关系），为每个家族生成版本演进总览页（版本链表 + 逐版本内容迭代含原文三态核验 + 演进洞察 + 知识推导过程），写入「制度版本演进」目录。用于版本演进 wiki 展示。",
-    "tapeType": "general",
+    "tapeType": "kb_aggregate",
     "category": "知识聚合",
     "status": "effective",
     "nodes": [

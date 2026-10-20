@@ -715,6 +715,7 @@ export default function OrchestrationsPage() {
                 { label: "通用编排", value: "general" },
                 { label: "摘要", value: "summary" },
                 { label: "知识构建", value: "kb_build" },
+                { label: "知识聚合", value: "kb_aggregate" },
                 { label: "质量评估", value: "quality" },
                 { label: "领域识别", value: "domain_resolve" },
               ]}

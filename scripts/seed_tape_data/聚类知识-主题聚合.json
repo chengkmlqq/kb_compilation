@@ -6,7 +6,7 @@
     "tapeName": "聚类知识-主题聚合",
     "tapeLabel": "聚类知识（跨文档主题聚合）",
     "tapeDescr": "读取知识库内全部制度文件的 wiki 页面与摘要，用 LLM 做跨文档主题聚类，为每个主题簇生成一篇综述页（page_type=topic_cluster），写入根目录「聚类知识」。用于「聚类知识 Wiki」Tab 展示。",
-    "tapeType": "general",
+    "tapeType": "kb_aggregate",
     "category": "知识聚合",
     "status": "effective",
     "nodes": [

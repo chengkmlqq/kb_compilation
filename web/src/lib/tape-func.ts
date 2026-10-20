@@ -1,16 +1,18 @@
 /**
- * 编排功能标签（tape_type）：summary 摘要 / kb_build 知识构建 / general 其他。
+ * 编排功能标签（tape_type）：summary 摘要 / kb_build 知识构建 / kb_aggregate 知识聚合 / general 其他。
  *
  * 2026-10-15：编排管理页按功能内容展示标签；「知识库构建配置」的构建引擎
  * 下拉按标签分组，选择编排时能明确区分摘要编排与知识构建编排。
+ * 2026-10-21：编排类型新增「知识聚合」（kb_aggregate），用于跨文档主题聚类类编排。
  */
 import type { BuildEngineItem } from "./api";
 
-export type TapeFunc = "summary" | "kb_build" | "quality" | "domain_resolve" | "general";
+export type TapeFunc = "summary" | "kb_build" | "kb_aggregate" | "quality" | "domain_resolve" | "general";
 
 export const TAPE_FUNC_META: Record<TapeFunc, { label: string; color: string }> = {
   summary: { label: "摘要", color: "blue" },
   kb_build: { label: "知识构建", color: "green" },
+  kb_aggregate: { label: "知识聚合", color: "orange" },
   quality: { label: "质量评估", color: "purple" },
   domain_resolve: { label: "领域识别", color: "geekblue" },
   general: { label: "其他", color: "default" },
