@@ -1495,7 +1495,7 @@ export default function ChatPage() {
                               })
                             }
                           />
-                        ) : m.streaming ? (
+                        ) : m.streaming && !m.thinking ? (
                           <span className="kb-think-shimmer" style={{ fontSize: 14 }}>思考中…</span>
                         ) : (
                           ""
@@ -2349,8 +2349,6 @@ function AssistantThink({
             active={!!answerStreaming}
             onCitationClick={onCitationClick}
           />
-        ) : answerStreaming ? (
-          <span className="kb-think-shimmer">思考中…</span>
         ) : (
           ""
         )}
