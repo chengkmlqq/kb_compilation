@@ -645,6 +645,25 @@ def test_agent_qa_default_has_no_tools(api_env, monkeypatch) -> None:
     assert "web_search" not in tool_names
 
 
+def test_agent_qa_empty_llm_response_yields_error_not_empty_message(api_env, monkeypatch) -> None:
+    """LLM 空流（无正文也无工具调用，空内容重试耗尽）→ 发可见 error 提示，
+    不静默产生「没有回复」；同时不再落空 assistant 消息（finally guard）。"""
+    empty_round = ["data: [DONE]"]
+    captured: list[dict] = []
+    # 首轮空 + 2 次空内容 nudge 重试均空 → 重试耗尽
+    monkeypatch.setattr("httpx.Client", _scripted_client(captured, [empty_round, empty_round, empty_round]))
+    r = api_env.post("/api/v1/agents/agent-plain/qa/stream", json={"question": "问一下"})
+    assert r.status_code == 200
+    events = _sse_events(r.text)
+    # 无正文 delta
+    assert not [e for e in events if e.get("type") == "delta"]
+    # 空响应兜底提示（非静默）
+    errors = [e for e in events if e.get("type") == "error"]
+    assert errors, "空响应应发 error 提示事件"
+    assert "模型未返回有效内容" in errors[0]["message"]
+    assert len(captured) == 3  # 首轮 + 2 次 nudge 重试
+
+
 def test_agent_qa_with_skills_injects_tool_and_executes(api_env, monkeypatch) -> None:
     """启用技能的 agent：注入 run_skill_script 工具并执行白名单脚本，回传最终答案。"""
     captured: list[dict] = []

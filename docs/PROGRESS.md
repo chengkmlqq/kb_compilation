@@ -2,7 +2,24 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-20（目录上传文件名带路径前缀修复 + 登录 500 审计表对齐）
+最后更新：2026-10-20（agent 问答空回复排查：模型 key 失效 + 空消息兜底修复）
+
+## 31. 当前状态（2026-10-20 agent 问答「没有收到回复」排查与兜底修复）
+
+- **症状**：docker kb 平台最近一次 agent 会话（sess_d8bf4e7f，供管制度知识智能体，「小额零星采购走什么流程」）assistant 消息 content=''，用户没收到回复
+- **排查链路（库内证据）**：
+  1. chat_session 最新 = agent 会话（agent_id=7eea2b66 供管制度知识智能体，绑定 808ac2b9 供管制度知识库）；chat_message 里 assistant 消息 content=''、thinking=NULL、refs=NULL
+  2. kb_llm_usage 时间线：04:33-04:34（用户会话）9 次调用中 5 次**0/0 空响应 success**（网关返回空流，非 2048 预算——§28 指纹不匹配），最后一次 04:34:41 空 → 落库空消息；04:49 出现 403；之后裸调模型 key 全部 401 INVALID_API_KEY（inferai/siliconflow/tokenerpgw 三个网关的 key 全部失效）
+  3. 复现（curl SSE）：agent 工具循环里 knowledge_search/grep_chunks/wiki_search 全部无命中（供管制度库无「小额零星采购」内容），第 7 轮 LLM 调用 403 Forbidden → except 发 error 事件，但 **finally 无条件 append 空 assistant 消息**（agents.py 527-530）→ 前端「没有回复」
+- **根因分层**：
+  1. **模型凭据失效（主因，阻断所有问答）**：默认 chat 模型 deepseek-v4-pro（3bc35b89，is_default=1，base=api.inferaiapi.com）key 裸调 401；siliconflow（c1395203）/tokenerpgw（a71934c7）也 401。04:49 起平台内调用 403。**需用户提供有效 key 更新模型注册表**
+  2. **平台无空响应兜底**：LLM 空流（0/0，重试耗尽后无输出）时只有 stage/done 事件，且 finally 无条件落 content='' 消息——把网关故障固化成「空回复」
+- **代码兜底修复（commit 待推）**：
+  1. `api/routers/agents.py`：生成循环 try/except/else/finally 重构——else 分支在**无异常且无正文/无引用**时发可见 error 提示「模型未返回有效内容，请稍后重试；若持续为空请检查模型服务配置」；finally 的 append 加 `(answer_parts or refs)` 守卫，**空响应/403 不再落 content='' 历史消息**（done 的 message_id 为空，前端按占位处理）
+  2. `tests/test_agent_skills_scope.py` +1 用例（LLM 空流×3 轮 → 无 delta + error 提示 + 3 次调用）
+- **验证**：agent 相关 8 个测试文件 86 passed；热修容器后复现：403 场景 error 事件正常、done message_id=""（空消息不再落库）；`tsc` 无前端改动
+- **部署注意**：api/routers/agents.py 已 docker cp 热修 kb-api-server + restart；CI 重建固化。**模型 key 需人工换新**（模型注册表页编辑 deepseek-v4-pro 默认模型的 API Key，或提供新 key 我代改）
+- **坑位**：① agent 会话空回复 ≠ 空答案（§28 是 max_tokens 吃满，本次是网关空流/403）——先看 kb_llm_usage 的 input/output_tokens 指纹：0/0=网关空流，=2048=预算吃满；② 外部 LLM key 失效是断崖式的（04:49 前正常、之后全 403），裸调验证最快；③ agents.py finally 无条件 append 空消息是历史缺陷，任何生成空/异常的 agent 会话都会被固化空消息
 
 ## 30. 当前状态（2026-10-20 目录上传文件名修复 + 登录 500 修复）
 

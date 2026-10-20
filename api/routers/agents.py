@@ -516,6 +516,18 @@ def agent_qa_stream(
         except Exception as e:  # noqa: BLE001
             logger.exception("agent qa failed for kb %s", last_kb_id)
             yield _sse({"type": "error", "message": str(e), "kb_id": last_kb_id})
+        else:
+            # 2026-10-20 空响应兜底：生成结束但未产出任何正文/引用（LLM 空流、空内容重试
+            # 耗尽）——此前只有 stage/done 事件，前端表现为「没有回复」；这里补一条可见提示。
+            if not answer_parts and not refs:
+                logger.warning("agent qa produced empty answer for kb %s", last_kb_id)
+                yield _sse(
+                    {
+                        "type": "error",
+                        "message": "模型未返回有效内容，请稍后重试；若持续为空请检查模型服务配置",
+                        "kb_id": last_kb_id,
+                    }
+                )
         finally:
             # 会话模式：终更助手消息（增量占位已建则 UPDATE 同一消息，否则补 append）
             if req.session_id and user_id:
@@ -523,7 +535,9 @@ def agent_qa_stream(
                     from api.services.chat_sessions import append_message
 
                     _persist_partial(force=True)
-                    if not assistant_message_id:
+                    # 2026-10-20 兜底修正：无正文且无引用时不落空助手消息（此前无条件
+                    # append，把网关空响应/403 固化成 content='' 的历史消息）。
+                    if not assistant_message_id and (answer_parts or refs):
                         saved = append_message(
                             db, user_id, req.session_id, "assistant", "".join(answer_parts), refs=refs
                         )
