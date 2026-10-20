@@ -458,7 +458,9 @@ export function apiMoveDocumentsToFolder(kbId: string, documentIds: string[], fo
 
 export function apiUploadDocument(kbId: string, file: File) {
   const form = new FormData();
-  form.append("file", file);
+  // 显式指定 filename：Chrome 对 <input webkitdirectory> 的文件把 webkitRelativePath
+  // 作为 multipart filename 发送（File.name 才是裸文件名）——不覆盖会得到「目录名/文件」入库
+  form.append("file", file, file.name);
   return request<DocItem>(`/api/v1/kbs/${kbId}/documents/upload`, {
     method: "POST",
     body: form,
@@ -481,7 +483,10 @@ export function apiUploadDocumentWithProgress(
   buildTapeId?: string,
 ) {
   const form = new FormData();
-  form.append("file", file);
+  // 显式指定 filename（basename）：Chrome 对 webkitdirectory 文件把 webkitRelativePath
+  // 当 multipart filename 发（如「制度文件/2024/a.pdf」），后端会原样落成文档名 ——
+  // 目录层级由 uploadDirectoryBatch 建真实文档目录承载，文件名必须只留裸名。
+  form.append("file", file, file.name);
   // 文件级处理配置（对齐 WeKnora upload process_config：上传确认弹窗选定的
   // 切片/解析引擎配置，JSON 字符串覆盖 KB 默认）
   if (processConfig && Object.keys(processConfig).length > 0) {

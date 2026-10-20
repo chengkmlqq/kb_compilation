@@ -363,6 +363,11 @@ class OperLog(Base):
     oper_url: Mapped[str | None] = mapped_column(String(512))
     menu_id: Mapped[str | None] = mapped_column(String(64))
     oper_content: Mapped[str | None] = mapped_column(Text)
+    # 共享框架库 modo_oper_log 由其他平台演进出 operation_id（NOT NULL，无默认值）；
+    # kb 抽离时未带此列，INSERT 不带该字段会被 MySQL 严格模式以 1364 拒绝 → 登录/审计全 500。
+    # 与共享库既有行一致（其他写入方显式写空串），ORM 默认值保证 INSERT 恒带该列。
+    operation_id: Mapped[str] = mapped_column(String(32), default="")
+
 
 
 class SyncLog(Base):

@@ -788,7 +788,11 @@ async def upload_document(
     else:
         if file is None:
             raise HTTPException(status_code=400, detail="请上传文件或提供 url")
-        fname = (file.filename or "untitled").strip()
+        # 剥掉路径只留裸文件名：Chrome 对 <input webkitdirectory> 的文件把
+        # webkitRelativePath 作为 multipart filename 发送（如「制度文件/2024/a.pdf」，File.name
+        # 才是裸名）。前端已显式指定 basename，这里再兜底防御其他客户端带路径上传。
+        raw_name = (file.filename or "untitled").strip()
+        fname = raw_name.replace("\\", "/").rsplit("/", 1)[-1] or raw_name
         if not fname or fname == "untitled":
             raise HTTPException(status_code=400, detail="文件名不能为空")
         content = await file.read()

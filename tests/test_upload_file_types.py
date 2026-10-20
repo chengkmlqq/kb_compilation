@@ -150,6 +150,36 @@ def test_upload_accepts_uppercase_extension(ft_client, ft_db) -> None:
     assert len(_docs(ft_db, kb.id)) == 1
 
 
+def test_upload_strips_directory_prefix_from_filename(ft_client, ft_db) -> None:
+    """webkitdirectory 上传的 multipart filename 带目录前缀（Chrome 用 webkitRelativePath
+    作 filename，如「制度文件/2024/规范.md」）——后端必须剥成裸文件名入库，目录层级
+    由前端建真实文档目录承载，不容许路径混进文档名。"""
+    kb = _mk_kb(ft_db)
+    r = ft_client.post(
+        f"/api/v1/kbs/{kb.id}/documents/upload",
+        files={"file": ("制度文件/2024/规范.md", io.BytesIO("# 规范".encode()), "application/octet-stream")},
+    )
+    assert r.status_code == 200, r.text
+    docs = _docs(ft_db, kb.id)
+    assert len(docs) == 1
+    assert docs[0].file_name == "规范.md"
+    assert docs[0].file_ext == "md"
+
+
+def test_upload_strips_windows_style_path_from_filename(ft_client, ft_db) -> None:
+    """防御反斜杠路径（Windows 风格「dir\\file.md」同样剥掉）。"""
+    kb = _mk_kb(ft_db)
+    r = ft_client.post(
+        f"/api/v1/kbs/{kb.id}/documents/upload",
+        files={"file": ("dir\\sub\\规范.md", io.BytesIO("# 规范".encode()), "application/octet-stream")},
+    )
+    assert r.status_code == 200, r.text
+    docs = _docs(ft_db, kb.id)
+    assert len(docs) == 1
+    assert docs[0].file_name == "规范.md"
+    assert docs[0].file_ext == "md"
+
+
 # --------------------------------------------------------------------------- #
 # zip 自动解包
 # --------------------------------------------------------------------------- #

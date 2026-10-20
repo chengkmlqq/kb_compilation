@@ -2,7 +2,45 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-20（知识库配置新增基本信息维护分区）
+最后更新：2026-10-20（目录上传文件名带路径前缀修复 + 登录 500 审计表对齐）
+
+## 30. 当前状态（2026-10-20 目录上传文件名修复 + 登录 500 修复）
+
+- **需求**：「知识库上传文件夹，默认勾选保留子目录，实际上传后没建目录、知识文件名前面多了一级目录」
+- **根因（浏览器级实测坐实）**：Chrome 对 `<input webkitdirectory>` 选中的文件，multipart 的
+  Content-Disposition filename 用的是 **webkitRelativePath**（如「制度文件/2024/a.pdf」），而
+  **不是** `File.name`（裸文件名）。前端 `form.append("file", file)` 未显式指定 filename →
+  后端 `file.filename` 收到完整相对路径 → `kb_document.file_name` 落成「顶层目录/文件名」
+  （即用户看到的「文件名前面多了一级目录」）。目录本身创建正常（playwright 实测：子目录
+  2024/更深 均建出且复用正确）；「没建目录」= 所选顶层目录按设计不建（弹窗文案「所选目录本身
+  不创建」），仅子目录会镜像建目录——若用户传的是扁平文件夹则一个目录都不建。
+- **修复（前端 + 后端双层）**：
+  1. `web/src/lib/api.ts`：`apiUploadDocument` / `apiUploadDocumentWithProgress` 的
+     `form.append("file", file)` → `form.append("file", file, file.name)`（显式指定 basename
+     filename，覆盖 Chrome 的 webkitRelativePath quirk）
+  2. `api/routers/kbs.py` upload_document：`fname` 剥路径只留裸名
+     （`raw.replace("\\","/").rsplit("/",1)[-1]`，兼容正反斜杠）——防御其他客户端带路径上传
+  3. `tests/test_upload_file_types.py` +2 用例（正斜杠「制度文件/2024/规范.md」/ 反斜杠
+     「dir\sub\规范.md」→ 落库 file_name 均剥成裸名），13 passed
+- **附带发现并修复（同批提交）**：登录 API 500 —— 共享框架库 `modo_oper_log` 被其他平台演进
+  出 `operation_id` 列（NOT NULL 无默认值），kb 抽离时模型未带该列 → INSERT 被 MySQL 严格
+  模式 1364 拒绝 → **所有登录（含 UI）500**。修复：`api/models/framework.py` OperLog 补
+  `operation_id`（`default=""`，与共享库既有行一致）。test_framework_models 68 passed
+- **验证**：playwright 实机（chromium-1228）目录上传复现+回归：修复前 4 个文档名全带
+  「复现测试/」前缀；后端热修后同批上传文档名全为裸名、正确落入 2024/更深 目录；`tsc --noEmit`
+  rc 0；定向 pytest（upload_file_types 13 + doc_folder/doc_upload_folder 8 + framework_models
+  68 + audit_log 5）全绿。全量 pytest **782 passed / 13 failed**：12 项为既有基线（chat_image_qa
+  2 + doc_download_fallback 6 + engine_admin 1 + env_isolation 2，dfea06a 干净 worktree 复现
+  一致）；第 13 项 `test_resolve_kb_url_dev_schema` 由**并行会话未提交的 api/db.py 双表改造**
+  （工作区 M + 新增 env_table_router.py）引入——其改掉 `_resolve_kb_url` dev 分支后该用例在
+  无 KNOWLEDGE_DATABASE_URL 环境必 RuntimeError，非本次改动所致，未代修
+- **部署注意**：后端 kbs.py/framework.py 改动 → 重建 kb-api-server（本机已 docker cp 热修 +
+  restart）；前端 api.ts 改动 → 重建 kb-web（前端显式 filename 属于源头修复，后端兜底已
+  先行生效）
+- **坑位**：① webkitdirectory 的 File 对象 `name` 与 multipart filename 是两回事，FormData
+  必须显式第三参；② 拖放目录路径 GlobalDropZone 已做 `normalizeDroppedFile` 归一化，只有
+  文件夹选择器路径中招；③ 验证目录上传用 playwright `set_input_files(目录)`（webkitdirectory
+  输入不接受 FilePayload，须传真实目录路径；顶层目录名会进 webkitRelativePath）
 
 ## 29. 当前状态（2026-10-20 知识库配置弹窗新增「基本信息」维护）
 
