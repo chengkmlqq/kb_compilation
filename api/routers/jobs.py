@@ -567,22 +567,57 @@ def job_statistics(
 
     2026-10-13：并入编排 run（kb_tape_run）状态——run 状态小写枚举经
     _run_state_to_job 映射为大写后合入对应计数，统计卡与列表口径一致。
+
+    2026-10-21：统计口径对齐「主任务」（/parents 视图），不再按「全部任务」——
+      1. modo_job 只统计链头（parent_id IS NULL 且非系统周期任务），
+         子任务（解析/切片等挂链头的）不单独计入；
+      2. 编排 run 排除被链头任务承接的（attached_run_ids，上传链触发时
+         run 已作为链头的子任务展示），与顶层列表一致；
+      3. run 双表（正式 + _dev）统计，与列表同口径。
+    统计卡与「主任务」表格合计可对上（此前统计含全部子任务导致卡数 > 列表行数）。
     """
     from api.models.orchestration import TapeRun
 
-    rows = db.execute(
-        select(Job.state, func.count()).group_by(Job.state)
-    ).all()
+    # ── modo_job：链头 + 非系统周期任务（与 list_parent_jobs 同款筛选）──
+    job_stmt = select(Job.state, func.count()).where(Job.parent_id.is_(None))
+    job_stmt = job_stmt.where(Job.task_class.not_in(SYSTEM_TASK_CLASSES))
+    rows = db.execute(job_stmt.group_by(Job.state)).all()
     counts: dict[str, int] = {}
     for state, count in rows:
         counts[str(state or "")] = int(count)
 
-    run_rows = db.execute(
-        select(TapeRun.status, func.count()).group_by(TapeRun.status)
-    ).all()
-    for status, count in run_rows:
+    # ── 编排 run：双表统计 + 排除被链头承接的（与 list_parent_jobs 同款）──
+    # 双表循环防重复：测试环境 db 被 override 为同一 session 时两轮查到同一批
+    # run，按 (id, status) 去重再计数（与 list_parent_jobs 按 id 回表覆盖同语义）。
+    run_pairs: set[tuple[str, str]] = set()
+    for env in (ENV_PROD, ENV_DEV):
+        with env_scope(env):
+            run_pairs.update(
+                (str(rid), str(status))
+                for rid, status in db.execute(
+                    select(TapeRun.id, TapeRun.status)
+                ).all()
+            )
+    run_rows: list[tuple[str, str]] = list(run_pairs)
+    # 被链头任务承接的 run 不作为顶层父任务行 → 统计同样排除
+    if run_rows:
+        attached = db.execute(
+            select(Job.task_params, Job.parent_id)
+            .where(Job.parent_id.is_not(None), Job.task_params.like("%runId%"))
+        ).all()
+        attached_run_ids: set[str] = set()
+        for tp, _pid in attached:
+            try:
+                rid = str((json.loads(tp or "{}") or {}).get("runId") or "")
+                if rid:
+                    attached_run_ids.add(rid)
+            except (TypeError, json.JSONDecodeError):
+                continue
+        if attached_run_ids:
+            run_rows = [r for r in run_rows if r[0] not in attached_run_ids]
+    for _rid, status in run_rows:
         key = _run_state_to_job(status)
-        counts[key] = counts.get(key, 0) + int(count)
+        counts[key] = counts.get(key, 0) + 1
 
     return {
         "success": True,
