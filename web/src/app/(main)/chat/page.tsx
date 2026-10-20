@@ -1801,7 +1801,8 @@ export default function ChatPage() {
                 {agentMode ? (
                   <AgentAvatar name={agents.find((a) => a.id === agentMode)?.name || ""} size="small" />
                 ) : (
-                  <RobotOutlined style={{ color: "rgba(50,97,206,1)", fontSize: 12 }} />
+                  // 2026-10-20 快速问答与智能体同款彩色图标（AgentAvatar 渐变块 + 首字符，带颜色文字）
+                  <AgentAvatar name="快速问答" size="small" />
                 )}
                 <span className="kb-chat-agent-btn-label">
                   {agents.find((a) => a.id === agentMode)?.name || "快速问答"}
