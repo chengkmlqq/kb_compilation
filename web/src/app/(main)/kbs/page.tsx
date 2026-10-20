@@ -647,35 +647,53 @@ export default function KbsPage() {
   };
 
   const onCreate = async () => {
+    // 分区表单校验/取值坑（2026-10-20 二次修复）：antd validateFields() 不传
+    // nameList 时只返回「当前挂载分区」字段的值——其他分区的 Form.Item 卸载后，
+    // 值虽保留在 store（preserve=true）但不在 validateFields 返回值里。
+    // ① name 输入框只在「基本信息」分区挂载，故先用 getFieldValue 单独校验非空：
+    //    未填则切回基本信息分区并提示（切回后已填值仍在）；
+    // ② payload 必须从 getFieldsValue(true)（整个 store）取值——否则停留在
+    //    「检索配置」时提交 name 缺失（后端报 name: Field required），停留在
+    //    「基本信息」时提交则检索/构建/来源分区的设置被静默丢弃。
+    const nameVal = form.getFieldValue("name");
+    if (!nameVal || !String(nameVal).trim()) {
+      if (createSection !== "basic") setCreateSection("basic");
+      form.validateFields(["name"]).catch(() => null);
+      message.warning("请先填写知识库名称");
+      return;
+    }
     const values = await form.validateFields().catch(() => null);
     if (!values) return;
-    const isRepo = values.repo_type === "git";
+    // 全分区已填值（含未挂载分区保留在 store 的值）；未到访过分区/未设置的字段
+    // 不在 store 中，以下各取值均带与表单项 initialValue 一致的默认兜底
+    const all = form.getFieldsValue(true);
+    const isRepo = all.repo_type === "git";
     const payload: KbCreatePayload = {
-      name: values.name,
-      label: values.label || undefined,
-      description: values.description,
-      scope: values.scope || "personal",
-      type: values.type || "document",
+      name: String(nameVal).trim(),
+      label: all.label || undefined,
+      description: all.description,
+      scope: all.scope || "personal",
+      type: all.type || "document",
       indexing_strategy: {
-        vector_enabled: !!values.vector_enabled,
-        keyword_enabled: !!values.keyword_enabled,
+        vector_enabled: all.vector_enabled !== false,
+        keyword_enabled: all.keyword_enabled !== false,
         // 「Wiki 构建」开关表单已移除（2026-10-15）：新建不再需要该开关——
         // 配置了构建引擎（build_engine）即自动触发构建任务
         wiki_enabled: true,
         // 知识图谱开关表单已移除（2026-10-15）：新建默认关闭（对齐后端新库默认）
         graph_enabled: false,
       },
-      embedding_model_id: values.embedding_model_id || undefined,
-      summary_model_id: values.summary_model_id || undefined,
-      build_tape_id: values.build_engine || undefined,
+      embedding_model_id: all.embedding_model_id || undefined,
+      summary_model_id: all.summary_model_id || undefined,
+      build_tape_id: all.build_engine || undefined,
       // 摘要策略固定 auto：系统按文档规模自动路由（小文档全文直塞 / 大文档分块合并），不再开放给用户选择
       summary_strategy: "auto",
       // 代码仓库知识库（2026-10）
       repo_type: isRepo ? "git" : "",
-      repo_url: isRepo ? values.repo_url : "",
-      repo_branch: isRepo ? values.repo_branch || "" : "",
-      repo_auth_type: isRepo ? values.repo_auth_type || "none" : "none",
-      repo_auth_secret: isRepo ? values.repo_auth_secret || "" : "",
+      repo_url: isRepo ? all.repo_url : "",
+      repo_branch: isRepo ? all.repo_branch || "" : "",
+      repo_auth_type: isRepo ? all.repo_auth_type || "none" : "none",
+      repo_auth_secret: isRepo ? all.repo_auth_secret || "" : "",
     };
     const res = await apiCreateKb(payload);
     if (res.success) {

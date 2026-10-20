@@ -2,7 +2,17 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-20（修复问答页思考输出时出现两个「思考中…」）
+最后更新：2026-10-20（修复新建知识库分区表单取值缺失：停留在检索配置时提交报 name: Field required）
+
+## 36. 当前状态（2026-10-20 新建知识库分区表单取值缺失修复）
+
+- **症状**：新建知识库时左侧分区导航停在「检索配置」，填写了名称后直接点「创建」→ 报错 `name: Field required`（后端 KBCreateRequest.name 必填 422）
+- **根因（antd 分区表单 + validateFields 语义）**：新建弹窗是分区表单（基本信息/知识来源/Wiki 构建/检索配置），`name` 输入框只在「基本信息」分区挂载。rc-field-form 的 `validateFields()` 不传 nameList 时**只把当前挂载分区字段收进返回值**（useForm.js finalValueNamePathList 仅取 fieldEntities 已注册字段）——其他分区 Form.Item 卸载后其值保留在 store（preserve=true）但不在 `values` 里。工作区旧修复只加了 `getFieldValue("name")` 非空预检（预检通过），payload 仍取 `values.name` → undefined → 后端 422
+- **同源隐患（一并修复）**：反向停留在「基本信息」提交时，`values.vector_enabled/keyword_enabled/embedding_model_id/build_engine/repo_*` 同样缺失 → 检索/构建/来源分区设置被静默丢弃（如向量/关键词检索被强制 false、git 仓库配置丢失）
+- **修复（commit 待推，纯前端 1 文件）**：`web/src/app/(main)/kbs/page.tsx` onCreate——保留 name 非空预检（`getFieldValue`，切回基本信息+提示），payload 全部改从 `form.getFieldsValue(true)`（完整 store，含未挂载分区保留值）取值：`name=String(nameVal).trim()`、`vector_enabled/keyword_enabled` 用 `!== false` 默认兜底（未到访检索分区=开，与 initialValue 一致）、scope 兜底 personal、repo 系列判断改 `all.repo_type`
+- **验证**：`tsc --noEmit` exit 0
+- **部署注意**：纯前端 → CI 重建 kb-web 生效
+- **坑位**：① antd `validateFields()` 返回值 ≠ 全表单值——分区表单的 payload 一律从 `getFieldsValue(true)` 取，不要依赖 validateFields 返回的 values；② Form.Item 卸载后值在 store（preserve 默认 true），`getFieldValue` 能读到，但 validateFields 结果里没有；③ 表单项 initialValue 只在挂载时写入 store，未到访分区的字段要从 payload 侧给默认值（`!== false`/`|| "personal"` 等）
 
 ## 35. 当前状态（2026-10-20 问答页思考输出时出现两个「思考中…」）
 
