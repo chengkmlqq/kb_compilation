@@ -2,7 +2,20 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-20（agent 问答空回复排查：模型 key 失效 + 空消息兜底修复）
+最后更新：2026-10-20（知识库删除前校验智能体绑定）
+
+## 32. 当前状态（2026-10-20 知识库删除前校验智能体绑定）
+
+- **需求**：「知识库删除前要校验是否绑定了智能体」——被智能体显式绑定的知识库拒绝删除，避免删完后智能体检索范围悬空
+- **绑定判定口径**（对齐 AgentEditorModal「知识库范围」三态）：**selected**（config.knowledge_bases / knowledge_ids 含该 kb_id）= 显式绑定，删除必须拦截；**all** = 智能体检索全部库，不拦截（其 resolve_kb_scope 按 state=="1" 过滤，软删后自动排除，不会悬空；若拦截则「一个 all 智能体锁死所有库删除」）；**none** = 不绑定；已删智能体（state=="0"）不参与拦截
+- **代码改动（commit a9e236f，已推送 dev）**：
+  1. `api/services/kb_admin.py`：新增 `_agents_bound_to_kb(db, kb_id)`（查 state=1 的 kb_agent，解析 config 判 selected 绑定，返回 [{id,name,kb_selection_mode}]）；`delete_kb` 开头插入守卫——绑定则返回 `{"success": False, "code": "AGENT_BOUND", "message": "知识库已被智能体「xxx」绑定，请先解除绑定后再删除", "data": {"bound_agents": [...]}}`，知识库保持 state=1 不被软删
+  2. `api/routers/kbs.py`：del_kb 对 `code == "AGENT_BOUND"` 抛 **400**（业务拒绝），「知识库不存在」仍 404
+  3. `web/src/app/(main)/kbs/page.tsx`：删除确认前预校验——模块级 `fetchAgentsBoundToKb`（分页拉全量启用智能体 page_size=100 循环取完，本地判 selected 绑定）；有绑定则 modal.warning 列出智能体名称并中止删除，不弹确认框；预校验失败不阻断（后端守卫兜底）
+  4. `tests/test_kb_admin.py` +4 用例（显式绑定拒绝+库保持可用 / 绑定其他库放行 / all 模式放行 / 已删智能体放行），17 passed
+- **验证**：test_kb_admin 17 passed（4 新 + 13 旧）；`tsc --noEmit` exit 0；全量 pytest **799 passed / 10 failed**（全部为既有基线：test_chat_image_qa 2 + test_doc_download_fallback 7 + test_engine_admin 1，storage/门禁类，与本次无关）
+- **部署注意**：api 端改动 → CI 重建 kb-api-server（或 docker cp 热修 kb_admin.py + kbs.py + restart）；前端改动 → 重建 kb-web。无迁移、无库内数据
+- **坑位**：① WeKnora 原版 DeleteKnowledgeBase 无 agent 校验（纯软删+异步清理），本守卫是 kb 平台新增需求，不追求对齐；② selected 模式的 resolve_kb_scope **不过滤 state**（软删库仍会进智能体检索范围），这正是 selected 必须拦截的技术原因；③ all 模式放行是有意设计（resolve_kb_scope 的 all 分支过滤 state=="1"）
 
 ## 31. 当前状态（2026-10-20 agent 问答「没有收到回复」排查与兜底修复）
 
