@@ -9,7 +9,8 @@
 #   celery-beat    Celery beat（扫描 modo_cron_task）
 #   redis          Celery broker + result backend
 #   pg             PostgreSQL + pgvector（知识库存储）
-#   mysql          框架库（用户/角色/菜单/数据源/调度/日志）
+#   mysql          框架库，2026-10-20 起使用远程库（KB_DATABASE_URL 指向
+#                  10.1.206.135:3306/data_supply），本地 mysql 服务已移除
 #
 # 使用（全部配置在 deploy/.env，无凭据字面量）：
 #   cd deploy && cp .env.example .env   # 填好凭据
@@ -120,8 +121,6 @@ services:
         condition: service_started
       pg:
         condition: service_healthy
-      mysql:
-        condition: service_healthy
     networks:
       - kb-net
 
@@ -140,8 +139,6 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       pg:
-        condition: service_healthy
-      mysql:
         condition: service_healthy
     networks:
       - kb-net
@@ -162,8 +159,6 @@ services:
       redis:
         condition: service_started
       pg:
-        condition: service_healthy
-      mysql:
         condition: service_healthy
     networks:
       - kb-net
@@ -188,8 +183,6 @@ services:
         condition: service_started
       pg:
         condition: service_healthy
-      mysql:
-        condition: service_healthy
     networks:
       - kb-net
 
@@ -207,8 +200,6 @@ services:
       redis:
         condition: service_started
       pg:
-        condition: service_healthy
-      mysql:
         condition: service_healthy
     networks:
       - kb-net
@@ -230,8 +221,6 @@ services:
         condition: service_started
       pg:
         condition: service_healthy
-      mysql:
-        condition: service_healthy
     networks:
       - kb-net
 
@@ -250,8 +239,6 @@ services:
         condition: service_started
       pg:
         condition: service_healthy
-      mysql:
-        condition: service_healthy
     networks:
       - kb-net
 
@@ -265,8 +252,6 @@ services:
       redis:
         condition: service_started
       pg:
-        condition: service_healthy
-      mysql:
         condition: service_healthy
     networks:
       - kb-net
@@ -377,27 +362,7 @@ services:
     networks:
       - kb-net
 
-  mysql:
-    image: mysql:8.0
-    container_name: kb-mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
-    volumes:
-      - mysql-data:/var/lib/mysql
-      # 首次启动自动应用知识库业务表 DDL（幂等；框架 modo_* 表仍需手动建表+种子）
-      - ../scripts/knowledge_business_schema.sql:/docker-entrypoint-initdb.d/01-knowledge-business-schema.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p${MYSQL_ROOT_PASSWORD}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    networks:
-      - kb-net
+
 
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
@@ -460,7 +425,7 @@ services:
 
 volumes:
   pg-data:
-  mysql-data:
+
   redis-data:
   kb-docs:
   minio-data:
