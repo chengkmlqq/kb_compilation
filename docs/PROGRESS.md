@@ -2,7 +2,20 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-20（修复 chat/page.tsx 图片粘贴类型错误，解锁 CI 构建）
+最后更新：2026-10-20（修复问答页思考输出时出现两个「思考中…」）
+
+## 35. 当前状态（2026-10-20 问答页思考输出时出现两个「思考中…」）
+
+- **症状**：智能问答页面思考内容输出过程中，页面同时显示两个「思考中…」
+- **根因（两条渲染路径各自重复提示）**：
+  1. **智能体模式**：`m.agent && m.thinking` 时顶部渲染 `AgentThinkingRow`（2492 行，streaming 时头部显示「思考中… / 进行中」），而正文区（1499 行）原条件 `m.streaming` 为真时再显示一个「思考中…」→ 双显
+  2. **快速问答**：`AssistantThink` 的 think-btn（2329 行，streaming 时显示「思考中…」）与 content-view 占位（2353 行，`answerStreaming` 时再显示「思考中…」）→ 双显
+- **修复（commit 79a1a6a，已推送 dev；纯前端 1 插入/3 删除）**：
+  1. 正文区占位条件 `m.streaming` → `m.streaming && !m.thinking`——有思考块在展示时正文区不再重复提示，留空等 `contentVisible` 放行打字机
+  2. `AssistantThink` 的 content-view 删除 `answerStreaming` 时的「思考中…」占位——think-btn 已是思考状态唯一提示
+- **验证**：`tsc --noEmit` exit 0
+- **部署注意**：纯前端 → CI 重建 kb-web 生效
+- **坑位**：① 思考态提示在三处组件各有一份（AgentThinkingRow / AssistantThink think-btn / 正文占位），改一处必须扫全部「思考中…」字面量（`grep -n 思考中 web/src`）避免重复提示；② `AssistantThink` 仅在 `!m.agent && m.thinking` 分支渲染，其 think-btn 必然存在，故 content-view 不需要独立占位
 
 ## 34. 当前状态（2026-10-20 CI 构建失败修复：chat/page.tsx 图片粘贴类型错误）
 
