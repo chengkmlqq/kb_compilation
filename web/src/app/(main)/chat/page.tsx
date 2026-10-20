@@ -706,11 +706,11 @@ export default function ChatPage() {
       setImagePreviews([]);
       for (const p of pending) {
         try {
-          const attId = await uploadAttachment(p.file, sessionId, { silent: true });
-          if (attId) {
-            turnImageIds.push(attId);
+          const att = await uploadAttachment(p.file, sessionId, { silent: true });
+          if (att) {
+            turnImageIds.push(att.id);
             localImages.push({
-              id: attId,
+              id: att.id,
               file_name: p.file.name,
               file_size: p.file.size,
               url: p.url,
