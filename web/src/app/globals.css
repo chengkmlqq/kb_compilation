@@ -2619,8 +2619,24 @@ html[data-theme="dark"] .kb-citation-web:hover {
   white-space: pre-wrap;
 }
 
+/* 2026-10-21 引用浮层内 md 渲染：表格等宽内容横向滚动而非撑破浮层 */
+.kb-citation-float__body .kb-chat-md {
+  overflow-x: auto;
+}
+.kb-citation-float__body .kb-chat-md-table th {
+  white-space: normal;
+}
+
 .kb-citation-float__muted {
   color: var(--kb-c-text-secondary);
+}
+
+/* 2026-10-21 「回答引用」抽屉内 md 渲染：表格等宽内容横向滚动而非撑破卡片 */
+.kb-ref-drawer-md {
+  overflow-x: auto;
+}
+.kb-ref-drawer-md .kb-chat-md-table th {
+  white-space: normal;
 }
 
 

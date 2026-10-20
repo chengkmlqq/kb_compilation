@@ -381,9 +381,14 @@ export default function MarkdownViewer({ text, refs, onCitationClick }: Props) {
               : hover.ref?.document_title || hover.payload.display}
           </div>
           <div className="kb-citation-float__body">
-            {hover.payload.type === "web"
-              ? hover.payload.url
-              : hover.ref?.content || "（该片段未返回正文，点击可查看详情）"}
+            {hover.payload.type === "web" ? (
+              hover.payload.url
+            ) : hover.ref?.content ? (
+              // 2026-10-21 引用片段按 md 渲染（切片原文含表格/列表等结构）
+              <MarkdownViewer text={hover.ref.content} />
+            ) : (
+              "（该片段未返回正文，点击可查看详情）"
+            )}
           </div>
           <div className="kb-citation-float__muted">
             {hover.payload.type === "web" ? (

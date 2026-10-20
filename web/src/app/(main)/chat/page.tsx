@@ -2170,10 +2170,10 @@ export default function ChatPage() {
                 {g.items.map((item, ii) => (
                   <div key={ii}>
                     {item.content && (
-                      <Text style={{ fontSize: 13 }}>
-                        {item.content.slice(0, 400)}
-                        {item.content.length > 400 ? "…" : ""}
-                      </Text>
+                      // 2026-10-21 引用切片按 md 渲染（切片原文含表格/列表等结构）
+                      <div className="kb-ref-drawer-md">
+                        <MarkdownViewer text={item.content.slice(0, 400)} />
+                      </div>
                     )}
                     <Space size={8} wrap style={{ marginTop: 4 }}>
                       <Tag color="geekblue">
