@@ -85,6 +85,7 @@ import MarkdownViewer from "@/components/MarkdownViewer";
 import TypewriterText from "@/components/TypewriterText";
 import { RagStep } from "@/components/RagPipelineProgress";
 import AgentToolCalls, { ToolCallEvent } from "@/components/AgentToolCalls";
+import AgentAvatar from "@/components/AgentAvatar";
 import { FolderIcon } from "@/components/kb/KbsIcons";
 import { copyText } from "@/lib/clipboard";
 
@@ -167,7 +168,7 @@ export default function ChatPage() {
   const [categories, setCategories] = useState<KbCategoryItem[]>([]);
   const kbPanelRef = useRef<HTMLDivElement | null>(null);
   const kbBtnRef = useRef<HTMLButtonElement | null>(null);
-  // 2026-10-12 对齐 WeKnora 输入区联网搜索开关（普通问答/agent 模式通用，请求级生效）
+  // 2026-10-12 对齐 WeKnora 输入区联网搜索开关（快速问答/agent 模式通用，请求级生效）
   const [webSearch, setWebSearch] = useState(false);
   // 2026-10-20 深度思考开关（请求级 thinking 透传；模型支持 reasoning_content 时流式打印思考过程）
   const [deepThinking, setDeepThinking] = useState(false);
@@ -637,7 +638,7 @@ export default function ChatPage() {
     const effectiveKbId = atTarget?.kind === "kb" ? atTarget.id : kbId;
     const effectiveAgent = atTarget?.kind === "agent" ? atTarget.id : agentMode;
     // 2026-10-20 对齐 DSB 门户问答（反思模式）：深度思考需至少选一个知识库或上传附件，
-    // 空选择时拦截并提示（普通问答仍走纯 LLM 对话）
+    // 空选择时拦截并提示（快速问答仍走纯 LLM 对话）
     if (deepThinking && !effectiveKbId && attachments.length === 0) {
       toast.warning("深度思考需要至少选择一个知识库或上传文档附件");
       return;
@@ -1104,7 +1105,7 @@ export default function ChatPage() {
   };
 
   // 图片问答门禁：选了智能体时按其 image_upload_enabled 配置判断（对齐
-  // WeKnora ImageUploadEnabled）；未选智能体（普通问答/纯对话模式）默认允许
+  // WeKnora ImageUploadEnabled）；未选智能体（快速问答/纯对话模式）默认允许
   // 传图——后端 /qa/stream 图片链路不依赖知识库/智能体，只要求模型 supports_vision。
   const activeAgentCfg = agents.find((a) => a.id === agentMode)?.config ?? {};
   const canUploadImage = agentMode ? !!activeAgentCfg.image_upload_enabled : true;
@@ -1463,7 +1464,7 @@ export default function ChatPage() {
                 <div className="kb-chat-assistant">
                     {/* 2026-10-20 对齐 WeKnora AgentStreamDisplay：智能体模式的
                         思考过程 + 工具调用按 action-card 时间线展示在答案之前
-                        （thinking 卡 → 工具卡 → 正文；普通问答无工具事件不受影响） */}
+                        （thinking 卡 → 工具卡 → 正文；快速问答无工具事件不受影响） */}
                     {m.agent && m.thinking ? (
                       <AgentThinkingRow thinking={m.thinking} streaming={!!m.streaming} />
                     ) : null}
@@ -1472,7 +1473,7 @@ export default function ChatPage() {
                     ) : null}
                     {/* 2026-10-16 DSB 对齐：RAG 步骤树/工具卡移除，思考折叠为 think-btn + think-view
                         2026-10-20：智能体模式（m.agent）的思考已在顶部 AgentThinkingRow 展示，
-                        这里只渲染正文；普通问答才用 AssistantThink（思考折叠条 + 正文一体） */}
+                        这里只渲染正文；快速问答才用 AssistantThink（思考折叠条 + 正文一体） */}
                     {!m.agent && m.thinking ? (
                       <AssistantThink
                         thinking={m.thinking}
@@ -1770,6 +1771,7 @@ export default function ChatPage() {
                   key: a.id,
                   label: (
                     <div className="kb-chat-model-item">
+                      <AgentAvatar name={a.name} size="small" />
                       <div className="kb-chat-model-item-left">
                         <div className="kb-chat-model-name">{a.name}</div>
                         <div className="kb-chat-model-descr">{a.description || "暂无描述"}</div>
@@ -1782,7 +1784,7 @@ export default function ChatPage() {
                 })),
                 selectable: false,
                 onClick: ({ key }) => {
-                  // 点击当前已选智能体 = 取消（切回普通问答）；否则选中并同步会话绑定
+                  // 点击当前已选智能体 = 取消（切回快速问答）；否则选中并同步会话绑定
                   if (agentMode === key) {
                     setAgentMode(undefined);
                     if (activeSession) {
@@ -1807,9 +1809,13 @@ export default function ChatPage() {
                     : "选择智能体"
                 }
               >
-                <RobotOutlined style={{ color: "rgba(50,97,206,1)", fontSize: 12 }} />
+                {agentMode ? (
+                  <AgentAvatar name={agents.find((a) => a.id === agentMode)?.name || ""} size="small" />
+                ) : (
+                  <RobotOutlined style={{ color: "rgba(50,97,206,1)", fontSize: 12 }} />
+                )}
                 <span className="kb-chat-agent-btn-label">
-                  {agents.find((a) => a.id === agentMode)?.name || "普通问答"}
+                  {agents.find((a) => a.id === agentMode)?.name || "快速问答"}
                 </span>
                 <DsbIconChevronDown size={12} className="kb-chat-agent-btn-arrow" />
               </button>
@@ -2122,7 +2128,7 @@ export default function ChatPage() {
                     onMouseEnter={(e) => (e.currentTarget.style.background = atTarget?.kind === "agent" && atTarget.id === a.id ? token.controlItemBgActive : token.colorFillTertiary)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = atTarget?.kind === "agent" && atTarget.id === a.id ? token.controlItemBgActive : "transparent")}
                   >
-                    <RobotOutlined style={{ color: token.colorPrimary, fontSize: 12 }} />
+                    <AgentAvatar name={a.name} size="small" />
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
                   </div>
                 ));
