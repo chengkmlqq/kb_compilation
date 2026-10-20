@@ -71,33 +71,45 @@ class KnowledgeBase(DeclarativeBase):
 
 
 def _resolve_db_url(env: str) -> str:
-    """按环境解析框架库 URL（dev 未配 / 总开关关 → 回落 prod）。"""
+    """按环境解析框架库 URL。
+
+    2026-10-20 双表改造：废弃双库路由（DEV_DATABASE_URL 独立库）——dev/prod
+    全部使用同一个 DATABASE_URL（data_supply），环境隔离改为同库双表
+    （见 api/services/env_table_router.py，dev 环境自动路由到 xxx_dev 表）。
+    保留 env 参数仅为兼容调用签名；dev 环境也返回生产 URL。
+    """
     settings = get_settings()
-    if env == ENV_DEV and settings.KB_ENV_ROUTING_ENABLED and settings.DEV_DATABASE_URL:
-        return settings.DEV_DATABASE_URL
     return settings.require_database_url()
 
 
 def _resolve_kb_url(env: str) -> tuple[str, str]:
-    """按环境解析向量库 (url, schema_name)：开发用独立 schema（同一 PG 实例）。"""
+    """按环境解析向量库 (url, schema_name)：开发用独立 schema（同一 PG 实例）。
+
+    2026-10-20 双表改造：向量库 kb_embedding 不在隔离名单（编排测试执行
+    不直接写向量表；向量经 VectorStore 服务层），dev 同样回落生产 URL，
+    不再切 schema/dev 库。
+    """
     settings = get_settings()
-    if env == ENV_DEV and settings.KB_ENV_ROUTING_ENABLED and settings.DEV_KNOWLEDGE_DATABASE_URL:
-        return settings.DEV_KNOWLEDGE_DATABASE_URL, settings.DEV_SCHEMA_NAME or "dev"
     return settings.require_knowledge_database_url(), settings.SCHEMA_NAME
 
 
 @lru_cache
 def _framework_engine_for(url: str) -> Engine:
-    """框架库引擎（按 URL 缓存——每个环境独立连接池）。"""
+    """框架库引擎（按 URL 缓存——dev/prod 双表改造后同一 URL，单连接池）。"""
     settings = get_settings()
-    return create_engine(
+    engine = create_engine(
         url,
         pool_pre_ping=settings.DB_POOL_PRE_PING,
         pool_size=settings.DB_MAX_CONNECTIONS,
         max_overflow=0,
         future=True,
     )
+    # 2026-10-20 双表改造：dev 环境（编排测试执行）自动把隔离表路由到
+    # xxx_dev 表。挂在框架引擎上，一次安装全部服务共享。
+    from api.services.env_table_router import install_dev_table_router
 
+    install_dev_table_router(engine)
+    return engine
 
 @lru_cache
 def _knowledge_engine_for(url: str, schema: str) -> Engine:
@@ -135,6 +147,9 @@ def get_sessionmaker(env: Optional[str] = None) -> sessionmaker[Session]:
     ⚠️ 不缓存：无参调用时 env 从 contextvar 解析，若 lru_cache 会按 None 缓存
     首次解析的环境，后续切环境(session_scope(env))仍命中旧缓存——engine 层
     已按 URL 缓存(连接池复用)，sessionmaker 新建开销可忽略。
+
+    2026-10-20 双表改造：dev 环境（编排测试执行）的表路由由框架引擎的
+    before_cursor_execute 事件实现（见 env_table_router），session 无需特殊类。
     """
     env = env or current_env()
     return sessionmaker(bind=get_engine(env), autoflush=False, expire_on_commit=False)

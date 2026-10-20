@@ -214,6 +214,12 @@ class RunScriptStep(BaseStep):
 
         env = dict(os.environ)
         env.update({str(k): str(v) for k, v in env_extra.items()})
+        # 2026-10-20 双表改造：子进程不继承 contextvar（新进程 current_env 默认 prod），
+        # 显式把当前执行环境注入 KB_ENV，脚本入口 env_scope(KB_ENV) 后其内部
+        # get_sessionmaker()/storage 写操作才路由到对应表（dev → _dev 表）。
+        from api.db import current_env
+
+        env.setdefault("KB_ENV", current_env())
         import signal as _sig
         proc = None
         try:

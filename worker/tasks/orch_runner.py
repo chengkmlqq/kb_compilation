@@ -20,7 +20,7 @@ import uuid
 
 logger = logging.getLogger("kb.orch.runner")
 
-from api.db import get_sessionmaker
+from api.db import ENV_DEV, env_scope, get_sessionmaker
 from api.models.orchestration import Tape, TapeRun, TapeStep
 from sqlalchemy import select
 from api.services.orchestration_engine import ATOM_MAP, TapeRuntimeContext
@@ -298,7 +298,16 @@ def execute_run(run_id: str, env: str | None = None) -> dict:
     """调度中枢入口（orch 队列）：首次推进 DAG。
 
     env：执行记录所在环境（上传链触发编排传 "prod"；None 沿用历史 dev）。
+    2026-10-20 双表改造：run 的所有读写必须落在执行记录所在表（dev → 测试
+    执行的 _dev 表 / prod → 正式表）。表路由事件读 contextvar（current_env），
+    故入口按 env 包 env_scope，使整条调用链（_get_run/_update_run/_advance_impl
+    及其内部 _append_step_result）的 SQL 都路由到对应表。
     """
+    with env_scope(env or ENV_DEV):
+        return _execute_run_impl(run_id, env)
+
+
+def _execute_run_impl(run_id: str, env: str | None = None) -> dict:
     run = _get_run(run_id, env)
     if not run:
         return {"success": False, "error": f"run not found: {run_id}"}
@@ -308,8 +317,13 @@ def execute_run(run_id: str, env: str | None = None) -> dict:
 
 
 def advance_run(run_id: str, step_id: str, env: str | None = None) -> dict:
-    """节点完成回调（orch 队列）：记录结果后推进 DAG。"""
-    _advance_impl(run_id, env)
+    """节点完成回调（orch 队列）：记录结果后推进 DAG。
+
+    2026-10-20 双表改造：同 execute_run，入口包 env_scope 保证 run 读写
+    路由到执行记录所在表。
+    """
+    with env_scope(env or ENV_DEV):
+        _advance_impl(run_id, env)
     return {"success": True, "run_id": run_id}
 
 
@@ -334,7 +348,16 @@ def run_node(run_id: str, step_id: str, bindings: dict, round_no: int = 0, env: 
     把 run 终态顶成 failed）。同 (step_id, round) 已有终态 → 直接返回不执行；
     已有 running 占位且未超时 → 视为在跑，返回 skip 不重复执行；running 占位
     超时（执行进程可能已消失）→ 放行重跑。
+
+    2026-10-20 双表改造：入口包 env_scope——run 记录读写（_get_run/
+    _append_step_result）与节点业务数据都路由到执行记录所在表。
     """
+    with env_scope(env or ENV_DEV):
+        return _run_node_impl(run_id, step_id, bindings, round_no, env)
+
+
+def _run_node_impl(run_id: str, step_id: str, bindings: dict, round_no: int = 0,
+                   env: str | None = None) -> dict:
     run = _get_run(run_id, env)
     if not run:
         return {"success": False, "error": f"run not found: {run_id}"}

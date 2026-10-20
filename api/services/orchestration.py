@@ -9,6 +9,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from api.config import get_settings
+from api.db import ENV_DEV, ENV_PROD, env_scope
 from api.models.orchestration import (
     Tape,
     TapeCategory,
@@ -488,10 +489,10 @@ def _create_tape_run(db, tape_id: str, inputs: dict | None = None, env: str | No
     if not step_count:
         raise ValueError("编排没有可执行的步骤（请先在设计器保存）")
 
-    run_env = env or ("dev" if get_settings().KB_ENV_ROUTING_ENABLED else "prod")
+    run_env = env or ENV_DEV  # 2026-10-20 双表改造：手工执行恒 dev（测试执行）；上传链显式传 "prod"
     run_id = uuid.uuid4().hex[:32]
     bindings0 = dict(inputs or {})
-    bindings0["__env__"] = run_env  # 2026-10-12 环境隔离：编排执行一律落开发库
+    bindings0["__env__"] = run_env  # 2026-10-20 环境隔离：编排执行落 _dev 表
     run = TapeRun(
         id=run_id,
         tape_id=tape_id,
@@ -547,7 +548,17 @@ def execute_tape(db, tape_id: str, inputs: dict | None = None, env: str | None =
 
 
 def get_tape_run(db, run_id: str) -> TapeRun:
+    """执行记录详情：正式表 + _dev 表双查（测试执行的 run 落 _dev 表）。
+
+    2026-10-20 双表改造：dev 环境（手工/定时执行的 run）在 kb_tape_run_dev，
+    prod（上传链 run）在 kb_tape_run。API 进程默认 prod env，故正式表先查，
+    未命中再切 dev env 查 _dev 表。
+    """
     run = db.get(TapeRun, run_id)
+    if run:
+        return run
+    with env_scope(ENV_DEV):
+        run = db.get(TapeRun, run_id)
     if not run:
         raise KeyError(f"执行记录不存在: {run_id}")
     return run
@@ -562,25 +573,42 @@ def list_tape_runs(db, tape_id: str, page=1, page_size=20) -> dict:
     # → 端点 500（与任务监控 parents 修复 9c5d15b 同源）。
     # 列表只展示窄字段，排序只取窄列 id（filesort 只碰 id 行），
     # 再按 id 回表取全行并保持排序顺序（不依赖优化器选索引）。
-    from sqlalchemy import func, select
+    #
+    # 2026-10-20 双表改造：手工执行（dev）的 run 在 kb_tape_run_dev，上传链
+    # （prod）在 kb_tape_run。两表分别取窄列 (id, created_at)，应用层合并
+    # 排序后再分页（run 总量小，不依赖单表 SQL 分页）。
+    from sqlalchemy import select
 
-    total_stmt = select(func.count()).select_from(TapeRun).where(TapeRun.tape_id == tape_id)
-    total = db.execute(total_stmt).scalar() or 0
-    run_id_stmt = select(TapeRun.id).where(TapeRun.tape_id == tape_id)
-    run_ids: list[str] = list(
-        db.execute(
-            run_id_stmt.order_by(TapeRun.created_at.desc(), TapeRun.id.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-        )
-        .scalars()
-        .all()
-    )
+    rows: list[tuple[str, object, str]] = []  # (id, created_at, env)
+    with env_scope(ENV_PROD):
+        rows += [
+            (rid, ts, ENV_PROD)
+            for rid, ts in db.execute(
+                select(TapeRun.id, TapeRun.created_at).where(TapeRun.tape_id == tape_id)
+            ).all()
+        ]
+    with env_scope(ENV_DEV):
+        rows += [
+            (rid, ts, ENV_DEV)
+            for rid, ts in db.execute(
+                select(TapeRun.id, TapeRun.created_at).where(TapeRun.tape_id == tape_id)
+            ).all()
+        ]
+    rows.sort(key=lambda r: (r[1] or datetime.min, r[0]), reverse=True)
+    total = len(rows)
+    page_rows = rows[(page - 1) * page_size : page * page_size]
+
     items: list[dict] = []
-    if run_ids:
-        pos = {rid: i for i, rid in enumerate(run_ids)}
-        fetched = db.execute(select(TapeRun).where(TapeRun.id.in_(run_ids))).scalars().all()
-        for r in sorted(fetched, key=lambda r: pos.get(r.id, len(run_ids))):
+    if page_rows:
+        pos = {rid: i for i, (rid, _ts, _e) in enumerate(page_rows)}
+        fetched = []
+        for env, ids in ((ENV_PROD, [r[0] for r in page_rows if r[2] == ENV_PROD]),
+                         (ENV_DEV, [r[0] for r in page_rows if r[2] == ENV_DEV])):
+            if not ids:
+                continue
+            with env_scope(env):
+                fetched += db.execute(select(TapeRun).where(TapeRun.id.in_(ids))).scalars().all()
+        for r in sorted(fetched, key=lambda r: pos.get(r.id, len(page_rows))):
             items.append(
                 {
                     "id": r.id,
@@ -589,6 +617,8 @@ def list_tape_runs(db, tape_id: str, page=1, page_size=20) -> dict:
                     "status": r.status,
                     "created_at": r.created_at.isoformat() if r.created_at else "",
                     "updated_at": r.updated_at.isoformat() if r.updated_at else "",
+                    # 2026-10-20 双表改造：env 标记（prod=正式 / dev=测试执行）
+                    "env": next((e for _rid, _ts, e in page_rows if _rid == r.id), ENV_PROD),
                 }
             )
     return {"total": total, "items": items}
@@ -609,6 +639,8 @@ def serialize_tape_run(run: TapeRun) -> dict:
         "error": run.error or "",
         "created_at": run.created_at.isoformat() if run.created_at else "",
         "updated_at": run.updated_at.isoformat() if run.updated_at else "",
+        # 2026-10-20 双表改造：env 标记（dev=测试执行 / prod=正式；缺省按正式）
+        "env": str((run.bindings or {}).get("__env__") or ENV_PROD),
     }
 
 

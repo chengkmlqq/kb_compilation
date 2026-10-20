@@ -277,6 +277,31 @@ def _direct_call(method, path, payload=None):
         _sys.path.insert(0, "/srv/kb")
     from sqlalchemy import text as _text
 
+    from api.db import ENV_DEV, env_scope, get_sessionmaker
+    from api.services import kb_admin
+
+    # 2026-10-20 双表改造：子进程不继承编排节点的 contextvar（默认 prod），
+    # 按父进程注入的 KB_ENV 包 env_scope，使本函数内所有 DB/存储写操作
+    # 路由到执行记录所在表（KB_ENV=dev → xxx_dev 表 / prod → 正式表）。
+    _env = os.environ.get("KB_ENV") or ""
+    if _env == ENV_DEV:
+        from contextlib import contextmanager as _cm
+
+        @_cm
+        def _scope():
+            with env_scope(ENV_DEV):
+                yield
+
+        with _scope():
+            return _direct_call_impl(method, path, payload)
+    return _direct_call_impl(method, path, payload)
+
+
+def _direct_call_impl(method, path, payload=None):
+    import sys as _sys
+
+    from sqlalchemy import text as _text
+
     from api.db import get_sessionmaker
     from api.services import kb_admin
 

@@ -20,7 +20,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from api.db import get_db, get_sessionmaker
+from api.db import ENV_DEV, ENV_PROD, env_scope, get_db, get_sessionmaker
 from api.config import get_settings
 from api.models.framework import Job, JobQueue
 from api.services.identity import decode_identity_cookie
@@ -141,10 +141,14 @@ def _child_agg(db: Session, parent_ids: list[str]) -> dict[str, dict]:
     if orch_ids:
         from api.models.orchestration import TapeRun
 
-        for rid, st in db.execute(
-            select(TapeRun.id, TapeRun.status).where(TapeRun.id.in_(orch_ids))
-        ).all():
-            run_state_by_id[str(rid)] = _run_state_to_job(str(st or ""))
+        # 2026-10-20 双表改造：run 可能落正式表（上传链）或 _dev 表（测试执行），
+        # 同一 stmt 在两个 env 下执行 → 自动路由到对应表，合并状态。
+        for env in (ENV_PROD, ENV_DEV):
+            with env_scope(env):
+                for rid, st in db.execute(
+                    select(TapeRun.id, TapeRun.status).where(TapeRun.id.in_(orch_ids))
+                ).all():
+                    run_state_by_id[str(rid)] = _run_state_to_job(str(st or ""))
     agg: dict[str, dict] = {}
     for pid, state, cls, params in rows:
         a = agg.setdefault(str(pid), {"count": 0, "states": {}})
@@ -208,7 +212,12 @@ def list_parent_jobs(
     if keyword:
         like = f"%{keyword}%"
         run_stmt = run_stmt.where(TapeRun.id.like(like) | TapeRun.tape_name.like(like))
-    run_rows = db.execute(run_stmt).all()  # [(id, created_at), ...]
+    # 2026-10-20 双表改造：正式表（上传链）+ _dev 表（测试执行）分别窄列查询
+    # 合并（同一 stmt 在两个 env 下自动路由到对应表），再进应用层排序。
+    run_rows: list[tuple[str, object]] = []
+    for env in (ENV_PROD, ENV_DEV):
+        with env_scope(env):
+            run_rows += list(db.execute(run_stmt).all())  # [(id, created_at), ...]
 
     # 2026-10-14：被链头任务承接的编排 run 不作为顶层父任务行。
     # 上传链/摘要触发（SUMMARY_RUN_*/ORCH_RUN_* job）会建一条 KbOrchestrationRunTask
@@ -249,11 +258,14 @@ def list_parent_jobs(
     jobs = (
         db.execute(select(Job).where(Job.id.in_(job_ids))).scalars().all() if job_ids else []
     )
-    runs = (
-        db.execute(select(TapeRun).where(TapeRun.id.in_(run_ids))).scalars().all()
-        if run_ids
-        else []
-    )
+    # 2026-10-20 双表改造：run 回表也按两环境分别查（正式表 + _dev 表）
+    runs: list[TapeRun] = []
+    if run_ids:
+        for env in (ENV_PROD, ENV_DEV):
+            with env_scope(env):
+                runs += list(
+                    db.execute(select(TapeRun).where(TapeRun.id.in_(run_ids))).scalars().all()
+                )
     jobs_by_id = {j.id: j for j in jobs}
     runs_by_id = {r.id: r for r in runs}
 
@@ -304,8 +316,11 @@ def list_job_children(
     """
     from api.models.orchestration import TapeRun
 
-    # 先查是否编排 run（虚拟父任务）
+    # 先查是否编排 run（虚拟父任务）；2026-10-20 双表改造：正式 + _dev 双查
     run = db.execute(select(TapeRun).where(TapeRun.id == job_id)).scalars().first()
+    if not run:
+        with env_scope(ENV_DEV):
+            run = db.execute(select(TapeRun).where(TapeRun.id == job_id)).scalars().first()
     if run:
         return {
             "success": True,
@@ -337,6 +352,11 @@ def list_job_children(
                 rid = str((json.loads(c.task_params or "{}") or {}).get("runId") or "")
                 if rid:
                     run = db.execute(select(TapeRun).where(TapeRun.id == rid)).scalars().first()
+                    if not run:  # 2026-10-20 双表：_dev 表兜底
+                        with env_scope(ENV_DEV):
+                            run = db.execute(
+                                select(TapeRun).where(TapeRun.id == rid)
+                            ).scalars().first()
                     if run:
                         d["job_state"] = d["state"]
                         d["state"] = _run_state_to_job(run.status)
@@ -505,11 +525,14 @@ def list_jobs(
     jobs = (
         db.execute(select(Job).where(Job.id.in_(job_ids))).scalars().all() if job_ids else []
     )
-    runs = (
-        db.execute(select(TapeRun).where(TapeRun.id.in_(run_ids))).scalars().all()
-        if run_ids
-        else []
-    )
+    # 2026-10-20 双表改造：run 回表按两环境分别查（正式表 + _dev 表）
+    runs: list[TapeRun] = []
+    if run_ids:
+        for env in (ENV_PROD, ENV_DEV):
+            with env_scope(env):
+                runs += list(
+                    db.execute(select(TapeRun).where(TapeRun.id.in_(run_ids))).scalars().all()
+                )
     jobs_by_id = {j.id: j for j in jobs}
     runs_by_id = {r.id: r for r in runs}
 
@@ -612,7 +635,17 @@ def stop_job(
     """
     from api.models.orchestration import TapeRun
 
+    # 2026-10-20 双表改造：正式 + _dev 双查（测试执行的 run 在 dev 表）；
+    # 记录 run_env 使状态回写落到同一张表（atomic flush 走对应表路由）。
+    run_env: str | None = None
     run = db.execute(select(TapeRun).where(TapeRun.id == job_id)).scalars().first()
+    if run:
+        run_env = ENV_PROD
+    else:
+        with env_scope(ENV_DEV):
+            run = db.execute(select(TapeRun).where(TapeRun.id == job_id)).scalars().first()
+        if run:
+            run_env = ENV_DEV
     if run:
         if run.status not in ("queued", "running"):
             raise HTTPException(
@@ -620,8 +653,9 @@ def stop_job(
             )
         run.status = "cancelled"
         run.error = (run.error or "") + " [任务监控页手动停止]"
-        db.add(run)
-        db.commit()
+        with env_scope(run_env or ENV_PROD):
+            db.add(run)
+            db.commit()
         return {
             "success": True,
             "data": {"id": job_id, "state": "STOPPED", "kind": "orchestration"},
@@ -706,10 +740,20 @@ def delete_job(
     """
     from api.models.orchestration import TapeRun
 
+    # 2026-10-20 双表改造：正式 + _dev 双查，删除在对应表执行
+    run_env: str | None = None
     run = db.execute(select(TapeRun).where(TapeRun.id == job_id)).scalars().first()
     if run:
-        db.delete(run)
-        db.commit()
+        run_env = ENV_PROD
+    else:
+        with env_scope(ENV_DEV):
+            run = db.execute(select(TapeRun).where(TapeRun.id == job_id)).scalars().first()
+        if run:
+            run_env = ENV_DEV
+    if run:
+        with env_scope(run_env or ENV_PROD):
+            db.delete(run)
+            db.commit()
         return {"success": True, "data": {"id": job_id, "deleted": True, "kind": "orchestration"}}
 
     job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
@@ -740,7 +784,11 @@ def get_job(
     """
     from api.models.orchestration import TapeRun
 
+    # 2026-10-20 双表改造：正式 + _dev 双查（测试执行的 run 在 dev 表）
     run = db.execute(select(TapeRun).where(TapeRun.id == job_id)).scalars().first()
+    if not run:
+        with env_scope(ENV_DEV):
+            run = db.execute(select(TapeRun).where(TapeRun.id == job_id)).scalars().first()
     if run:
         return {"success": True, "data": _run_to_job_dict(run)}
 
