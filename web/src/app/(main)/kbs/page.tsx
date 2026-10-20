@@ -22,6 +22,7 @@ import {
   CodeOutlined,
   CommentOutlined,
   DeleteOutlined,
+  FileZipOutlined,
   ProfileOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
@@ -30,7 +31,9 @@ import {
   apiCreateKbCategory,
   apiDeleteKb,
   apiDeleteKbCategory,
+  apiExportKb,
   apiGetDocument,
+  apiImportKb,
   apiListAgents,
   apiListBuildEngines,
   apiListKbCategories,
@@ -44,6 +47,7 @@ import {
   DocItem,
   KbCategoryItem,
   KbCreatePayload,
+  KbImportResult,
   KbItem,
   ModelItem,
 } from "@/lib/api";
@@ -306,6 +310,11 @@ export default function KbsPage() {
   // DSB 对齐：分类树展开态（DSB 默认展开全部）+ 分页页码输入框文本
   const [treeExpanded, setTreeExpanded] = useState(true);
   const [jumpText, setJumpText] = useState("1");
+  // 知识库导入导出（2026-10-21）：导入 = 上传 zip 文件 + 可选覆盖同名槽位
+  const [importOpen, setImportOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importReplace, setImportReplace] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
   // 首个 tab「知识库管理」= 页面标题 + 列表，不可关闭；后续把知识库的
@@ -480,6 +489,60 @@ export default function KbsPage() {
   useEffect(() => {
     void loadCategories();
   }, [loadCategories]);
+
+  // ---- 知识库导出/导入（2026-10-21）----
+  // 导出 = 整库 zip（配置快照 + 文档原文件 + wiki 页快照）；导入 = 上传 zip 建库
+  // + 文档入上传链（解析/摘要/wiki 构建由既有链路自动恢复，不携带切片二进制）。
+  const onExportKb = async (kb: KbItem) => {
+    try {
+      await apiExportKb(kb.id, kb.name);
+      message.success(`知识库「${kb.name}」已导出为 zip`);
+    } catch (err) {
+      message.error((err as Error)?.message || "导出失败");
+    }
+  };
+
+  const onImportKb = async () => {
+    if (!importFile) {
+      message.warning("请先选择导出的 zip 文件");
+      return;
+    }
+    setImporting(true);
+    try {
+      const res = await apiImportKb(importFile, importReplace);
+      if (res.success && res.data) {
+        const d: KbImportResult = res.data;
+        const warnSuffix = d.warnings.length ? `（${d.warnings.length} 条警告）` : "";
+        message.success(
+          `导入完成：知识库「${d.kb_name}」已创建${warnSuffix}，${d.docs_created} 篇文档进入解析队列`
+        );
+        if (d.warnings.length) {
+          // 警告逐条展示（模型/编排不存在回退等，导入仍成功）
+          Modal.info({
+            title: "导入警告",
+            content: (
+              <div>
+                {d.warnings.map((w, i) => (
+                  <div key={i}>· {w}</div>
+                ))}
+              </div>
+            ),
+          });
+        }
+        setImportOpen(false);
+        setImportFile(null);
+        setImportReplace(false);
+        void load();
+        void loadCategories();
+      } else {
+        message.error(res.message || "导入失败");
+      }
+    } catch {
+      message.error("导入失败：网络错误或文件过大");
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const openCatCreate = () => {
     setCatName("");
@@ -966,6 +1029,7 @@ export default function KbsPage() {
                                 ? [{ key: "repo", label: "代码仓库" }]
                                 : []),
                               { key: "config", label: "知识库配置" },
+                              { key: "export", label: "导出" },
                               { type: "divider" },
                               { key: "delete", label: "删除", danger: true },
                             ],
@@ -977,6 +1041,7 @@ export default function KbsPage() {
                               else if (key === "wiki-graph") openKbSection(kb, "wiki-graph");
                               else if (key === "repo") openKbSection(kb, "repo");
                               else if (key === "config") setConfigKb(kb);
+                              else if (key === "export") void onExportKb(kb);
                               else if (key === "delete") onDelete(kb);
                             },
                           }}
@@ -1050,6 +1115,49 @@ export default function KbsPage() {
           )}
         </div>
       </div>
+
+        {/* 知识库导入弹窗（2026-10-21：上传导出的 zip，可覆盖同名库） */}
+        <Modal
+          title="导入知识库"
+          open={importOpen}
+          onOk={() => void onImportKb()}
+          onCancel={() => {
+            setImportOpen(false);
+            setImportFile(null);
+            setImportReplace(false);
+          }}
+          okText="导入"
+          cancelText="取消"
+          confirmLoading={importing}
+          width={520}
+          destroyOnClose
+        >
+          <Space direction="vertical" style={{ display: "flex" }} size={12}>
+            <div>
+              <div style={{ marginBottom: 6, fontSize: 13, color: "rgba(0,0,0,.65)" }}>
+                选择导出的知识库 zip 文件
+              </div>
+              <input
+                type="file"
+                accept=".zip,application/zip"
+                onChange={(e) => {
+                  const f = e.target.files?.[0] || null;
+                  setImportFile(f);
+                }}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(0,0,0,.45)" }}>
+              导入后将创建新知识库，文档自动进入解析/摘要/wiki 构建链路（与上传一致）。
+            </div>
+            <Switch
+              checked={importReplace}
+              onChange={setImportReplace}
+              checkedChildren="覆盖同名库"
+              unCheckedChildren="同名报错"
+            />
+          </Space>
+        </Modal>
 
         {/* 新建知识库弹窗（对齐智能体编辑器 AgentEditorModal：Modal + 左侧分区导航 + 底部确定/取消） */}
         <Modal
@@ -1349,6 +1457,17 @@ export default function KbsPage() {
               onClick={openCreate}
             >
               新建
+            </Button>
+            <Button
+              className="kb-kbs-new-btn"
+              icon={<FileZipOutlined />}
+              onClick={() => {
+                setImportFile(null);
+                setImportReplace(false);
+                setImportOpen(true);
+              }}
+            >
+              导入
             </Button>
           </div>
         }

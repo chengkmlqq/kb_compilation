@@ -629,6 +629,47 @@ export async function apiFetchDocumentBlob(kbId: string, docId: string) {
   return { blob, contentType: res.headers.get("content-type") || "", size: res.headers.get("content-length") || blob.size };
 }
 
+// ---- 知识库导出/导入（2026-10-21，整库 zip） ----
+
+export interface KbImportResult {
+  kb_id: string;
+  kb_name: string;
+  docs_created: number;
+  docs_skipped: number;
+  warnings: string[];
+}
+
+/** 导出整个知识库为 zip（后端流式返回，需 blob 下载不走 request envelope）。 */
+export async function apiExportKb(kbId: string, kbName: string) {
+  const res = await fetch(`/api/v1/kbs/${encodeURIComponent(kbId)}/export`);
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const data = await res.json();
+      detail = data?.detail || data?.message || "";
+    } catch {
+      /* 非 JSON 响应，退化为状态码提示 */
+    }
+    throw new Error(detail || `导出失败 (${res.status})`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${kbName || "kb"}_export.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** 上传知识库导出 zip 导入（replace=true 覆盖同名库）。 */
+export async function apiImportKb(file: File, replace: boolean): Promise<ApiEnvelope<KbImportResult>> {
+  const fd = new FormData();
+  fd.append("file", file);
+  return requestUpload(`/api/v1/kbs/import?replace=${replace}`, fd);
+}
+
 // ---- wiki ----
 
 export interface WikiFolderItem {

@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from api.config import get_settings
 from api.db import get_db
 from api.models.framework import Job, SysFile
-from api.models.knowledge import KbDocument
+from api.models.knowledge import KbDatasource, KbDocument
 from api.services.embedding import get_embedding_client
 from api.services.identity import decode_identity_cookie
 from api.routers.files import (
@@ -113,6 +113,9 @@ MAX_UPLOAD_BYTES = 600 * 1024 * 1024  # 600 MB（2026-10-16 心电图 pdf转word
 # 压缩包上传（自动解包）限制：条目数 + 解压后总量（防解压炸弹）
 MAX_ARCHIVE_ENTRIES = 2000
 MAX_ARCHIVE_UNCOMPRESSED_BYTES = 2 * MAX_UPLOAD_BYTES
+# 知识库导入包（zip）上限：条目数 + 总量（对齐 upload-archive 口径，2026-10-21）
+MAX_IMPORT_ENTRIES = 3000
+MAX_IMPORT_UNCOMPRESSED_BYTES = 2 * MAX_UPLOAD_BYTES
 
 
 class KBCreateRequest(BaseModel):
@@ -2253,6 +2256,85 @@ def download_document(
             },
         )
     raise HTTPException(status_code=404, detail="物理文件缺失")
+
+
+# ---------------------------------------------------------------------------
+# 知识库导出 / 导入（2026-10-21，整库 zip：manifest + 文档原文件）
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{kb_id}/export")
+def export_kb(
+    kb_id: str,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+):
+    """导出整个知识库为 zip（读可见即可；写权限不要求）。
+
+    zip 内容：manifest.json（配置快照 + 文档清单 + 目录树）+ files/（文档原文件，
+    按目录结构摆放）+ wiki/*.md（wiki 页快照，仅供审计参考，导入不恢复——wiki
+    由导入后的构建链重新生成）。切片/向量不携带。
+    """
+    _kb_visible(kb_id, caller, db)
+    from api.services.kb_export import export_kb_zip
+
+    try:
+        data = export_kb_zip(db, kb_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    kb = db.get(KbDatasource, kb_id)
+    fname = f"{kb.name if kb else kb_id}_kb_export.zip"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/zip",
+        headers={"Content-Disposition": _content_disposition(fname)},
+    )
+
+
+@router.post("/import")
+async def import_kb(
+    file: UploadFile,
+    replace: bool = Query(default=False),
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """上传知识库导出 zip 并导入（建库 + 文档入上传链）。
+
+    replace=true 覆盖同名库（级联删除旧库内容后按导出配置重建，import 侧不再
+    弹出确认框——前端已做一次确认）。文档解析/摘要/wiki 构建全部走既有链路自动
+    恢复，与上传链路一致。
+    """
+    identity = decode_identity_cookie(x_next_identity or "")
+    if not identity:
+        raise HTTPException(status_code=401, detail="未登录")
+    caller_user_id = identity.user_id if identity else ""
+    caller_team_name = identity.team_name or "" if identity else ""
+    from api.services.scope import is_admin
+
+    is_sys_admin = is_admin(db, caller_user_id) if caller_user_id else False
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="文件内容为空")
+    if len(content) > MAX_IMPORT_UNCOMPRESSED_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"导入包超过大小限制 {MAX_IMPORT_UNCOMPRESSED_BYTES // (1024 * 1024)}MB",
+        )
+    from api.services.kb_export import import_kb_zip
+
+    try:
+        res = import_kb_zip(
+            db,
+            content,
+            caller_user_id=caller_user_id,
+            caller_team_name=caller_team_name,
+            is_sys_admin=is_sys_admin,
+            replace=replace,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "data": res}
 
 
 # 转换后的 DOCX MIME（前端 docx-preview 只认 OOXML）
