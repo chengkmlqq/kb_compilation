@@ -169,8 +169,6 @@ export default function ChatPage() {
   const kbBtnRef = useRef<HTMLButtonElement | null>(null);
   // 2026-10-12 对齐 WeKnora 输入区联网搜索开关（快速问答/agent 模式通用，请求级生效）
   const [webSearch, setWebSearch] = useState(false);
-  // 2026-10-20 深度思考开关（请求级 thinking 透传；模型支持 reasoning_content 时流式打印思考过程）
-  const [deepThinking, setDeepThinking] = useState(false);
   // 2026-10-12 对齐 WeKnora embeddedMode：iframe 嵌入 / ?embed=1 / ?noframe=1 时
   // 隐藏左侧会话列表，问答区满宽沉浸式展示（宿主页面嵌入问答小窗场景）
   const [embeddedMode, setEmbeddedMode] = useState(false);
@@ -374,10 +372,9 @@ export default function ChatPage() {
       kb_id: kbId || null,
       model_id: modelId || null,
       web_search_enabled: webSearch,
-      thinking: deepThinking, // 2026-10-20 深度思考开关随会话快照恢复
       at_target: atTarget,
     }),
-    [agentMode, kbId, modelId, webSearch, deepThinking, atTarget],
+    [agentMode, kbId, modelId, webSearch, atTarget],
   );
 
   // 打开会话：加载历史消息
@@ -410,7 +407,6 @@ export default function ChatPage() {
           if (st.agent_id) setAgentMode(st.agent_id);
           if (st.model_id) setModelId(st.model_id);
           if (st.web_search_enabled != null) setWebSearch(!!st.web_search_enabled);
-          if (st.thinking != null) setDeepThinking(!!st.thinking); // 2026-10-20 深度思考快照
           if (st.at_target) setAtTarget(st.at_target);
           else setAtTarget(null);
         }
@@ -636,12 +632,6 @@ export default function ChatPage() {
     // @提及：本条消息级目标覆盖（kb / agent），未提及则沿用顶部选择
     const effectiveKbId = atTarget?.kind === "kb" ? atTarget.id : kbId;
     const effectiveAgent = atTarget?.kind === "agent" ? atTarget.id : agentMode;
-    // 2026-10-20 对齐 DSB 门户问答（反思模式）：深度思考需至少选一个知识库或上传附件，
-    // 空选择时拦截并提示（快速问答仍走纯 LLM 对话）
-    if (deepThinking && !effectiveKbId && attachments.length === 0) {
-      toast.warning("深度思考需要至少选择一个知识库或上传文档附件");
-      return;
-    }
     // 2026-10-15 纯对话模式：知识库与智能体都未选择时直接走纯 LLM 对话（不再拦截）
     const userMsg: UiMessage = {
       id: `local-user-${Date.now()}`,
@@ -773,9 +763,9 @@ export default function ChatPage() {
           embed_query: true,
           model_id: modelId || undefined, // 2026-10-06: 模型切换（空=默认模型）
           web_search_enabled: webSearch, // 2026-10-12 对齐 WeKnora 输入区联网开关
-          // 2026-10-20 深度思考：false 也要显式传（disabled）——此前 `deepThinking || undefined`
-          // 把 false 转成不传，而默认模型 deepseek-v4-pro 网关默认开启思考 → 关闭开关形同虚设
-          thinking: deepThinking,
+          // 2026-10-20 深度思考按钮已移除：固定 disabled——默认模型 deepseek-v4-pro 网关
+          // 默认开启思考，不显式禁用会一直输出推理过程（用户不需要思考展示）
+          thinking: false,
           // 2026-10-18 对齐 WeKnora 图片仅随当轮注入：本轮图片附件 id（[]=本轮无图）
           image_attachment_ids: turnImageIds,
           // 2026-10-20 附件问答交互改造：本轮全部附件 id（图片+文档），
@@ -1836,21 +1826,6 @@ export default function ChatPage() {
                 <GlobalOutlined />
               </button>
             )}
-            {/* 2026-10-20 深度思考开关：开启后请求级透传 thinking，模型支持
-                reasoning_content 时思考过程流式打印（非 Agent/Agent 均生效） */}
-            <button
-              type="button"
-              className={`kb-chat-input-icon-btn${deepThinking ? " active" : ""}`}
-              title={
-                deepThinking
-                  ? "深度思考已开启：回答前先流式展示推理过程"
-                  : "深度思考已关闭（开启后先展示推理过程再回答）"
-              }
-              aria-pressed={deepThinking}
-              onClick={() => setDeepThinking((v) => !v)}
-            >
-              <BulbOutlined />
-            </button>
           </div>
           <div className="kb-chat-input-actions-right">
             {/* 2026-10-19 DSB 对齐：知识库选择移到最右（.kb-select-btn 胶囊 + .chat-kb-list 浮层面板）
