@@ -26,6 +26,16 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 120.0
 
+# ---- 2026-10-20 对齐 WeKnora agent 循环加固（internal/agent/const.go + engine.go）----
+# WeKnora: maxEmptyResponseRetries=2 / maxRepeatedResponseRounds=2 /
+# MaxToolOutputChars / MaxContextTokens。kb 无对应 AgentConfig 字段，用常量兜底，
+# 语义与 WeKnora 一致：空内容重试、卡死检测、工具结果截断、上下文预算压缩。
+MAX_EMPTY_RETRIES = 2            # 空回答重试上限（对齐 maxEmptyResponseRetries）
+MAX_REPEATED_TOOL_ROUNDS = 2     # 连续相同工具调用轮次上限（对齐卡死检测）
+MAX_TOOL_OUTPUT_CHARS = 12000    # 单个工具结果截断上限（对齐 MaxToolOutputChars）
+MAX_CONTEXT_TOKENS = 60000       # 工具循环上下文预算（粗估 token，超限压缩早期 tool 消息）
+_EMPTY_NUDGE = "请直接给出你的完整回答（纯文本），不要调用工具。"
+
 
 @dataclass
 class ChatConfig:
@@ -788,6 +798,12 @@ def answer_question(
         yield {"type": "stage", "stage": "generation", "status": "done", "title": "回答完成"}
         return
     max_rounds = max(1, int(max_tool_iterations or 1))
+    # 2026-10-20 对齐 WeKnora 循环加固：
+    # - empty_retries：空回答重试计数
+    # - last_tool_sig / same_tool_rounds：卡死检测（连续相同工具调用）
+    empty_retries = 0
+    last_tool_sig = ""
+    same_tool_rounds = 0
     for round_idx in range(max_rounds):
         tool_calls: list[dict] = []
         buffered: list[dict] = []  # 本轮流式文本（非最终轮不回传，避免前言污染答案）
@@ -803,7 +819,48 @@ def answer_question(
                 tool_calls.append(ev)
             elif etype in ("delta", "thinking"):
                 buffered.append(ev)
-        if not tool_calls or round_idx == max_rounds - 1:
+        if not tool_calls:
+            # 2026-10-20 空内容重试（对齐 WeKnora maxEmptyResponseRetries）：
+            # LLM 自然 stop 但未产出任何正文（thinking-only 循环/空响应）——
+            # 追加 nudge 消息重试，最多 MAX_EMPTY_RETRIES 次，耗尽后走兜底文案。
+            has_answer_text = any(
+                ev.get("type") == "delta" and (ev.get("text") or "").strip()
+                for ev in buffered
+            )
+            if not has_answer_text and empty_retries < MAX_EMPTY_RETRIES:
+                empty_retries += 1
+                logger.warning(
+                    "agent round %d: empty answer, nudging LLM (retry %d/%d)",
+                    round_idx + 1, empty_retries, MAX_EMPTY_RETRIES,
+                )
+                messages.append(ChatMessage(role="user", content=_EMPTY_NUDGE))
+                continue
+            for ev in buffered:
+                yield ev
+            break
+        # 卡死检测（对齐 WeKnora maxRepeatedResponseRounds）：连续多轮发起
+        # 完全相同的工具调用（同一工具+同参数）视为卡死，提前结束循环，
+        # 避免空转消耗完 max_rounds 且用户久久等不到结果。
+        tool_sig = json.dumps(
+            [
+                {
+                    "name": tc.get("name") or "",
+                    "arguments": (tc.get("arguments") or "")[:200],
+                }
+                for tc in tool_calls
+            ],
+            ensure_ascii=False,
+        )
+        if tool_sig and tool_sig == last_tool_sig:
+            same_tool_rounds += 1
+        else:
+            same_tool_rounds = 0
+        last_tool_sig = tool_sig
+        if same_tool_rounds >= MAX_REPEATED_TOOL_ROUNDS:
+            logger.warning(
+                "agent round %d: stuck loop (same tool calls %d consecutive rounds), stopping",
+                round_idx + 1, same_tool_rounds,
+            )
             for ev in buffered:
                 yield ev
             break
@@ -842,6 +899,13 @@ def answer_question(
                 if tool_executor
                 else f"工具不可用: 未配置执行器（{tc.get('name') or '?'}）"
             )
+            # 2026-10-20 工具输出钳制（对齐 WeKnora MaxToolOutputChars）：
+            # 超长工具结果截断，防爆上下文/响应体积；截断标记保留在原位。
+            if result and len(result) > MAX_TOOL_OUTPUT_CHARS:
+                result = (
+                    result[:MAX_TOOL_OUTPUT_CHARS]
+                    + f"\n…[工具输出已截断：原 {len(result)} 字符，仅保留前 {MAX_TOOL_OUTPUT_CHARS} 字符]"
+                )
             durations.append(round(time.time() - _t0, 2))
             results.append(
                 {"id": tc.get("id") or f"call_{i}", "name": tc.get("name") or "", "result": result}
@@ -854,6 +918,35 @@ def answer_question(
                 )
             )
         yield {"type": "tool", "tool_calls": tool_calls, "results": results, "durations": durations}
+        # 2026-10-20 上下文窗口管理（对齐 WeKnora manageContextWindow）：多轮工具
+        # 循环把工具结果全量累积进 messages，长链路可能撑爆模型上下文。每轮结束
+        # 粗估总 token，超过 MAX_CONTEXT_TOKENS 时压缩最早的 tool 消息（截短内容
+        # 到尾部摘要），保留最近轮次完整结果。压缩失败/估算不可用时跳过（尽力而为）。
+        try:
+            from api.services.chunking import approx_token_count
+
+            est_tokens = sum(approx_token_count(m.content or "") for m in messages)
+            if est_tokens > MAX_CONTEXT_TOKENS:
+                logger.warning(
+                    "agent context window: est=%d > %d, compressing oldest tool messages",
+                    est_tokens, MAX_CONTEXT_TOKENS,
+                )
+                _compressed = 0
+                for _m in messages:
+                    if _m.role != "tool":
+                        continue
+                    if approx_token_count(_m.content or "") <= 400:
+                        continue
+                    _keep = (_m.content or "")[:2000]
+                    _tail = (_m.content or "")[-200:]
+                    _m.content = _keep + "\n…[工具结果已压缩以控制上下文]…" + _tail
+                    _compressed += 1
+                    est_tokens = sum(approx_token_count(m.content or "") for m in messages)
+                    if est_tokens <= MAX_CONTEXT_TOKENS:
+                        break
+                logger.warning("agent context window: compressed %d tool messages", _compressed)
+        except Exception:  # noqa: BLE001 — 上下文压缩尽力而为，失败不阻断
+            logger.debug("agent context compression skipped", exc_info=True)
     # 2026-10-12: 工具循环结束（无更多工具调用或达最大轮次）补发 done，
     # 否则前端步骤树「正在生成回答…」永远转 loading。
     yield {"type": "stage", "stage": "generation", "status": "done", "title": "回答完成"}
