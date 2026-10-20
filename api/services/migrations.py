@@ -136,7 +136,8 @@ def run_migrations_on_startup() -> None:
         logger.info("[migrate] sqlite / no DATABASE_URL — skip (tests/fresh dev)")
         return
     cfg = _alembic_config()
-    cfg.set_main_option("sqlalchemy.url", url)
+    # 密码可能含 URL 编码的 %：configparser 插值前先转义为 %%（get 时还原）
+    cfg.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
     _ensure_version_table_width(url)
     logger.info("[migrate] alembic upgrade head (framework store)")
     command.upgrade(cfg, "head")
