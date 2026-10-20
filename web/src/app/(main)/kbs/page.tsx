@@ -31,6 +31,7 @@ import {
   apiDeleteKb,
   apiDeleteKbCategory,
   apiGetDocument,
+  apiListAgents,
   apiListBuildEngines,
   apiListKbCategories,
   apiListKbs,
@@ -38,6 +39,7 @@ import {
   apiListSkillsRegistry,
   apiRenameKbCategory,
   apiUpdateKb,
+  AgentItem,
   BuildEngineItem,
   DocItem,
   KbCategoryItem,
@@ -200,6 +202,36 @@ const CaretRightIcon = () => (
     />
   </svg>
 );
+
+/**
+ * 删除前预校验：拉取全量启用智能体（分页循环取完），返回显式绑定该知识库的
+ * 智能体列表。判定口径与后端 delete_kb 的 AGENT_BOUND 守卫一致：
+ * kb_selection_mode=selected 且库 id 在 knowledge_bases / knowledge_ids 中。
+ */
+async function fetchAgentsBoundToKb(kbId: string): Promise<AgentItem[]> {
+  const bound: AgentItem[] = [];
+  const pageSize = 100; // 后端 list_agents page_size 上限
+  for (let page = 1; ; page += 1) {
+    const res = await apiListAgents(page, pageSize);
+    if (!res.success || !res.data) break;
+    const { items, total } = res.data;
+    for (const ag of items) {
+      const cfg = (ag.config ?? {}) as {
+        kb_selection_mode?: string;
+        knowledge_bases?: string[];
+        knowledge_ids?: string[];
+      };
+      if (cfg.kb_selection_mode !== "selected") continue;
+      const kbIds = new Set([
+        ...(cfg.knowledge_bases ?? []),
+        ...(cfg.knowledge_ids ?? []),
+      ]);
+      if (kbIds.has(kbId)) bound.push(ag);
+    }
+    if (items.length < pageSize || page * pageSize >= total) break;
+  }
+  return bound;
+}
 
 /** 新建知识库弹窗分区导航（对齐智能体编辑器 AgentEditorModal 与配置弹窗 KBConfigModal） */
 const CREATE_SECTIONS = [
@@ -657,7 +689,23 @@ export default function KbsPage() {
     }
   };
 
-  const onDelete = (kb: KbItem) => {
+  const onDelete = async (kb: KbItem) => {
+    // 删除前预校验：该库是否被智能体显式绑定（kb_selection_mode=selected 且
+    // 库 id 在 knowledge_bases/knowledge_ids 中）。有绑定则提示并中止，
+    // 避免删完后智能体检索范围悬空（后端同样拦截，双保险）。
+    let boundAgents: AgentItem[] = [];
+    try {
+      boundAgents = await fetchAgentsBoundToKb(kb.id);
+    } catch {
+      // 预校验失败不回退：后端 delete 接口自身也有 AGENT_BOUND 守卫
+    }
+    if (boundAgents.length > 0) {
+      modal.warning({
+        title: `无法删除知识库「${kb.name}」`,
+        content: `该知识库已被 ${boundAgents.length} 个智能体绑定（${boundAgents.map((a) => a.name).join("、")}），请先在智能体配置中解除绑定后再删除。`,
+      });
+      return;
+    }
     const docN = kb.doc_count ?? 0;
     const wikiN = kb.page_count ?? 0;
     const content =

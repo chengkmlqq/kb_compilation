@@ -29,6 +29,7 @@ from api.models.framework import User
 from api.models.knowledge import (
     DocChunk,
     DocFolder,
+    KbAgent,
     KbDatasource,
     KbDocument,
     WIKI_FEEDBACK_PRESETS,
@@ -498,12 +499,45 @@ def _apply_repo_fields(db: Session, kb: KbDatasource, fields: dict) -> None:
     kb.repo_pull_error = None
 
 
-def delete_kb(db: Session, kb_id: str) -> dict:
-    """级联删除知识库（对齐 WeKnora：KB 记录软删 + 内容一并清理，不再设守卫）。
+def _agents_bound_to_kb(db: Session, kb_id: str) -> list[dict]:
+    """返回显式绑定该知识库的启用智能体（kb_selection_mode=selected 且 kb_id 在列表中）。
 
-    WeKnora 的 DeleteKnowledgeBase 不校验文档数：先软删 KB 记录，再清理
-    共享/数据源，最后异步删 embeddings/chunks/files/图谱。本实现同步清理
-    （本库数据量小），语义一致：
+    判定口径（对齐 AgentEditorModal「知识库范围」）：
+    - selected：config.knowledge_bases / knowledge_ids 里含该 kb_id → 显式绑定；
+    - all：智能体检索全部知识库，删除后 resolve_kb_scope 按 state=="1" 自动
+      排除软删库，不构成悬空引用 —— 不拦截，避免「存在一个 all 智能体就
+      删不掉任何知识库」；
+    - none：不绑定。
+
+    返回 [{id, name, kb_selection_mode}, ...]，仅含 state=="1"（启用）智能体；
+    已删除智能体（state=="0"）不参与拦截。
+    """
+    agents = db.execute(
+        select(KbAgent).where(KbAgent.state == "1")
+    ).scalars().all()
+    bound: list[dict] = []
+    for ag in agents:
+        cfg = ag.config or {}
+        if cfg.get("kb_selection_mode") != "selected":
+            continue
+        kb_ids = set(cfg.get("knowledge_bases") or []) | set(
+            cfg.get("knowledge_ids") or []
+        )
+        if kb_id in kb_ids:
+            bound.append(
+                {"id": ag.id, "name": ag.name, "kb_selection_mode": "selected"}
+            )
+    return bound
+
+
+def delete_kb(db: Session, kb_id: str) -> dict:
+    """级联删除知识库（对齐 WeKnora：KB 记录软删 + 内容一并清理）。
+
+    删除前守卫（2026-10-20）：被启用智能体显式绑定（kb_selection_mode=selected
+    且 kb_id 在 knowledge_bases/knowledge_ids 中）的知识库拒绝删除，返回
+    code=AGENT_BOUND；all 模式智能体不拦截（软删后其检索范围自动排除）。
+
+    删除流程（同步清理，本库数据量小，语义与 WeKnora 一致）：
 
       1. KB 软删（state=0）
       2. wiki 链接 → 页面 → 文件夹（先删依赖，避免孤儿链接）
@@ -516,6 +550,17 @@ def delete_kb(db: Session, kb_id: str) -> dict:
     kb = get_kb(db, kb_id)
     if not kb:
         return {"success": False, "message": f"知识库不存在: {kb_id}"}
+
+    # 0) 智能体绑定校验（2026-10-20：删除前校验是否绑定了智能体）
+    bound_agents = _agents_bound_to_kb(db, kb_id)
+    if bound_agents:
+        names = "、".join(a["name"] for a in bound_agents)
+        return {
+            "success": False,
+            "code": "AGENT_BOUND",
+            "message": f"知识库已被智能体「{names}」绑定，请先解除绑定后再删除",
+            "data": {"bound_agents": bound_agents},
+        }
 
     # 快照计数（前端确认框「将一并删除 N 文档 / M Wiki 页」用）
     doc_count = (

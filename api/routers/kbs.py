@@ -524,6 +524,9 @@ def del_kb(
     _kb_manage(kb_id, caller, db)
     result = delete_kb(db, kb_id)
     if not result["success"]:
+        if result.get("code") == "AGENT_BOUND":
+            # 被智能体绑定：业务拒绝（400），与「知识库不存在」(404) 区分
+            raise HTTPException(status_code=400, detail=result["message"])
         raise HTTPException(status_code=404, detail=result["message"])
     return result
 

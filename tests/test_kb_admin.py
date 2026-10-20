@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from api.db import Base
 from api.models.knowledge import (
     DocChunk,
+    KbAgent,
     KbDatasource,
     KbDocument,
     WikiFolder,
@@ -114,6 +115,71 @@ def test_delete_kb_cascade_when_documents_exist(kb_db) -> None:
 def test_delete_kb_missing(kb_db) -> None:
     result = delete_kb(kb_db, "nope")
     assert result["success"] is False
+
+
+def _make_agent(kb_db, agent_id: str, name: str, mode: str, kb_ids: list[str], state: str = "1") -> KbAgent:
+    agent = KbAgent(
+        id=agent_id,
+        name=name,
+        state=state,
+        config={
+            "kb_selection_mode": mode,
+            "knowledge_bases": list(kb_ids),
+            "knowledge_ids": [],
+        },
+    )
+    kb_db.add(agent)
+    kb_db.commit()
+    return agent
+
+
+def test_delete_kb_rejected_when_agent_bound(kb_db) -> None:
+    """显式绑定该库的启用智能体 → 拒绝删除（AGENT_BOUND，知识库保持可用）。"""
+    kb = create_kb(kb_db, "被绑定库")
+    _make_agent(kb_db, "ag1", "供管制度知识智能体", "selected", [kb.id])
+
+    result = delete_kb(kb_db, kb.id)
+
+    assert result["success"] is False
+    assert result["code"] == "AGENT_BOUND"
+    assert "供管制度知识智能体" in result["message"]
+    assert result["data"]["bound_agents"][0]["id"] == "ag1"
+    # 库未被软删（仍在可见列表里）
+    assert get_kb(kb_db, kb.id) is not None
+    assert kb_db.get(KbDatasource, kb.id).state == "1"
+
+
+def test_delete_kb_ok_when_agent_binds_other_kb(kb_db) -> None:
+    """智能体绑定的是别的库 → 不拦截。"""
+    kb = create_kb(kb_db, "待删库")
+    other = create_kb(kb_db, "另一个库")
+    _make_agent(kb_db, "ag2", "其他智能体", "selected", [other.id])
+
+    result = delete_kb(kb_db, kb.id)
+
+    assert result["success"] is True
+    assert get_kb(kb_db, kb.id) is None
+
+
+def test_delete_kb_ok_when_agent_mode_all(kb_db) -> None:
+    """all 模式智能体不构成显式绑定（软删后检索范围自动排除），不拦截。"""
+    kb = create_kb(kb_db, "全量智能体库")
+    _make_agent(kb_db, "ag3", "全量智能体", "all", [])
+
+    result = delete_kb(kb_db, kb.id)
+
+    assert result["success"] is True
+    assert get_kb(kb_db, kb.id) is None
+
+
+def test_delete_kb_ok_when_agent_soft_deleted(kb_db) -> None:
+    """已删除（state=0）的智能体绑定不算阻断。"""
+    kb = create_kb(kb_db, "库")
+    _make_agent(kb_db, "ag4", "已删智能体", "selected", [kb.id], state="0")
+
+    result = delete_kb(kb_db, kb.id)
+
+    assert result["success"] is True
 
 
 def test_create_list_delete_document(kb_db) -> None:
