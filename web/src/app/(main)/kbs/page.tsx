@@ -996,7 +996,9 @@ export default function KbsPage() {
           width={860}
           destroyOnClose
         >
-          <Form form={form} layout="vertical" preserve={false}>
+          {/* 2026-10-20 修复：preserve={false} 会在分区切换（Form.Item 卸载）时清空
+              已填字段——去掉，改用打开弹窗时 resetFields 清空（openCreate 已有） */}
+          <Form form={form} layout="vertical">
             <div style={{ display: "flex", gap: 16, minHeight: 440 }}>
               {/* 左侧分区导航（对齐智能体编辑器 AgentEditorModal） */}
               <div
