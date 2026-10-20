@@ -163,14 +163,17 @@ def _session_id(client, db, agent_id=None) -> str:
     return s["id"]
 
 
-def test_upload_image_plain_session_rejected(client, db) -> None:
+def test_upload_image_plain_session_allowed(client, db) -> None:
+    """2026-10-18 对齐 WeKnora（95f51a6）：普通会话（无 agent）图片放行——
+    非 Agent 图片问答由平台视觉模型兜底（image_qa.fallback_enabled(None)=True）。
+    原名 test_upload_image_plain_session_rejected（旧行为：普通会话拒绝图片）。"""
     sid = _session_id(client, db)
     r = client.post(
         f"/api/v1/sessions/{sid}/attachments",
         files={"file": ("pic.png", b"\x89PNGdata", "image/png")},
     )
-    assert r.status_code == 400
-    assert "仅智能体会话支持图片上传" in r.json()["detail"]
+    assert r.status_code == 200
+    assert r.json()["data"]["media_type"] == "image"
 
 
 def test_bind_agent_to_plain_session_then_upload_image_accepted(client, db) -> None:
@@ -189,7 +192,7 @@ def test_bind_agent_to_plain_session_then_upload_image_accepted(client, db) -> N
     assert r2.status_code == 200
     assert r2.json()["data"]["media_type"] == "image"
 
-    # 解绑回普通会话后，图片门禁重新拒绝
+    # 解绑回普通会话后：2026-10-18 起普通会话图片放行（对齐 WeKnora），仍可上传
     r3 = client.put(f"/api/v1/sessions/{sid}", json={"agent_id": ""})
     assert r3.status_code == 200
     assert r3.json()["data"]["agent_id"] is None
@@ -197,8 +200,8 @@ def test_bind_agent_to_plain_session_then_upload_image_accepted(client, db) -> N
         f"/api/v1/sessions/{sid}/attachments",
         files={"file": ("pic.png", b"\x89PNGdata", "image/png")},
     )
-    assert r4.status_code == 400
-    assert "仅智能体会话支持图片上传" in r4.json()["detail"]
+    assert r4.status_code == 200
+    assert r4.json()["data"]["media_type"] == "image"
 
 
 def test_bind_agent_to_session_missing_agent_rejected(client, db) -> None:
