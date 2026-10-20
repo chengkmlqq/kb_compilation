@@ -71,10 +71,13 @@ x-api-env: &api-env
     # 启动自动迁移开关（默认开）：迁移链 multi-head 等异常时运维可临时关掉
     # 跳过启动迁移（DB 手动推到最新）快速恢复 api-server，修复后恢复开。
     AUTO_MIGRATE_ON_START: ${AUTO_MIGRATE_ON_START:-}
-    # 编排节点 weknora_rpc 直连开关（.env 置 1）：进程内调 api.services，不经 HTTP，
-    # 消除 api-server 单点（40 并发编排打爆单进程 uvicorn 的根因）。仅执行编排
-    # script 节点的 worker 需要；放共享锚点对纯 API/调度服务无害。
-    KB_INTERNAL_DIRECT: ${KB_INTERNAL_DIRECT:-}
+    # 编排节点 weknora_rpc 直连开关（默认开）：进程内调 api.services，不经 HTTP，
+    # 消除 api-server 单点（40 并发编排打爆单进程 uvicorn 的根因）与登录凭证失效
+    # 故障（2026-10-20 实测 admin/sys 密码不匹配致 wiki构建-* 编排整批失败）。
+    # 直连模式唯一前提：进程能 import 平台 services（worker/api-server 容器均满足，
+    # PYTHONPATH=/srv/kb）；纯外部/独立脚本环境需显式置 0 走 HTTP 登录。
+    # 仅执行编排 script 节点的 worker 需要；放共享锚点对纯 API/调度服务无害。
+    KB_INTERNAL_DIRECT: ${KB_INTERNAL_DIRECT:-1}
 
 services:
   nginx:
