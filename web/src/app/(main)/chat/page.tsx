@@ -763,9 +763,9 @@ export default function ChatPage() {
           embed_query: true,
           model_id: modelId || undefined, // 2026-10-06: 模型切换（空=默认模型）
           web_search_enabled: webSearch, // 2026-10-12 对齐 WeKnora 输入区联网开关
-          // 2026-10-20 深度思考按钮已移除：固定 disabled——默认模型 deepseek-v4-pro 网关
-          // 默认开启思考，不显式禁用会一直输出推理过程（用户不需要思考展示）
-          thinking: false,
+          // 2026-10-20 深度思考按钮已移除：默认开启思考输出（用户要求保留思考展示）——
+          // 显式传 true，让模型 reasoning_content 经 thinking 事件流式返回并折叠展示
+          thinking: true,
           // 2026-10-18 对齐 WeKnora 图片仅随当轮注入：本轮图片附件 id（[]=本轮无图）
           image_attachment_ids: turnImageIds,
           // 2026-10-20 附件问答交互改造：本轮全部附件 id（图片+文档），
