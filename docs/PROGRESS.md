@@ -2,7 +2,16 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-20（问答页移除深度思考按钮 + 固定禁用思考）
+最后更新：2026-10-20（修复 chat/page.tsx 图片粘贴类型错误，解锁 CI 构建）
+
+## 34. 当前状态（2026-10-20 CI 构建失败修复：chat/page.tsx 图片粘贴类型错误）
+
+- **症状**：push dev 触发 CI，`bun run build` 在 TypeScript 阶段失败——`chat/page.tsx:711:31 Type error: Argument of type 'ChatAttachmentItem' is not assignable to parameter of type 'string'`（另 714 行同错），构建退出码 1，阻塞所有后续部署
+- **根因**：并行会话 34e6195（图片粘贴上传改造）在 709 行 `const attId = await uploadAttachment(...)`——`uploadAttachment` 返回 `Promise<ChatAttachmentItem | null>`（1077 行 `return res.data`），而调用处把返回值当 string 用：`turnImageIds.push(attId)`（应 push `attId.id`）、`localImages.push({ id: attId })`（应 `att.id`）
+- **修复（commit ac6a412，已推送 dev）**：`web/src/app/(main)/chat/page.tsx` 709-717 行——接收为 `att`，`if (att)` 后 `turnImageIds.push(att.id)`、`localImages.push({ id: att.id, ... })`；4 insertions/4 deletions
+- **验证**：`tsc --noEmit` exit 0（修复前快照 tsc 报同 2 错，见 §32 归因——当时已识别为并行会话在途代码预存问题，未代改；CI 构建坐实后必须修，阻断交付）
+- **部署注意**：前端源码改动 → CI 重建 kb-web 镜像生效（本次修复本身即 CI 构建产物）；工作区并行会话其他未提交文件（GlobalDropZone.tsx/UploadConfirmDialog.tsx/KbDocsPane.tsx/upload-dir.ts 等）未纳入提交
+- **坑位**：① 本地工作区 tsc 绿 ≠ 提交快照 tsc 绿（并行会话在途改动可能临时掩盖/恰好修复基线错误）——CI 构建以仓库 checkout 快照为准；② 类型错误在已提交快照坐实（CI 失败）后，即使是他人引入也必须修（阻断交付），commit message 注明来源
 
 ## 33. 当前状态（2026-10-20 问答页移除深度思考按钮）
 
@@ -15,7 +24,6 @@
 - **保留不动**：后端 qa.py/agents.py 的 thinking 参数（其他客户端可继续用）；消息里已保存的 thinking 字段与思考折叠块展示（历史消息回看）；QaStreamEvent thinking 事件处理
 - **验证**：worktree 独立分支（避开并行会话同文件编辑）grep 零 `deepThinking` 残留；tsc --noEmit 仅剩 2 个预存错误（并行会话 34e6195 引入的 ChatAttachmentItem 类型问题，未代修）；全量 pytest 799 passed / 10 failed 全为既有基线
 - **部署注意**：前端改动 → 重建 kb-web 镜像生效
-- **坑位**：① 深度思考按钮删除前曾经历两轮改动（23a0346 显式 false 透传 → 0f5ce24 移除入口），若用户后续要恢复思考展示，请求参数 `thinking: false` 固定值需改回可配置；② 本文件与并行会话（附件交互/图片按钮改造）多次同文件并发，最终删除在独立 worktree 分支完成并 rebase 合入，主工作区无残留
 
 ## 32. 当前状态（2026-10-20 知识库删除前校验智能体绑定）
 
