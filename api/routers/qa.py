@@ -32,6 +32,7 @@ from api.services.chat_sessions import (
     get_context_messages,
     get_session,
     set_attachment_caption,
+    update_message,
 )
 from api.services.identity import decode_identity_cookie
 
@@ -265,6 +266,49 @@ def _run_generation(
         image_description = ""
         plan_images: list[str] = image_urls
         include_doc_images = True
+        # 2026-10-20 增量持久化：生成过程中定期把已生成部分落库（同一消息 UPDATE），
+        # 而非等 finally 一次性落库——刷新/关页后重开会话也能看到已生成的部分内容。
+        # 首条 delta 时创建占位消息拿到 id，之后按时间节流 update，finally 终更。
+        assistant_message_id = ""
+        _last_persist_ts = 0.0
+
+        def _persist_partial(force: bool = False) -> None:
+            """把当前已生成内容写入会话消息（占位不存在则先创建）。"""
+            nonlocal assistant_message_id, _last_persist_ts
+            if not (session and user_id and req.session_id):
+                return
+            content = "".join(answer_parts)
+            if not content and not thinking_parts and not refs:
+                return  # 尚无任何内容，不建占位（避免空消息）
+            now = time.time()
+            if not force and now - _last_persist_ts < 1.0:
+                return  # 节流：至少 1 秒写一次
+            try:
+                if assistant_message_id:
+                    update_message(
+                        db, user_id, req.session_id, assistant_message_id,
+                        content=content, refs=refs,
+                        thinking="".join(thinking_parts) if thinking_parts else None,
+                    )
+                else:
+                    saved = append_message(
+                        db, user_id, req.session_id, "assistant",
+                        content,
+                        refs=refs,
+                        thinking="".join(thinking_parts) if thinking_parts else None,
+                    )
+                    assistant_message_id = saved.get("id") or ""
+                    # 2026-10-20 增量落库完成首写：向前端暴露服务端消息 id，
+                    # 前端刷新后续拉时若命中这条消息则直接复用（不再插入重复占位）
+                    if assistant_message_id:
+                        store.append_event(
+                            stream_id,
+                            {"type": "assistant_message", "message_id": assistant_message_id},
+                        )
+                _last_persist_ts = now
+            except Exception as e:  # noqa: BLE001
+                logger.warning("incremental persist assistant failed: %s", e)
+
         try:
             requested_cfg = None
             if req.model_id:
@@ -387,21 +431,26 @@ def _run_generation(
                 elif event.get("type") == "delta":
                     answer_parts.append(event.get("text", ""))
                     store.append_event(stream_id, {"type": "delta", "text": event.get("text", "")})
+                    _persist_partial()  # 2026-10-20 增量落库：生成中定期保存已生成部分
                 else:
                     store.append_event(stream_id, event)
         except Exception as e:  # noqa: BLE001
             logger.exception("qa generation failed")
             store.append_event(stream_id, {"type": "error", "message": str(e)})
         finally:
-            # persist assistant message (content + refs + thinking)
-            assistant_message_id = ""
+            # 终更 assistant 消息：增量持久化已建占位则 UPDATE 同一消息（保留中间
+            # 已落库内容），否则（无内容场景）回落原 append 逻辑。
             if session and user_id and req.session_id:
                 try:
-                    payload = {"content": "".join(answer_parts), "refs": refs}
-                    if thinking_parts:
-                        payload["thinking"] = "".join(thinking_parts)
-                    saved = append_message(db, user_id, req.session_id, "assistant", **payload)
-                    assistant_message_id = saved.get("id") or ""
+                    _persist_partial(force=True)
+                    if not assistant_message_id:
+                        # 全程无 delta（如空回答/失败）：与旧行为一致，补一条空助手消息
+                        saved = append_message(
+                            db, user_id, req.session_id, "assistant",
+                            "".join(answer_parts), refs=refs,
+                            thinking="".join(thinking_parts) if thinking_parts else None,
+                        )
+                        assistant_message_id = saved.get("id") or ""
                 except Exception as e:  # noqa: BLE001
                     logger.warning("persist assistant failed: %s", e)
             # 2026-10-14 done 事件带回持久化消息 id：前端据此把本地占位 id

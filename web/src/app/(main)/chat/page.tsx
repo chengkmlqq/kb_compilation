@@ -432,14 +432,14 @@ export default function ChatPage() {
   const tryResume = async (sessionId: string) => {
     const raw = sessionStorage.getItem(QA_RESUME_KEY(sessionId));
     if (!raw) return;
-    let anchor: { stream_id: string; offset: number };
+    let anchor: { stream_id: string; offset: number; assistant_message_id?: string };
     try {
       anchor = JSON.parse(raw);
     } catch {
       sessionStorage.removeItem(QA_RESUME_KEY(sessionId));
       return;
     }
-    const { stream_id, offset } = anchor;
+    const { stream_id, offset, assistant_message_id } = anchor;
     setResuming(true);
     try {
       const resp = await fetch(`/api/v1/qa/stream/${stream_id}?after=${offset}`, {
@@ -454,10 +454,16 @@ export default function ChatPage() {
       let fullThinking = "";
       let refs: ChatRefItem[] = [];
       let resumeDone = false;
-      // 补一个续传占位消息（若最后一条不是本流助手消息）
+      // 2026-10-20 增量持久化：后端已把部分内容落库并暴露消息 id，刷新后加载历史
+      // 已含该条 assistant 消息——命中则直接复用续拉（不插占位，避免同一回答出现两条）；
+      // 未命中（流刚开始、尚无落库内容）仍按旧逻辑插入 resume 占位。
       const lastMsg = msgsRef.current?.[msgsRef.current.length - 1];
-      const needPlaceholder =
-        !lastMsg || lastMsg.role !== "assistant" || lastMsg.streaming !== true;
+      const hitServerMsg =
+        !!assistant_message_id &&
+        !!lastMsg &&
+        lastMsg.role === "assistant" &&
+        lastMsg.id === assistant_message_id;
+      const needPlaceholder = !hitServerMsg;
       const placeholderId = `resume-ai-${Date.now()}`;
       if (needPlaceholder) {
         setMsgs((prev) => [
@@ -787,6 +793,9 @@ export default function ChatPage() {
       let streamId = "";
       let eventCount = 0;
       let streamDone = false;
+      // 2026-10-20 增量持久化：后端首写助手消息后回传服务端 id，存入锚点，
+      // 刷新后 tryResume 命中该消息则复用续拉（避免同一回答出现两条）。
+      let anchorAssistantId = "";
 
       while (true) {
         if (streamDone) {
@@ -879,6 +888,19 @@ export default function ChatPage() {
                   JSON.stringify({ stream_id: streamId, offset: 0 }),
                 );
               }
+            } else if (evt.type === "assistant_message") {
+              // 2026-10-20 增量持久化：后端已首写助手消息，记录服务端 id 供刷新后复用
+              anchorAssistantId = (evt.message_id || "").trim();
+              if (sessionId && streamId && anchorAssistantId) {
+                sessionStorage.setItem(
+                  QA_RESUME_KEY(sessionId),
+                  JSON.stringify({
+                    stream_id: streamId,
+                    offset: eventCount,
+                    assistant_message_id: anchorAssistantId,
+                  }),
+                );
+              }
             } else if (evt.type === "error") {
               toast.error(evt.message || "问答失败");
             } else if (evt.type === "done") {
@@ -896,7 +918,11 @@ export default function ChatPage() {
             if (sessionId && streamId) {
               sessionStorage.setItem(
                 QA_RESUME_KEY(sessionId),
-                JSON.stringify({ stream_id: streamId, offset: eventCount }),
+                JSON.stringify({
+                  stream_id: streamId,
+                  offset: eventCount,
+                  ...(anchorAssistantId ? { assistant_message_id: anchorAssistantId } : {}),
+                }),
               );
             }
           } catch {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
@@ -337,6 +338,37 @@ def agent_qa_stream(
         image_description = ""
         plan_images: list[str] = image_urls
         include_doc_images = True
+        # 2026-10-20 增量持久化（对齐 qa.py）：生成中定期把已生成部分落库，
+        # 刷新/关页后重开会话不丢中间内容；首条 delta 建占位，finally 终更。
+        assistant_message_id = ""
+        _last_persist_ts = 0.0
+
+        def _persist_partial(force: bool = False) -> None:
+            nonlocal assistant_message_id, _last_persist_ts
+            if not (req.session_id and user_id):
+                return
+            content = "".join(answer_parts)
+            if not content and not refs:
+                return  # 尚无内容不建占位（避免空消息）
+            now = time.time()
+            if not force and now - _last_persist_ts < 1.0:
+                return
+            try:
+                from api.services.chat_sessions import append_message, update_message
+
+                if assistant_message_id:
+                    update_message(
+                        db, user_id, req.session_id, assistant_message_id,
+                        content=content, refs=refs,
+                    )
+                else:
+                    saved = append_message(
+                        db, user_id, req.session_id, "assistant", content, refs=refs
+                    )
+                    assistant_message_id = saved.get("id") or ""
+                _last_persist_ts = now
+            except Exception as e:  # noqa: BLE001
+                logger.warning("incremental persist agent assistant failed: %s", e)
         # 2026-10-12: 模型选择生效——指定模型则显式解析（文本/图片均生效），
         # 与 qa.py 的 _run_generation 同款逻辑；解析失败回退默认模型。
         requested_cfg = None
@@ -473,6 +505,7 @@ def agent_qa_stream(
                     event["kb_id"] = kb.id
                     if event.get("type") == "delta":
                         answer_parts.append(event.get("text", ""))
+                        _persist_partial()  # 2026-10-20 增量落库：生成中定期保存已生成部分
                     elif event.get("type") == "context":
                         hits = event.get("hits") or []
                         refs = [
@@ -484,16 +517,17 @@ def agent_qa_stream(
             logger.exception("agent qa failed for kb %s", last_kb_id)
             yield _sse({"type": "error", "message": str(e), "kb_id": last_kb_id})
         finally:
-            # 会话模式：持久化助手回答
-            assistant_message_id = ""
+            # 会话模式：终更助手消息（增量占位已建则 UPDATE 同一消息，否则补 append）
             if req.session_id and user_id:
                 try:
                     from api.services.chat_sessions import append_message
 
-                    saved = append_message(
-                        db, user_id, req.session_id, "assistant", "".join(answer_parts), refs=refs
-                    )
-                    assistant_message_id = saved.get("id") or ""
+                    _persist_partial(force=True)
+                    if not assistant_message_id:
+                        saved = append_message(
+                            db, user_id, req.session_id, "assistant", "".join(answer_parts), refs=refs
+                        )
+                        assistant_message_id = saved.get("id") or ""
                 except Exception as e:  # noqa: BLE001
                     logger.warning("failed to persist agent assistant message: %s", e)
             # 2026-10-14 done 事件带回持久化消息 id：前端据此把本地占位 id 换成服务端 id，
