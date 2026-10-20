@@ -45,6 +45,36 @@ def test_config_to_dict_roundtrip() -> None:
     assert cfg2.agent_mode == "smart-reasoning"
 
 
+# ── 2026-10-20 对齐 WeKnora：有效系统提示词「非空即用」 ─────────────────
+
+
+def _agent(**cfg_kwargs) -> KbAgent:
+    return KbAgent(id="a1", name="测试", team_name="T1", config=cfg_kwargs or None)
+
+
+def test_effective_system_prompt_prefers_custom() -> None:
+    from api.services.agents import effective_system_prompt
+
+    agent = _agent(system_prompt="你是制度专家。")
+    assert effective_system_prompt(agent, default="默认提示词") == "你是制度专家。"
+
+
+def test_effective_system_prompt_falls_back_to_default() -> None:
+    from api.services.agents import effective_system_prompt
+
+    agent = _agent(system_prompt="   ")
+    assert effective_system_prompt(agent, default="默认提示词") == "默认提示词"
+
+
+def test_effective_system_prompt_ignores_switch_flag() -> None:
+    """对齐 WeKnora：use_custom_system_prompt 开关不参与判断，非空即用。
+    旧配置开关为 False 但填了内容时依然生效（避免语义陷阱）。"""
+    from api.services.agents import effective_system_prompt
+
+    agent = _agent(use_custom_system_prompt=False, system_prompt="填了就用。")
+    assert effective_system_prompt(agent, default="默认提示词") == "填了就用。"
+
+
 @pytest.fixture()
 def agent_db():
     engine = create_engine("sqlite:///:memory:")

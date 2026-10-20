@@ -175,11 +175,53 @@ CITATION_INSTRUCTIONS = (
 )
 
 
+# ── 提示词占位符渲染（2026-10-20 对齐 WeKnora types.RenderPromptPlaceholders）──
+# 系统提示词与上下文模板支持 {{query}} / {{contexts}} / {{current_time}} /
+# {{current_week}} / {{language}} 占位符，按字段在渲染时替换。未命中的
+# {{...}} 原样保留（与 WeKnora 行为一致），避免误伤字面量。
+PROMPT_PLACEHOLDERS = ("query", "contexts", "current_time", "current_week", "language")
+
+
+def render_prompt_placeholders(
+    template: str,
+    *,
+    query: str = "",
+    contexts: str = "",
+    language: str = "zh-CN",
+    now: float | None = None,
+) -> str:
+    """Replace {{query}}/{{contexts}}/{{current_time}}/{{current_week}}/{{language}}.
+
+    对齐 WeKnora types.RenderPromptPlaceholders 的占位符语义：
+    - {{query}} = 用户本次问题
+    - {{contexts}} = 序列化后的检索片段块（serialize_context 输出，空串时替换为空）
+    - {{current_time}} / {{current_week}} = 当前时间 / 星期（北京时区展示）
+    - {{language}} = 会话语言（当前固定 zh-CN）
+    """
+    if "{{" not in template:
+        return template
+    import datetime as _dt
+
+    dt = _dt.datetime.fromtimestamp(now) if now is not None else _dt.datetime.now()
+    week_cn = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+    values = {
+        "query": query,
+        "contexts": contexts,
+        "current_time": dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "current_week": week_cn[dt.weekday()],
+        "language": language,
+    }
+    out = template
+    for key, val in values.items():
+        out = out.replace("{{" + key + "}}", val)
+    return out
+
+
 SYSTEM_PROMPT = (
     "你是一个知识库问答助手。请仅依据下方提供的检索片段回答问题，"
     "不得编造片段中不存在的内容。\n"
     + CITATION_INSTRUCTIONS
-    + "\n\n以下是检索到的知识片段：\n{context}"
+    + "\n\n以下是检索到的知识片段：\n{{contexts}}"
 )
 
 
@@ -189,14 +231,21 @@ def build_messages(
     history: list[ChatMessage] | None = None,
     extra_context: str = "",
     agent_prompt: str = "",
+    context_template: str = "",
     image_urls: list[str] | None = None,
     image_description: str = "",
+    language: str = "zh-CN",
 ) -> list[ChatMessage]:
     """Build the message list: system (with context) + history + user question.
 
     extra_context (session attachments, already markdown) is appended to the
     system prompt so the model can answer from attached documents.
     agent_prompt overrides the default system prompt (agent persona).
+    context_template (2026-10-20 对齐 WeKnora)：非空时整体渲染进 user 消息，
+    支持 {{query}}/{{contexts}}/{{current_time}}/{{current_week}}/{{language}}
+    占位符——即「问题+检索片段如何组织」由上下文模板决定；此时 extra_context
+    仍拼进 system（附件作为补充上下文）。为空时保持旧逻辑：questions 原样
+    作为 user 消息。
     image_urls (session image attachments, data URLs) are attached to the
     user message as OpenAI content-array image parts (multimodal QA).
     image_description: 非视觉模型路径的图像文本描述，以「[用户上传图片内容]」拼进
@@ -204,32 +253,51 @@ def build_messages(
     """
     context = serialize_context(hits)
     if context or extra_context:
-        parts = []
-        if context:
-            parts.append(f"以下为知识库检索片段：\n{context}")
-        if extra_context:
-            parts.append(f"以下为本次会话上传的附件文档内容：\n{extra_context}")
         base = (
             "你是一个知识库问答助手。请优先依据提供的检索片段和附件文档回答问题；"
             "若信息不足，请明确说明。\n"
             + CITATION_INSTRUCTIONS
         )
-        # agent 人设也要带引用规范，否则 agent 路径的引用仍是裸 id
-        system = (
-            (base if not agent_prompt else agent_prompt + "\n\n" + CITATION_INSTRUCTIONS)
-            + "\n\n"
-            + "\n\n".join(parts)
-        )
+        # 2026-10-20 对齐 WeKnora：agent 人设可能自带引用规范与 {{contexts}}
+        # 占位符（默认 SYSTEM_PROMPT 即含），避免重复注入——CITATION 已在模板
+        # 中则不追加；片段由 {{contexts}} 占位符渲染注入或拼尾部二选一。
+        template = base if not agent_prompt else agent_prompt
+        if CITATION_INSTRUCTIONS not in template:
+            template += "\n\n" + CITATION_INSTRUCTIONS
+        if "{{contexts}}" in template:
+            # 模板声明了片段位置 → 由占位符渲染注入，附件仍追加尾部
+            system = template
+            if extra_context:
+                system += "\n\n以下为本次会话上传的附件文档内容：\n" + extra_context
+        else:
+            parts = []
+            if context:
+                parts.append(f"以下为知识库检索片段：\n{context}")
+            if extra_context:
+                parts.append(f"以下为本次会话上传的附件文档内容：\n{extra_context}")
+            system = template + "\n\n" + "\n\n".join(parts)
     else:
         # 2026-10-15 纯对话模式（未选知识库 / 检索零命中）：不注入检索片段，
         # 用通用助手人设自由回答；信息不足时明确说明，避免编造。
         system = agent_prompt or "你是一个智能问答助手。请直接、准确地回答用户的问题；信息不足时请明确说明，不要编造。"
+    # 2026-10-20 占位符渲染（对齐 WeKnora）：{{query}}/{{contexts}}/时间/语言
+    # 在 system 提示词里替换；contexts 用检索片段 JSON 块，query 用本次问题。
+    system = render_prompt_placeholders(
+        system, query=question, contexts=context, language=language
+    )
     messages = [ChatMessage(role="system", content=system)]
     messages.extend(history or [])
-    user_content = question
+    if context_template:
+        # 2026-10-20 对齐 WeKnora into_chat_message.go：上下文模板决定 user 消息
+        # 组织（{{query}}/{{contexts}} 等占位符整体渲染），附件/图片描述追加其后
+        user_content = render_prompt_placeholders(
+            context_template, query=question, contexts=context, language=language
+        )
+    else:
+        user_content = question
     if image_description:
         # 图片文本描述：模型看不了图时（非视觉模型 / OIP 协议）注入（WeKnora 同款）
-        user_content = question + IMAGE_CONTENT_PREFIX + image_description
+        user_content = user_content + IMAGE_CONTENT_PREFIX + image_description
     messages.append(
         ChatMessage(role="user", content=user_content, images=image_urls or None)
     )
@@ -658,6 +726,7 @@ def answer_question(
     chat_cfg: ChatConfig | None = None,
     extra_context: str = "",
     agent_prompt: str = "",
+    context_template: str = "",
     image_urls: list[str] | None = None,
     image_description: str = "",
     include_doc_images: bool = True,
@@ -785,7 +854,8 @@ def answer_question(
     images = list(image_urls or []) + doc_images
     messages = build_messages(
         question, hits, normalized,
-        extra_context=extra_context, agent_prompt=agent_prompt, image_urls=images,
+        extra_context=extra_context, agent_prompt=agent_prompt,
+        context_template=context_template, image_urls=images,
         image_description=image_description,
     )
     client = ChatClient(chat_cfg)

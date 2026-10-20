@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   App,
+  Button,
   Checkbox,
   Col,
   Divider,
@@ -46,6 +47,15 @@ import {
 import AgentAvatar from "@/components/AgentAvatar";
 
 const { TextArea } = Input;
+
+// 2026-10-20 提示词占位符（对齐 WeKnora /agents/placeholders 的 5 个通用占位符）
+const PROMPT_PLACEHOLDER_TAGS = [
+  { token: "{{query}}", label: "用户问题" },
+  { token: "{{contexts}}", label: "检索片段" },
+  { token: "{{current_time}}", label: "当前时间" },
+  { token: "{{current_week}}", label: "当前星期" },
+  { token: "{{language}}", label: "语言" },
+];
 
 export interface AgentEditorValues {
   name: string;
@@ -132,7 +142,6 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
       description: initial?.description ?? "",
       agent_mode: c.agent_mode ?? "quick-answer",
       system_prompt: c.system_prompt ?? "",
-      use_custom_system_prompt: c.use_custom_system_prompt ?? false,
       context_template: c.context_template ?? "",
       model_id: c.model_id ?? "",
       rerank_model_id: c.rerank_model_id ?? "",
@@ -191,6 +200,26 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
     [kbs]
   );
 
+  // 2026-10-20 占位符插入：在系统提示词/上下文模板光标处插入 {{xxx}}
+  const insertPlaceholder = (field: "system_prompt" | "context_template", token: string) => {
+    const el = document.activeElement as HTMLTextAreaElement | null;
+    const current = String(form.getFieldValue(field) || "");
+    if (el && el.tagName === "TEXTAREA" && el.selectionStart != null) {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const next = current.slice(0, start) + token + current.slice(end);
+      form.setFieldValue(field, next);
+      // 光标回到插入点之后，方便连续插入
+      requestAnimationFrame(() => {
+        el.focus();
+        const pos = start + token.length;
+        el.setSelectionRange(pos, pos);
+      });
+    } else {
+      form.setFieldValue(field, current + token);
+    }
+  };
+
   const onOk = async () => {
     const v = await form.validateFields().catch(() => null);
     if (!v) return;
@@ -198,7 +227,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
     const config: Record<string, unknown> = {
       agent_mode: v.agent_mode,
       system_prompt: v.system_prompt,
-      use_custom_system_prompt: v.use_custom_system_prompt,
+      use_custom_system_prompt: v.use_custom_system_prompt ?? false,
       context_template: v.context_template,
       model_id: v.model_id,
       rerank_model_id: v.rerank_model_id,
@@ -317,18 +346,60 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
             {section === "prompts" && (
               <>
                 <Form.Item
-                  name="use_custom_system_prompt"
-                  label="启用自定义系统提示词"
-                  valuePropName="checked"
-                  extra="关闭时使用平台默认提示词；开启后可自行设定智能体的角色、行为与回答风格"
+                  name="system_prompt"
+                  label="系统提示词"
+                  extra="留空使用平台默认提示词；填写即自定义。支持占位符：{{query}} 用户问题、{{contexts}} 检索片段、{{current_time}}、{{current_week}}、{{language}}"
                 >
-                  <Switch />
+                  <TextArea rows={6} placeholder="设定智能体的角色、行为与回答风格…（支持 {{query}} / {{contexts}} 等占位符）" />
                 </Form.Item>
-                <Form.Item name="system_prompt" label="系统提示词" extra="设定智能体的角色定位、行为准则与回答风格，直接影响回答质量">
-                  <TextArea rows={6} placeholder="设定智能体的角色、行为与回答风格…" />
+                <Form.Item
+                  label="可用占位符"
+                  extra="点击插入到光标处，用于在提示词中引用用户问题或检索片段"
+                >
+                  <Space wrap size={[4, 4]}>
+                    {PROMPT_PLACEHOLDER_TAGS.map((p) => (
+                      <Button
+                        key={p.token}
+                        size="small"
+                        type="dashed"
+                        style={{ fontFamily: "monospace", fontSize: 12 }}
+                        onClick={() => insertPlaceholder("system_prompt", p.token)}
+                      >
+                        {p.token}
+                        <span style={{ marginLeft: 4, color: "#999", fontSize: 12 }}>
+                          {p.label}
+                        </span>
+                      </Button>
+                    ))}
+                  </Space>
                 </Form.Item>
-                <Form.Item name="context_template" label="上下文模板（可选）" extra="高级选项，一般场景可留空；用于组织问答时的上下文结构">
-                  <TextArea rows={3} />
+                <Form.Item
+                  name="context_template"
+                  label="上下文模板（可选）"
+                  extra="组织发送给模型的用户消息结构（问题与检索片段的排布方式）；留空 = 问题原文直接发送。同样支持占位符"
+                >
+                  <TextArea rows={3} placeholder='如：参考材料：\n{{contexts}}\n\n问题：{{query}}' />
+                </Form.Item>
+                <Form.Item
+                  label="上下文模板可用占位符"
+                  extra="点击插入到光标处"
+                >
+                  <Space wrap size={[4, 4]}>
+                    {PROMPT_PLACEHOLDER_TAGS.map((p) => (
+                      <Button
+                        key={p.token}
+                        size="small"
+                        type="dashed"
+                        style={{ fontFamily: "monospace", fontSize: 12 }}
+                        onClick={() => insertPlaceholder("context_template", p.token)}
+                      >
+                        {p.token}
+                        <span style={{ marginLeft: 4, color: "#999", fontSize: 12 }}>
+                          {p.label}
+                        </span>
+                      </Button>
+                    ))}
+                  </Space>
                 </Form.Item>
               </>
             )}

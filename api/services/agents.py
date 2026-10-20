@@ -397,6 +397,16 @@ def resolve_agent_qa_overrides(agent: KbAgent) -> dict:
 
 
 def effective_system_prompt(agent: KbAgent, default: str = SYSTEM_PROMPT) -> str:
-    """Agent's system prompt, falling back to the default RAG prompt."""
+    """Agent's system prompt, falling back to the default RAG prompt.
+
+    2026-10-20 对齐 WeKnora：前端无「启用自定义」开关，「非空即用」——
+    system_prompt 有内容即生效，留空回退默认。旧配置里的
+    use_custom_system_prompt 开关不再参与判断（避免填了内容却不生效的
+    语义陷阱），system_prompt_id 预留模板引用兜底。
+    """
     cfg = config_from_dict(agent.config or {})
-    return cfg.system_prompt.strip() or default
+    if cfg.system_prompt.strip():
+        return cfg.system_prompt.strip()
+    if cfg.system_prompt_id:
+        return default
+    return default

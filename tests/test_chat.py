@@ -69,6 +69,70 @@ def test_build_messages_no_context_uses_fallback_system() -> None:
     assert "信息不足时请明确说明" in messages[0].content
 
 
+# ── 2026-10-20 对齐 WeKnora：提示词占位符 + 上下文模板 ─────────────────
+
+
+def test_render_prompt_placeholders_basic() -> None:
+    """{{query}}/{{contexts}}/{{language}}/时间占位符按字段替换。"""
+    from api.services.chat import render_prompt_placeholders
+
+    out = render_prompt_placeholders(
+        "问：{{query}}\n材料：{{contexts}}\n语言：{{language}}\n{{current_time}} {{current_week}}",
+        query="什么是数据中台",
+        contexts="片段块",
+        language="zh-CN",
+        now=0,  # 1970-01-01 星期四（UTC 本地时区下仍为星期四/四）
+    )
+    assert "问：什么是数据中台" in out
+    assert "材料：片段块" in out
+    assert "语言：zh-CN" in out
+    assert "{{current_time}}" not in out
+    assert "{{current_week}}" not in out
+
+
+def test_render_prompt_placeholders_keeps_unknown_tokens() -> None:
+    """未识别的 {{...}} 原样保留（对齐 WeKnora 行为）。"""
+    from api.services.chat import render_prompt_placeholders
+
+    out = render_prompt_placeholders("{{unknown}} {{query}}", query="q")
+    assert "{{unknown}}" in out
+    assert "q" in out
+
+
+def test_build_messages_context_template_renders_user_message() -> None:
+    """对齐 WeKnora into_chat_message：context_template 决定 user 消息组织。"""
+    messages = build_messages(
+        "什么是数据中台？",
+        [_hit()],
+        context_template="参考材料：\n{{contexts}}\n\n问题：{{query}}",
+    )
+    user = messages[-1]
+    assert user.role == "user"
+    assert "参考材料：" in user.content
+    assert "问题：什么是数据中台？" in user.content
+    assert "search_results" in user.content  # 片段渲染进 user（模板声明位置）
+
+
+def test_build_messages_default_prompt_renders_contexts_placeholder() -> None:
+    """默认 SYSTEM_PROMPT 含 {{contexts}}：渲染后不残留占位符、片段不重复注入。"""
+    from api.services.chat import SYSTEM_PROMPT
+
+    messages = build_messages("问题", [_hit()], agent_prompt=SYSTEM_PROMPT)
+    system = messages[0].content
+    assert "{{contexts}}" not in system
+    assert system.count("search_results") == 1  # 占位符注入一次，不重复拼尾部
+    assert messages[-1].content == "问题"
+
+
+def test_build_messages_custom_prompt_without_placeholder_appends_context() -> None:
+    """自定义提示词不含 {{contexts}} 时保持旧行为：片段拼在 system 尾部。"""
+    messages = build_messages("问题", [_hit()], agent_prompt="你是制度问答专家。")
+    system = messages[0].content
+    assert system.startswith("你是制度问答专家。")
+    assert "search_results" in system
+    assert "引用规范" in system  # 自动追加引用规范
+
+
 def test_chat_client_endpoint_normalization() -> None:
     from api.services.chat import ChatClient
 

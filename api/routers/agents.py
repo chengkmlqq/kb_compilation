@@ -461,6 +461,7 @@ def agent_qa_stream(
                     image_description=image_description if idx == 0 else "",
                     include_doc_images=include_doc_images,
                     agent_prompt=agent_prompt or "",
+                    context_template=(agent_cfg.context_template or "").strip(),  # 2026-10-20 对齐 WeKnora
                     user_id=ctx_user_id,
                     team_name=ctx_team_name,
                     is_sys_admin=ctx_is_admin,
