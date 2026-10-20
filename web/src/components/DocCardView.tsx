@@ -81,20 +81,29 @@ export function docStageTag(d: DocItem): ReactNode {
   const summaryDetail = sum.text; // 摘要完成/摘要失败/摘要未生成
   const wikiDetail = wiki.text; // 构建完成/构建失败/构建中/构建未生成
   const detail = `已就绪 · ${summaryDetail} · ${wikiDetail}`;
-  const anyFailed = sum.color === "error" || wiki.color === "error";
-  const anyRunning = sum.color === "processing" || wiki.color === "processing";
-  if (anyFailed) {
-    return <Tag color="error">处理失败</Tag>;
+  // 失败细分（2026-10-21）：摘要编排失败（summary_status=FAILED，编排 run 失败
+  // 回写）与构建失败分开标注，不再笼统显示「处理失败」
+  const sumFailed = sum.color === "error";
+  const wikiFailed = wiki.color === "error";
+  if (sumFailed || wikiFailed) {
+    const text = sumFailed && wikiFailed ? "摘要/构建失败" : sumFailed ? "摘要失败" : "构建失败";
+    return <Tag color="error" title={detail}>{text}</Tag>;
   }
+  const anyRunning = sum.color === "processing" || wiki.color === "processing";
   if (anyRunning) {
-    return <Tag color="processing">处理中</Tag>;
+    return <Tag color="processing" title={detail}>处理中</Tag>;
   }
   const bothDone = sum.color === "success" && wiki.color === "success";
   if (bothDone) {
-    return <Tag color="success">已就绪</Tag>;
+    return <Tag color="success" title={detail}>已就绪</Tag>;
   }
-  // 摘要/构建未生成（未配置或未触发）——视为就绪但未走完整管线
-  return <Tag color="default">已就绪</Tag>;
+  // 灰色「已就绪」按缺项细分（2026-10-21）：解析完成但摘要/构建至少一段未生成
+  const sumMissing = sum.color === "default"; // 摘要未生成（未配置摘要或编排失败未回写）
+  const wikiMissing = wiki.color === "default"; // 构建未生成（未配构建引擎/手动模式/未触发）
+  const text = !sumMissing && wikiMissing ? "已就绪·未构建"
+    : sumMissing && !wikiMissing ? "已就绪·无摘要"
+    : "已就绪·待生成";
+  return <Tag color="default" title={detail}>{text}</Tag>;
 }
 
 /**

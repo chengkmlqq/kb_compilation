@@ -2,7 +2,20 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-20（修复新建知识库分区表单取值缺失：停留在检索配置时提交报 name: Field required）
+最后更新：2026-10-21（摘要编排失败回写 FAILED + 文档状态标签区分摘要失败/构建失败/未构建/无摘要）
+
+## 37. 当前状态（2026-10-21 摘要编排失败标记 + 已就绪状态区分）
+
+- **需求**：① 摘要编排失败也要在文档列表标出来（此前摘要 run 失败 summary_status 永远留 "" → 灰色「已就绪」，与「没配摘要」无法区分）；② 两个「已就绪」（绿=全流程完成 / 灰=有缺项）在文案上区分
+- **根因**：摘要编排 run 失败时没有任何回写 kb_document.summary_status 的路径（只由 kb_write_doc_summary 原子写 READY，全文搜索确认无写 FAILED 点）→ 摘要失败与摘要未生成同态
+- **实现（三层）**：
+  1. `worker/tasks/doc_process.py` `_enqueue_summary_task`：摘要 run 的 inputs 加 `"purpose": "summary"` 身份标记（构建/题材分析/手动执行 run 无此标记，不受影响）
+  2. `worker/tasks/orch_runner.py`：新增 `_mark_summary_failed(inputs, error)`——仅 purpose=summary 且有 document_id 时回写 `summary_status=FAILED` + `summary_error`（截 500 字，守卫：已有 READY 不被旧失败 run 覆盖，回写异常不阻断编排）；`_update_run` 置 failed 终态时自动调用（覆盖「编排不存在」与节点失败终态两条路径）。⚠️ 函数内 `from api.db import get_sessionmaker`（模块顶部 import 的绑定不响应测试 monkeypatch）
+  3. `web/src/components/DocCardView.tsx` `docStageTag`：失败细分（摘要失败/构建失败/摘要与构建失败，红）；灰色「已就绪」按缺项细分：`已就绪·未构建`（摘要完成构建未生成）/ `已就绪·无摘要`（构建完成摘要未生成）/ `已就绪·待生成`（都缺）；所有状态 Tag 挂 title 悬浮显示「已就绪 · 摘要xx · 构建xx」三段详情
+- **测试**：新增 `tests/test_summary_failed_mark.py` 7 用例（回写/非摘要不动/未知 purpose 不动/READY 不覆盖/_update_run failed 触发/success 不触发/非摘要 failed 不动）；43 passed（+ domain_guided_build + orchestration_engine 回归）
+- **验证**：tsc --noEmit exit 0；定向 pytest 43 passed。⚠️ 全量 pytest 现被 `api/routers/jobs.py:467` 语法错误阻塞——并行会话在途改动（107+/17-，run 耗时对齐逻辑）把 _run_duration_ms docstring 开头 `"""` 丢了，import api.main 即 SyntaxError，非本次改动，未代改
+- **部署注意**：doc_process.py/orch_runner.py 属 worker/API 层 → 重建 kb-api-server + 4 celery worker（或 docker cp 热修 + restart）；DocCardView 属前端 → 重建 kb-web。存量已失败的摘要 run 不回补（只对新失败生效）
+- **坑位**：① 磁盘上 summary_status=FAILED 的旧数据不存在（该状态此前从未写入），前端 FAILED 分支是新链路产物；② 手动在编排页执行摘要 run 无 purpose 标记 → 失败不会回写文档（有意设计：手动调试不干扰业务状态）；③ jobs.py 语法错误会随并行会话提交进 CI 必红——若对方提交前未修复需补 `"""`
 
 ## 36. 当前状态（2026-10-20 新建知识库分区表单取值缺失修复）
 

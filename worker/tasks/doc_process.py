@@ -467,6 +467,10 @@ def _enqueue_summary_task(
             "only_codes": "",
             "build_summary": "",
             "language": "中文",
+            # 2026-10-21 摘要编排身份标记：run 失败时 orch_runner 据此把
+            # kb_document.summary_status 回写 FAILED（此前摘要编排失败只留
+            # 空状态，文档列表灰色「已就绪」，无法区分「没配摘要」与「摘要失败」）。
+            "purpose": "summary",
             # 2026-10-13 增量修订：Refine 编排把历史摘要（kb_document.summary）
             # 作为滚动起点（n2 读 prev_summary）；其它模式忽略该键。
             "prev_summary": (doc.summary or "").strip(),

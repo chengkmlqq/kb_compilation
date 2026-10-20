@@ -141,18 +141,59 @@ def _append_step_result(run_id: str, result: dict, env: str | None = None) -> No
         db.close()
 
 
+def _mark_summary_failed(inputs: dict, error: str) -> None:
+    """摘要编排 run 失败 → 回写 kb_document.summary_status=FAILED + summary_error。
+
+    仅文档链触发的摘要 run（inputs.purpose == "summary" 且有 document_id）回写；
+    构建编排/题材分析/用户在编排页手动执行的 run 不受影响。幂等：文档已有
+    成功摘要（READY）不被旧失败 run 覆盖。回写失败不阻断编排（尽力而为）。
+    """
+    if (str(inputs.get("purpose") or "") != "summary"):
+        return
+    doc_id = str(inputs.get("document_id") or inputs.get("doc_id") or "")
+    if not doc_id:
+        return
+    try:
+        from api.models.knowledge import KbDocument
+        from api.db import get_sessionmaker  # 函数内取模块属性，测试 monkeypatch 生效
+
+        db = get_sessionmaker()()  # kb_document 在业务库（环境无关），用常规会话
+        try:
+            doc = db.get(KbDocument, doc_id)
+            if not doc:
+                return
+            if doc.summary_status == "READY":
+                return
+            doc.summary_status = "FAILED"
+            doc.summary_error = (error or "摘要编排执行失败")[:500]
+            db.commit()
+            logger.warning(
+                "summary run failed → kb_document %s summary_status=FAILED (%s)",
+                doc_id, (error or "")[:200],
+            )
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 — 回写失败不阻断编排
+        logger.exception("mark summary failed for document %s", doc_id)
+
+
 def _update_run(run_id: str, env: str | None = None, **fields) -> None:
     db = _run_db(env)
+    run_inputs: dict | None = None
     try:
         _lock_run(db, run_id)
         run = db.get(TapeRun, run_id)
         if not run:
             return
+        run_inputs = dict(run.inputs or {})
         for k, v in fields.items():
             setattr(run, k, v)
         db.commit()
     finally:
         db.close()
+    # 编排 run 进入 failed 终态 → 摘要 run 回写文档摘要失败状态（2026-10-21）
+    if fields.get("status") == "failed" and run_inputs is not None:
+        _mark_summary_failed(run_inputs, str(fields.get("error") or ""))
 
 
 def _bindings_from_run(run_id: str, env: str | None = None) -> dict:
