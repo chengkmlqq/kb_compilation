@@ -416,6 +416,8 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                   >
                     <Select
                       allowClear
+                      showSearch
+                      optionFilterProp="label"
                       placeholder="选择分类"
                       options={categories.map((c) => ({ label: c.name, value: c.name }))}
                     />
@@ -443,7 +445,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                     <Row gutter={16}>
                       <Col span={16}>
                         <Form.Item name="strategy" label="切片策略">
-                          <Select options={STRATEGY_OPTIONS} />
+                          <Select showSearch optionFilterProp="label" options={STRATEGY_OPTIONS} />
                         </Form.Item>
                         <Text type="secondary" style={{ fontSize: 12, marginTop: -8, display: "block" }}>
                           {STRATEGY_DESC[strategy ?? "auto"] ?? STRATEGY_DESC.auto}
@@ -481,7 +483,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                     </Row>
 
                     <Form.Item name="separators" label="分隔符">
-                      <Select mode="tags" options={SEPARATOR_PRESETS.map((v) => ({ value: v, label: JSON.stringify(v) }))} />
+                      <Select mode="tags" showSearch optionFilterProp="label" options={SEPARATOR_PRESETS.map((v) => ({ value: v, label: JSON.stringify(v) }))} />
                     </Form.Item>
 
                     <Form.Item label="父子分块">
@@ -511,7 +513,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                     )}
 
                     <Form.Item name="languages" label="语言（留空自动识别）">
-                      <Select mode="multiple" options={LANG_OPTIONS} allowClear />
+                      <Select mode="multiple" showSearch optionFilterProp="label" options={LANG_OPTIONS} allowClear />
                     </Form.Item>
 
                     <Form.Item label="解析引擎规则（按文件类型选引擎）" style={{ marginBottom: 8 }}>
@@ -529,6 +531,8 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                                   >
                                     <Select
                                       mode="multiple"
+                                      showSearch
+                                      optionFilterProp="label"
                                       placeholder="文件类型"
                                       options={FILE_TYPE_OPTIONS}
                                       style={{ width: "100%" }}
@@ -539,7 +543,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                                   <Form.Item {...field} name={[field.name, "engine"]} noStyle
                                     rules={[{ required: true, message: "选引擎" }]}
                                   >
-                                    <Select placeholder="解析引擎" options={engineOptions} style={{ width: "100%" }} />
+                                    <Select placeholder="解析引擎" showSearch optionFilterProp="label" options={engineOptions} style={{ width: "100%" }} />
                                   </Form.Item>
                                 </Col>
                                 <Col span={2}>
@@ -580,6 +584,8 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                   >
                     <Select
                       allowClear
+                      showSearch
+                      optionFilterProp="label"
                       placeholder="选择视觉模型"
                       options={visionModelOptions}
                     />
@@ -591,6 +597,8 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                   >
                     <Select
                       allowClear
+                      showSearch
+                      optionFilterProp="label"
                       placeholder="Chinese"
                       options={[
                         { label: "中文（Chinese）", value: "Chinese" },
@@ -611,12 +619,14 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                   >
                     <Select
                       allowClear
+                      showSearch
+                      optionFilterProp="label"
                       placeholder={buildEngines.length ? "选择构建引擎" : "暂无已发布的编排，请先到服务编排发布"}
                       options={groupBuildEngineOptions(buildEngines)}
                     />
                   </Form.Item>
                   <Form.Item name="summary_model_id" label="Wiki 合成模型（LLM）">
-                    <Select allowClear placeholder="留空 = 系统默认" options={modelOptions("chat")} />
+                    <Select allowClear showSearch optionFilterProp="label" placeholder="留空 = 系统默认" options={modelOptions("chat")} />
                   </Form.Item>
                 </>
               )}
@@ -630,7 +640,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                     <Switch />
                   </Form.Item>
                   <Form.Item name="embedding_model_id" label="Embedding 模型（向量化）">
-                    <Select allowClear placeholder="留空 = 系统默认" options={modelOptions("embedding")} />
+                    <Select allowClear showSearch optionFilterProp="label" placeholder="留空 = 系统默认" options={modelOptions("embedding")} />
                   </Form.Item>
                 </>
               )}

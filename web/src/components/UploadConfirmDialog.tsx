@@ -397,12 +397,12 @@ export default function UploadConfirmDialog({
                         {rules.map((r, idx) => (
                           <Row key={idx} gutter={8} align="middle" style={{ marginBottom: 8 }}>
                             <Col span={11}>
-                              <Select mode="multiple" placeholder="文件类型" style={{ width: "100%" }}
+                              <Select mode="multiple" showSearch optionFilterProp="label" placeholder="文件类型" style={{ width: "100%" }}
                                 value={r.file_types} options={FILE_TYPE_OPTIONS}
                                 onChange={(v) => setRules((prev) => prev.map((x, i) => (i === idx ? { ...x, file_types: v } : x)))} />
                             </Col>
                             <Col span={11}>
-                              <Select placeholder="解析引擎" style={{ width: "100%" }} value={r.engine}
+                              <Select placeholder="解析引擎" showSearch optionFilterProp="label" style={{ width: "100%" }} value={r.engine}
                                 options={engineOptions}
                                 onChange={(v) => setRules((prev) => prev.map((x, i) => (i === idx ? { ...x, engine: v } : x)))} />
                             </Col>
@@ -452,7 +452,7 @@ export default function UploadConfirmDialog({
                       </Col>
                     </Row>
                     <Form.Item label="分隔符">
-                      <Select mode="tags" style={{ width: "100%" }} value={chunking.separators as string[]}
+                      <Select mode="tags" showSearch optionFilterProp="label" style={{ width: "100%" }} value={chunking.separators as string[]}
                         options={SEPARATOR_PRESETS.map((v) => ({ value: v, label: JSON.stringify(v) }))}
                         onChange={(v) => setChunking((p) => ({ ...p, separators: v }))} />
                     </Form.Item>
@@ -480,7 +480,7 @@ export default function UploadConfirmDialog({
                       </Row>
                     )}
                     <Form.Item label="语言（留空自动识别）">
-                      <Select mode="multiple" style={{ width: "100%" }} value={chunking.languages as string[]}
+                      <Select mode="multiple" showSearch optionFilterProp="label" style={{ width: "100%" }} value={chunking.languages as string[]}
                         options={LANG_OPTIONS} allowClear
                         onChange={(v) => setChunking((p) => ({ ...p, languages: v }))} />
                     </Form.Item>
@@ -500,6 +500,8 @@ export default function UploadConfirmDialog({
                     >
                       <Select
                         style={{ width: "100%" }}
+                        showSearch
+                        optionFilterProp="label"
                         allowClear
                         placeholder="跟随知识库默认"
                         value={summaryStrategy || undefined}
@@ -514,6 +516,8 @@ export default function UploadConfirmDialog({
                     >
                       <Select
                         style={{ width: "100%" }}
+                        showSearch
+                        optionFilterProp="label"
                         allowClear
                         placeholder="跟随知识库默认"
                         value={buildEngine || undefined}

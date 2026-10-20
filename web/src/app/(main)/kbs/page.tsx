@@ -1051,6 +1051,8 @@ export default function KbsPage() {
                       extra="个人知识库仅自己可见，团队知识库团队成员可见，系统知识库所有用户可见（仅管理员可建）"
                     >
                       <Select
+                        showSearch
+                        optionFilterProp="label"
                         options={[
                           { label: "个人", value: "personal" },
                           { label: "团队", value: "team" },
@@ -1065,6 +1067,8 @@ export default function KbsPage() {
                     >
                       <Select
                         allowClear
+                        showSearch
+                        optionFilterProp="label"
                         placeholder="选择分类"
                         options={categories.map((c) => ({ label: c.name, value: c.name }))}
                       />
@@ -1080,6 +1084,8 @@ export default function KbsPage() {
                       extra="文档上传 = 手动上传文件/目录构建知识库；Git 代码仓库 = 创建后自动拉取仓库代码并按目录结构建立知识库"
                     >
                       <Select
+                        showSearch
+                        optionFilterProp="label"
                         options={[
                           { label: "文档上传（手动）", value: "file" },
                           { label: "Git 代码仓库（自动拉取）", value: "git" },
@@ -1105,6 +1111,8 @@ export default function KbsPage() {
                           initialValue="none"
                         >
                           <Select
+                            showSearch
+                            optionFilterProp="label"
                             options={[
                               { label: "无凭证（公开仓库）", value: "none" },
                               { label: "Token（访问令牌）", value: "token" },
@@ -1147,6 +1155,8 @@ export default function KbsPage() {
                     >
                       <Select
                         allowClear
+                        showSearch
+                        optionFilterProp="label"
                         placeholder={buildEngines.length ? "选择构建引擎" : "暂无已发布的编排，请先到服务编排发布"}
                         options={groupBuildEngineOptions(buildEngines)}
                       />
@@ -1156,7 +1166,7 @@ export default function KbsPage() {
                       label="大语言模型（LLM）"
                       extra="Wiki 合成/文档理解用；留空 = 系统默认"
                     >
-                      <Select allowClear options={chatOptions} placeholder="选择大语言模型" />
+                      <Select allowClear showSearch optionFilterProp="label" options={chatOptions} placeholder="选择大语言模型" />
                     </Form.Item>
                   </>
                 )}
@@ -1186,7 +1196,7 @@ export default function KbsPage() {
                       label="向量模型（Embedding）"
                       extra="知识向量化用；留空 = 系统默认"
                     >
-                      <Select allowClear options={embeddingOptions} placeholder="选择向量模型" />
+                      <Select allowClear showSearch optionFilterProp="label" options={embeddingOptions} placeholder="选择向量模型" />
                     </Form.Item>
                   </>
                 )}
