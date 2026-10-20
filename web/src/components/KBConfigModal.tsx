@@ -622,7 +622,23 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                       showSearch
                       optionFilterProp="label"
                       placeholder={buildEngines.length ? "选择构建引擎" : "暂无已发布的编排，请先到服务编排发布"}
-                      options={groupBuildEngineOptions(buildEngines)}
+                      options={groupBuildEngineOptions(
+                        // 2026-10-21 后端已过滤仅 kb_build 类型；存量 KB 若绑定过
+                        // 摘要/其他类型编排，把已绑定值作为保留项附上（避免裸 id 显示）
+                        kb?.build_tape_id &&
+                          !buildEngines.some((e) => e.id === kb.build_tape_id)
+                          ? [
+                              ...buildEngines,
+                              {
+                                id: kb.build_tape_id,
+                                tape_name: kb.build_tape_id,
+                                tape_label: `${kb.build_tape_id}（已绑定，类型已下线）`,
+                                tape_descr: "",
+                                tape_type: "general",
+                              },
+                            ]
+                          : buildEngines
+                      )}
                     />
                   </Form.Item>
                   <Form.Item name="summary_model_id" label="Wiki 合成模型（LLM）">

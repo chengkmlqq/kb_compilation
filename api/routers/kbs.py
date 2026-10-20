@@ -290,9 +290,12 @@ def build_engines(
     db: Session = Depends(get_db),
     x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
 ) -> dict:
-    """构建引擎下拉数据源：服务编排中已发布的编排程序（status=effective）。
+    """构建引擎下拉数据源：服务编排中已发布的**知识构建**编排程序。
 
-    知识库创建表单「构建引擎」选项；返回简表（id/tape_name/tape_label/tape_descr）。
+    2026-10-21 过滤：知识库「构建引擎」下拉只展示功能标签为知识构建
+    （tape_type=kb_build，2026-10-15 功能标签）的编排；摘要（summary）/
+    其他（general）类型编排不再出现在该下拉。存量 KB 已绑定的
+    build_tape_id（摘要/通用编排）保留原值不受影响（回填走 kb.build_tape_id）。
     """
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity:
@@ -303,7 +306,7 @@ def build_engines(
     rows = (
         db.execute(
             select(Tape)
-            .where(Tape.status == "effective")
+            .where(Tape.status == "effective", Tape.tape_type == "kb_build")
             .order_by(Tape.updated_at.desc())
         )
         .scalars()
