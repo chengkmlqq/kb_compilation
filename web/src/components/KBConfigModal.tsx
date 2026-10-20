@@ -309,7 +309,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
 
   const modelOptions = (type: string) =>
       models.filter((m) => m.type === type).map((m) => ({
-        label: m.name,
+        label: m.display_name || m.name,
         value: m.id,
       }));
 
@@ -321,7 +321,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
           (m.type === "chat" || m.type === "vllm") && m.supports_vision,
       )
       .map((m) => ({
-        label: `${m.name}${m.type === "vllm" ? "（视觉）" : ""}`,
+        label: `${m.display_name || m.name}${m.type === "vllm" ? "（视觉）" : ""}`,
         value: m.id,
       }));
 

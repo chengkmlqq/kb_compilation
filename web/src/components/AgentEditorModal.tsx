@@ -209,15 +209,15 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
   }, [open, defaultSystemPrompt, form]);
 
   const modelOptions = useMemo(
-    () => models.filter((m) => m.type === "chat").map((m) => ({ label: m.name, value: m.id })),
+    () => models.filter((m) => m.type === "chat").map((m) => ({ label: m.display_name || m.name, value: m.id })),
     [models]
   );
   const rerankOptions = useMemo(
-    () => models.filter((m) => m.type === "rerank").map((m) => ({ label: m.name, value: m.id })),
+    () => models.filter((m) => m.type === "rerank").map((m) => ({ label: m.display_name || m.name, value: m.id })),
     [models]
   );
   const vlmOptions = useMemo(
-    () => models.filter((m) => m.type === "vllm").map((m) => ({ label: m.name, value: m.id })),
+    () => models.filter((m) => m.type === "vllm").map((m) => ({ label: m.display_name || m.name, value: m.id })),
     [models]
   );
   const kbOptions = useMemo(
