@@ -2,7 +2,7 @@
 
 // 智能体分区编辑器（P0 对齐 WeKnora AgentEditorModal 13 分区交互：
 // 左侧导航分区 → 右侧配置表单；新建与编辑共用，字段全覆盖）。
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   App,
   Button,
@@ -35,6 +35,7 @@ import {
   ToolOutlined,
 } from "@ant-design/icons";
 import {
+  apiAgentPromptDefaults,
   apiAgentToolCatalog,
   apiListKbs,
   apiListMcps,
@@ -96,6 +97,10 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
   const [mcpOptions, setMcpOptions] = useState<{ value: string; label: string }[]>([]);
   const [skillOptions, setSkillOptions] = useState<{ value: string; label: string }[]>([]);
   const [toolCatalog, setToolCatalog] = useState<AgentToolCatalogItem[]>([]);
+  // 2026-10-20 平台默认提示词（对齐 WeKnora 模板预填：system_prompt 为空时展示默认正文）
+  const [defaultSystemPrompt, setDefaultSystemPrompt] = useState<string>("");
+  // 编辑模式回填后是否已预填默认提示词（避免用户清空后被再次预填覆盖）
+  const defaultPromptPrefilledRef = useRef(false);
 
   const isEdit = mode === "edit";
   const agentMode = Form.useWatch("agent_mode", form) ?? "quick-answer";
@@ -106,17 +111,18 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
   const webSearch = Form.useWatch("web_search_enabled", form) ?? false;
   const skillsEnabled = Form.useWatch("skills_enabled", form) ?? false;
 
-  // 数据源：模型 / 知识库 / MCP / 技能
+  // 数据源：模型 / 知识库 / MCP / 技能 + 默认提示词
   useEffect(() => {
     if (!open) return;
     void (async () => {
       try {
-        const [m, k, mc, sk, tc] = await Promise.all([
+        const [m, k, mc, sk, tc, pd] = await Promise.all([
           apiListModels().catch(() => null),
           apiListKbs(1, 100).catch(() => null),
           apiListMcps().catch(() => null),
           apiListSkillsRegistry().catch(() => null),
           apiAgentToolCatalog().catch(() => null),
+          apiAgentPromptDefaults().catch(() => null),
         ]);
         if (m?.success && m.data) setModels(m.data.items);
         if (k?.success && k.data) setKbs(k.data.items);
@@ -129,6 +135,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
           setSkillOptions(items.map((s) => ({ value: s.name, label: s.name })));
         }
         if (tc?.success && tc.data?.tools) setToolCatalog(tc.data.tools);
+        if (pd?.success && pd.data?.system_prompt) setDefaultSystemPrompt(pd.data.system_prompt);
       } catch { /* 不阻断 */ }
     })();
   }, [open]);
@@ -180,8 +187,26 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
       selected_skills: c.selected_skills ?? [],
       question_suggestions: c.question_suggestions ?? { starters: { enabled: true, items: [] } },
     });
+    // 2026-10-20 每次打开重置预填标记，允许本次会话重新预填默认提示词
+    defaultPromptPrefilledRef.current = false;
     setSection("basic");
   }, [open, initial, form]);
+
+  // 2026-10-20 对齐 WeKnora 模板预填：system_prompt 为空时把平台默认提示词
+  // 填进文本框（新建直接可见；编辑旧 agent 未填自定义时同样展示默认正文）。
+  // 用户手动清空后不再预填（ref 守卫），避免打断编辑。
+  useEffect(() => {
+    if (!open) return;
+    if (!defaultSystemPrompt) return;
+    if (defaultPromptPrefilledRef.current) return;
+    const current = String(form.getFieldValue("system_prompt") || "").trim();
+    if (current) {
+      defaultPromptPrefilledRef.current = true;
+      return;
+    }
+    form.setFieldValue("system_prompt", defaultSystemPrompt);
+    defaultPromptPrefilledRef.current = true;
+  }, [open, defaultSystemPrompt, form]);
 
   const modelOptions = useMemo(
     () => models.filter((m) => m.type === "chat").map((m) => ({ label: m.name, value: m.id })),
@@ -348,7 +373,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
                 <Form.Item
                   name="system_prompt"
                   label="系统提示词"
-                  extra="留空使用平台默认提示词；填写即自定义。支持占位符：{{query}} 用户问题、{{contexts}} 检索片段、{{current_time}}、{{current_week}}、{{language}}"
+                  extra="新建时已展示平台默认提示词，可直接在其上修改；清空后保存即恢复默认。支持占位符：{{query}} 用户问题、{{contexts}} 检索片段、{{current_time}}、{{current_week}}、{{language}}"
                 >
                   <TextArea rows={6} placeholder="设定智能体的角色、行为与回答风格…（支持 {{query}} / {{contexts}} 等占位符）" />
                 </Form.Item>

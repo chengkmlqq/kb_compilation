@@ -77,6 +77,23 @@ def tool_catalog_route() -> dict:
     return {"success": True, "data": {"tools": TOOL_CATALOG}}
 
 
+@router.get("/prompt-defaults")
+def prompt_defaults_route() -> dict:
+    """平台默认提示词（2026-10-20 对齐 WeKnora 模板预填）：
+
+    新建/编辑智能体时前端展示系统默认提示词正文（SYSTEM_PROMPT 常量，
+    含 {{contexts}} 等占位符与引用规范），用户可直接看到默认人设并在
+    其上修改；留空保存仍回退默认。
+    """
+    return {
+        "success": True,
+        "data": {
+            "system_prompt": SYSTEM_PROMPT,
+            "placeholders": ["query", "contexts", "current_time", "current_week", "language"],
+        },
+    }
+
+
 @router.put("/{agent_id}")
 def update(agent_id: str, req: AgentUpdateRequest, db: Session = Depends(get_db)) -> dict:
     agent = update_agent(db, agent_id, req.model_dump(exclude_none=True))

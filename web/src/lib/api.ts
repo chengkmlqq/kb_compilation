@@ -1065,6 +1065,16 @@ export function apiAgentToolCatalog() {
   return request<{ tools: AgentToolCatalogItem[] }>("/api/v1/agents/tool-catalog");
 }
 
+/** 平台默认提示词（2026-10-20：新建/编辑智能体时展示默认 system_prompt 正文） */
+export interface AgentPromptDefaults {
+  system_prompt: string;
+  placeholders: string[];
+}
+
+export function apiAgentPromptDefaults() {
+  return request<AgentPromptDefaults>("/api/v1/agents/prompt-defaults");
+}
+
 export function apiDeleteAgent(agentId: string) {
   return request(`/api/v1/agents/${agentId}`, { method: "DELETE" });
 }

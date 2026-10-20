@@ -75,6 +75,17 @@ def test_effective_system_prompt_ignores_switch_flag() -> None:
     assert effective_system_prompt(agent, default="默认提示词") == "填了就用。"
 
 
+def test_agents_prompt_defaults_route() -> None:
+    """GET /agents/prompt-defaults 返回平台默认提示词（新建/编辑展示用）。"""
+    from api.routers.agents import prompt_defaults_route
+    from api.services.chat import SYSTEM_PROMPT
+
+    body = prompt_defaults_route()  # 端点无 DB/鉴权依赖，直接调 handler 验证
+    assert body["success"] is True
+    assert body["data"]["system_prompt"] == SYSTEM_PROMPT
+    assert "contexts" in body["data"]["placeholders"]
+
+
 @pytest.fixture()
 def agent_db():
     engine = create_engine("sqlite:///:memory:")
