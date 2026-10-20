@@ -4483,6 +4483,26 @@ html[data-theme="dark"] .kb-citation-web:hover {
   row-gap: 4px;
   column-gap: 4px;
 }
+/* 已选知识库 Tag：蓝色主色系（对齐 DSB 选中态：主色浅底 + 主色描边 + 主色文字/关闭） */
+.kb-chat-kb-tags-list .kb-chat-kb-tag.ant-tag {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 0 8px;
+  line-height: 22px;
+  font-size: 12px;
+  color: rgba(50, 97, 206, 1);
+  background: rgba(232, 243, 255, 1);
+  border-color: rgba(50, 97, 206, 1);
+}
+.kb-chat-kb-tags-list .kb-chat-kb-tag.ant-tag .ant-tag-close-icon {
+  color: rgba(50, 97, 206, 1);
+  font-size: 10px;
+  margin-left: 4px;
+}
+.kb-chat-kb-tags-list .kb-chat-kb-tag.ant-tag .ant-tag-close-icon:hover {
+  color: rgba(36, 46, 67, 1);
+}
 /* 卡片列表区（对齐 .kb-list：padding 12px 20px 20px、3 列） */
 .kb-chat-kb-cards-wrap {
   width: 100%;

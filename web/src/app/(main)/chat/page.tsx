@@ -1934,6 +1934,7 @@ export default function ChatPage() {
                 <div className="kb-chat-kb-tags-list">
                   {activeKb ? (
                     <Tag
+                      className="kb-chat-kb-tag"
                       closable
                       onClose={(e) => {
                         e.preventDefault();
