@@ -1,25 +1,22 @@
 "use client";
 
-// Agent 多轮工具调用卡片（2026-10-21 完全对齐 WeKnora AgentStreamDisplay 的
-// action-card / tree 形态）：
-// - 每工具一张卡片：工具图标 + 中文名标题（搜索类带 query）+ 状态（执行中/完成/失败）
-// - 完成后固定展示结果摘要行（搜索结果数/关键词命中/wiki 读页等）
-// - 点击展开详情：参数（可选）+ 结果文本；失败卡显示失败原因
-// - 完成态自动折叠成「N 个中间步骤」树根（对齐 WeKnora tree-container），
-//   点击展开中间步骤时间线
+// Agent 多轮工具调用时间线（2026-10-21 完全对齐 WeKnora AgentStreamDisplay 的
+// tree-container / tree-child 形态）：
+// - 完成后自动折叠为树根摘要「思考 N 轮 · 调用 N 次工具 · 耗时 N」（对齐
+//   intermediateStepsSummary），点击切换收缩/展开
+// - 展开后按时间线渲染：每行左侧纵向竖线（tree-branch 对齐），工具图标 + 中文名
+//   （搜索类带 query）+ 状态（执行中/完成/失败）+ 结果摘要行
+// - 完成/失败不用圆圈勾，用颜色与竖线表达（对齐 WeKnora action-card 无勾形态）
 // 数据来自 chat SSE 的 tool_call / tool 事件（ToolCallEvent）。
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   BulbOutlined,
-  CheckCircleOutlined,
-  ClockCircleOutlined,
   CodeOutlined,
   DatabaseOutlined,
   DownOutlined,
   FileSearchOutlined,
   GlobalOutlined,
-  LoadingOutlined,
   OrderedListOutlined,
   PaperClipOutlined,
   RightOutlined,
@@ -33,7 +30,6 @@ import {
   toolStatusText,
   toolSummaryText,
   toolTitle,
-  zhToolName,
 } from "@/lib/agent-tool-display";
 
 export interface ToolCallEvent {
@@ -78,109 +74,124 @@ function iconOf(name: string) {
   return map[key] ?? <ToolOutlined />;
 }
 
+function formatDuration(seconds: number): string {
+  if (seconds == null || seconds < 0) return "";
+  if (seconds < 60) return `${Math.round(seconds * 10) / 10}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return `${m}m ${s}s`;
+}
+
 interface Props {
   events: ToolCallEvent[];
 }
 
-/** 完成态工具卡折叠成树根的「N 个中间步骤」摘要（对齐 WeKnora intermediateStepsSummary）。 */
-function TreeRoot({ count, open, onToggle }: { count: number; open: boolean; onToggle: () => void }) {
-  return (
-    <div className="kb-agent-tree-root">
-      <div className="kb-agent-tree-root-head" onClick={onToggle} role="button" tabIndex={0}>
-        <span className="kb-agent-tree-root-icon">
-          <CheckCircleOutlined />
-        </span>
-        <span className="kb-agent-tree-root-text">
-          <strong>{count}</strong> 个中间步骤
-        </span>
-        <span className="kb-agent-tool-arrow">{open ? <DownOutlined /> : <RightOutlined />}</span>
-      </div>
-    </div>
-  );
-}
-
 export default function AgentToolCalls({ events }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // 2026-10-21 树形收缩/展开：默认收起（对齐 WeKnora showIntermediateSteps=false），
+  // 点树根切换；无论展开还是收缩树根始终存在（之前只有展开、无收缩入口）。
   const [treeOpen, setTreeOpen] = useState(false);
+
+  const allDone = useMemo(() => events.every((ev) => ev.status === "done"), [events]);
+  // 统计（对齐 WeKnora intermediateStepsSummary：思考轮数/工具数/耗时）
+  const stats = useMemo(() => {
+    const thinkingRounds = events.filter((ev) => ev.name === "thinking").length;
+    const toolCalls = events.filter((ev) => ev.name !== "thinking").length;
+    const totalSec = events.reduce((acc, ev) => acc + (ev.duration || 0), 0);
+    return { thinkingRounds, toolCalls, totalSec };
+  }, [events]);
+
   if (!events || events.length === 0) return null;
 
-  const allDone = events.every((ev) => ev.status === "done");
-  const collapsed = allDone && events.length > 1 && !treeOpen;
+  // 树根摘要（对齐 WeKnora intermediateStepsSummary 文案）
+  const summaryParts: string[] = [];
+  if (stats.thinkingRounds > 0) summaryParts.push(`思考 ${stats.thinkingRounds} 轮`);
+  if (stats.toolCalls > 0) summaryParts.push(`调用 ${stats.toolCalls} 次工具`);
+  if (stats.toolCalls === 0 && stats.thinkingRounds === 0) summaryParts.push(`已完成 ${events.length} 个步骤`);
+  if (stats.totalSec > 0) summaryParts.push(`耗时 ${formatDuration(stats.totalSec)}`);
+  const treeSummary = summaryParts.join(" · ");
 
-  const cards = (
-    <div className="kb-agent-tool-calls">
-      {events.map((ev) => {
-        const open = !!expanded[ev.id];
-        const pending = ev.status === "running";
-        const failed = ev.status === "done" && ev.success === false;
-        const summary = !open && !pending && ev.success !== false ? toolSummaryText(ev) : "";
-        const title = toolTitle({
-          name: ev.name,
-          pending,
-          success: ev.success,
-          arguments: ev.arguments,
-        });
-        return (
-          <div
-            key={ev.id}
-            className={`kb-agent-tool-card${pending ? " kb-agent-tool-card--pending" : ""}${failed ? " kb-agent-tool-card--failed" : ""}`}
-          >
-            <div
-              className="kb-agent-tool-card-head"
-              onClick={() => setExpanded((p) => ({ ...p, [ev.id]: !open }))}
-              title={summary || undefined}
-            >
-              {pending ? (
-                <LoadingOutlined spin className="kb-agent-tool-spin" />
-              ) : failed ? (
-                <ClockCircleOutlined className="kb-agent-tool-fail" />
-              ) : (
-                <CheckCircleOutlined className="kb-agent-tool-done" />
-              )}
-              <span className="kb-agent-tool-tool">{iconOf(ev.name)}</span>
-              <span className="kb-agent-tool-name">{pending ? title : title || zhToolName(ev.name)}</span>
-              <span className="kb-agent-tool-status">{toolStatusText(ev)}</span>
-              {summary && <span className="kb-agent-tool-summary">{summary}</span>}
-              <span className="kb-agent-tool-arrow">{open ? <DownOutlined /> : <RightOutlined />}</span>
-            </div>
-            {open && (
-              <div className="kb-agent-tool-details">
-                {ev.arguments ? (
-                  <>
-                    <div className="kb-agent-tool-section-title">参数</div>
-                    <pre className="kb-agent-tool-pre">{prettyArgs(ev.arguments)}</pre>
-                  </>
-                ) : null}
-                {failed && ev.error ? (
-                  <>
-                    <div className="kb-agent-tool-section-title">失败原因</div>
-                    <pre className="kb-agent-tool-pre kb-agent-tool-pre--error">{ev.error}</pre>
-                  </>
-                ) : null}
-                {ev.result ? (
-                  <>
-                    <div className="kb-agent-tool-section-title">{toolDetailLabel({ name: ev.name, success: ev.success })}</div>
-                    <pre className="kb-agent-tool-pre">
-                      {ev.result.length > 2000 ? `${ev.result.slice(0, 2000)}…` : ev.result}
-                    </pre>
-                  </>
-                ) : null}
+  const showTree = allDone;
+  const showTimeline = !showTree || treeOpen;
+
+  return (
+    <div className="kb-agent-tree">
+      {showTree && (
+        <div
+          className={`kb-agent-tree-root${treeOpen ? " kb-agent-tree-root--open" : ""}`}
+          onClick={() => setTreeOpen((v) => !v)}
+          role="button"
+          tabIndex={0}
+        >
+          <span className="kb-agent-tree-root-icon">{iconOf("thinking")}</span>
+          <span className="kb-agent-tree-root-text">{treeSummary}</span>
+          <span className="kb-agent-tree-root-arrow">
+            {treeOpen ? <DownOutlined /> : <RightOutlined />}
+          </span>
+        </div>
+      )}
+
+      {showTimeline && (
+        <div className="kb-agent-tree-children">
+          {events.map((ev, index) => {
+            const open = !!expanded[ev.id];
+            const pending = ev.status === "running";
+            const failed = ev.status === "done" && ev.success === false;
+            const isLast = index === events.length - 1;
+            const summary = !open && !pending && ev.success !== false ? toolSummaryText(ev) : "";
+            return (
+              <div
+                key={ev.id}
+                className={`kb-agent-tree-child${isLast ? " kb-agent-tree-child--last" : ""}`}
+              >
+                <div
+                  className={`kb-agent-tool-card${pending ? " kb-agent-tool-card--pending" : ""}${failed ? " kb-agent-tool-card--failed" : ""}`}
+                >
+                  <div
+                    className="kb-agent-tool-card-head"
+                    onClick={() => setExpanded((p) => ({ ...p, [ev.id]: !open }))}
+                    title={summary || undefined}
+                  >
+                    {/* 工具图标固定挂在纵向竖线处（对齐 WeKnora .action-title-icon），
+                        执行中由卡片动画表达，不加圆圈勾 */}
+                    <span className="kb-agent-tool-tool">{iconOf(ev.name)}</span>
+                    <span className="kb-agent-tool-name">
+                      {toolTitle({ name: ev.name, pending, success: ev.success, arguments: ev.arguments })}
+                    </span>
+                    <span className="kb-agent-tool-status">{toolStatusText(ev)}</span>
+                    {summary && <span className="kb-agent-tool-summary">{summary}</span>}
+                    <span className="kb-agent-tool-arrow">{open ? <DownOutlined /> : <RightOutlined />}</span>
+                  </div>
+                  {open && (
+                    <div className="kb-agent-tool-details">
+                      {ev.arguments ? (
+                        <>
+                          <div className="kb-agent-tool-section-title">参数</div>
+                          <pre className="kb-agent-tool-pre">{prettyArgs(ev.arguments)}</pre>
+                        </>
+                      ) : null}
+                      {failed && ev.error ? (
+                        <>
+                          <div className="kb-agent-tool-section-title">失败原因</div>
+                          <pre className="kb-agent-tool-pre kb-agent-tool-pre--error">{ev.error}</pre>
+                        </>
+                      ) : null}
+                      {ev.result ? (
+                        <>
+                          <div className="kb-agent-tool-section-title">{toolDetailLabel({ name: ev.name, success: ev.success })}</div>
+                          <pre className="kb-agent-tool-pre">
+                            {ev.result.length > 2000 ? `${ev.result.slice(0, 2000)}…` : ev.result}
+                          </pre>
+                        </>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-          </div>
-        );
-      })}
+            );
+          })}
+        </div>
+      )}
     </div>
   );
-
-  // 完成态且多张卡 → 折叠成树根（对齐 WeKnora tree-container），展开后显示时间线
-  if (collapsed) {
-    return (
-      <div className="kb-agent-tool-calls kb-agent-tool-calls--tree">
-        <TreeRoot count={events.length} open={treeOpen} onToggle={() => setTreeOpen((v) => !v)} />
-        {treeOpen && cards}
-      </div>
-    );
-  }
-  return cards;
 }
