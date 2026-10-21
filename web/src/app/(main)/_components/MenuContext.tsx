@@ -48,11 +48,11 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "grp_knowledge", menu_name: "grp_knowledge", menu_label: "知识管理", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 1, state: "1" },
   { menu_id: "kbs", menu_name: "kbs", menu_label: "知识库管理", route: "/kbs", parent_id: "grp_knowledge", menu_icon: "IconBook1Color", sort_num: 1, state: "1" },
   // 2026-10-21 语义层：一级菜单（知识库之后），四个占位子菜单（元数据/文档库/知识本体/知识图谱）
-  { menu_id: "grp_semantic", menu_name: "grp_semantic", menu_label: "语义层", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 2, state: "1" },
-  { menu_id: "sem_metadata", menu_name: "sem_metadata", menu_label: "元数据", route: "/semantic/metadata", parent_id: "grp_semantic", menu_icon: "DatabaseOutlined", sort_num: 1, state: "1" },
-  { menu_id: "sem_docs", menu_name: "sem_docs", menu_label: "文档库", route: "/semantic/docs", parent_id: "grp_semantic", menu_icon: "FileOutlined", sort_num: 2, state: "1" },
-  { menu_id: "sem_ontology", menu_name: "sem_ontology", menu_label: "知识本体", route: "/semantic/ontology", parent_id: "grp_semantic", menu_icon: "ApartmentOutlined", sort_num: 3, state: "1" },
-  { menu_id: "sem_graph", menu_name: "sem_graph", menu_label: "知识图谱", route: "/semantic/graph", parent_id: "grp_semantic", menu_icon: "PartitionOutlined", sort_num: 4, state: "1" },
+  { menu_id: "grp_semantic_layer", menu_name: "grp_semantic_layer", menu_label: "语义层", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 2, state: "1" },
+  { menu_id: "sem_metadata", menu_name: "sem_metadata", menu_label: "元数据", route: "/semantic/metadata", parent_id: "grp_semantic_layer", menu_icon: "DatabaseOutlined", sort_num: 1, state: "1" },
+  { menu_id: "sem_docs", menu_name: "sem_docs", menu_label: "文档库", route: "/semantic/docs", parent_id: "grp_semantic_layer", menu_icon: "FileOutlined", sort_num: 2, state: "1" },
+  { menu_id: "sem_ontology", menu_name: "sem_ontology", menu_label: "知识本体", route: "/semantic/ontology", parent_id: "grp_semantic_layer", menu_icon: "ApartmentOutlined", sort_num: 3, state: "1" },
+  { menu_id: "sem_graph", menu_name: "sem_graph", menu_label: "知识图谱", route: "/semantic/graph", parent_id: "grp_semantic_layer", menu_icon: "PartitionOutlined", sort_num: 4, state: "1" },
   // 2026-10-20 高频词管理（迁移自 WeKnora wiki/keywords/overview；种子为一级菜单，兜底挂知识管理下）
   { menu_id: "wiki_keywords", menu_name: "wiki_keywords", menu_label: "高频词", route: "/wiki-keywords", parent_id: "grp_knowledge", menu_icon: "BarChartOutlined", sort_num: 2, state: "1" },
   // 2026-10-20 维护中心（Wiki 页面反馈汇总与处理；知识库卡片「反馈 N」也可进入）

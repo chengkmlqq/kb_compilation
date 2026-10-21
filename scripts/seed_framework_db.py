@@ -102,11 +102,13 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("agents", "agents", "智能体", "/agents", None, "IconSemanticSearchColor", 3),
     ("wiki_keywords", "wiki_keywords", "高频词", "/wiki-keywords", None, "BarChartOutlined", 4),
     # ---- 语义层（顶级目录：元数据/文档库/知识本体/知识图谱） ----
-    ("grp_semantic", "grp_semantic", "语义层", None, None, "ApartmentOutlined", 5),
-    ("sem_metadata", "sem_metadata", "元数据", "/semantic/metadata", "grp_semantic", "DatabaseOutlined", 1),
-    ("sem_docs", "sem_docs", "文档库", "/semantic/docs", "grp_semantic", "FileOutlined", 2),
-    ("sem_ontology", "sem_ontology", "知识本体", "/semantic/ontology", "grp_semantic", "ApartmentOutlined", 3),
-    ("sem_graph", "sem_graph", "知识图谱", "/semantic/graph", "grp_semantic", "PartitionOutlined", 4),
+    # 注意：menu_id 用 grp_semantic_layer，避开库内既有「语义资产管理」树占用的
+    # grp_semantic（2026-10-21 实测该 id 已被业务菜单占用，沿用会 upsert 覆写）。
+    ("grp_semantic_layer", "grp_semantic_layer", "语义层", None, None, "ApartmentOutlined", 5),
+    ("sem_metadata", "sem_metadata", "元数据", "/semantic/metadata", "grp_semantic_layer", "DatabaseOutlined", 1),
+    ("sem_docs", "sem_docs", "文档库", "/semantic/docs", "grp_semantic_layer", "FileOutlined", 2),
+    ("sem_ontology", "sem_ontology", "知识本体", "/semantic/ontology", "grp_semantic_layer", "ApartmentOutlined", 3),
+    ("sem_graph", "sem_graph", "知识图谱", "/semantic/graph", "grp_semantic_layer", "PartitionOutlined", 4),
     # ---- 运维监控（顶级目录：任务监控/任务管理/主机监控/操作日志/切片核对/元数据采集） ----
     ("grp_ops", "grp_ops", "运维监控", None, None, "IconTaskMonitorColor", 6),
     ("jobs", "jobs", "任务监控", "/jobs", "grp_ops", "IconTaskMonitorColor", 1),
