@@ -538,8 +538,20 @@ def agent_qa_stream(
                         _persist_partial()  # 2026-10-20 增量落库：生成中定期保存已生成部分
                     elif event.get("type") == "context":
                         hits = event.get("hits") or []
+                        # 2026-10-21 修复「引用悬停显示『该片段未返回正文』」：
+                        # 原实现只带 chunk_id+score，缺 content/document_id/kb_id/meta，
+                        # 前端 MarkdownViewer 引用浮层 hover.ref?.content 为空 →
+                        # 恒显示占位文案。与 qa.py _run_generation 的 refs 组装对齐，
+                        # 全字段带回（多 KB 循环时 hits 自身已带各 kb 的归属字段）。
                         refs = [
-                            {"chunk_id": h.get("chunk_id", ""), "score": h.get("score", 0)}
+                            {
+                                "chunk_id": h.get("chunk_id", ""),
+                                "content": h.get("content", ""),
+                                "document_id": h.get("document_id", ""),
+                                "kb_id": h.get("kb_id", ""),
+                                "score": h.get("score", 0),
+                                "meta": h.get("meta") or {},
+                            }
                             for h in hits
                         ]
                     yield _sse(event)
