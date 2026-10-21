@@ -176,6 +176,12 @@ def agent_qa_stream(
     """
 
     def generator():
+        # 2026-10-21 对齐 WeKnora done 事件统计：整体耗时（含检索/生成/工具全链）、
+        # 思考轮次（generation 轮数）、工具调用数。前端工具链树根摘要用这些真实值，
+        # 而不是前端把各工具 duration 累加（累加 ≠ 整体耗时）。
+        _t0 = time.monotonic()
+        _thinking_rounds = 0
+        _tool_calls_count = 0
         agent = db.execute(select(KbAgent).where(KbAgent.id == agent_id)).scalars().first()
         if not agent:
             yield _sse({"type": "error", "message": f"agent not found: {agent_id}"})
@@ -533,6 +539,12 @@ def agent_qa_stream(
                     max_tool_iterations=per_kb_iterations,
                 ):
                     event["kb_id"] = kb.id
+                    # 2026-10-21 统计：工具调用事件计数 + generation 轮次计数
+                    # （stage/generation/running 出现一次 = 一轮 LLM 生成，即一轮思考）
+                    if event.get("type") == "tool_call":
+                        _tool_calls_count += len(event.get("tool_calls") or [])
+                    elif event.get("type") == "stage" and event.get("stage") == "generation" and event.get("status") == "running":
+                        _thinking_rounds += 1
                     if event.get("type") == "delta":
                         answer_parts.append(event.get("text", ""))
                         _persist_partial()  # 2026-10-20 增量落库：生成中定期保存已生成部分
@@ -593,11 +605,19 @@ def agent_qa_stream(
                     logger.warning("failed to persist agent assistant message: %s", e)
             # 2026-10-14 done 事件带回持久化消息 id：前端据此把本地占位 id 换成服务端 id，
             # 否则点赞/反馈按 id 查库会 404「消息不存在」。
+            # 2026-10-21 补统计（对齐 WeKnora done 事件的 total_steps/total_duration_ms）：
+            # total_duration_ms = 整体耗时（含检索/生成/工具全链，多 KB 循环累加）、
+            # thinking_rounds = generation 轮数、tool_calls_count = 工具调用总数
+            # （字段名带 _count 后缀：done 事件已有一个 tool_calls 数组字段名，
+            # 不与前端 QaStreamEvent.tool_calls 冲突）。
             yield _sse(
                 {
                     "type": "done",
                     "message_id": assistant_message_id,
                     "user_message_id": user_message_id,
+                    "total_duration_ms": int((time.monotonic() - _t0) * 1000),
+                    "thinking_rounds": _thinking_rounds,
+                    "tool_calls_count": _tool_calls_count,
                 }
             )
 

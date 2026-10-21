@@ -86,6 +86,26 @@ def test_agents_prompt_defaults_route() -> None:
     assert "contexts" in body["data"]["placeholders"]
 
 
+def test_agent_done_event_stats_fields() -> None:
+    """2026-10-21 对齐 WeKnora done 事件统计：done 事件带 total_duration_ms /
+    thinking_rounds / tool_calls_count（整体耗时、思考轮次、工具调用数）。
+
+    直接验证最终 done 事件构造（不含鉴权/知识库依赖）——通过逐行 scan
+    agent_qa_stream 源码里 done 事件的字段构造，或最小化调用链路。
+    这里用源码静态断言：done 事件 dict 构造处必含三个统计字段。
+    """
+    import re
+
+    src = open("api/routers/agents.py", encoding="utf-8").read()
+    done_block = src[src.index('"type": "done"'):]
+    # 找到 finally 里 done yield 的 dict 构造（含 message_id 的那处）
+    m = re.search(r'"type": "done",\s*\n\s*"message_id"[^}]*\}', done_block)
+    assert m, "done 事件构造未找到"
+    block = m.group(0)
+    for field in ("total_duration_ms", "thinking_rounds", "tool_calls_count"):
+        assert field in block, f"done 事件缺统计字段 {field}"
+
+
 def test_agents_prompt_templates_route() -> None:
     """GET /agents/prompt-templates 返回模板库（2026-10-21 对齐 WeKnora）。
 

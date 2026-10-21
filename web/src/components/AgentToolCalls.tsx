@@ -84,35 +84,53 @@ function formatDuration(seconds: number): string {
 
 interface Props {
   events: ToolCallEvent[];
+  /** 2026-10-21 后端 done 事件统计（整体耗时/思考轮次/工具调用数），优先于前端推算 */
+  stats?: { totalDurationMs?: number; thinkingRounds?: number; toolCalls?: number };
+  /**
+   * 2026-10-21 答案是否仍在流式生成（m.streaming）：
+   * true = 答案未完成 → 工具链强制展开（用户随时看进度）；
+   * false = 答案已完成 → 折叠成树根摘要，可手动展开/收缩。
+   */
+  answerStreaming?: boolean;
 }
 
-export default function AgentToolCalls({ events }: Props) {
+export default function AgentToolCalls({ events, stats, answerStreaming }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   // 2026-10-21 树形收缩/展开：默认收起（对齐 WeKnora showIntermediateSteps=false），
   // 点树根切换；无论展开还是收缩树根始终存在（之前只有展开、无收缩入口）。
   const [treeOpen, setTreeOpen] = useState(false);
 
+  // 折叠规则（2026-10-21 对齐用户反馈「答案没出来前展开、回复完后折叠」）：
+  // - 答案仍在流式（answerStreaming）→ 无论工具是否完成都展开时间线
+  // - 答案已完成（!answerStreaming）且所有工具 done → 显示树根摘要（可手动展开/收缩）
   const allDone = useMemo(() => events.every((ev) => ev.status === "done"), [events]);
-  // 统计（对齐 WeKnora intermediateStepsSummary：思考轮数/工具数/耗时）
-  const stats = useMemo(() => {
-    const thinkingRounds = events.filter((ev) => ev.name === "thinking").length;
-    const toolCalls = events.filter((ev) => ev.name !== "thinking").length;
-    const totalSec = events.reduce((acc, ev) => acc + (ev.duration || 0), 0);
-    return { thinkingRounds, toolCalls, totalSec };
-  }, [events]);
+  const showTree = allDone && !answerStreaming;
+  const showTimeline = !showTree || treeOpen;
+  // 统计（对齐 WeKnora intermediateStepsSummary：思考轮数/工具数/耗时）。
+  // 优先用后端 done 事件统计（整体耗时含检索/生成/工具全链，思考轮次=generation 轮数），
+  // 前端推算仅作兜底：thinking 工具数作为思考轮、非 thinking 作为工具数。
+  const statsMerged = useMemo(() => {
+    const fallbackThinking = events.filter((ev) => ev.name === "thinking").length;
+    const fallbackTools = events.filter((ev) => ev.name !== "thinking").length;
+    const fallbackTotalSec = events.reduce((acc, ev) => acc + (ev.duration || 0), 0);
+    return {
+      thinkingRounds: stats?.thinkingRounds ?? fallbackThinking,
+      toolCalls: stats?.toolCalls ?? fallbackTools,
+      totalDurationMs: stats?.totalDurationMs ?? (fallbackTotalSec > 0 ? fallbackTotalSec * 1000 : undefined),
+    };
+  }, [events, stats]);
 
   if (!events || events.length === 0) return null;
 
   // 树根摘要（对齐 WeKnora intermediateStepsSummary 文案）
   const summaryParts: string[] = [];
-  if (stats.thinkingRounds > 0) summaryParts.push(`思考 ${stats.thinkingRounds} 轮`);
-  if (stats.toolCalls > 0) summaryParts.push(`调用 ${stats.toolCalls} 次工具`);
-  if (stats.toolCalls === 0 && stats.thinkingRounds === 0) summaryParts.push(`已完成 ${events.length} 个步骤`);
-  if (stats.totalSec > 0) summaryParts.push(`耗时 ${formatDuration(stats.totalSec)}`);
+  if (statsMerged.thinkingRounds > 0) summaryParts.push(`思考 ${statsMerged.thinkingRounds} 轮`);
+  if (statsMerged.toolCalls > 0) summaryParts.push(`调用 ${statsMerged.toolCalls} 次工具`);
+  if (statsMerged.toolCalls === 0 && statsMerged.thinkingRounds === 0) summaryParts.push(`已完成 ${events.length} 个步骤`);
+  if (statsMerged.totalDurationMs != null && statsMerged.totalDurationMs > 0) {
+    summaryParts.push(`耗时 ${formatDuration(statsMerged.totalDurationMs / 1000)}`);
+  }
   const treeSummary = summaryParts.join(" · ");
-
-  const showTree = allDone;
-  const showTimeline = !showTree || treeOpen;
 
   return (
     <div className="kb-agent-tree">

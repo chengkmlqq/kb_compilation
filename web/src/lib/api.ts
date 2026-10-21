@@ -2784,8 +2784,13 @@ export interface QaStreamEvent {
   summary?: string;
   hits_count?: number;
   tool_calls?: Array<{ id?: string; name?: string; arguments?: string }>;
-  results?: Array<{ id?: string; name?: string; result?: string }>;
+  results?: Array<{ id?: string; name?: string; result?: string; success?: boolean; error?: string }>;
   durations?: number[];
+  /** 2026-10-21 done 事件统计（对齐 WeKnora total_steps/total_duration_ms） */
+  total_duration_ms?: number;
+  thinking_rounds?: number;
+  /** done 事件的工具调用总数（避免与同名的 tool_calls 数组字段混淆） */
+  tool_calls_count?: number;
 }
 
 export interface ChatSessionInputState {
