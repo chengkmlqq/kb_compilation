@@ -208,6 +208,34 @@ export default function ChatPage() {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
   };
 
+  // 2026-10-21 修复「已拉到底部仍提示回到最新」：
+  // 旧实现只在 onScroll 时更新按钮，但消息内容高度会异步变化（答案流式追加、
+  // 工具链折叠/展开、Markdown/图片渲染完成）——这些变化不触发 scroll 事件，
+  // 按钮状态残留（如内容变矮后用户其实已在底部、按钮仍显示）。
+  // 这里统一成 updateScrollBtn：onScroll + 内容尺寸变化（ResizeObserver）都调它；
+  // 内容不足一屏（scrollHeight<=clientHeight，含 is-home overflow:visible）时强制隐藏。
+  const updateScrollBtn = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollHeight <= el.clientHeight + 2) {
+      setShowScrollBtn(false);
+      return;
+    }
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    setShowScrollBtn(!atBottom);
+  };
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    updateScrollBtn();
+    if (typeof ResizeObserver === "undefined") return;
+    // 内容区尺寸变化（答案/工具链/图片异步渲染）时重算按钮状态
+    const ro = new ResizeObserver(updateScrollBtn);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- msgs/streaming 变化即内容变化
+  }, [msgs, streaming]);
+
   // 2026-10-12: 步骤树兜底——把消息里所有仍在 running 的步骤标为 done。
   // 后端此前只发 generation/running 从不发 done（已修复），但这里仍需要
   // 防御：任何路径（done 事件、用户停止、流中断）漏发 done 时，不能让
@@ -1420,11 +1448,7 @@ export default function ChatPage() {
         <div
           ref={scrollRef}
           className="kb-chat-content"
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-            setShowScrollBtn(!atBottom);
-          }}
+          onScroll={updateScrollBtn}
           style={{ position: "relative" }}
         >
           {loadingMsgs ? (
