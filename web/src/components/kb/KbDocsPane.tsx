@@ -1003,7 +1003,9 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                 </button>
               </Tooltip>
             </div>
-            <ModoButton icon={<ReloadOutlined />} onClick={() => void load()}>
+            {/* 2026-10-21 对齐参数管理页 UI：按钮去胶囊（ModoButton 默认 shape=round，
+                显式 shape=default 走全局 antd borderRadius=2，与搜索框统一） */}
+            <ModoButton shape="default" icon={<ReloadOutlined />} onClick={() => void load()}>
               刷新
             </ModoButton>
             <Dropdown
@@ -1036,7 +1038,7 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                 ],
               }}
             >
-              <ModoButton type="primary" icon={<CloudUploadOutlined />}>
+              <ModoButton shape="default" type="primary" icon={<CloudUploadOutlined />}>
                 添加知识
                 <DownOutlined style={{ fontSize: 10, marginLeft: 2 }} />
               </ModoButton>

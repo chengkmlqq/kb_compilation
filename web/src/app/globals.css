@@ -2192,8 +2192,8 @@ html[data-theme="dark"] body {
   align-items: center;
 }
 
-/* 搜索框（对齐知识库管理页 .kb-kbs-search：fill-2 底 / 无边框 / 14px 胶囊 / 28px 高 / 12px 字）。
-   普通 Input 的 className 落在 affix-wrapper 自身，故自带类选择器与后代选择器都写上 */
+/* 搜索框（2026-10-21 对齐参数管理页 UI：去胶囊圆角，与全局 antd token borderRadius=2
+   统一为 2px；此前 14px 胶囊与其他列表页搜索框不一致）。fill-2 底 / 无边框 / 28px 高 */
 .kb-doc-search-input.ant-input-affix-wrapper,
 .kb-doc-search-input .ant-input-affix-wrapper {
   grid-area: search;
@@ -2203,7 +2203,7 @@ html[data-theme="dark"] body {
   max-width: 100%;
   height: 28px;
   padding: 0 12px;
-  border-radius: 14px;
+  border-radius: 2px;
   background: #eff4f9;
   border-color: transparent;
 }
