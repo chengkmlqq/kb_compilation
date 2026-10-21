@@ -2,7 +2,37 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-21（列表接口性能修复：RBAC 菜单 N+1 批量 + wiki 页计数条件聚合；验证通过已提交推送）
+最后更新：2026-10-21（智能问答「无返回」根因修复：前端 thinking:true 覆盖 agent 配置 + LLM 429 重试策略强化；验证通过已提交推送）
+
+## 40. 当前状态（2026-10-21 智能问答「为什么没有返回」——同模型 WeKnora 能答 kb 不能）
+
+- **现象**：智能问答（供管制度智能体）最近会话 assistant 消息 content=''，无回复；
+  usage 记录 04:19:43 / 04:27:52 两次 `op:agent 429 Too Many Requests`。
+- **对比 WeKnora（同 deepseek-v4-pro 能答）**：
+  1. **WeKnora 不强制 thinking**：基类 `baseProvider.Thinking() = noThinking{}`（provider.go:66），
+     deepseekProvider 继承不发 thinking 字段；模型真吐思考也有 `removeThinkingContent`
+     剥离 `<think>` 兜底（openai_stream.go:26-27,88-101）。
+  2. **kb 前端硬编码 `thinking: true`**（chat/page.tsx:773，cbcff52 引入）→ agents.py:532
+     `req.thinking` 优先于 agent 配置（供管制度智能体 config.thinking=False）→ 强制网关
+     思考模式 → deepseek-v4-pro 工具循环+长上下文（8k+ tokens）下只输出 reasoning_content、
+     正文 content 空（usage 铁证：agent 调用 in 7k-9k、out 仅 59-243 tokens 全是思考无正文）。
+  3. **429 重试太弱**：chat.py 原 3 次尝试、退避 1.5s/3s，限流高峰（InferAI ~3次/分）
+     连续失败直接「无返回」；编排引擎同场景已是 15s 起指数退避 + 5 次。
+- **修复（2 文件，api+web 各一）**：
+  1. `web/src/app/(main)/chat/page.tsx`：`thinking: true` → `undefined`——不再覆盖 agent
+     配置，agent 问答回落 thinking=False 正常输出正文；普通问答回落网关默认（reasoning
+     仍会经 thinking 事件折叠展示，有则展示不强制）。对齐 WeKnora。
+  2. `api/services/chat.py` `_stream_openai_stream`：429/403/408 限流类 5s 起指数退避
+     （5/10/15/20s）、尝试次数 3→5；5xx 保持 1.5s 起。重试耗尽后 429 抛中文可读提示
+     （「模型服务繁忙（HTTP 429 限流）…请稍等 1-2 分钟」，对齐 404 处理手法），
+     不再裸抛 httpx 英文异常。
+- **验证**：test_chat_client/test_chat/test_qa_stream_resume 20 过；web tsc --noEmit 0 错；
+  全量 pytest 828 passed / 8 failed（存量 DATABASE_URL 环境问题，与基线一致）。
+- **部署注意**：api + web 双层改动 → 重建 kb-api-server + kb-web 生效。
+- **实测确认（同模型三种参数均可出正文，简单问答不受 thinking 影响）**：no-thinking /
+  thinking-true / thinking-false 三发 1+1 均返回 content='2'；问题仅在 agent 工具循环
+  组合下 thinking 强制开启时出现。后续若用户需要深度思考开关，应按 WeKnora 思路做
+  provider 级 thinking_control（模型条目已有 thinking_control 字段），而非全局硬编码。
 
 ## 39. 当前状态（2026-10-21 列表接口性能——GET /api/v1/kbs 慢的根因修复）
 

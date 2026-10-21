@@ -513,7 +513,12 @@ class ChatClient:
             # 故用 build_request + send(stream=True)（原生 Response，可自管关闭）。
             resp = None
             last_exc: Exception | None = None
-            for attempt in range(3):  # 最多 3 次尝试（2 次重试）
+            # 2026-10-21 对齐编排引擎退避策略：429 限流（InferAI ~3次/分）用
+            # 5s 起指数退避（5/10/15/20s），尝试次数 3→5；5xx 保持短退避 1.5s 起。
+            # 此前 3 次尝试、1.5s/3s 退避在限流高峰连续失败（usage 实测 429
+            # error 且 retries=2），问答直接「无返回」。
+            max_attempts = 5
+            for attempt in range(max_attempts):
                 _stats["retries"] = attempt
                 try:
                     req = client.build_request("POST", endpoint, json=payload, headers=headers)
@@ -545,9 +550,24 @@ class ChatClient:
                                 f"请在「模型配置」中核对该模型名是否为网关实际支持的取值。"
                             ) from exc
                         raise
-                    if attempt < 2:
-                        time.sleep(1.5 * (attempt + 1))
+                    if attempt < max_attempts - 1:
+                        # 429/403/408 限流类：5s 起指数退避；其余 5xx：1.5s 起
+                        if status in (403, 408, 429):
+                            time.sleep(min(5 * (attempt + 1), 20))
+                        else:
+                            time.sleep(1.5 * (attempt + 1))
             if resp is None:
+                # 2026-10-21 重试耗尽：429/403 限流给出可读中文提示（原样抛
+                # httpx 异常，前端只显示 "Client error '429 Too Many Requests'
+                # for url ..."）。模型服务限流时用户应知道「稍后重试」而非
+                # 以为系统故障。
+                _status = getattr(getattr(last_exc, "response", None), "status_code", None)
+                if _status in (403, 408, 429):
+                    raise RuntimeError(
+                        f"模型服务当前繁忙（HTTP {_status} 限流），已自动重试 "
+                        f"{max_attempts} 次仍未成功。请稍等 1-2 分钟后重新提问；"
+                        f"若持续出现，请检查模型「{self.cfg.model}」的并发配额。"
+                    ) from last_exc
                 raise last_exc or RuntimeError("chat stream failed")
             try:
                 for line in resp.iter_lines():
