@@ -5409,3 +5409,19 @@ html[data-theme="dark"] .kb-citation-web:hover {
   color: #4d5e7d;
   flex-shrink: 0;
 }
+
+/* ── 总览页 · 知识库维度统计表（overview-kb-*，2026-10-21）── */
+.overview-kb-num {
+  font-variant-numeric: tabular-nums;
+}
+.overview-kb-inflight {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #e6f4ff;
+  color: #1677ff;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}

@@ -3259,6 +3259,21 @@ export function apiOverviewTrend(days = 7) {
   );
 }
 
+/** 知识库维度统计条目（总览页「知识库维度」区块；GET /overview/kb-stats） */
+export interface OverviewKbStat {
+  id: string;
+  name: string;
+  docs: { total: number; by_state: Record<string, number> };
+  chunks: number;
+  wiki_pages: number;
+  issues_open: number;
+  last_doc_at: string | null;
+}
+
+export function apiOverviewKbStats() {
+  return request<{ items: OverviewKbStat[] }>("/api/v1/overview/kb-stats");
+}
+
 // ---- 任务管理（定时任务 modo_cron_task，对齐 data-synth cron） ----
 
 export interface CronTaskItem {

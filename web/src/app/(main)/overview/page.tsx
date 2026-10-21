@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useMemo, useState, type ComponentType, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
-import { App, Empty, Segmented, Spin, Tooltip } from "antd";
+import { App, Button, Empty, Segmented, Spin, Table, Tooltip, Typography } from "antd";
 import {
   BookOutlined,
   CheckCircleOutlined,
@@ -22,9 +22,12 @@ import {
   ThunderboltOutlined,
   WarningOutlined,
 } from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
 import {
+  apiOverviewKbStats,
   apiOverviewSummary,
   apiOverviewTrend,
+  OverviewKbStat,
   OverviewSummary,
   OverviewTrendDay,
 } from "@/lib/api";
@@ -80,6 +83,8 @@ export default function OverviewPage() {
   const router = useRouter();
   const [summary, setSummary] = useState<OverviewSummary | null>(null);
   const [trend, setTrend] = useState<OverviewTrendDay[]>([]);
+  const [kbStats, setKbStats] = useState<OverviewKbStat[]>([]);
+  const [kbStatsLoading, setKbStatsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendDays, setTrendDays] = useState(7);
@@ -104,6 +109,18 @@ export default function OverviewPage() {
     }
   }, []);
 
+  const loadKbStats = useCallback(async () => {
+    setKbStatsLoading(true);
+    try {
+      const res = await apiOverviewKbStats();
+      if (res.success && res.data) setKbStats(res.data.items || []);
+    } catch {
+      /* 知识库维度统计失败不阻断主看板 */
+    } finally {
+      setKbStatsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadSummary();
   }, [loadSummary]);
@@ -111,6 +128,10 @@ export default function OverviewPage() {
   useEffect(() => {
     void loadTrend(trendDays);
   }, [loadTrend, trendDays]);
+
+  useEffect(() => {
+    void loadKbStats();
+  }, [loadKbStats]);
 
   // ── 指标卡（对齐任务监控页 JobStats 视觉：48px 圆角图标底 / 26px 数值）──
   const statCards = useMemo(() => {
@@ -206,6 +227,69 @@ export default function OverviewPage() {
         { date: d.date, series: "Wiki 页", value: d.wiki_pages },
       ]),
     [trend],
+  );
+
+  // ── 知识库维度统计（表格）──
+  const kbStatColumns: ColumnsType<OverviewKbStat> = useMemo(
+    () => [
+      {
+        title: "知识库",
+        dataIndex: "name",
+        width: 240,
+        ellipsis: true,
+        render: (v: string, r: OverviewKbStat) => (
+          <Typography.Link onClick={() => router.push(`/kbs/${r.id}`)}>{v}</Typography.Link>
+        ),
+      },
+      {
+        title: "文档",
+        dataIndex: ["docs", "total"],
+        width: 100,
+        align: "right",
+        sorter: (a, b) => a.docs.total - b.docs.total,
+        render: (_: unknown, r: OverviewKbStat) => (
+          <span className="overview-kb-num">
+            {r.docs.total}
+            {r.docs.by_state.PENDING || r.docs.by_state.PARSING || r.docs.by_state.EMBEDDING ? (
+              <span className="overview-kb-inflight">
+                {" "}
+                {(r.docs.by_state.PENDING || 0) + (r.docs.by_state.PARSING || 0) + (r.docs.by_state.EMBEDDING || 0)}
+                处理中
+              </span>
+            ) : null}
+          </span>
+        ),
+      },
+      {
+        title: "知识分块",
+        dataIndex: "chunks",
+        width: 100,
+        align: "right",
+        sorter: (a, b) => a.chunks - b.chunks,
+      },
+      {
+        title: "Wiki 页面",
+        dataIndex: "wiki_pages",
+        width: 100,
+        align: "right",
+        sorter: (a, b) => a.wiki_pages - b.wiki_pages,
+      },
+      {
+        title: "待处理问题",
+        dataIndex: "issues_open",
+        width: 110,
+        align: "right",
+        render: (v: number) =>
+          v > 0 ? <span style={{ color: "#d48806", fontWeight: 600 }}>{v}</span> : v,
+      },
+      {
+        title: "最近文档更新",
+        dataIndex: "last_doc_at",
+        width: 160,
+        render: (v: string | null) => (v ? v.slice(0, 16).replace("T", " ") : "—"),
+      },
+    ],
+    [router],
   );
 
   const sectionStyle: CSSProperties = {
@@ -470,6 +554,52 @@ export default function OverviewPage() {
                   </span>
                 </div>
               </div>
+            </div>
+
+            {/* 知识库维度统计（2026-10-21）：各库文档/分块/Wiki 页/问题，点击库名下钻 */}
+            <div style={{ ...sectionStyle, padding: 16, marginBottom: 16 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 12,
+                }}
+              >
+                <span style={{ fontSize: 14, fontWeight: 600, color: "#242E43" }}>
+                  知识库维度统计
+                </span>
+                <Button
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  onClick={() => void loadKbStats()}
+                >
+                  刷新
+                </Button>
+              </div>
+              {kbStatsLoading && kbStats.length === 0 ? (
+                <div
+                  style={{
+                    height: 120,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Spin />
+                </div>
+              ) : kbStats.length === 0 ? (
+                <Empty description="暂无知识库" />
+              ) : (
+                <Table<OverviewKbStat>
+                  rowKey="id"
+                  size="small"
+                  columns={kbStatColumns}
+                  dataSource={kbStats}
+                  pagination={false}
+                  scroll={{ x: 900 }}
+                />
+              )}
             </div>
           </>
         )}
