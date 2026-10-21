@@ -2,7 +2,47 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-21（索引巡检补齐 6 表 7 索引 + RBAC 连接复用 + 智能问答无返回修复；验证通过已提交推送）
+最后更新：2026-10-22（质量评估全库跑通：env=prod 修复 + 并行节点 bindings lost-update 修复；7 库 4 维度评估全部完成）
+
+## 42. 当前状态（2026-10-22 质量评估批量跑通——两处 bug 修复 + 全库评估完成）
+
+- **任务**：用质量评估功能评估全部已构建 KB 文档（7 库 × dim=all/doc/chunk/graph），
+  过程中修 bug，修完用 deploy/kb-update.sh 更新后重评，直到全部完成。
+- **Bug 1（评估任务永远排队中）**：`api/routers/quality.py` launch 时
+  `execute_tape(db, tape_id, inputs)` 未传 env（None→dev），而占位行建在
+  API 默认 prod 上下文、UI 读正式表；评估脚本 get_sessionmaker() 被 env 路由到
+  _dev 表 → 读旧快照库（未同步新库的 KB）、结果落 kb_quality_run_dev，占位行
+  永远 queued。**修复：显式传 env="prod"**（与上传链一致：数据在 prod，编排节点
+  须同环境读写）。commit 64efefa。另清理了旧代码遗留的 4 条卡死占位评估任务 +
+  3 条孤儿 run 行（不清理会触发「已有运行中的任务」拦截）。
+- **Bug 2（dim=all 维度分全丢）**：电信语义层 dim=all 成功但 chunk/wiki/graph 全
+  None（单维度评估 99/100 正常）。run.bindings 只剩 wiki_sem_r/wiki_cmp_r/
+  graph_sem_r（n05/n06/n07），n02/n03/n04 并行写的 chunk_r/wiki_r/graph_r 全丢。
+  **根因**：`worker/tasks/orch_runner.py` `_run_node_impl` 写回 bindings 是
+  「无锁读 _bindings_from_run → merge → _update_run 整行覆盖」（写才加锁）。
+  fan-out 并行节点毫秒级完成时（小库单节点 100-250ms）后写者覆盖先写者的 key；
+  大库单节点数秒自然错开故一直没暴露。**修复：新增 `_merge_run_bindings`——读-改-
+  写在 `_lock_run`（SELECT FOR UPDATE）内完成，同 run 并行节点提交串行化；
+  __loop_state__ 仍由调度中枢独占。**commit 5148f33。
+- **验证**：修复后重跑 电信语义层 dim=all → chunk=99/wiki=0/graph=60（原全 None）；
+  test 库回归 dim=all → chunk=99/wiki=48.5/graph=74（原 graph None，同 bug）。
+  测试：test_quality_dim_runs 7 + test_orch_runner_bindings_merge 4（新）+ orch
+  相关套件 52 passed；两次部署均走 deploy/kb-update.sh（沙箱 nohup 代跑）。
+- **全库评估结果（7 库 × 4 维度，全部 success）**：
+  - test：chunk 99 / wiki 48.5 / graph 74 / doc 100（69 问题，wiki 断链/孤立为主）
+  - 木业：chunk 98 / wiki 无页(0 页) / graph 60 / doc 100
+  - 济南市监局：chunk 70 / wiki 63.3 / graph 48 / doc 100（71638 问题，wiki 孤立/缺出处居多）
+  - 供管制度：chunk 98 / wiki 54.4 / graph 48 / doc 96（1 文档转换失败）
+  - 茶叶：chunk 77 / wiki 63.5 / graph 44 / doc 100
+  - NG集团规范：chunk 69 / wiki 79.6 / graph 48 / doc 100（270 文档仍 PENDING）
+  - 电信语义层：chunk 99 / wiki 0（无页面）/ graph 60 / doc 100
+- **部署注意**：两次改动均已在 dev 提交推送（64efefa + 5148f33）；容器已重建生效。
+- **坑位**：① 质量评估与「编排页手动执行」同走 execute_tape 但语义不同——评估是
+  生产审计必须 prod，手动执行是测试执行走 dev，勿统一改；② 并行编排节点写回
+  bindings 必须行锁内合并，任何「读-改-写」三段式在 fan-out 快速完成时都会
+  lost-update；③ 评估大库（济南 73765 页）单次 dim=all 约 4 分钟，7 库全量约
+  11 分钟；④ 同 tape 防重 guard 要求按 KB 串行（每 KB 4 维度并行、KB 间等待），
+  批量脚本见 /tmp/run_quality_eval.py。
 
 ## 41. 当前状态（2026-10-21 索引缺失巡检——模型声明 vs 实际库比对）
 
