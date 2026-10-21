@@ -94,6 +94,19 @@ def prompt_defaults_route() -> dict:
     }
 
 
+@router.get("/prompt-templates")
+def prompt_templates_route() -> dict:
+    """提示词模板库（2026-10-21 对齐 WeKnora GET /tenants/kv/prompt-templates）：
+
+    返回系统提示词 / 上下文模板的多模板列表（含名称、描述、正文、默认标记、
+    知识库/联网标签），前端「使用模板」选择器据此填充提示词文本框；
+    「恢复默认」则使用 prompt-defaults 的平台默认提示词。
+    """
+    from api.services.prompt_templates import get_prompt_templates
+
+    return {"success": True, "data": get_prompt_templates()}
+
+
 @router.put("/{agent_id}")
 def update(agent_id: str, req: AgentUpdateRequest, db: Session = Depends(get_db)) -> dict:
     agent = update_agent(db, agent_id, req.model_dump(exclude_none=True))
