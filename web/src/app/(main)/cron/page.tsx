@@ -53,6 +53,7 @@ const TASK_CLASS_LABELS: Record<string, string> = {
   KbOrchestrationRunTask: "编排运行",
   KbOrchestrationNodeTask: "编排节点执行",
   KbOrphanRecoveryTask: "孤儿任务恢复（系统自跑）",
+  KbBuildRetriggerTask: "构建失败补位自愈（failed 文档滚动补位）",
 };
 const taskClassLabel = (tc?: string) => (tc && TASK_CLASS_LABELS[tc]) || tc || "";
 

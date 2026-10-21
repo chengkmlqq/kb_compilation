@@ -22,6 +22,7 @@ import {
   JobItem,
 } from "@/lib/api";
 import { resolveJobMonitorQueueLabel } from "./queue-label";
+import { taskClassLabel } from "./task-class-label";
 
 interface JobLogDrawerProps {
   visible: boolean;
@@ -550,9 +551,9 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
                 </Text>
               </Descriptions.Item>
               <Descriptions.Item label="任务类">
-                <Tooltip title={job.task_class}>
+                <Tooltip title={job.task_class || "-"}>
                   <Text style={{ wordBreak: "break-all" }}>
-                    {job.task_class || "-"}
+                    {taskClassLabel(job.task_class)}
                   </Text>
                 </Tooltip>
               </Descriptions.Item>
