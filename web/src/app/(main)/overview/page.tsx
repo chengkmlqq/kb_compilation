@@ -10,19 +10,18 @@
  */
 import { useCallback, useEffect, useMemo, useState, type ComponentType, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
-import { App, Button, Empty, Segmented, Spin, Table, Tooltip, Typography } from "antd";
+import { App, Button, Empty, Segmented, Spin } from "antd";
 import {
   BookOutlined,
   CheckCircleOutlined,
-  DislikeOutlined,
   FileTextOutlined,
+  LikeOutlined,
   PartitionOutlined,
   ReloadOutlined,
   SyncOutlined,
   ThunderboltOutlined,
   WarningOutlined,
 } from "@ant-design/icons";
-import type { ColumnsType } from "antd/es/table";
 import {
   apiOverviewKbStats,
   apiOverviewSummary,
@@ -187,8 +186,8 @@ export default function OverviewPage() {
           ? `成功 ${s.jobs.success} · 失败 ${s.jobs.failed} · 均耗时 ${fmtDuration(s.jobs.avg_duration_ms)}`
           : "",
         icon: <CheckCircleOutlined style={{ fontSize: 22 }} />,
-        color: "#cf1322",
-        bg: "#FFF1F0",
+        color: "#389e0d",
+        bg: "#F6FFED",
         onClick: () => router.push("/jobs"),
       },
       {
@@ -196,7 +195,7 @@ export default function OverviewPage() {
         label: "问答点赞率",
         value: s ? `${(s.feedback.like_rate * 100).toFixed(1)}%` : "0%",
         sub: s ? `反馈 ${s.feedback.total} · 近7天 ${s.feedback.week_count}` : "",
-        icon: <DislikeOutlined style={{ fontSize: 22 }} />,
+        icon: <LikeOutlined style={{ fontSize: 22 }} />,
         color: "#13c2c2",
         bg: "#E6FFFB",
         onClick: () => router.push("/feedback-stats"),
@@ -229,67 +228,16 @@ export default function OverviewPage() {
     [trend],
   );
 
-  // ── 知识库维度统计（表格）──
-  const kbStatColumns: ColumnsType<OverviewKbStat> = useMemo(
-    () => [
-      {
-        title: "知识库",
-        dataIndex: "name",
-        width: 240,
-        ellipsis: true,
-        render: (v: string, r: OverviewKbStat) => (
-          <Typography.Link onClick={() => router.push(`/kbs/${r.id}`)}>{v}</Typography.Link>
-        ),
-      },
-      {
-        title: "文档",
-        dataIndex: ["docs", "total"],
-        width: 100,
-        align: "right",
-        sorter: (a, b) => a.docs.total - b.docs.total,
-        render: (_: unknown, r: OverviewKbStat) => (
-          <span className="overview-kb-num">
-            {r.docs.total}
-            {r.docs.by_state.PENDING || r.docs.by_state.PARSING || r.docs.by_state.EMBEDDING ? (
-              <span className="overview-kb-inflight">
-                {" "}
-                {(r.docs.by_state.PENDING || 0) + (r.docs.by_state.PARSING || 0) + (r.docs.by_state.EMBEDDING || 0)}
-                处理中
-              </span>
-            ) : null}
-          </span>
-        ),
-      },
-      {
-        title: "知识分块",
-        dataIndex: "chunks",
-        width: 100,
-        align: "right",
-        sorter: (a, b) => a.chunks - b.chunks,
-      },
-      {
-        title: "Wiki 页面",
-        dataIndex: "wiki_pages",
-        width: 100,
-        align: "right",
-        sorter: (a, b) => a.wiki_pages - b.wiki_pages,
-      },
-      {
-        title: "待处理问题",
-        dataIndex: "issues_open",
-        width: 110,
-        align: "right",
-        render: (v: number) =>
-          v > 0 ? <span style={{ color: "#d48806", fontWeight: 600 }}>{v}</span> : v,
-      },
-      {
-        title: "最近文档更新",
-        dataIndex: "last_doc_at",
-        width: 160,
-        render: (v: string | null) => (v ? v.slice(0, 16).replace("T", " ") : "—"),
-      },
-    ],
-    [router],
+  // ── 知识库维度统计（分组柱状图：x=知识库，系列=文档/分块/Wiki 页/问题）──
+  const kbStatChartData = useMemo(
+    () =>
+      kbStats.flatMap((kb) => [
+        { id: kb.id, kb: kb.name, series: "文档", value: kb.docs.total },
+        { id: kb.id, kb: kb.name, series: "知识分块", value: kb.chunks },
+        { id: kb.id, kb: kb.name, series: "Wiki 页", value: kb.wiki_pages },
+        { id: kb.id, kb: kb.name, series: "待处理问题", value: kb.issues_open },
+      ]),
+    [kbStats],
   );
 
   const sectionStyle: CSSProperties = {
@@ -580,7 +528,7 @@ export default function OverviewPage() {
               {kbStatsLoading && kbStats.length === 0 ? (
                 <div
                   style={{
-                    height: 120,
+                    height: 260,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -591,13 +539,16 @@ export default function OverviewPage() {
               ) : kbStats.length === 0 ? (
                 <Empty description="暂无知识库" />
               ) : (
-                <Table<OverviewKbStat>
-                  rowKey="id"
-                  size="small"
-                  columns={kbStatColumns}
-                  dataSource={kbStats}
-                  pagination={false}
-                  scroll={{ x: 900 }}
+                <ChartLazy
+                  chart="column"
+                  data={kbStatChartData}
+                  height={300}
+                  config={{
+                    xField: "kb",
+                    yField: "value",
+                    seriesField: "series",
+                    group: true,
+                  }}
                 />
               )}
             </div>
