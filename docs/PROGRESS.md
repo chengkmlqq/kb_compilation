@@ -2,7 +2,33 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-21（智能问答「无返回」根因修复：前端 thinking:true 覆盖 agent 配置 + LLM 429 重试策略强化；验证通过已提交推送）
+最后更新：2026-10-21（索引巡检补齐 6 表 7 索引 + RBAC 连接复用 + 智能问答无返回修复；验证通过已提交推送）
+
+## 41. 当前状态（2026-10-21 索引缺失巡检——模型声明 vs 实际库比对）
+
+- **巡检方法**：SQLAlchemy 元数据声明索引（index=True 单列 + Index() 组合）vs
+  实际库 SHOW INDEX 覆盖比对，按「索引覆盖的列组合」而非索引名判断
+  （迁移自定义名与 SQLAlchemy 自动命名 ix_<table>_<col> 不同，纯名字比对会误报）。
+- **发现 6 表 7 索引缺失**（模型声明但线上库未建，均为高频查询列）：
+  - chat_session.parent_session_id（分叉会话查询）
+  - kb_datasource.scope / owner_team_name（kb_visible_clauses 每请求可见性过滤）
+  - kb_document.source_type（按来源类型过滤）
+  - kb_quality_run.kb_id（按库查质量运行）
+  - wiki_link.kb_id（51k 行，删除/读链接多处 WHERE）
+  - wiki_page_issue.kb_id（按库查 wiki 问题）
+- **全表核对**：其余业务表索引完整（kb_llm_usage 6 索引 / modo_job 7 索引 /
+  wiki_page 4 索引等均 OK）；dev 双表（xxx_dev）数据量小且仅编排测试读写，
+  不在正式查询路径，未补（随 create_all 建，量小影响有限）。
+- **修复**：migrations/versions/0036_missing_indexes.py（幂等守卫
+  _table_exists/_column_exists/_index_exists，跨 MySQL/PG；命名对齐
+  模型 ix_<table>_<col>）。已在线上库执行（0035 → 0036，5.5s），
+  7 索引全部落库确认。
+- **验证**：test_migrations_version_table + test_kb_admin + test_system_admin
+  64 passed；全量 pytest 841 passed / 1 failed（存量 DB 环境问题）。
+- **P2 待续**：modo_job.state/task_class/create_time 统计过滤仍全扫
+  （系统任务排除靠 not_in + 状态分组，补偿收益低未做）；ChatMessage.feedback
+  反馈统计（chats 表量级小）；kb_document 文档列表 file_ext/parse_state
+  过滤（已随 kb_id 索引前缀生效，单独立索引收益低）。
 
 ## 40. 当前状态（2026-10-21 智能问答「为什么没有返回」——同模型 WeKnora 能答 kb 不能）
 
