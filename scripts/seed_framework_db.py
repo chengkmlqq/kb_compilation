@@ -199,7 +199,7 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("orch_defines", "orch_defines", "编排组件", "/orchestrations/steps", "grp_debug", "BlockOutlined", 5),
     ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_debug", "IconCloudServerColor", 6),
     ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_debug", "TableOutlined", 7),
-    ("quality", "quality", "质量评估", "/quality", "grp_debug", "CheckCircleOutlined", 8),
+    ("quality", "quality", "wiki评估", "/quality", "grp_debug", "CheckCircleOutlined", 8),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，
@@ -226,13 +226,25 @@ REMOVED_SYSTEM_CONFIG_DIMS: set[str] = {
     # 2026-10-21 移除：元数据采集页已有 full/incremental 模式选择，此开关仅渲染
     # 警示条、不拦截任何操作（POST /metadata/collection 不校验），属冗余配置
     "metadata_full_collection_enabled",
+    # 2026-10-21 移除：向量模型配置统一走「模型管理」页（KbModel embedding 类型），
+    # 不再经 modo_dim/参数管理页（legacy 读取链已删，见 api/services/embedding.py）
+    "EMBEDDING_BASE_URL",
+    "EMBEDDING_API_KEY",
+    "EMBEDDING_MODEL",
+    "EMBEDDING_DIM",
 }
 
+# 系统参数种子（modo_dim, dim_group=SYSTEM_CONFIG）
+# 2026-10-12: 参数表清理后仅保留代码确实读取的参数，此处固化进种子——
+#   全新部署跑本脚本即建好，已部署环境已有则跳过（不覆盖已有配置值）。
+# 2026-10-21: 移除全部向量模型参数（EMBEDDING_*，统一走「模型管理」页 KbModel）
+#   与 4 个小写失效参数（ai_chat_* / dify_chat_api_endpoint）+ 冗余的
+#   metadata_full_collection_enabled；REMOVED_SYSTEM_CONFIG_DIMS 让重跑本脚本时
+#   显式清理旧库残留行（对齐 REMOVED_MENUS 语义）。
+# dim_value 默认留空 = 走容器 env / 代码默认（与线上实际生效路径一致）；
+# 敏感字段（*_API_KEY）不写默认值。seq 与已部署库一致，保证「参数管理」列表顺序稳定。
+# (dim_code, dim_value, dim_desc, seq)
 SYSTEM_CONFIG_DIMS: list[tuple[str, str, str, int]] = [
-    ("EMBEDDING_BASE_URL", "", "向量模型端点（OpenAI 兼容 /v1；留空=容器 env EMBEDDING_BASE_URL）", 0),
-    ("EMBEDDING_API_KEY", "", "向量模型密钥（留空=容器 env EMBEDDING_API_KEY）", 1),
-    ("EMBEDDING_MODEL", "", "向量模型，如 BAAI/bge-m3（留空=容器 env EMBEDDING_MODEL）", 2),
-    ("EMBEDDING_DIM", "", "向量维度，如 1024（留空=容器 env EMBEDDING_DIM）", 3),
     # 2026-10-13 上传链摘要：三个标准摘要编排的 tape_id（Stuff/Map-Reduce/Refine）。
     # 留空 = 上传不触发摘要（即使 KB summary_strategy=auto 也静默跳过）；
     # 写入后 KB 上传按策略自动路由。运维换编排（自建复制）改这里即可，无需改代码。

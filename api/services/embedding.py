@@ -1,9 +1,12 @@
 """Embedding client (OpenAI-compatible /v1/embeddings).
 
 Mirrors WeKnora's embedding channel: an OpenAI-compatible endpoint driven by
-EMBEDDING_BASE_URL / EMBEDDING_API_KEY / EMBEDDING_MODEL, with batched
-requests and a deterministic zero-vector fallback so ingestion never hard-fails
-on a transient model outage (chunks stay searchable via the keyword arm).
+the model registry (KbModel, type=embedding) — see load_embedding_config.
+2026-10-21: legacy modo_dim (SYSTEM_CONFIG EMBEDDING_*) / env fallback removed;
+vector model config is now exclusively managed via the 模型管理 page
+(/models → KbModel). Batched requests and a deterministic zero-vector fallback
+so ingestion never hard-fails on a transient model outage (chunks stay
+searchable via the keyword arm).
 """
 
 from __future__ import annotations
@@ -17,7 +20,6 @@ from dataclasses import dataclass
 import httpx
 
 from api.config import get_settings
-from api.services.runtime_config import resolve_runtime_config
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -47,93 +49,89 @@ def load_embedding_config(
     is_sys_admin: bool = False,
     kb_id: str = "",
 ) -> EmbeddingConfig:
-    """Resolve embedding config with scoped model priority: scoped model
-    registry default (personal > team > system), then legacy DB (SYSTEM_CONFIG)
-    wins over env, like the source platform's runtime-config precedence.
-    Consumers with no user context resolve the system default first.
+    """Resolve embedding config from the model registry (KbModel, type=embedding).
 
-    kb_id: when set and the KB has `embedding_model_id` bound, that specific
-    model wins (WeKnora KB-level embedding_model_id binding)."""
+    Priority: scoped model registry default (personal > team > system), then
+    KB-level `embedding_model_id` binding when kb_id is set, then any enabled
+    global embedding model. 2026-10-21: legacy modo_dim (SYSTEM_CONFIG
+    EMBEDDING_*) / env fallback removed — vector model config is exclusively
+    managed via the 模型管理 page (/models → KbModel). Raises RuntimeError
+    when no usable embedding model exists (callers surface the error).
+    """
     settings = get_settings()
+    if db is None:
+        # 无 DB 上下文（理论上所有生产调用点都传 db）：直接报错，避免静默走空配置
+        raise RuntimeError("embedding config requires a DB session (model registry)")
 
-    if db is not None:
-        try:
-            from api.services.models import resolve_model_config
+    resolved = None
+    try:
+        from api.services.models import resolve_model_config
 
-            bound_model_id = ""
-            if kb_id:
-                try:
-                    from sqlalchemy import select as _select
+        bound_model_id = ""
+        if kb_id:
+            try:
+                from sqlalchemy import select as _select
 
-                    from api.models.knowledge import KbDatasource as _Kb
+                from api.models.knowledge import KbDatasource as _Kb
 
-                    kb = db.execute(
-                        _select(_Kb).where(_Kb.id == kb_id)
-                    ).scalars().first()
-                    bound_model_id = (getattr(kb, "embedding_model_id", "") or "") if kb else ""
-                except Exception:  # noqa: BLE001
-                    logger.warning("failed to read kb.embedding_model_id", exc_info=True)
-            resolved = resolve_model_config(
-                db,
-                "embedding",
-                caller_user_id=user_id or "",
-                caller_team_name=team_name or "",
-                is_sys_admin=is_sys_admin,
-                model_id=bound_model_id or None,
-            )
-            if not (resolved and resolved.get("base_url")):
-                # 2026-10-17 兜底：无 kb / scoped 默认解析不到时，取全局任一启用的 embedding 模型
-                try:
-                    from sqlalchemy import select as _sel_fb
+                kb = db.execute(
+                    _select(_Kb).where(_Kb.id == kb_id)
+                ).scalars().first()
+                bound_model_id = (getattr(kb, "embedding_model_id", "") or "") if kb else ""
+            except Exception:  # noqa: BLE001
+                logger.warning("failed to read kb.embedding_model_id", exc_info=True)
+        resolved = resolve_model_config(
+            db,
+            "embedding",
+            caller_user_id=user_id or "",
+            caller_team_name=team_name or "",
+            is_sys_admin=is_sys_admin,
+            model_id=bound_model_id or None,
+        )
+        if not (resolved and resolved.get("base_url")):
+            # 兜底：无 kb / scoped 默认解析不到时，取全局任一启用的 embedding 模型
+            try:
+                from sqlalchemy import select as _sel_fb
 
-                    from api.models.model import KbModel as _KbModel_fb
+                from api.models.model import KbModel as _KbModel_fb
 
-                    _fb = (
-                        db.execute(
-                            _sel_fb(_KbModel_fb)
-                            .where(
-                                _KbModel_fb.state == "1",
-                                _KbModel_fb.type == "embedding",
-                            )
-                            .order_by(_KbModel_fb.is_default.desc(), _KbModel_fb.updated_at.desc())
+                _fb = (
+                    db.execute(
+                        _sel_fb(_KbModel_fb)
+                        .where(
+                            _KbModel_fb.state == "1",
+                            _KbModel_fb.type == "embedding",
                         )
-                        .scalars()
-                        .first()
+                        .order_by(_KbModel_fb.is_default.desc(), _KbModel_fb.updated_at.desc())
                     )
-                    if _fb is not None:
-                        from api.services.models import _model_to_config as _m2c_fb
-
-                        resolved = _m2c_fb(_fb)
-                except Exception:  # noqa: BLE001
-                    logger.warning("global embedding fallback failed", exc_info=True)
-            if resolved and resolved.get("base_url"):
-                return EmbeddingConfig(
-                    base_url=resolved["base_url"],
-                    api_key=resolved.get("api_key") or "",
-                    model=resolved.get("model") or "",
-                    dim=int(resolved.get("dimension") or settings.EMBEDDING_DIM),
-                    custom_headers=resolved.get("custom_headers") or None,
-                    interface_type=(resolved.get("interface_type") or "openai"),
+                    .scalars()
+                    .first()
                 )
-        except Exception:
-            logger.warning(
-                "failed to resolve scoped embedding model; using legacy config", exc_info=True
-            )
+                if _fb is not None:
+                    from api.services.models import _model_to_config as _m2c_fb
 
-    def _resolve(env_key: str, db_codes: list[str], fallback: str = "") -> str:
-        if db is None:
-            return fallback
-        try:
-            return resolve_runtime_config(db, env_key, db_codes=db_codes, fallback=fallback)["value"]
-        except Exception:
-            logger.warning("failed to resolve %s from DB; using env", env_key, exc_info=True)
-            return fallback
+                    resolved = _m2c_fb(_fb)
+            except Exception:  # noqa: BLE001
+                logger.warning("global embedding fallback failed", exc_info=True)
+    except Exception:
+        logger.warning(
+            "failed to resolve scoped embedding model", exc_info=True
+        )
 
-    base_url = _resolve("EMBEDDING_BASE_URL", ["EMBEDDING_BASE_URL", "DIFY_CHAT_API_ENDPOINT"], settings.EMBEDDING_BASE_URL)
-    api_key = _resolve("EMBEDDING_API_KEY", ["EMBEDDING_API_KEY"], settings.EMBEDDING_API_KEY)
-    model = _resolve("EMBEDDING_MODEL", ["EMBEDDING_MODEL", "SUMMARY_MODEL_NAME"], settings.EMBEDDING_MODEL)
-    dim = int(_resolve("EMBEDDING_DIM", ["EMBEDDING_DIM"], str(settings.EMBEDDING_DIM)) or settings.EMBEDDING_DIM)
-    return EmbeddingConfig(base_url=base_url, api_key=api_key, model=model, dim=dim)
+    if resolved and resolved.get("base_url"):
+        return EmbeddingConfig(
+            base_url=resolved["base_url"],
+            api_key=resolved.get("api_key") or "",
+            model=resolved.get("model") or "",
+            dim=int(resolved.get("dimension") or settings.EMBEDDING_DIM),
+            custom_headers=resolved.get("custom_headers") or None,
+            interface_type=(resolved.get("interface_type") or "openai"),
+        )
+    # 2026-10-21：legacy modo_dim / env 兜底已移除，向量模型统一由「模型管理」页配置
+    raise RuntimeError(
+        "未配置向量模型：请在「模型管理」页添加并启用一个 embedding 类型模型"
+        "（当前无任何可用的 embedding 模型）"
+    )
 
 
 def l2_normalize(vec: list[float]) -> list[float]:
@@ -156,7 +154,7 @@ class EmbeddingClient:
     def _endpoint(self) -> str:
         base = (self.cfg.base_url or "").rstrip("/")
         if not base:
-            raise RuntimeError("EMBEDDING_BASE_URL is not configured")
+            raise RuntimeError("向量模型未配置 base_url：请在「模型管理」页配置 embedding 模型")
         if base.endswith("/embeddings"):
             return base
         return base + "/embeddings"

@@ -49,10 +49,11 @@ class Settings:
     # and HNSW search are available. VECTOR_STORE_TYPE=es is reserved for a
     # future Elasticsearch backend.
     KNOWLEDGE_DATABASE_URL: str = os.getenv("KNOWLEDGE_DATABASE_URL", "")
+    # 2026-10-21: EMBEDDING_BASE_URL / _API_KEY / _MODEL 的 settings 已移除——
+    # 向量模型统一由「模型管理」页（KbModel embedding 类型）解析。
+    # EMBEDDING_DIM 保留：pgvector 建表列维度（api/models/knowledge.py）+ 模型未声明
+    # dimension 时的回落值。
     EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "1024"))
-    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "")
-    EMBEDDING_BASE_URL: str = os.getenv("EMBEDDING_BASE_URL", "")
-    EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")
 
     # --- Auth ---
     AUTH_SECRET: str = os.getenv("AUTH_SECRET", os.getenv("NEXTAUTH_SECRET", ""))

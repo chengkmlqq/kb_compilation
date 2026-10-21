@@ -39,15 +39,12 @@ logger = logging.getLogger(__name__)
 MODEL_CONFIG_GROUP = "SYSTEM_CONFIG"
 
 # (dim_code, 中文名, 是否敏感, 说明)
+# 2026-10-21：向量模型配置移除（EMBEDDING_*）——统一走「模型管理」页（KbModel，
+# embedding 类型），不再经 modo_dim/参数管理页；此处仅保留问答模型三项。
 MODEL_CONFIG_FIELDS: list[tuple[str, str, bool, str]] = [
     ("AI_CHAT_API_ENDPOINT", "问答模型端点", False, "OpenAI 兼容 /v1 地址，用于问答与 wiki 实体抽取"),
     ("AI_CHAT_API_KEY", "问答模型密钥", True, "Bearer 密钥（回显掩码，留空=不变）"),
     ("AI_CHAT_MODEL", "问答模型", False, "如 deepseek-v4-pro"),
-    ("EMBEDDING_BASE_URL", "向量模型端点", False, "OpenAI 兼容 /v1 地址，用于文档向量化"),
-    ("EMBEDDING_API_KEY", "向量模型密钥", True, "Bearer 密钥（回显掩码，留空=不变）"),
-    ("EMBEDDING_MODEL", "向量模型", False, "如 bge-m3"),
-    ("EMBEDDING_DIM", "向量维度", False, "向量维度，默认 1024"),
-    ("EMBEDDING_PROVIDER", "向量服务商", False, "如 openai / ollama / dashscope"),
 ]
 
 
