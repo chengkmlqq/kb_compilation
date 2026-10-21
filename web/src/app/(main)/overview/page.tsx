@@ -34,23 +34,22 @@ function ChartLazy({
   chart,
   data,
   height,
+  config = {},
 }: {
   chart: "line" | "pie" | "column";
   data: unknown[];
   height: number;
+  /** 图表字段映射配置（xField/yField/seriesField/angleField/colorField 等），
+   *  @ant-design/plots v2（G2 架构）缺字段映射时 encode 为空，图表渲染空白 */
+  config?: Record<string, unknown>;
 }) {
-  const [Comp, setComp] = useState<ComponentType<{ data: unknown[]; height: number }> | null>(
-    null,
-  );
+  const [Comp, setComp] = useState<ComponentType<any> | null>(null);
   useEffect(() => {
     let alive = true;
     void import("@ant-design/charts").then((m) => {
       if (!alive) return;
       const map = { line: m.Line, pie: m.Pie, column: m.Column };
-      setComp(
-        () =>
-          map[chart] as unknown as ComponentType<{ data: unknown[]; height: number }>,
-      );
+      setComp(() => map[chart] as unknown as ComponentType<any>);
     });
     return () => {
       alive = false;
@@ -63,7 +62,7 @@ function ChartLazy({
       </div>
     );
   }
-  return <Comp data={data} height={height} />;
+  return <Comp {...config} data={data} height={height} />;
 }
 
 const inFlight = (byState: Record<string, number>) =>
@@ -228,29 +227,7 @@ export default function OverviewPage() {
         overflow: "auto",
       }}
     >
-      <div style={{ background: "#F5F7FA", flex: 1, minHeight: 0 }}>
-        {/* 顶部标题行 */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 16,
-          }}
-        >
-          <span style={{ fontSize: 16, fontWeight: 600, color: "#242E43" }}>知识构建总览</span>
-          <Tooltip title="刷新">
-            <ReloadOutlined
-              style={{ fontSize: 16, color: "#4d5e7d", cursor: "pointer" }}
-              onClick={() => {
-                setLoading(true);
-                void loadSummary();
-                void loadTrend(trendDays);
-              }}
-            />
-          </Tooltip>
-        </div>
-
+      <div style={{ background: "#F5F7FA", flex: 1, minHeight: 0, paddingTop: 10 }}>
         {/* 指标卡区 */}
         {loading && !summary ? (
           <div style={{ display: "flex", justifyContent: "center", padding: 64 }}>
@@ -378,7 +355,12 @@ export default function OverviewPage() {
               ) : trend.length === 0 ? (
                 <Empty description="暂无趋势数据" />
               ) : (
-                <ChartLazy chart="line" data={trendLineData} height={260} />
+                <ChartLazy
+                  chart="line"
+                  data={trendLineData}
+                  height={260}
+                  config={{ xField: "date", yField: "value", seriesField: "series" }}
+                />
               )}
             </div>
 
@@ -398,7 +380,12 @@ export default function OverviewPage() {
                 {statePieData.length === 0 ? (
                   <Empty description="暂无文档" />
                 ) : (
-                  <ChartLazy chart="pie" data={statePieData} height={260} />
+                  <ChartLazy
+                    chart="pie"
+                    data={statePieData}
+                    height={260}
+                    config={{ angleField: "value", colorField: "type" }}
+                  />
                 )}
               </div>
 
