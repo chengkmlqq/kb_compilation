@@ -12,7 +12,6 @@ import {
   App,
   Button,
   Card,
-  Dropdown,
   Input,
   Modal,
   Select,
@@ -26,7 +25,6 @@ import {
   AppstoreOutlined,
   CloudUploadOutlined,
   DeleteOutlined,
-  DownOutlined,
   DownloadOutlined,
   EditOutlined,
   FolderAddOutlined,
@@ -1065,39 +1063,33 @@ export default function KbDocsPane({
             <ModoButton shape="default" icon={<ReloadOutlined />} onClick={() => void load()}>
               刷新
             </ModoButton>
-            <Dropdown
-              menu={{
-                items: [
-                  {
-                    key: "upload-files",
-                    icon: <CloudUploadOutlined />,
-                    label: "选择文件",
-                    // 2026-10-21 合并入口：文件/文件夹同一按钮展开——
-                    // 「选择文件」支持普通文件 + zip（自动解包，保留包内子孙目录）；
-                    // 「选择文件夹」保留完整子目录结构（webkitdirectory），
-                    // 文件夹内的 zip 同样自动解包（2026-10-21）
-                    onClick: () => fileInputRef.current?.click(),
-                  },
-                  {
-                    key: "upload-folder",
-                    icon: <FolderOutlined />,
-                    label: "选择文件夹",
-                    onClick: () => dirInputRef.current?.click(),
-                  },
-                  {
-                    key: "table",
-                    icon: <TableOutlined />,
-                    label: "添加表",
-                    onClick: () => setSelectTableOpen(true),
-                  },
-                ],
-              }}
-            >
-              <ModoButton shape="default" type="primary" icon={<CloudUploadOutlined />}>
-                添加知识
-                <DownOutlined style={{ fontSize: 10, marginLeft: 2 }} />
+            {/* 2026-10-21 上传入口三按钮：选择文件 / 选择文件夹 / 添加表（弃用下拉合并形态）。
+                「选择文件」支持普通文件 + zip（自动解包，保留包内子孙目录）；
+                「选择文件夹」保留完整子目录结构（webkitdirectory），文件夹内的 zip 同样自动解包 */}
+            <Space size={8}>
+              <ModoButton
+                shape="default"
+                type="primary"
+                icon={<CloudUploadOutlined />}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                选择文件
               </ModoButton>
-            </Dropdown>
+              <ModoButton
+                shape="default"
+                icon={<FolderOutlined />}
+                onClick={() => dirInputRef.current?.click()}
+              >
+                选择文件夹
+              </ModoButton>
+              <ModoButton
+                shape="default"
+                icon={<TableOutlined />}
+                onClick={() => setSelectTableOpen(true)}
+              >
+                添加表
+              </ModoButton>
+            </Space>
             {/* 隐藏的文件选择触发器（本地上传）：accept 只列系统可解析的格式 + zip
                 （zip 自动解包，2026-10-21 起并入「选择文件」，不再单列压缩包入口） */}
             <input
