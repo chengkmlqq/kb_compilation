@@ -81,15 +81,30 @@ SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 #   （解析引擎开关/存储类型/向量库类型/系统信息 页面下架；后端 /api/v1/system/* 接口保留）
 # 2026-10-15 调整：移除「新版问答」页面（/chat-next，assistant-ui 试验页）——页面/组件/依赖
 #   全量删除，恢复方案J 引入前的菜单（chat_next 已从 KB_MENUS 移除，顶级 sort_num 顺延还原）
-# 2026-10-21 调整：新增顶级「语义层」（grp_semantic，目录）——知识库（kbs，sort 2）之后插入，
+# 2026-10-21 调整：新增顶级「语义层」（grp_semantic_layer，目录）——知识库（kbs，sort 2）之后插入，
 #   子级：元数据/文档库/知识本体/知识图谱（/semantic/* 占位页，后续功能填充）；
 #   后续顶级 sort_num 顺延（运维监控 5→6，配置管理 6→7，系统管理 7→8，调试工具 8→9）。
+#   注：menu_id 用 grp_semantic_layer——2026-10-21 实测库内既有「语义资产管理」树占用 grp_semantic，
+#   沿用会 upsert 覆写，故避开；该树（grp_semantic 目录 + 5 子项）无代码页面且非平台功能，
+#   同日随本次调整一并下架（见 REMOVED_MENUS）。
 # 默认隐藏菜单（state=0，菜单管理页可恢复启用）；chat_next 已随页面删除退出该集合
 HIDDEN_MENUS: set[str] = set()
-# 已下架菜单（2026-10-15 移除「新版问答」/chat-next 页面及其组件）：
+# 已下架菜单（2026-10-15 移除「新版问答」/chat-next 页面及其组件；
+#  2026-10-21 移除库内遗留「语义资产管理」树——grp_semantic 顶级目录 + 5 个子菜单
+#  business_extract/semantic_process/semantic_assets/version_release/conflict_handling，
+#  均无对应代码页面，属旧业务迁移残留，非平台功能）：
 # KB_MENUS 是幂等 upsert 语义——只增改不删，seed 里删掉条目不会动旧库残留行；
 # 故 main() 里按此集合显式清理 modo_menu + modo_role_menu_rela（新库同样幂等无操作）。
-REMOVED_MENUS: set[str] = {"chat_next"}
+REMOVED_MENUS: set[str] = {
+    "chat_next",
+    # 「语义资产管理」树（2026-10-21 下架）
+    "grp_semantic",
+    "business_extract",
+    "semantic_process",
+    "semantic_assets",
+    "version_release",
+    "conflict_handling",
+}
 # 结构：Header 顶级 = 总览/智能问答/知识库/智能体/高频词/语义层(目录)/
 #         运维监控(目录)/配置管理(目录)/系统管理/调试工具(目录)。
 #   - route 留空 = 纯目录分组（只展开不跳转）
