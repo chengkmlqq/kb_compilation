@@ -81,6 +81,7 @@ import {
   DEFAULT_SUPPORTED_EXTS,
   acceptAttr,
   isArchiveFileName,
+  isSupportedFileName,
   partitionBySupport,
   supportedLabel,
 } from "@/lib/upload-support";
@@ -725,6 +726,7 @@ export default function KbDocsPane({
     let ok = 0;
     let fail = 0;
     let folderFail = 0;
+    let archives = 0;
     message.open({
       key: progressKey,
       type: "loading",
@@ -742,6 +744,21 @@ export default function KbDocsPane({
           console.error("ensure doc folder failed", e);
           continue;
         }
+      }
+      // zip 压缩包（2026-10-21）：服务端自动解包，解包内容落到 zip 所在目录下
+      // （mirror 关闭时落到当前所选目录，与「平铺上传」一致）
+      if (isArchiveFileName(file.name)) {
+        archives += 1;
+        message.open({
+          key: progressKey,
+          type: "loading",
+          content: `正在解包 ${i + 1}/${total}：${relativePathOf(file) || file.name}`,
+          duration: 0,
+        });
+        const done = await handleArchiveUpload(file, targetFolderId);
+        if (done) ok += 1;
+        else fail += 1;
+        continue;
       }
       message.open({
         key: progressKey,
@@ -762,7 +779,9 @@ export default function KbDocsPane({
     }
 
     const parts: string[] = [];
-    if (ok > 0) parts.push(`成功 ${ok} 个`);
+    if (ok > 0) {
+      parts.push(archives > 0 ? `成功 ${ok} 个（含 ${archives} 个压缩包已解包）` : `成功 ${ok} 个`);
+    }
     if (fail > 0) parts.push(`失败 ${fail} 个`);
     if (folderFail > 0) parts.push(`目录创建失败未上传 ${folderFail} 个`);
     if (skipped > 0) parts.push(`跳过隐藏/空文件 ${skipped} 个`);
@@ -781,15 +800,16 @@ export default function KbDocsPane({
 
   /**
    * 上传 zip 压缩包（服务端**自动解包**，2026-10-20）：
-   * 包内目录结构由后端还原到当前所选目录下（同级同名复用），逐个文件入队解析；
+   * 包内目录结构由后端还原到指定目录下（同级同名复用），逐个文件入队解析；
    * 进度/结果用同 key 的 message 就地更新，完成后刷新列表与目录树。
+   * @param folderId 解包目标目录（缺省 = 当前所选目录；文件夹内 zip 传 zip 所在子目录）
    */
-  const handleArchiveUpload = async (file: File) => {
+  const handleArchiveUpload = async (file: File, folderId?: string): Promise<boolean> => {
     if (!isArchiveFileName(file.name)) {
       message.warning(`仅支持 zip 压缩包自动解包（当前文件：${file.name}）`);
-      return;
+      return false;
     }
-    const progressKey = "kb-archive-upload";
+    const progressKey = `kb-archive-upload-${file.name}`;
     message.open({
       key: progressKey,
       type: "loading",
@@ -806,11 +826,11 @@ export default function KbDocsPane({
           content: `正在上传并解包「${file.name}」… ${pct}%`,
           duration: 0,
         }),
-      docFolderId || undefined,
+      folderId || docFolderId || undefined,
     ).catch(() => null);
     if (!res) {
       message.open({ key: progressKey, type: "error", content: "压缩包上传失败", duration: 6 });
-      return;
+      return false;
     }
     if (!res.success || !res.data) {
       message.open({
@@ -819,7 +839,7 @@ export default function KbDocsPane({
         content: apiErrorMessage(res, "压缩包上传失败"),
         duration: 8,
       });
-      return;
+      return false;
     }
     const d = res.data;
     const detail: string[] = [];
@@ -848,19 +868,24 @@ export default function KbDocsPane({
       await loadDocFolders();
       void load();
     }
+    return d.created_count > 0;
   };
 
-  /** 目录选择（webkitdirectory）回调：先按格式白名单分拣，再进上传确认弹窗 */
+  /** 目录选择（webkitdirectory）回调：先按格式白名单分拣（zip 保留，确认后自动解包），再进上传确认弹窗 */
   const handleDirPicked = (files: File[]) => {
     if (files.length === 0) return;
     const { entries, hiddenSkipped, emptySkipped } = collectDirFiles(files);
-    // 只保留系统能解析的格式（压缩包不在白名单内：请用「上传压缩包」单独解包）
-    const { kept } = partitionBySupport(
-      entries.map((e) => e.file),
-      supportedExts,
+    // 只保留系统能解析的格式 + zip 压缩包（zip 由 uploadDirectoryBatch 分流服务端解包，
+    // 2026-10-21 起文件夹内的压缩包不再跳过）
+    const keptNames = new Set(
+      entries
+        .filter(
+          (e) =>
+            isSupportedFileName(e.file.name, supportedExts) || isArchiveFileName(e.file.name),
+        )
+        .map((e) => e.file.name),
     );
-    const keptSet = new Set(kept);
-    const validEntries = entries.filter((e) => keptSet.has(e.file));
+    const validEntries = entries.filter((e) => keptNames.has(e.file.name));
     const unsupportedSkipped = entries.length - validEntries.length;
     if (validEntries.length === 0) {
       message.warning(
@@ -1044,24 +1069,20 @@ export default function KbDocsPane({
               menu={{
                 items: [
                   {
-                    key: "upload",
+                    key: "upload-files",
                     icon: <CloudUploadOutlined />,
-                    label: "上传文件",
-                    // 2026-10-21 合并入口：zip/文件夹不再单列顶层项——
+                    label: "选择文件",
+                    // 2026-10-21 合并入口：文件/文件夹同一按钮展开——
                     // 「选择文件」支持普通文件 + zip（自动解包，保留包内子孙目录）；
-                    // 「选择文件夹」保留完整子目录结构（webkitdirectory）
-                    children: [
-                      {
-                        key: "upload-files",
-                        label: "选择文件",
-                        onClick: () => fileInputRef.current?.click(),
-                      },
-                      {
-                        key: "upload-folder",
-                        label: "选择文件夹",
-                        onClick: () => dirInputRef.current?.click(),
-                      },
-                    ],
+                    // 「选择文件夹」保留完整子目录结构（webkitdirectory），
+                    // 文件夹内的 zip 同样自动解包（2026-10-21）
+                    onClick: () => fileInputRef.current?.click(),
+                  },
+                  {
+                    key: "upload-folder",
+                    icon: <FolderOutlined />,
+                    label: "选择文件夹",
+                    onClick: () => dirInputRef.current?.click(),
                   },
                   {
                     key: "table",
@@ -1301,6 +1322,11 @@ export default function KbDocsPane({
             return;
           }
           for (const f of filesToUpload) {
+            // zip 分流服务端解包（弹窗「继续添加」无 accept 限制，可能混入压缩包）
+            if (isArchiveFileName(f.name)) {
+              void handleArchiveUpload(f, docFolderId || undefined);
+              continue;
+            }
             startDocUpload(f, undefined, docFolderId, processConfig, buildEngine);
           }
         }}
