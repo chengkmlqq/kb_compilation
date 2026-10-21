@@ -208,7 +208,7 @@ export default function GlobalDropZone() {
         const kbId = cur.kbId;
         const baseFolderId = cur.folderId || "";
         // 拖入目录时按相对路径在知识库内创建/复用文档目录（与「添加知识 → 上传文件夹」同语义；
-        // 目录层级来自 collectDroppedFiles 的 path，绝不落到文件名上）
+        // 目录层级来自 collectDroppedFiles 的 path，保留完整层级含顶层目录，2026-10-20 起）
         let ensurer: DocFolderEnsurer | null = null;
         if (result.entries.some((e) => dirsFromPath(e.path).length > 0)) {
           ensurer = await createDocFolderEnsurer(kbId, baseFolderId).catch(() => null);
@@ -216,7 +216,7 @@ export default function GlobalDropZone() {
         }
         for (const entry of result.entries) {
           if (cur.accept && !cur.accept(entry.file)) continue;
-          // zip 压缩包：走服务端自动解包（包内目录结构由后端还原，无需逐级建目录）
+          // 压缩包（zip / rar）：走服务端自动解包（包内目录结构由后端还原，无需逐级建目录）
           if (isArchiveFileName(entry.file.name)) {
             uploadArchiveToKb(kbId, entry.file, baseFolderId);
             continue;
@@ -329,7 +329,7 @@ export default function GlobalDropZone() {
         <InboxOutlined style={{ fontSize: 48, color: "#1677ff" }} />
         <div style={{ fontSize: 18, fontWeight: 600, color: "#1677ff" }}>{label}</div>
         <div style={{ fontSize: 13, color: "#666" }}>
-          支持目录与 zip 压缩包（自动解包）· 单次 ≤ {MAX_DROP_FILES} 个文件 · 单文件 ≤ {MAX_FILE_SIZE_MB}MB
+          支持目录与 zip / rar 压缩包（自动解包）· 单次 ≤ {MAX_DROP_FILES} 个文件 · 单文件 ≤ {MAX_FILE_SIZE_MB}MB
         </div>
       </div>
     </div>

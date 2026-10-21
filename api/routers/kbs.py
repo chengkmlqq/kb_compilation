@@ -20,6 +20,7 @@ import os
 import re
 import uuid
 from pathlib import Path
+from typing import Callable
 
 from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -658,13 +659,12 @@ def _attach_wiki_build_status(db: Session, kb_id: str, items: list[dict]) -> Non
 
     if not items:
         return
-    # 只取提到本 KB 的任务：kb_id 内嵌在 task_params JSON 文本里，先用 LIKE 粗筛
-    # （下方 json.loads 再精确校验 cfg.kb_id），并加 limit 兜底。
-    # 原实现无条件全表扫 WIKI 任务并逐行 json.loads，随任务累积线性变慢 —— 而本函数
-    # 每次文档列表请求都会执行（文档解析中前端每 3s 轮询一次），是详情页卡顿主因之一。
+    # 只取提到本 KB 的任务：kb_id 冗余列（before_insert/update 自动提取）等值索引直查，
+    # 替代原 `task_params LIKE '%kb_id%'` 全文扫（随任务累积线性变慢）；json.loads
+    # 精确校验保留兜底（防列提取与真实 config 不一致）。
     jobs = db.execute(
         select(Job.id, Job.task_params, Job.state, Job.duration_ms)
-        .where(Job.id.like("WIKI%"), Job.task_params.like(f"%{kb_id}%"))
+        .where(Job.id.like("WIKI%"), Job.kb_id == kb_id)
         .order_by(Job.create_time.desc())
         .limit(3000)
     ).all()
@@ -1172,14 +1172,17 @@ async def upload_archive(
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    """上传 zip 压缩包并**自动解包**入库（2026-10-20）。
+    """上传压缩包并**自动解包**入库（2026-10-20 zip；2026-10-21 增 rar）。
 
     - 包内目录结构 → 知识库文档目录（同级同名复用；keep_structure=false 时全部落到 folder_id）；
     - 跳过：目录项、隐藏/系统垃圾文件（. 开头 / Thumbs.db 等）、空文件、非白名单格式、超大文件；
     - 每个文件仍走「存储 → kb_document(PENDING) → Celery 解析」同一条链路（与单文件上传一致）；
     - 返回 created + skipped 统计，前端据此提示「已解压上传 N 个、跳过 M 个」。
+
+    解包实现：zip 走内置 zipfile（零依赖）；rar 走系统 bsdtar（libarchive，
+    部署镜像含 libarchive-tools，见 deploy/Dockerfile.api*）——用子进程
+    临时文件而非 Python rarfile，避免引入第三方依赖与 unrar 可执行文件依赖。
     """
-    import zipfile
 
     _kb_manage(kb_id, caller, db)
 
@@ -1193,7 +1196,7 @@ async def upload_archive(
         suffix = f"（.{archive_ext}）" if archive_ext else ""
         raise HTTPException(
             status_code=400,
-            detail=f"仅支持 zip 压缩包自动解包；当前文件：{fname or '未命名'}{suffix}",
+            detail=f"仅支持 zip / rar 压缩包自动解包；当前文件：{fname or '未命名'}{suffix}",
         )
 
     content = await file.read()
@@ -1205,12 +1208,7 @@ async def upload_archive(
             detail=f"压缩包超过大小限制 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB",
         )
 
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(content))
-    except zipfile.BadZipFile as exc:
-        raise HTTPException(
-            status_code=400, detail="压缩包无法解压（不是有效的 zip 或文件已损坏）"
-        ) from exc
+    entries, _close_archive = _read_archive_entries(content, archive_ext, fname)
 
     from api.services import storage as storage_svc
 
@@ -1222,19 +1220,21 @@ async def upload_archive(
     folder_seed_count = 0
 
     try:
-        file_infos = [i for i in zf.infolist() if not (i.filename or "").endswith("/")]
+        file_infos = entries
         if len(file_infos) > MAX_ARCHIVE_ENTRIES:
             raise HTTPException(
                 status_code=400,
                 detail=f"压缩包内文件过多（{len(file_infos)} 个，上限 {MAX_ARCHIVE_ENTRIES} 个），请拆分后上传",
             )
-        total_uncompressed = sum(i.file_size for i in file_infos)
-        if total_uncompressed > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+        # zip 条目带真实大小可预检总量；rar 大小未知，总量在逐条提取时累加校验
+        known_sizes = [e.size for e in file_infos if e.size is not None]
+        if known_sizes and sum(known_sizes) > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
             raise HTTPException(
                 status_code=413,
-                detail=f"压缩包解压后过大（约 {total_uncompressed // (1024 * 1024)}MB，上限 "
+                detail=f"压缩包解压后过大（约 {sum(known_sizes) // (1024 * 1024)}MB，上限 "
                 f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)}MB），请拆分后上传",
             )
+        real_total = 0  # rar 解压总量（逐条累加，防解压炸弹）
 
         # 目录映射（同级同名复用）："(parent_id)\0(name)" → folder_id
         existing = {f"{f['parent_id']}\0{f['name']}": f["id"] for f in doc_folders(db, kb_id)}
@@ -1252,8 +1252,8 @@ async def upload_archive(
                 parent = fid
             return parent
 
-        for info in file_infos:
-            raw_name = (info.filename or "").replace("\\", "/")
+        for entry in file_infos:
+            raw_name = (entry.name or "").replace("\\", "/")
             parts = archive_entry_parts(raw_name)
             if not parts:
                 continue  # 非法路径（含 .. / 全空段）直接丢弃
@@ -1266,21 +1266,36 @@ async def upload_archive(
                 skipped["unsupported"] += 1
                 unsupported_types.add(entry_ext or base_name)
                 continue
-            if info.file_size == 0:
+            if entry.size == 0:
                 skipped["empty"] += 1
                 continue
-            if info.file_size > MAX_UPLOAD_BYTES:
+            if entry.size is not None and entry.size > MAX_UPLOAD_BYTES:
                 skipped["oversize"] += 1
                 continue
 
             target_folder = _ensure_folder(parts[:-1]) if keep_structure else folder_id
             try:
-                data = zf.read(info)
+                data = entry.read()
             except Exception as exc:  # noqa: BLE001 - 单个坏条目不阻断整包
                 logger.warning("archive entry read failed: %s (%s)", raw_name, exc)
                 skipped["failed"] += 1
                 errors.append(f"{base_name}: 读取失败")
                 continue
+            # rar 条目大小未知 → 提取后校验空/超大/总量
+            if entry.size is None:
+                if not data:
+                    skipped["empty"] += 1
+                    continue
+                if len(data) > MAX_UPLOAD_BYTES:
+                    skipped["oversize"] += 1
+                    continue
+                real_total += len(data)
+                if real_total > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"压缩包解压后过大（超过 "
+                        f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)}MB），请拆分后上传",
+                    )
 
             doc_id = uuid.uuid4().hex
             storage_path = storage_svc.resolve_new_path(f"kb_documents/{kb_id}/{doc_id}.{entry_ext}")
@@ -1307,7 +1322,7 @@ async def upload_archive(
                 logger.exception("failed to enqueue archived doc %s", doc.id)
             created.append({"id": doc.id, "file_name": doc.file_name, "folder_id": target_folder})
     finally:
-        zf.close()
+        _close_archive()
 
     return {
         "success": True,
@@ -1321,6 +1336,131 @@ async def upload_archive(
             "errors": errors[:5],
         },
     }
+
+
+def _read_archive_entries(
+    content: bytes, archive_ext: str, fname: str
+) -> tuple[list["_ArchiveEntry"], Callable[[], None]]:
+    """按压缩包类型读取条目清单。
+
+    zip → 内置 zipfile（内存，零依赖）；rar → 系统 bsdtar 子进程 + 临时文件
+    （libarchive，部署镜像含 libarchive-tools）。返回 (entries, close)：
+    entries 为统一条目对象（.name=包内路径 / .size=解压大小，rar 未知为 None /
+    .read() 取字节内容），close 用于释放 zip 句柄或清理临时文件。
+
+    坏包统一抛 400（与 zip 分支原「无法解压」文案一致）。
+    """
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    import zipfile
+
+    if archive_ext == "rar":
+        # bsdtar 需真实文件路径（libarchive 解 rar 不支持内存流）
+        tmp = tempfile.NamedTemporaryFile(prefix="kb-upload-", suffix=".rar", delete=False)
+        try:
+            tmp.write(content)
+            tmp.flush()
+        finally:
+            tmp.close()
+        prog = "bsdtar"
+        if not shutil.which(prog):
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+            raise HTTPException(
+                status_code=400,
+                detail="服务器缺少 rar 解包组件（bsdtar），请联系管理员安装 libarchive-tools",
+            )
+
+        def _close() -> None:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+        try:
+            listing = subprocess.run(
+                [prog, "-tf", tmp.name],
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            _close()
+            logger.warning("bsdtar -tf failed(%s=%s): %s", fname, archive_ext, exc)
+            raise HTTPException(
+                status_code=400, detail="压缩包无法解压（不是有效的 rar 或文件已损坏）"
+            ) from exc
+        if listing.returncode != 0:
+            _close()
+            logger.warning("bsdtar -tf non-zero: %s", listing.stderr.decode("utf-8", "replace")[:300])
+            raise HTTPException(
+                status_code=400, detail="压缩包无法解压（不是有效的 rar 或文件已损坏）"
+            )
+        names = [
+            ln
+            for ln in listing.stdout.decode("utf-8", "replace").splitlines()
+            if ln and not ln.endswith("/")
+        ]
+
+        def _make_read(name: str):
+            def _read() -> bytes:
+                try:
+                    res = subprocess.run(
+                        [prog, "-xOf", tmp.name, name],
+                        capture_output=True,
+                        timeout=120,
+                        check=False,
+                    )
+                except (subprocess.TimeoutExpired, OSError) as exc:
+                    logger.warning("bsdtar -xOf failed(%s): %s", name, exc)
+                    raise RuntimeError(f"rar 条目读取失败: {name}") from exc
+                if res.returncode != 0:
+                    raise RuntimeError(f"rar 条目读取失败: {name}")
+                return res.stdout
+
+            return _read
+
+        entries = [
+            _ArchiveEntry(n, None, _make_read(n))
+            for n in names
+        ]
+        return entries, _close
+
+    # zip：内置 zipfile，内存流
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(
+            status_code=400, detail="压缩包无法解压（不是有效的 zip 或文件已损坏）"
+        ) from exc
+
+    def _close() -> None:
+        zf.close()
+
+    entries = [
+        _ArchiveEntry(i.filename, i.file_size, lambda i=i: zf.read(i))
+        for i in zf.infolist()
+        if not (i.filename or "").endswith("/")
+    ]
+    return entries, _close
+
+
+class _ArchiveEntry:
+    """压缩包条目统一抽象（zip / rar 共用循环逻辑）。"""
+
+    __slots__ = ("name", "size", "_read")
+
+    def __init__(self, name: str, size: int | None, read) -> None:
+        self.name = name
+        self.size = size
+        self._read = read
+
+    def read(self) -> bytes:
+        return self._read()
 
 
 def _enqueue_document_process(
@@ -1515,11 +1655,14 @@ def document_processing_timeline(kb_id: str, document_id: str, db: Session = Dep
     ).fetchone()
 
     # ---- wiki 构建任务（WIKI_SKILL_*，task_params.config.knowledge_id 关联） ----
+    # 2026-10-21 性能修复：原 `Job.id.like("WIKI%")` 无 limit 全量拉取全部 WIKI 任务
+    # 逐行 json.loads；改 kb_id 冗余列等值索引收窄（任务量级随 KB 累积而非全局）。
     wiki_state = wiki_job_id = wiki_dur = wiki_err = None
     wiki_jobs = db.execute(
         select(Job.id, Job.task_params, Job.state, Job.duration_ms, Job.error_message)
-        .where(Job.id.like("WIKI%"))
+        .where(Job.id.like("WIKI%"), Job.kb_id == kb_id)
         .order_by(Job.create_time.desc())
+        .limit(2000)
     ).all()
     for jid, tp, st, dur, err in wiki_jobs:
         try:

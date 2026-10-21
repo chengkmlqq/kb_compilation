@@ -25,8 +25,8 @@ export const DEFAULT_SUPPORTED_EXTS: string[] = [
   "dockerfile",
 ];
 
-/** 可自动解包的压缩包格式（服务端解包，见 apiUploadArchive） */
-export const ARCHIVE_EXTS: string[] = ["zip"];
+/** 可自动解包的压缩包格式（服务端解包，见 apiUploadArchive；2026-10-21 增 rar） */
+export const ARCHIVE_EXTS: string[] = ["zip", "rar"];
 
 /** 取扩展名（小写、不含点） */
 export function extOf(fileName: string): string {

@@ -310,8 +310,9 @@ SUPPORTED_UPLOAD_TYPES: tuple[str, ...] = (
 #: 前端 <input accept> 用的扩展名串（与白名单同源）
 SUPPORTED_UPLOAD_ACCEPT: str = ",".join(f".{t}" for t in SUPPORTED_UPLOAD_TYPES)
 
-#: 允许上传的压缩包扩展名（服务端自动解包，见 /kbs/{id}/documents/upload-archive）
-SUPPORTED_ARCHIVE_TYPES: tuple[str, ...] = ("zip",)
+#: 允许上传的压缩包扩展名（服务端自动解包，见 /kbs/{id}/documents/upload-archive）。
+#: zip 走内置 zipfile；rar 走系统 bsdtar（libarchive，部署镜像含 libarchive-tools）。
+SUPPORTED_ARCHIVE_TYPES: tuple[str, ...] = ("zip", "rar")
 
 #: 目录上传 / 压缩包解包时跳过的系统垃圾文件（与前端 web/src/lib/upload-dir.ts 的
 #: JUNK_FILE_NAMES 同源；隐藏文件另外按「任一路径段以 . 开头」判定）

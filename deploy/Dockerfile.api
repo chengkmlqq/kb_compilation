@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         git \
         openssh-client \
+        libarchive-tools \
         fonts-liberation \
         libnss3 \
         libnspr4 \

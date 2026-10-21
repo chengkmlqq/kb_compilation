@@ -797,14 +797,14 @@ export default function KbDocsPane({
   };
 
   /**
-   * 上传 zip 压缩包（服务端**自动解包**，2026-10-20）：
+   * 上传压缩包（zip / rar，服务端**自动解包**，2026-10-20 zip、2026-10-21 增 rar）：
    * 包内目录结构由后端还原到指定目录下（同级同名复用），逐个文件入队解析；
    * 进度/结果用同 key 的 message 就地更新，完成后刷新列表与目录树。
-   * @param folderId 解包目标目录（缺省 = 当前所选目录；文件夹内 zip 传 zip 所在子目录）
+   * @param folderId 解包目标目录（缺省 = 当前所选目录；文件夹内压缩包传所在子目录）
    */
   const handleArchiveUpload = async (file: File, folderId?: string): Promise<boolean> => {
     if (!isArchiveFileName(file.name)) {
-      message.warning(`仅支持 zip 压缩包自动解包（当前文件：${file.name}）`);
+      message.warning(`仅支持 zip / rar 压缩包自动解包（当前文件：${file.name}）`);
       return false;
     }
     const progressKey = `kb-archive-upload-${file.name}`;
@@ -1064,8 +1064,8 @@ export default function KbDocsPane({
               刷新
             </ModoButton>
             {/* 2026-10-21 上传入口三按钮：选择文件 / 选择文件夹 / 添加表（弃用下拉合并形态）。
-                「选择文件」支持普通文件 + zip（自动解包，保留包内子孙目录）；
-                「选择文件夹」保留完整子目录结构（webkitdirectory），文件夹内的 zip 同样自动解包 */}
+                「选择文件」支持普通文件 + zip / rar（自动解包，保留包内子孙目录）；
+                「选择文件夹」保留完整子目录结构（webkitdirectory），文件夹内的压缩包同样自动解包 */}
             <Space size={8}>
               <ModoButton
                 shape="default"
@@ -1090,8 +1090,8 @@ export default function KbDocsPane({
                 添加表
               </ModoButton>
             </Space>
-            {/* 隐藏的文件选择触发器（本地上传）：accept 只列系统可解析的格式 + zip
-                （zip 自动解包，2026-10-21 起并入「选择文件」，不再单列压缩包入口） */}
+            {/* 隐藏的文件选择触发器（本地上传）：accept 只列系统可解析的格式 + zip / rar
+                （压缩包自动解包，2026-10-21 起并入「选择文件」，不再单列压缩包入口） */}
             <input
               ref={fileInputRef}
               type="file"
