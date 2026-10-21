@@ -248,50 +248,62 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
   const onOk = async () => {
     const v = await form.validateFields().catch(() => null);
     if (!v) return;
+    // 分区表单：字段按 section 条件渲染，非当前分区字段已卸载——
+    // validateFields 只返回挂载字段的值（卸载字段即使已填写也不在 v 里），
+    // 需用 getFieldsValue(true) 取 store 全量（preserve 保留值）合并后提交，
+    // 否则切到其他分区保存时 name 等字段丢失 → 后端报 "name: Field required"。
+    const all = form.getFieldsValue(true);
+    const values = { ...all, ...v };
+    // name 卸载后必填规则不生效，手动兜底：为空提示并跳回基本信息分区
+    if (!String(values.name ?? "").trim()) {
+      message.error("请输入智能体名称");
+      setSection("basic");
+      return;
+    }
     // 汇总 config（对齐 WeKnora config JSON 形状，缺省值后端 config_from_dict 兜底）
     const config: Record<string, unknown> = {
-      agent_mode: v.agent_mode,
-      system_prompt: v.system_prompt,
-      use_custom_system_prompt: v.use_custom_system_prompt ?? false,
-      context_template: v.context_template,
-      model_id: v.model_id,
-      rerank_model_id: v.rerank_model_id,
-      temperature: v.temperature,
-      max_completion_tokens: v.max_completion_tokens,
-      thinking: v.thinking,
-      citation_enabled: v.citation_enabled,
-      max_iterations: v.max_iterations,
-      llm_call_timeout: v.llm_call_timeout,
-      reflection_enabled: v.reflection_enabled,
-      multi_turn_enabled: v.multi_turn_enabled,
-      history_turns: v.history_turns,
-      kb_selection_mode: v.kb_selection_mode,
-      knowledge_bases: v.knowledge_bases ?? [],
-      retrieve_kb_only_when_mentioned: v.retrieve_kb_only_when_mentioned,
-      embedding_top_k: v.embedding_top_k,
-      keyword_threshold: v.keyword_threshold,
-      vector_threshold: v.vector_threshold,
-      rerank_top_k: v.rerank_top_k,
-      rerank_threshold: v.rerank_threshold,
-      enable_query_expansion: v.enable_query_expansion,
-      enable_rewrite: v.enable_rewrite,
-      web_search_enabled: v.web_search_enabled,
-      web_search_max_results: v.web_search_max_results,
-      web_search_provider_id: v.web_search_provider_id,
-      image_upload_enabled: v.image_upload_enabled,
-      vlm_model_id: v.vlm_model_id,
-      attachment_image_understanding: v.attachment_image_understanding,
-      attachment_ocr_max_pages: v.attachment_ocr_max_pages ?? 0,
-      allowed_tools: v.allowed_tools ?? [],
-      mcp_selection_mode: v.mcp_selection_mode,
-      mcp_services: v.mcp_services ?? [],
-      mcp_auth_wait_timeout: v.mcp_auth_wait_timeout,
-      skills_enabled: v.skills_enabled,
-      skills_selection_mode: v.skills_selection_mode,
-      selected_skills: v.selected_skills ?? [],
-      question_suggestions: v.question_suggestions ?? {},
+      agent_mode: values.agent_mode,
+      system_prompt: values.system_prompt,
+      use_custom_system_prompt: values.use_custom_system_prompt ?? false,
+      context_template: values.context_template,
+      model_id: values.model_id,
+      rerank_model_id: values.rerank_model_id,
+      temperature: values.temperature,
+      max_completion_tokens: values.max_completion_tokens,
+      thinking: values.thinking,
+      citation_enabled: values.citation_enabled,
+      max_iterations: values.max_iterations,
+      llm_call_timeout: values.llm_call_timeout,
+      reflection_enabled: values.reflection_enabled,
+      multi_turn_enabled: values.multi_turn_enabled,
+      history_turns: values.history_turns,
+      kb_selection_mode: values.kb_selection_mode,
+      knowledge_bases: values.knowledge_bases ?? [],
+      retrieve_kb_only_when_mentioned: values.retrieve_kb_only_when_mentioned,
+      embedding_top_k: values.embedding_top_k,
+      keyword_threshold: values.keyword_threshold,
+      vector_threshold: values.vector_threshold,
+      rerank_top_k: values.rerank_top_k,
+      rerank_threshold: values.rerank_threshold,
+      enable_query_expansion: values.enable_query_expansion,
+      enable_rewrite: values.enable_rewrite,
+      web_search_enabled: values.web_search_enabled,
+      web_search_max_results: values.web_search_max_results,
+      web_search_provider_id: values.web_search_provider_id,
+      image_upload_enabled: values.image_upload_enabled,
+      vlm_model_id: values.vlm_model_id,
+      attachment_image_understanding: values.attachment_image_understanding,
+      attachment_ocr_max_pages: values.attachment_ocr_max_pages ?? 0,
+      allowed_tools: values.allowed_tools ?? [],
+      mcp_selection_mode: values.mcp_selection_mode,
+      mcp_services: values.mcp_services ?? [],
+      mcp_auth_wait_timeout: values.mcp_auth_wait_timeout,
+      skills_enabled: values.skills_enabled,
+      skills_selection_mode: values.skills_selection_mode,
+      selected_skills: values.selected_skills ?? [],
+      question_suggestions: values.question_suggestions ?? {},
     };
-    const res = await onSubmit({ name: v.name, description: v.description, config });
+    const res = await onSubmit({ name: String(values.name).trim(), description: values.description, config });
     if (res.success) {
       message.success(isEdit ? "智能体已更新" : "智能体已创建");
       onClose(true);

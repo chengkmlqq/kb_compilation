@@ -247,16 +247,24 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
     if (!kb) return;
     const v = await form.validateFields().catch(() => null);
     if (!v) return;
+    // 分区表单坑（2026-10-21 修复，对齐 kbs/page.tsx / AgentEditorModal）：
+    // 字段按 section 条件渲染，validateFields() 只返回「当前挂载分区」的值——
+    // 停在「基本信息」保存时，检索/VLM/切片等分区字段已卸载不在 v 里，
+    // 直接取 v 会把 vector_enabled 当 false 误关、model_id 当 null 解绑、
+    // 切片配置重置默认。用 getFieldsValue(true) 取 store 全量
+    // （打开时已回填全部字段，preserve 保留）合并后提交。
+    const all = form.getFieldsValue(true);
+    const values = { ...all, ...v };
     const payload: KbUpdatePayload = {
       // 基本信息（2026-10-20）：名称 / 描述 / 分类
-      name: (v.name as string | undefined)?.trim() || kb.name,
-      description: (v.description as string | undefined) ?? "",
+      name: (values.name as string | undefined)?.trim() || kb.name,
+      description: (values.description as string | undefined) ?? "",
       // 分类（2026-10-20）：空 = 移出分类（后端 exclude_none 丢 null，必须传空串清空）
-      label: (v.label as string | undefined) ?? "",
+      label: (values.label as string | undefined) ?? "",
       type: "document",
       indexing_strategy: {
-        vector_enabled: !!v.vector_enabled,
-        keyword_enabled: !!v.keyword_enabled,
+        vector_enabled: !!values.vector_enabled,
+        keyword_enabled: !!values.keyword_enabled,
         // 「Wiki 构建」开关表单已移除（2026-10-15）：触发不再依赖该开关——
         // 配置了构建引擎（KB 级或文档级）即自动触发构建；保存时保留 KB 原值，
         // 不走 !!v.wiki_enabled（undefined→false 会误关存量 KB）。
@@ -270,19 +278,19 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
       // 后端「字段在 payload 才更新」→ 存量值保持不变（老库手动模式不被动切换、问题生成不被动关闭）
       // 构建引擎（2026-10-16 配置弹窗补入口）：回填保证未动时表单值=原绑定；
       // allowClear 清空 → null = 解除绑定（后端「字段在 payload 才更新」语义）
-      build_tape_id: (v.build_engine as string | undefined) || null,
-      embedding_model_id: v.embedding_model_id || null,
-      summary_model_id: v.summary_model_id || null,
+      build_tape_id: (values.build_engine as string | undefined) || null,
+      embedding_model_id: values.embedding_model_id || null,
+      summary_model_id: values.summary_model_id || null,
       // 摘要策略固定 auto：系统按文档规模自动路由（小文档全文直塞 / 大文档分块合并）
       summary_strategy: "auto",
       configs: {
         extract_config: kb.extract_config ?? { enabled: false },
         // 图片处理（对齐 WeKnora vlm_config）：开关 + 绑定的视觉模型 + 描述语言
         vlm_config: {
-          enabled: !!v.vlm_enabled,
-          model_id: (v.vlm_model_id as string | undefined) || "",
+          enabled: !!values.vlm_enabled,
+          model_id: (values.vlm_model_id as string | undefined) || "",
           description_language:
-            (v.vlm_description_language as string | undefined) || "",
+            (values.vlm_description_language as string | undefined) || "",
         },
       },
     };
@@ -293,7 +301,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
         message.error(res.message || "保存失败");
         return;
       }
-      const chunkRes = await apiPutChunkingConfig(kb.id, pickChunking(v));
+      const chunkRes = await apiPutChunkingConfig(kb.id, pickChunking(values));
       if (!chunkRes.success) {
         message.error(`知识库配置已保存，切片配置保存失败：${chunkRes.message || "接口未上线？"}`);
         return;
