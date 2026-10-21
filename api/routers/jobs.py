@@ -401,6 +401,9 @@ def list_job_children(
     # 后台跑就显示「成功」（用户反馈）。原 job 状态保留在 job_state 供排障对比。
     # 2026-10-20 粒度修正：不再向子任务列表注入 step_results/run_tape_name——
     # 编排内部节点归编排详情/日志视图，不作为任务监控子任务粒度。
+    # 2026-10-21 补 tape_name：用户反馈摘要子任务只显示「编排执行」，看不出是
+    # 哪个编排——子任务行附带 run.tape_name（如「摘要-Map-Reduce（分块合并）」），
+    # 前端任务类列优先展示编排名（回退 taskClassLabel）。
     items: list[dict] = []
     for c in children:
         d = _job_to_dict(c)
@@ -417,6 +420,10 @@ def list_job_children(
                     if run:
                         d["job_state"] = d["state"]
                         d["state"] = _run_state_to_job(run.status)
+                        # 2026-10-21 子任务中文展示：携带编排名（摘要/构建编排名），
+                        # runId 供日志抽屉/前端定位真实编排执行记录
+                        d["tape_name"] = run.tape_name
+                        d["run_id"] = rid
                         # 2026-10-19 耗时口径：编排子任务的 job 耗时是「投递」秒级
                         # （handler 建完 run 即返回），真实执行在 run 上——与 state
                         # 同口径，把耗时/起止时间也按 run（created_at → updated_at）
@@ -905,7 +912,23 @@ def get_job(
     job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
     if not job:
         raise HTTPException(status_code=404, detail=f"任务不存在: {job_id}")
-    return {"success": True, "data": _job_to_dict(job)}
+    d = _job_to_dict(job)
+    # 2026-10-21：run 承接 job（SUMMARY_RUN_*/ORCH_RUN_* 编排子任务）附带
+    # tape_name/run_id，日志抽屉基本信息可展示编排名（与 list_job_children 同口径）
+    if job.task_class == "KbOrchestrationRunTask":
+        try:
+            rid = str((json.loads(job.task_params or "{}") or {}).get("runId") or "")
+            if rid:
+                run = db.execute(select(TapeRun).where(TapeRun.id == rid)).scalars().first()
+                if not run:
+                    with env_scope(ENV_DEV):
+                        run = db.execute(select(TapeRun).where(TapeRun.id == rid)).scalars().first()
+                if run:
+                    d["tape_name"] = run.tape_name
+                    d["run_id"] = rid
+        except (TypeError, json.JSONDecodeError):
+            pass
+    return {"success": True, "data": d}
 
 
 @router.get("/{job_id}/trace")
@@ -1265,27 +1288,56 @@ async def job_log_stream(
     def _find_run() -> object | None:
         """查 kb_tape_run（正式表 + _dev 表双查，同 get_job 语义）。
 
-        端点无 Depends(get_db) 注入（SSE 连接不持长会话），用独立短会话自查。
+        2026-10-21 扩展：传入 id 可能是 "run 承接 job"（SUMMARY_RUN_*/ORCH_RUN_*
+        等 KbOrchestrationRunTask 的 modo_job 行，task_params.runId 指向真实
+        run）——按 job id 查不到 run 时，解析 task_params.runId 再查，命中即走
+        run 快照流。否则摘要任务日志框只有 scheduler 生命周期两行，用户看不到
+        124 条 step_results 执行明细（反馈「日志为什么只有一点点」）。
         """
-        try:
+        def _query_run(rid: str) -> object | None:
             from api.models.orchestration import TapeRun
 
             with get_sessionmaker()() as sdb:
                 run = sdb.execute(
-                    select(TapeRun).where(TapeRun.id == job_id)
+                    select(TapeRun).where(TapeRun.id == rid)
                 ).scalars().first()
                 if run:
                     return run
                 with env_scope(ENV_DEV):
                     run = sdb.execute(
-                        select(TapeRun).where(TapeRun.id == job_id)
+                        select(TapeRun).where(TapeRun.id == rid)
                     ).scalars().first()
                 return run
+
+        try:
+            run = _query_run(job_id)
+            if run:
+                return run
+            # run 承接 job：解析 task_params.runId 定位真实编排执行
+            with get_sessionmaker()() as sdb:
+                job = sdb.execute(
+                    select(Job).where(Job.id == job_id)
+                ).scalars().first()
+            if not job or job.task_class != "KbOrchestrationRunTask":
+                return None
+            try:
+                rid = str((json.loads(job.task_params or "{}") or {}).get("runId") or "")
+            except (TypeError, json.JSONDecodeError):
+                return None
+            if not rid:
+                return None
+            return _query_run(rid)
         except Exception:  # noqa: BLE001 — 非编排环境/表缺失 → 走 modo_job 流
             return None
 
-    async def _generate_run():
-        """编排 run：step_results 快照流（snapshot 替换 + 终态/空闲 finish）。"""
+    async def _generate_run(run_id: str):
+        """编排 run：step_results 快照流（snapshot 替换 + 终态/空闲 finish）。
+
+        run_id 为真实 kb_tape_run id——调用方 _find_run 已处理「run 承接 job」
+        （SUMMARY_RUN_* 等传入的是 modo_job id 时按 task_params.runId 解析）。
+        """
+        from api.models.orchestration import TapeRun  # noqa: F401 （函数内延迟导入，同 _find_run）
+
         last_sig: tuple | None = None
         idle_loops = 0
         terminal_grace = 0
@@ -1295,12 +1347,12 @@ async def job_log_stream(
                     break
                 with get_sessionmaker()() as sdb:
                     run = sdb.execute(
-                        select(TapeRun).where(TapeRun.id == job_id)
+                        select(TapeRun).where(TapeRun.id == run_id)
                     ).scalars().first()
                     if not run:
                         with env_scope(ENV_DEV):
                             run = sdb.execute(
-                                select(TapeRun).where(TapeRun.id == job_id)
+                                select(TapeRun).where(TapeRun.id == run_id)
                             ).scalars().first()
                     if not run:
                         yield await _sse({"type": "finish", "payload": {
@@ -1411,9 +1463,14 @@ async def job_log_stream(
                 "ts": datetime.now(timezone.utc).isoformat(),
             }})
 
-    # 编排 run（虚拟任务）→ 快照流；否则 modo_job 全量增量流
-    is_run = _find_run() is not None
-    generator = _generate_run() if is_run else _generate_job()
+    # 编排 run（虚拟任务 / run 承接 job）→ 快照流；否则 modo_job 全量增量流。
+    # _find_run 已把 SUMMARY_RUN_*/ORCH_RUN_* 等承接 job 解析到真实 run id
+    run_obj = _find_run()
+    if run_obj is not None:
+        run_id = str(getattr(run_obj, "id"))
+        generator = _generate_run(run_id)
+    else:
+        generator = _generate_job()
 
     return StreamingResponse(
         generator,

@@ -557,6 +557,16 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
                   </Text>
                 </Tooltip>
               </Descriptions.Item>
+              {/* 2026-10-21：编排子任务（KbOrchestrationRunTask）后端附带 tape_name
+                  （编排名，如「摘要-Map-Reduce（分块合并）」）——摘要任务日志抽屉
+                  直接显示编排名，而非笼统的「编排执行」 */}
+              {(job as { tape_name?: string }).tape_name ? (
+                <Descriptions.Item label="编排名称">
+                  <Text style={{ wordBreak: "break-all" }}>
+                    {(job as { tape_name?: string }).tape_name}
+                  </Text>
+                </Descriptions.Item>
+              ) : null}
               <Descriptions.Item label="队列">
                 {resolveJobMonitorQueueLabel(job.queue_name, "")}
               </Descriptions.Item>

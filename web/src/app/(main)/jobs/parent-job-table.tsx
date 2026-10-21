@@ -185,7 +185,14 @@ function ChildTable({
   // 子任务粒度只到「编排 run」这一级。
   const jobCols: ColumnsType<Record<string, unknown>> = [
     { title: "子任务ID", dataIndex: "id", ellipsis: true, render: (v) => <Tooltip title={String(v)}><Text style={{ fontFamily: "monospace", fontSize: 12 }}>{String(v).slice(0, 12)}</Text></Tooltip> },
-    { title: "任务类", dataIndex: "task_class", ellipsis: true, render: (v) => taskClassLabel(String(v || "")) },
+    // 2026-10-21：编排子任务（KbOrchestrationRunTask）后端附带 tape_name（编排名，
+    // 如「摘要-Map-Reduce（分块合并）」）——优先展示编排名，让用户一眼看出是
+    // 摘要/构建哪一个编排，而非笼统的「编排执行」；tooltip 展示完整名。
+    { title: "任务类", dataIndex: "task_class", ellipsis: true, render: (v, row) => {
+        const tapeName = String((row as Record<string, unknown>)?.tape_name || "").trim();
+        if (tapeName) return <Tooltip title={tapeName}><Text>{tapeName}</Text></Tooltip>;
+        return taskClassLabel(String(v || ""));
+      } },
     { title: "状态", dataIndex: "state", width: 110, render: (v) => renderStateTag(String(v || "")) },
     { title: "开始时间", dataIndex: "start_time", width: 150, render: (v) => fmtTime(String(v || "")) },
     { title: "结束时间", dataIndex: "end_time", width: 150, render: (v) => fmtTime(String(v || "")) },
