@@ -199,6 +199,93 @@ def overview_summary(
     }
 
 
+@router.get("/kb-stats")
+def overview_kb_stats(
+    db: Session = Depends(get_db),
+    caller: dict = Depends(_require_caller),
+) -> dict:
+    """知识库维度统计：每个可见知识库的 文档数（按解析状态）/ 分块数 /
+    Wiki 页数 / 待处理问题数 / 最近更新时间。总览页「知识库维度」区块数据源。
+
+    聚合方式：全部按 kb_id 一次 GROUP BY 分批取，避免每库 N+1 查询。
+    """
+    kb_ids = _visible_kb_ids(db, caller)
+    if not kb_ids:
+        return {"success": True, "data": {"items": []}}
+
+    # 库基础信息（库名）
+    kb_rows = db.execute(
+        select(KbDatasource.id, KbDatasource.name)
+        .where(KbDatasource.id.in_(kb_ids))
+    ).all()
+    kb_map: dict[str, str] = {str(i): n for i, n in kb_rows}
+
+    # 文档：总数 + 解析状态分布 + 最近一次新增时间
+    doc_rows = db.execute(
+        select(
+            KbDocument.kb_id,
+            KbDocument.parse_state,
+            func.count(),
+            func.max(KbDocument.created_at),
+        )
+        .where(KbDocument.kb_id.in_(kb_ids))
+        .group_by(KbDocument.kb_id, KbDocument.parse_state)
+    ).all()
+    doc_agg: dict[str, dict] = {}
+    for kb_id, state, count, last_at in doc_rows:
+        key = str(kb_id)
+        ent = doc_agg.setdefault(key, {"total": 0, "by_state": {}, "last_doc_at": None})
+        ent["total"] += int(count)
+        ent["by_state"][str(state or "PENDING")] = int(count)
+        if last_at and (ent["last_doc_at"] is None or last_at > ent["last_doc_at"]):
+            ent["last_doc_at"] = last_at
+
+    # 分块：按 kb_id 计数
+    chunk_rows = db.execute(
+        select(DocChunk.kb_id, func.count())
+        .where(DocChunk.kb_id.in_(kb_ids))
+        .group_by(DocChunk.kb_id)
+    ).all()
+    chunk_agg = {str(k): int(c) for k, c in chunk_rows}
+
+    # Wiki 页（仅 active）
+    wiki_rows = db.execute(
+        select(WikiPage.kb_id, func.count())
+        .where(WikiPage.kb_id.in_(kb_ids), WikiPage.status == "active")
+        .group_by(WikiPage.kb_id)
+    ).all()
+    wiki_agg = {str(k): int(c) for k, c in wiki_rows}
+
+    # 待处理问题（pending）
+    issue_rows = db.execute(
+        select(WikiPageIssue.kb_id, func.count())
+        .where(WikiPageIssue.kb_id.in_(kb_ids), WikiPageIssue.status == "pending")
+        .group_by(WikiPageIssue.kb_id)
+    ).all()
+    issue_agg = {str(k): int(c) for k, c in issue_rows}
+
+    items = []
+    for kb_id, name in kb_map.items():
+        d = doc_agg.get(kb_id, {"total": 0, "by_state": {}, "last_doc_at": None})
+        items.append(
+            {
+                "id": kb_id,
+                "name": name,
+                "docs": {
+                    "total": d["total"],
+                    "by_state": d["by_state"],
+                },
+                "chunks": chunk_agg.get(kb_id, 0),
+                "wiki_pages": wiki_agg.get(kb_id, 0),
+                "issues_open": issue_agg.get(kb_id, 0),
+                "last_doc_at": d["last_doc_at"].isoformat() if d["last_doc_at"] else None,
+            }
+        )
+    # 按文档总数降序，便于总览一眼看到负载最高的库
+    items.sort(key=lambda i: i["docs"]["total"], reverse=True)
+    return {"success": True, "data": {"items": items}}
+
+
 def _days_back(days: int) -> list[str]:
     """最近 N 天日期列表（含今天），本地时区，升序；供趋势补齐空日期。"""
     today = datetime.now(timezone.utc).replace(tzinfo=None)
