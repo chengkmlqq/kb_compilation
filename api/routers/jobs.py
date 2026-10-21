@@ -448,8 +448,11 @@ def list_job_children(
     }
 
 
-# 系统自愈周期任务（默认从任务列表隐藏，避免每 5 分钟刷屏）
-SYSTEM_TASK_CLASSES: tuple[str, ...] = ("KbOrphanRecoveryTask",)
+# 系统自愈周期任务（默认从任务列表隐藏，避免每 5/10 分钟刷屏）
+SYSTEM_TASK_CLASSES: tuple[str, ...] = (
+    "KbOrphanRecoveryTask",
+    "KbOrphanDocCleanupTask",  # 2026-10-21 孤儿文档任务清理（每 10 分钟）
+)
 
 # ── 编排 run（kb_tape_run）与任务监控枚举对齐 ──────────────────────────
 # 任务监控页的状态枚举沿用 modo_job 的大写形态（PENDING/RUNNING/SUCCESS/

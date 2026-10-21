@@ -77,6 +77,7 @@ try:
         log_cleanup,
         metadata_collect,
         orch_runner,
+        orphan_doc_cleanup,
         orphan_recovery,
         prechunk_ingest,
         reg_cache_cleanup,

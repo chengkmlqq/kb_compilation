@@ -881,6 +881,30 @@ def main(argv: list[str] | None = None) -> None:
             db.commit()
             print("[6c/7] 构建补位自愈 cron 种子 OK: 每 6 小时")
 
+        # 6d) 孤儿文档任务清理 cron（2026-10-21）：删文档时 _cleanup_document_jobs
+        #     只清理「之后」删除的文档——历史删除的文档其 DOC_* 链头任务残留
+        #     在任务监控（实测 57 条）。每 10 分钟扫描清理。幂等。
+        existing_cron = db.execute(
+            select(CronTask).where(CronTask.task_class == "KbOrphanDocCleanupTask")
+        ).scalars().first()
+        if existing_cron:
+            print("[6d/7] 孤儿文档任务清理 cron 已存在 (skip)")
+        else:
+            db.add(
+                CronTask(
+                    id=uuid.uuid4().hex,
+                    name="孤儿文档任务清理",
+                    label="定期清理文档已删除但任务监控残留的记录（每 10 分钟）",
+                    cron_expression="*/10 * * * *",
+                    state="1",
+                    task_class="KbOrphanDocCleanupTask",
+                    fire_params=json.dumps({"dry_run": False}, ensure_ascii=False),
+                    queue_name="default",
+                )
+            )
+            db.commit()
+            print("[6d/7] 孤儿文档任务清理 cron 种子 OK: 每 10 分钟")
+
         # 7) 编排内置组件定义（幂等 upsert）
         d_created, d_updated = _seed_step_defines(db)
         print(f"[7/7] 编排组件定义种子 OK: 内置 {len(ORCH_STEP_DEFINES)} 个 [新建 {d_created} / 修正 {d_updated}]")
