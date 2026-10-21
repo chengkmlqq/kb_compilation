@@ -572,7 +572,11 @@ def api_env(monkeypatch):
     session.add_all(
         [
             KbAgent(id="agent-plain", name="普通助手", state="1",
-                    config=config_from_dict({"embed_query": False}).to_dict()),
+                    # 2026-10-21 显式 quick-answer（新建默认已改 smart-reasoning）：
+                    # 本 agent 用于验证快速问答 = 纯 RAG 单轮不注入工具
+                    config=config_from_dict(
+                        {"agent_mode": "quick-answer", "embed_query": False}
+                    ).to_dict()),
             # 2026-10-21 运行模式生效：技能执行属于 agent 多轮能力，测试用
             # smart-reasoning（quick-answer 纯 RAG 单轮不注入任何工具）
             KbAgent(id="agent-skilled", name="技能助手", state="1",

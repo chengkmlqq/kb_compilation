@@ -104,7 +104,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
   const defaultPromptPrefilledRef = useRef(false);
 
   const isEdit = mode === "edit";
-  const agentMode = Form.useWatch("agent_mode", form) ?? "quick-answer";
+  const agentMode = Form.useWatch("agent_mode", form) ?? "smart-reasoning";
   const agentName = Form.useWatch("name", form) ?? "";
   const kbMode = Form.useWatch("kb_selection_mode", form) ?? "all";
   const mcpMode = Form.useWatch("mcp_selection_mode", form) ?? "none";
@@ -148,7 +148,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
     form.setFieldsValue({
       name: initial?.name ?? "",
       description: initial?.description ?? "",
-      agent_mode: c.agent_mode ?? "quick-answer",
+      agent_mode: c.agent_mode ?? "smart-reasoning",
       system_prompt: c.system_prompt ?? "",
       context_template: c.context_template ?? "",
       model_id: c.model_id ?? "",
@@ -383,30 +383,28 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
 
             {section === "prompts" && (
               <>
+                {/* 提示词输入框（2026-10-21 修复并行会话坏写法：Form.Item 的 children
+                    写成函数 {(control) => ...} 拿不到字段 control——antd 只在 shouldUpdate
+                    时把 FormInstance 传给函数 children，control?.value/onChange 恒为
+                    undefined → 文本框不可输入。改为标准组合：外层 Form.Item 负责
+                    label/extra，内层 noStyle Form.Item 直接包 TextArea（自动注入
+                    value/onChange），模板选择器绝对定位在右下角。 */}
                 <Form.Item
-                  name="system_prompt"
                   label="系统提示词"
                   extra="新建时已展示平台默认提示词，可直接在其上修改；清空后保存即恢复默认。支持占位符：{{query}} 用户问题、{{contexts}} 检索片段、{{current_time}}、{{current_week}}、{{language}}"
                 >
-                  {/* antd 6 类型签名与 rc-field-form 运行时不一致（类型收 form、运行时收 control），
-                      用 any 标注参数绕过，取值/赋值走 control.value/control.onChange */}
-                  {(control: any) => (
-                    <div style={{ position: "relative" }}>
-                      <TextArea
-                        rows={6}
-                        value={control?.value}
-                        onChange={control?.onChange}
-                        placeholder="设定智能体的角色、行为与回答风格…（支持 {{query}} / {{contexts}} 等占位符）"
-                      />
-                      {/* 2026-10-21 模板库选择器（对齐 WeKnora PromptTemplateSelector）：
-                          使用模板 = 用模板正文整体替换当前提示词；恢复默认 = 回平台默认人设 */}
-                      <PromptTemplateSelector
-                        type="system_prompt"
-                        onSelect={(tpl) => form.setFieldValue("system_prompt", tpl.content)}
-                        onReset={() => form.setFieldValue("system_prompt", defaultSystemPrompt)}
-                      />
-                    </div>
-                  )}
+                  <div style={{ position: "relative" }}>
+                    <Form.Item name="system_prompt" noStyle>
+                      <TextArea rows={6} placeholder="设定智能体的角色、行为与回答风格…（支持 {{query}} / {{contexts}} 等占位符）" />
+                    </Form.Item>
+                    {/* 模板库选择器（对齐 WeKnora PromptTemplateSelector）：
+                        使用模板 = 用模板正文整体替换当前提示词；恢复默认 = 回平台默认人设 */}
+                    <PromptTemplateSelector
+                      type="system_prompt"
+                      onSelect={(tpl) => form.setFieldValue("system_prompt", tpl.content)}
+                      onReset={() => form.setFieldValue("system_prompt", defaultSystemPrompt)}
+                    />
+                  </div>
                 </Form.Item>
                 <Form.Item
                   label="可用占位符"
@@ -430,28 +428,20 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
                   </Space>
                 </Form.Item>
                 <Form.Item
-                  name="context_template"
                   label="上下文模板（可选）"
                   extra="组织发送给模型的用户消息结构（问题与检索片段的排布方式）；留空 = 问题原文直接发送。同样支持占位符"
                 >
-                  {/* antd 6 类型签名与 rc-field-form 运行时不一致（类型收 form、运行时收 control），
-                      用 any 标注参数绕过，取值/赋值走 control.value/control.onChange */}
-                  {(control: any) => (
-                    <div style={{ position: "relative" }}>
-                      <TextArea
-                        rows={3}
-                        value={control?.value}
-                        onChange={control?.onChange}
-                        placeholder='如：参考材料：\n{{contexts}}\n\n问题：{{query}}'
-                      />
-                      {/* 2026-10-21 模板库选择器：使用模板 = 套用上下文模板；恢复默认 = 清空（原文直发） */}
-                      <PromptTemplateSelector
-                        type="context_template"
-                        onSelect={(tpl) => form.setFieldValue("context_template", tpl.content)}
-                        onReset={() => form.setFieldValue("context_template", "")}
-                      />
-                    </div>
-                  )}
+                  <div style={{ position: "relative" }}>
+                    <Form.Item name="context_template" noStyle>
+                      <TextArea rows={3} placeholder='如：参考材料：\n{{contexts}}\n\n问题：{{query}}' />
+                    </Form.Item>
+                    {/* 模板库选择器：使用模板 = 套用上下文模板；恢复默认 = 清空（原文直发） */}
+                    <PromptTemplateSelector
+                      type="context_template"
+                      onSelect={(tpl) => form.setFieldValue("context_template", tpl.content)}
+                      onReset={() => form.setFieldValue("context_template", "")}
+                    />
+                  </div>
                 </Form.Item>
                 <Form.Item
                   label="上下文模板可用占位符"

@@ -22,7 +22,8 @@ from api.services.agents import (
 
 def test_config_defaults() -> None:
     cfg = config_from_dict(None)
-    assert cfg.agent_mode == "quick-answer"
+    # 2026-10-21 默认运行模式改为智能推理（新建智能体默认 Agent 多轮能力）
+    assert cfg.agent_mode == "smart-reasoning"
     assert cfg.kb_selection_mode == "all"
     assert cfg.temperature == 0.7
     assert cfg.top_k == 5
@@ -33,7 +34,7 @@ def test_config_partial_merge_keeps_defaults() -> None:
     cfg = config_from_dict({"temperature": 0.2, "knowledge_bases": ["kb1"]})
     assert cfg.temperature == 0.2
     assert cfg.knowledge_bases == ["kb1"]
-    assert cfg.agent_mode == "quick-answer"  # untouched default
+    assert cfg.agent_mode == "smart-reasoning"  # untouched default
     assert cfg.top_k == 5
 
 
@@ -174,7 +175,7 @@ def test_create_and_list(agent_db) -> None:
     items = list_agents(agent_db, team_name="T1")["items"]
     assert len(items) == 1
     assert items[0]["name"] == "制度助手"
-    assert items[0]["config"]["agent_mode"] == "quick-answer"
+    assert items[0]["config"]["agent_mode"] == "smart-reasoning"
 
 
 def test_update_merges_config(agent_db) -> None:
@@ -183,7 +184,7 @@ def test_update_merges_config(agent_db) -> None:
     assert updated is not None
     cfg = config_from_dict(updated.config)
     assert cfg.top_k == 10
-    assert cfg.agent_mode == "quick-answer"  # preserved
+    assert cfg.agent_mode == "smart-reasoning"  # preserved
 
 
 def test_delete_soft(agent_db) -> None:

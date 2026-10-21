@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.models.knowledge import KbAgent, KbDatasource
@@ -42,7 +42,9 @@ class AgentConfig:
     配置项（基础/提示词/模型/对话/建议/知识库/检索/联网/多模态/工具/MCP/技能）。
     """
 
-    agent_mode: str = AGENT_MODE_QUICK_ANSWER
+    # 2026-10-21 默认改为智能推理：quick-answer 纯 RAG 单轮不注入工具
+    # （运行模式生效，对齐 WeKnora qaMode 路由），新建智能体默认给完整能力。
+    agent_mode: str = AGENT_MODE_SMART_REASONING
     system_prompt: str = ""
     context_template: str = ""
     use_custom_system_prompt: bool = False
@@ -314,7 +316,8 @@ def list_agents(db: Session, team_name: str | None = None, page: int = 1, page_s
     stmt = select(KbAgent).where(KbAgent.state == "1")
     if team_name:
         stmt = stmt.where(KbAgent.team_name == team_name)
-    total = len(db.execute(stmt).scalars().all())
+    # 2026-10-21 性能修复：计数走 SQL count（原 len(all()) 物化全表 ORM 对象）
+    total = int(db.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0)
     rows = db.execute(stmt.order_by(KbAgent.created_at.desc(), KbAgent.id.desc()).offset((page - 1) * page_size).limit(page_size)).scalars().all()
     items = [
         {
