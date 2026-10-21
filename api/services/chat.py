@@ -964,11 +964,17 @@ def answer_question(
         durations: list[float] = []
         for i, tc in enumerate(tool_calls):
             _t0 = time.time()
-            result = (
-                tool_executor(tc)
-                if tool_executor
-                else f"工具不可用: 未配置执行器（{tc.get('name') or '?'}）"
-            )
+            error_msg = None
+            try:
+                result = (
+                    tool_executor(tc)
+                    if tool_executor
+                    else f"工具不可用: 未配置执行器（{tc.get('name') or '?'}）"
+                )
+            except Exception as exc:  # noqa: BLE001 — 工具执行异常转失败结果，不阻断整轮
+                logger.exception("tool call failed: %s", tc.get("name"))
+                result = f"工具执行失败: {exc}"
+                error_msg = str(exc)
             # 2026-10-20 工具输出钳制（对齐 WeKnora MaxToolOutputChars）：
             # 超长工具结果截断，防爆上下文/响应体积；截断标记保留在原位。
             if result and len(result) > MAX_TOOL_OUTPUT_CHARS:
@@ -978,7 +984,14 @@ def answer_question(
                 )
             durations.append(round(time.time() - _t0, 2))
             results.append(
-                {"id": tc.get("id") or f"call_{i}", "name": tc.get("name") or "", "result": result}
+                {
+                    "id": tc.get("id") or f"call_{i}",
+                    "name": tc.get("name") or "",
+                    "result": result,
+                    # 2026-10-21 对齐 WeKnora 工具卡失败态：执行器抛异常 → success=False
+                    "success": error_msg is None,
+                    "error": error_msg or "",
+                }
             )
             messages.append(
                 ChatMessage(
@@ -987,7 +1000,12 @@ def answer_question(
                     tool_call_id=tc.get("id") or f"call_{i}",
                 )
             )
-        yield {"type": "tool", "tool_calls": tool_calls, "results": results, "durations": durations}
+        yield {
+            "type": "tool",
+            "tool_calls": tool_calls,
+            "results": results,
+            "durations": durations,
+        }
         # 2026-10-20 上下文窗口管理（对齐 WeKnora manageContextWindow）：多轮工具
         # 循环把工具结果全量累积进 messages，长链路可能撑爆模型上下文。每轮结束
         # 粗估总 token，超过 MAX_CONTEXT_TOKENS 时压缩最早的 tool 消息（截短内容

@@ -2724,6 +2724,17 @@ html[data-theme="dark"] .kb-citation-web:hover {
 .kb-agent-tool-card--pending {
   border-left-color: #1677ff;
 }
+/* 2026-10-21 对齐 WeKnora action-error：工具执行失败红色态 */
+.kb-agent-tool-card--failed {
+  border-left-color: #ff4d4f;
+}
+.kb-agent-tool-fail {
+  color: #ff4d4f;
+  font-size: 13px;
+}
+.kb-agent-tool-card--failed .kb-agent-tool-name {
+  color: #ff4d4f;
+}
 .kb-agent-tool-card-head {
   display: flex;
   align-items: center;
@@ -2806,6 +2817,46 @@ html[data-theme="dark"] .kb-citation-web:hover {
   word-break: break-all;
   max-height: 320px;
   overflow: auto;
+}
+.kb-agent-tool-pre--error {
+  background: rgba(255, 77, 79, 0.06);
+  color: #ff4d4f;
+}
+/* 2026-10-21 对齐 WeKnora tree-container：完成态中间步骤折叠为树根 */
+.kb-agent-tool-calls--tree {
+  gap: 0;
+}
+.kb-agent-tree-root {
+  border-left: 2px solid var(--kb-c-border, #e5e6eb);
+  padding-left: 10px;
+}
+.kb-agent-tree-root-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  color: var(--kb-c-text);
+  border-radius: 4px;
+  padding: 0 4px;
+  transition: background-color 0.15s ease;
+}
+.kb-agent-tree-root-head:hover {
+  background: var(--kb-c-citation-bg);
+}
+.kb-agent-tree-root-icon {
+  color: #52c41a;
+  font-size: 13px;
+}
+.kb-agent-tree-root-text strong {
+  color: var(--kb-c-text);
+}
+/* 思考详情（markdown 渲染容器） */
+.kb-agent-tool-details--thinking {
+  white-space: normal;
+  word-break: break-word;
 }
 
 /* ── 编排模板：左分类树 + 右列表（2026-10-13，参考 wiki 两栏结构） ── */

@@ -238,11 +238,12 @@ export default function ChatPage() {
     };
 
     // tool 事件回填：把 tool_call 挂上的 running 卡片按 id（缺 id 时按顺序）标 done 并回填结果/耗时。
+    // 2026-10-21 对齐 WeKnora：回填 success/error（后端 tool 事件新增字段），失败卡红色展示失败原因。
     // 主发送与续传两条 SSE 分支共用。
     const applyToolResults = (
       msgId: string,
       toolCalls: Array<{ id?: string; name?: string }>,
-      results: Array<{ result?: string; name?: string }>,
+      results: Array<{ result?: string; success?: boolean; error?: string; name?: string }>,
       durations: number[],
     ) => {
       setMsgs((prev) =>
@@ -262,6 +263,8 @@ export default function ChatPage() {
                 ...toolEvents[idx],
                 status: "done" as const,
                 result: res?.result !== undefined ? String(res.result) : "",
+                success: res?.success !== undefined ? !!res.success : true,
+                error: res?.error ? String(res.error) : "",
                 duration: dur,
               };
             } else {
@@ -270,6 +273,8 @@ export default function ChatPage() {
                 name: tc.name || "unknown",
                 status: "done" as const,
                 result: res?.result !== undefined ? String(res.result) : "",
+                success: res?.success !== undefined ? !!res.success : true,
+                error: res?.error ? String(res.error) : "",
                 duration: dur,
               });
             }
@@ -868,7 +873,7 @@ export default function ChatPage() {
               applyToolResults(
                 placeholder.id,
                 (evt.tool_calls || []) as Array<{ id?: string; name?: string }>,
-                (evt.results || []) as Array<{ result?: string; name?: string }>,
+                (evt.results || []) as Array<{ result?: string; success?: boolean; error?: string; name?: string }>,
                 (evt.durations || []) as number[],
               );
             } else if (evt.type === "stream_meta") {
@@ -2495,17 +2500,16 @@ function AgentThinkingRow({ thinking, streaming }: { thinking: string; streaming
       </div>
       {expanded && (
         <div
-          className="kb-agent-tool-details"
+          className="kb-agent-tool-details kb-agent-tool-details--thinking"
           style={{
             padding: "8px 12px",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
             maxHeight: 240,
             overflow: "auto",
             fontSize: 12,
           }}
         >
-          {thinking}
+          {/* 2026-10-21 对齐 WeKnora thinking 卡：正文 markdown 渲染（而非纯文本 pre） */}
+          <MarkdownViewer text={thinking} />
         </div>
       )}
     </div>
