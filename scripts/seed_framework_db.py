@@ -209,19 +209,28 @@ SEED_GRANT_ROLES = (SEED_ROLE, "plat-mgr", "normal_user")
 # 系统参数种子（modo_dim, dim_group=SYSTEM_CONFIG）
 # 2026-10-12: 参数表清理后仅保留代码确实读取的 9 个参数，此处固化进种子——
 #   全新部署跑本脚本即建好这 9 行，已部署环境已有则跳过（不覆盖已有配置值）。
+# 2026-10-21: 移除 4 个失效参数（代码读取端用大写 key 查询，而这几行是小写，
+#   config_cache 大小写敏感匹配不上 → 页面可改但不生效）：
+#   ai_chat_api_endpoint / ai_chat_api_key / ai_chat_model / dify_chat_api_endpoint。
+#   问答模型/向量模型由「模型配置」页（MODEL_CONFIG_FIELDS 大写 key）管理；
+#   REMOVED_SYSTEM_CONFIG_DIMS 让重跑本脚本时显式清理旧库残留行（对齐 REMOVED_MENUS 语义）。
 # dim_value 默认留空 = 走容器 env / 代码默认（与线上实际生效路径一致）；
 # 敏感字段（*_API_KEY）不写默认值。seq 与已部署库一致，保证「参数管理」列表顺序稳定。
 # (dim_code, dim_value, dim_desc, seq)
+# 已失效参数（2026-10-21 移除）：小写 key 与代码大写读取端不匹配，页面改了不生效
+REMOVED_SYSTEM_CONFIG_DIMS: set[str] = {
+    "ai_chat_api_endpoint",
+    "ai_chat_api_key",
+    "ai_chat_model",
+    "dify_chat_api_endpoint",
+}
+
 SYSTEM_CONFIG_DIMS: list[tuple[str, str, str, int]] = [
     ("EMBEDDING_BASE_URL", "", "向量模型端点（OpenAI 兼容 /v1；留空=容器 env EMBEDDING_BASE_URL）", 0),
     ("EMBEDDING_API_KEY", "", "向量模型密钥（留空=容器 env EMBEDDING_API_KEY）", 1),
     ("EMBEDDING_MODEL", "", "向量模型，如 BAAI/bge-m3（留空=容器 env EMBEDDING_MODEL）", 2),
     ("EMBEDDING_DIM", "", "向量维度，如 1024（留空=容器 env EMBEDDING_DIM）", 3),
-    ("ai_chat_api_endpoint", "", "问答模型端点（OpenAI 兼容 /v1；留空=容器 env AI_CHAT_API_ENDPOINT）", 4),
-    ("ai_chat_api_key", "", "问答模型密钥（留空=容器 env AI_CHAT_API_KEY）", 5),
-    ("ai_chat_model", "", "问答模型名，如 deepseek-v4-pro（留空=容器 env AI_CHAT_MODEL）", 6),
     ("metadata_full_collection_enabled", "true", "元数据全量采集开关（true/false）", 9),
-    ("dify_chat_api_endpoint", "", "兼容端点回退（问答/向量的兜底项；留空=不使用）", 37),
     # 2026-10-13 上传链摘要：三个标准摘要编排的 tape_id（Stuff/Map-Reduce/Refine）。
     # 留空 = 上传不触发摘要（即使 KB summary_strategy=auto 也静默跳过）；
     # 写入后 KB 上传按策略自动路由。运维换编排（自建复制）改这里即可，无需改代码。
@@ -495,7 +504,31 @@ def _seed_system_config_dims(db) -> int:
 
     仅当 (dim_group, dim_code) 不存在时插入；已存在则完全不动
     （不覆盖已配置值，也不修正漂移）。返回新建行数。
+
+    2026-10-21：播种前先按 REMOVED_SYSTEM_CONFIG_DIMS 显式清理失效参数行
+    （种子是 upsert 只增不删，旧库残留的小写失效行必须显式删才能真正下架，
+    对齐 REMOVED_MENUS 语义；新库幂等无操作）。
     """
+    # 0) 失效参数清理（2026-10-21：ai_chat_api_endpoint 等 4 个小写 key 与代码
+    #    大写读取端不匹配，页面改了不生效——从库里删除，模型配置交给「模型配置」页）
+    if REMOVED_SYSTEM_CONFIG_DIMS:
+        removed_dims = 0
+        for code in REMOVED_SYSTEM_CONFIG_DIMS:
+            rows = db.execute(
+                select(Dim).where(
+                    Dim.dim_group == "SYSTEM_CONFIG",
+                    Dim.dim_code == code,
+                )
+            ).scalars().all()
+            for row in rows:
+                db.delete(row)
+                removed_dims += 1
+        if removed_dims:
+            db.commit()
+            print(
+                f"  清理失效参数 {removed_dims} 行: "
+                + ", ".join(sorted(REMOVED_SYSTEM_CONFIG_DIMS))
+            )
     created = 0
     for code, value, desc, seq in SYSTEM_CONFIG_DIMS:
         existing = db.execute(
