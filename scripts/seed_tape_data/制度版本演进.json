@@ -1,192 +1,212 @@
 {
-  "type": "kb.orchestration.draft",
-  "schemaVersion": 1,
-  "exportedAt": "2026-10-18T00:00:00.000000",
-  "draft": {
-    "tapeName": "制度版本演进",
-    "tapeLabel": "制度版本演进（多版本迭代总览）",
-    "tapeDescr": "识别知识库中同名多版本文件家族（按核心名聚类），用 LLM 判定版本链（现行/废止/替代关系），为每个家族生成版本演进总览页（版本链表 + 逐版本内容迭代含原文三态核验 + 演进洞察 + 知识推导过程），写入「制度版本演进」目录。用于版本演进 wiki 展示。",
-    "tapeType": "kb_aggregate",
-    "category": "知识聚合",
-    "status": "effective",
-    "nodes": [
-      {
-        "id": "n1",
-        "type": "custom",
-        "data": {
-          "label": "收集家族语料",
-          "config": {
-            "code": "import json as _json, os as _os, re as _re\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st\nKB = str(bindings.get('kb_id') or '')\nif not KB:\n    raise RuntimeError('缺 kb_id')\nOUT = '/tmp/evolution'\n_os.makedirs(OUT, exist_ok=True)\n\n\ndef _family_core(fname):\n    # 通用家族核心名: 去版本号/文号/通知/修订/附件等包装后缀, 保留主题核心名\n    name = _re.sub(r'\\.[^.]+$', '', fname or '')\n    name = _re.sub(r'^(?:关于)?(?:印发|发布|修订|实施|下达)?\\s*', '', name)\n    name = _re.sub(r'(?:的?通知|的?修订说明|的?附件|的?补充说明)$', '', name)\n    name = _re.sub(r'[\\s（(]*[Vv]?\\d+(?:\\.\\d+)?[\\s版）)]*', '', name)          # V2.0 / 2版\n    name = _re.sub(r'[\\s（(]*\\d{4}\\s*年?[\\s版）)]*', '', name)                  # 2024 / 2024年\n    name = _re.sub(r'[\\s（(]*(?:第)?[一二三四五六七八九十\\d]+版[\\s）)]*', '', name)  # 第X版\n    name = _re.sub(r'[\\s（(]*(?:试行|暂行|修订稿|征求意见稿)[\\s）)]*', '', name)\n    name = _re.sub(r'[\\s（(]*[〔\\[【][^〕\\]】]*[〕\\]】]?[\\s）)]*', '', name)      # 文号\n    return name.strip() or (fname or '')\n\n\ndef _version_tag(fname):\n    # 版本标识提取(排序/标注用), 无版本号返回空\n    m = _re.search(r'([Vv]\\d+(?:\\.\\d+)?|\\d{4}\\s*年?版|第[一二三四五六七八九十\\d]+版|\\d{4})', fname or '')\n    return m.group(1) if m else ''\n\n\ndb = _gsm()()\ntry:\n    docs = db.execute(_st('''\n        select d.id, d.file_name,\n               (select count(*) from wiki_page p where p.kb_id = d.kb_id and p.status='active'\n                  and p.source_refs like concat('%', d.id, '%')) as cnt\n        from kb_document d\n        where d.kb_id = :k and d.parse_state = 'READY'\n        order by d.file_name\n    '''), {'k': KB}).all()\n    doc_rows = []\n    for did, fname, cnt in docs:\n        s = db.execute(_st(\"select coalesce(summary,'') from kb_document where id=:i\"), {'i': did}).scalar() or ''\n        rows = db.execute(_st('''\n            select slug, title, page_type from wiki_page\n            where kb_id=:k and status='active'\n              and source_refs like concat('%', :d, '%')\n            order by page_type, created_at\n            limit 80\n        '''), {'k': KB, 'd': did}).all()\n        src_pages = [{'slug': r[0], 'title': r[1], 'type': r[2]} for r in rows if r[2] not in ('summary',)]\n        sum_pages = [{'slug': r[0], 'title': r[1], 'type': r[2]} for r in rows if r[2] == 'summary']\n        doc_rows.append({'doc_id': did, 'name': fname, 'summary': str(s)[:400],\n                         'src_pages': src_pages[:30], 'sum_pages': sum_pages[:5],\n                         'version': _version_tag(fname), 'core': _family_core(fname)})\nfinally:\n    db.close()\n\n# 家族聚类：core 相同的文档归一组（多版本/多份）\nfamilies = {}\nfor i, d in enumerate(doc_rows, 1):\n    d['idx'] = i\n    families.setdefault(d['core'], []).append(d)\nfamilies = {core: members for core, members in families.items() if len(members) > 1}\n# 家族内按版本标识排序（无版本号的排后）\nfor core, members in families.items():\n    members.sort(key=lambda x: (not x['version'], x['version']))\n\n_json.dump({'families': families, 'docs': doc_rows}, open(_os.path.join(OUT, 'families.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)\n\nlines = []\nfor core, members in families.items():\n    lines.append('## 家族「%s」(%d 份文件)' % (core, len(members)))\n    for m in members:\n        lines.append('[%d] %s (版本: %s)\\n  摘要: %s' % (\n            m['idx'], m['name'], m['version'] or '未标注', m['summary'][:200]))\n\nprompt = (\n    '下面是知识库中按核心主题聚类出的「同名多版本文件家族」清单。请判定每个家族的版本演进链：\\n'\n    '要求：\\n'\n    '1. 对每个家族：标注版本顺序（旧→新）、谁是现行生效版（版本号最新或摘要标注现行）、废止/替代关系（从摘要中\"已被XX替代/废止\"等表述推断）；\\n'\n    '2. 只输出 JSON 对象（不是数组），禁止任何解释或 Markdown 标记：\\n'\n    '{\"families\":[{\"core\":\"家族名\",\"versions\":[{\"idx\":1,\"version\":\"V1\",\"status\":\"历史|现行\",\"relation\":\"被V2替代|替代V1|现行\"}]}]}\\n'\n    '3. idx 用文件清单里的编号。无版本信息的文件 status 标\"未标注\"，relation 标\"未知\"。\\n\\n'\n    '文件清单：\\n' + '\\n'.join(lines)\n)\nbindings['version_plan_prompt'] = prompt\nbindings['family_count'] = len(families)\nbindings['families_json'] = _os.path.join(OUT, 'families.json')\nprint('[n1] 家族 %d 个（多版本），prompt %d 字 → %s/families.json' % (len(families), len(prompt), OUT))"
-          }
-        }
-      },
-      {
-        "id": "n2",
-        "type": "custom",
-        "data": {
-          "label": "LLM版本链判定",
-          "config": {
-            "model": "{{summary_model_id}}",
-            "prompt": "{{version_plan_prompt}}",
-            "system": "你是文件版本管理专家。只输出 JSON，不要任何解释、前言或代码块标记。",
-            "thinking": "disabled",
-            "max_tokens": 4000,
-            "output_var": "version_raw",
-            "temperature": 0.2
-          }
-        }
-      },
-      {
-        "id": "n3",
-        "type": "custom",
-        "data": {
-          "label": "生成版本演进总览",
-          "config": {
-            "code": "import sys as _sys, os as _os, json as _json, re as _re\nSD = '/srv/kb/worker/builtin_engine/scripts'\nif SD not in _sys.path:\n    _sys.path.insert(0, SD)\n_os.environ.setdefault('KB_API_BASE_URL', 'http://api-server:8000')\nimport weknora_rpc as wr\nwr.load_config()\nKB = str(bindings.get('kb_id') or '')\nif KB:\n    wr.KB = KB\n    _os.environ['WEKNORA_KB_ID'] = KB\nwr.mcp_init()\n\nOUT = '/tmp/evolution'\nraw = str(bindings.get('version_raw') or '') or str(bindings.get('version_plan') or '')\nm = _re.search(r'\\{.*\\}', raw, _re.S)\nif not m:\n    raise RuntimeError('版本链解析失败: ' + raw[:200])\nplan = _json.loads(m.group(0))\nfamilies_plan = plan.get('families') if isinstance(plan, dict) else plan\nif not isinstance(families_plan, list) or not families_plan:\n    raise RuntimeError('版本链为空')\ndata = _json.load(open(_os.path.join(OUT, 'families.json'), encoding='utf-8'))\nall_docs = {d['idx']: d for d in data['docs']}\n\n# 根下「制度版本演进」目录\nroot_fid = ''\ntry:\n    for f in wr.list_all_folders_cached(kb_id=KB):\n        if f.get('name') == '制度版本演进' and not (f.get('parent_id') or ''):\n            root_fid = f.get('id') or ''\n            break\nexcept Exception as e:\n    print('[n3] 目录缓存不可用:', e)\nif not root_fid:\n    r = wr.create_folder('制度版本演进', parent_id='', kb_id=KB)\n    root_fid = ((r.get('data') or {}) if isinstance(r, dict) else {}).get('id') or ''\nif not root_fid:\n    raise RuntimeError('创建「制度版本演进」目录失败')\nbindings['evolution_folder_id'] = root_fid\nprint('[n3] 根目录:', root_fid)\n\n# 全库真实 slug 集合（双链校验：LLM 自造 slug 降级纯文本，防 broken_link）\nknown_slugs = set()\ntry:\n    page_no = 1\n    while True:\n        rg = wr.list_wiki_pages(kb_id=KB, page=page_no, page_size=300)\n        pages = rg.get('pages') or []\n        if not pages:\n            break\n        for p in pages:\n            known_slugs.add(str(p.get('slug') or ''))\n        if len(pages) < 300:\n            break\n        page_no += 1\nexcept Exception as e:\n    print('[n3] slug 集合拉取失败:', e)\n\n\ndef _link_rep(mm):\n    slug = mm.group(1)\n    disp = mm.group(2) or slug\n    return ('[[%s|%s]]' % (slug, disp)) if slug in known_slugs else disp\n\n\ndef _fix_links(text):\n    return _re.sub(r'\\[\\[([^\\[\\]\\|]+)(?:\\|([^\\[\\]]*))?\\]\\]', _link_rep, text)\n\n\npages = []\nfor fp in families_plan:\n    core = str(fp.get('core') or '').strip()\n    versions = fp.get('versions') or []\n    if not core or not versions:\n        continue\n    members = []\n    for v in versions:\n        try:\n            d = all_docs.get(int(v.get('idx', 0)))\n        except Exception:\n            d = None\n        if d:\n            d['version_info'] = v\n            members.append(d)\n    if not members:\n        print('[n3] 家族「%s」无有效成员，跳过' % core)\n        continue\n    # 素材：各版本摘要 + 原文页双链 + 摘要页双链\n    src_parts = ['### 家族「%s」版本演进素材' % core]\n    for mm in members:\n        vi = mm.get('version_info') or {}\n        src_parts.append('#### %s（%s，状态:%s，关系:%s）' % (\n            mm['name'], mm['version'] or '未标注', vi.get('status', '?'), vi.get('relation', '?')))\n        if mm.get('summary'):\n            src_parts.append(mm['summary'])\n        for sp in (mm.get('sum_pages') or [])[:3]:\n            src_parts.append('- 摘要页：[[%s|%s]]' % (sp['slug'], sp['title']))\n        for sp in (mm.get('src_pages') or [])[:15]:\n            src_parts.append('- 原文页：[[%s|%s]]' % (sp['slug'], sp['title']))\n    src = '\\n'.join(src_parts)\n\n    prompt = (\n        '以下是同一文件家族「%s」的 %d 个版本（含各版本摘要与可引用原文页，slug 全部真实）。\\n' % (core, len(members)) +\n        '请生成该家族的「版本演进总览」wiki 页（通用业务文件版本演进，不限于任何行业），四段式结构：\\n'\n        '1. ## 一、版本演进链：表格 | 版本 | 文号/标识 | 状态 | 废止/替代关系 | 原文依据 |（原文依据用材料中真实 summary 双链）\\n'\n        '2. ## 二、逐版本内容迭代：按版本顺序（最早→最新），每个版本一段「版本要点」（每条要点链材料中真实原文 slug 佐证），相邻版本之间一段迭代表：| # | 迭代方向 | 具体变化 | 原文依据 | 原文核验 |，原文依据列必须双链（旧版+新版各至少一条真实 slug）；原文核验列只能填三态之一：✅原文印证（原文长句可定位）/ ⚠️原文存疑（摘要声称但原文未定位到）/ ➖无原文（该版无独立文档）；\\n'\n        '3. ## 三、版本演进洞察与实操提醒：趋势归纳（制度定位/适用范围/管理颗粒度等维度变化）+ 实操风险提示（从迭代中归纳，不引入新事实）；\\n'\n        '4. ## 四、知识推导过程：检索→溯源→比对→原文核验→归纳 简述；\\n'\n        '硬性要求：\\n'\n        '- 所有差异/要点必须链材料中出现的真实 slug（[[summary/...]] 或 [[longsentence/...]] 或 [[original_sentence/...]]）；\\n'\n        '- 某版本在库内无独立文档/无原文页时，该版要点写「该版在库内无独立文档，无法提取内容要点」，禁止编造；\\n'\n        '- 禁止出现「（依据摘要页）」「（推断）」「（依据）」等占位臆断文字；\\n'\n        '- 中文 Markdown，1000~2200 字，只输出正文（不含 # 标题）。双链只能用材料中出现的真实 slug。\\n\\n' + src\n    )\n    try:\n        content = str(wr.llm_call([{'role': 'user', 'content': prompt}],\n                                  max_tokens=6000, temperature=0.3) or '').strip()\n    except Exception as e:\n        print('[n3] 家族「%s」生成失败: %s' % (core, e))\n        continue\n    if not content:\n        print('[n3] 家族「%s」内容为空，跳过' % core)\n        continue\n    content = _fix_links(content)\n    pages.append({\n        'title': core + '版本演进总览',\n        'content': '# %s 版本演进总览\\n\\n> ⚠️ 本文以现行生效版为准，历史版本仅作沿革参考。\\n\\n%s' % (core, content),\n        'source_refs': ['%s|%s' % (mm['doc_id'], mm['name']) for mm in members],\n    })\n    print('[n3] 家族「%s」: %d 版本, %d 字' % (core, len(members), len(content)))\n\n_json.dump(pages, open(_os.path.join(OUT, 'ev_pages.json'), 'w', encoding='utf-8'),\n           ensure_ascii=False, indent=1)\nbindings['evolution_pages'] = len(pages)\nprint('[n3] 生成 %d 个版本演进页 → %s/ev_pages.json' % (len(pages), OUT))"
-          }
-        }
-      },
-      {
-        "id": "n4",
-        "type": "custom",
-        "data": {
-          "label": "写入版本演进页",
-          "config": {
-            "queue": "build",
-            "source": "/tmp/evolution/ev_pages.json",
-            "folder_id": "{{evolution_folder_id}}",
-            "page_type": "topic_cluster",
-            "slug_prefix": "evolution",
-            "title_field": "title",
-            "content_field": "content",
-            "slug_hash_field": "title",
-            "source_refs_field": "source_refs"
-          }
-        }
-      },
-      {
-        "id": "n5",
-        "type": "custom",
-        "data": {
-          "label": "完成汇总",
-          "config": {
-            "code": "n = bindings.get('evolution_pages')\nfid = bindings.get('evolution_folder_id')\nprint('[n5] 版本演进构建完成: 生成 %s 页，目录 %s' % (n, fid))"
-          }
-        }
-      }
-    ],
-    "edges": [
-      {
-        "source": "n1",
-        "target": "n2"
-      },
-      {
-        "source": "n2",
-        "target": "n3"
-      },
-      {
-        "source": "n3",
-        "target": "n4"
-      },
-      {
-        "source": "n4",
-        "target": "n5"
-      }
-    ],
-    "execParams": {
-      "kb_id": ""
+ "type": "kb.orchestration.draft",
+ "schemaVersion": 1,
+ "exportedAt": "2026-10-20T23:15:47.490822",
+ "draft": {
+  "tapeName": "制度版本演进",
+  "tapeLabel": "制度版本演进（多版本迭代总览）",
+  "tapeDescr": "识别知识库中同名多版本文件家族（按核心名聚类），用 LLM 判定版本链（现行/废止/替代关系），为每个家族生成版本演进总览页（版本链表 + 逐版本内容迭代含原文三态核验 + 演进洞察 + 知识推导过程），写入「制度版本演进」目录。用于版本演进 wiki 展示。",
+  "tapeType": "kb_aggregate",
+  "category": "知识聚合",
+  "status": "effective",
+  "nodes": [
+   {
+    "id": "n1",
+    "data": {
+     "label": "收集家族语料",
+     "config": {
+      "code": "import json as _json, os as _os, re as _re\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st\nKB = str(bindings.get('kb_id') or '')\nif not KB:\n    raise RuntimeError('缺 kb_id')\nOUT = '/tmp/evolution'\n_os.makedirs(OUT, exist_ok=True)\n\n\ndef _family_core(fname):\n    # 通用家族核心名: 去版本号/文号/通知/修订/附件等包装后缀, 保留主题核心名\n    name = _re.sub(r'\\.[^.]+$', '', fname or '')\n    name = _re.sub(r'^(?:关于)?(?:印发|发布|修订|实施|下达)?\\s*', '', name)\n    name = _re.sub(r'(?:的?通知|的?修订说明|的?附件|的?补充说明)$', '', name)\n    name = _re.sub(r'[\\s（(]*[Vv]?\\d+(?:\\.\\d+)?[\\s版）)]*', '', name)          # V2.0 / 2版\n    name = _re.sub(r'[\\s（(]*\\d{4}\\s*年?[\\s版）)]*', '', name)                  # 2024 / 2024年\n    name = _re.sub(r'[\\s（(]*(?:第)?[一二三四五六七八九十\\d]+版[\\s）)]*', '', name)  # 第X版\n    name = _re.sub(r'[\\s（(]*(?:试行|暂行|修订稿|征求意见稿)[\\s）)]*', '', name)\n    name = _re.sub(r'[\\s（(]*[〔\\[【][^〕\\]】]*[〕\\]】]?[\\s）)]*', '', name)      # 文号\n    return name.strip() or (fname or '')\n\n\ndef _version_tag(fname):\n    # 版本标识提取(排序/标注用), 无版本号返回空\n    m = _re.search(r'([Vv]\\d+(?:\\.\\d+)?|\\d{4}\\s*年?版|第[一二三四五六七八九十\\d]+版|\\d{4})', fname or '')\n    return m.group(1) if m else ''\n\n\ndb = _gsm()()\ntry:\n    docs = db.execute(_st('''\n        select d.id, d.file_name,\n               (select count(*) from wiki_page p where p.kb_id = d.kb_id and p.status='active'\n                  and p.source_refs like concat('%', d.id, '%')) as cnt\n        from kb_document d\n        where d.kb_id = :k and d.parse_state = 'READY'\n        order by d.file_name\n    '''), {'k': KB}).all()\n    doc_rows = []\n    for did, fname, cnt in docs:\n        s = db.execute(_st(\"select coalesce(summary,'') from kb_document where id=:i\"), {'i': did}).scalar() or ''\n        rows = db.execute(_st('''\n            select slug, title, page_type from wiki_page\n            where kb_id=:k and status='active'\n              and source_refs like concat('%', :d, '%')\n            order by page_type, created_at\n            limit 80\n        '''), {'k': KB, 'd': did}).all()\n        src_pages = [{'slug': r[0], 'title': r[1], 'type': r[2]} for r in rows if r[2] not in ('summary',)]\n        sum_pages = [{'slug': r[0], 'title': r[1], 'type': r[2]} for r in rows if r[2] == 'summary']\n        doc_rows.append({'doc_id': did, 'name': fname, 'summary': str(s)[:400],\n                         'src_pages': src_pages[:30], 'sum_pages': sum_pages[:5],\n                         'version': _version_tag(fname), 'core': _family_core(fname)})\nfinally:\n    db.close()\n\n# 家族聚类：core 相同的文档归一组（多版本/多份）\nfamilies = {}\nfor i, d in enumerate(doc_rows, 1):\n    d['idx'] = i\n    families.setdefault(d['core'], []).append(d)\nfamilies = {core: members for core, members in families.items() if len(members) > 1}\n# 家族内按版本标识排序（无版本号的排后）\nfor core, members in families.items():\n    members.sort(key=lambda x: (not x['version'], x['version']))\n\n_json.dump({'families': families, 'docs': doc_rows}, open(_os.path.join(OUT, 'families.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)\n\nlines = []\nfor core, members in families.items():\n    lines.append('## 家族「%s」(%d 份文件)' % (core, len(members)))\n    for m in members:\n        lines.append('[%d] %s (版本: %s)\\n  摘要: %s' % (\n            m['idx'], m['name'], m['version'] or '未标注', m['summary'][:200]))\n\nprompt = (\n    '下面是知识库中按核心主题聚类出的「同名多版本文件家族」清单。请判定每个家族的版本演进链：\\n'\n    '要求：\\n'\n    '1. 对每个家族：标注版本顺序（旧→新）、谁是现行生效版（版本号最新或摘要标注现行）、废止/替代关系（从摘要中\"已被XX替代/废止\"等表述推断）；\\n'\n    '2. 只输出 JSON 对象（不是数组），禁止任何解释或 Markdown 标记：\\n'\n    '{\"families\":[{\"core\":\"家族名\",\"versions\":[{\"idx\":1,\"version\":\"V1\",\"status\":\"历史|现行\",\"relation\":\"被V2替代|替代V1|现行\"}]}]}\\n'\n    '3. idx 用文件清单里的编号。无版本信息的文件 status 标\"未标注\"，relation 标\"未知\"。\\n\\n'\n    '文件清单：\\n' + '\\n'.join(lines)\n)\nbindings['version_plan_prompt'] = prompt\nbindings['family_count'] = len(families)\nbindings['families_json'] = _os.path.join(OUT, 'families.json')\nprint('[n1] 家族 %d 个（多版本），prompt %d 字 → %s/families.json' % (len(families), len(prompt), OUT))"
+     }
     },
-    "steps": [
-      {
-        "step_id": "n1",
-        "step_inst": "script",
-        "step_label": "收集家族语料",
-        "step_config": {
-          "code": "import json as _json, os as _os, re as _re\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st\nKB = str(bindings.get('kb_id') or '')\nif not KB:\n    raise RuntimeError('缺 kb_id')\nOUT = '/tmp/evolution'\n_os.makedirs(OUT, exist_ok=True)\n\n\ndef _family_core(fname):\n    # 通用家族核心名: 去版本号/文号/通知/修订/附件等包装后缀, 保留主题核心名\n    name = _re.sub(r'\\.[^.]+$', '', fname or '')\n    name = _re.sub(r'^(?:关于)?(?:印发|发布|修订|实施|下达)?\\s*', '', name)\n    name = _re.sub(r'(?:的?通知|的?修订说明|的?附件|的?补充说明)$', '', name)\n    name = _re.sub(r'[\\s（(]*[Vv]?\\d+(?:\\.\\d+)?[\\s版）)]*', '', name)          # V2.0 / 2版\n    name = _re.sub(r'[\\s（(]*\\d{4}\\s*年?[\\s版）)]*', '', name)                  # 2024 / 2024年\n    name = _re.sub(r'[\\s（(]*(?:第)?[一二三四五六七八九十\\d]+版[\\s）)]*', '', name)  # 第X版\n    name = _re.sub(r'[\\s（(]*(?:试行|暂行|修订稿|征求意见稿)[\\s）)]*', '', name)\n    name = _re.sub(r'[\\s（(]*[〔\\[【][^〕\\]】]*[〕\\]】]?[\\s）)]*', '', name)      # 文号\n    return name.strip() or (fname or '')\n\n\ndef _version_tag(fname):\n    # 版本标识提取(排序/标注用), 无版本号返回空\n    m = _re.search(r'([Vv]\\d+(?:\\.\\d+)?|\\d{4}\\s*年?版|第[一二三四五六七八九十\\d]+版|\\d{4})', fname or '')\n    return m.group(1) if m else ''\n\n\ndb = _gsm()()\ntry:\n    docs = db.execute(_st('''\n        select d.id, d.file_name,\n               (select count(*) from wiki_page p where p.kb_id = d.kb_id and p.status='active'\n                  and p.source_refs like concat('%', d.id, '%')) as cnt\n        from kb_document d\n        where d.kb_id = :k and d.parse_state = 'READY'\n        order by d.file_name\n    '''), {'k': KB}).all()\n    doc_rows = []\n    for did, fname, cnt in docs:\n        s = db.execute(_st(\"select coalesce(summary,'') from kb_document where id=:i\"), {'i': did}).scalar() or ''\n        rows = db.execute(_st('''\n            select slug, title, page_type from wiki_page\n            where kb_id=:k and status='active'\n              and source_refs like concat('%', :d, '%')\n            order by page_type, created_at\n            limit 80\n        '''), {'k': KB, 'd': did}).all()\n        src_pages = [{'slug': r[0], 'title': r[1], 'type': r[2]} for r in rows if r[2] not in ('summary',)]\n        sum_pages = [{'slug': r[0], 'title': r[1], 'type': r[2]} for r in rows if r[2] == 'summary']\n        doc_rows.append({'doc_id': did, 'name': fname, 'summary': str(s)[:400],\n                         'src_pages': src_pages[:30], 'sum_pages': sum_pages[:5],\n                         'version': _version_tag(fname), 'core': _family_core(fname)})\nfinally:\n    db.close()\n\n# 家族聚类：core 相同的文档归一组（多版本/多份）\nfamilies = {}\nfor i, d in enumerate(doc_rows, 1):\n    d['idx'] = i\n    families.setdefault(d['core'], []).append(d)\nfamilies = {core: members for core, members in families.items() if len(members) > 1}\n# 家族内按版本标识排序（无版本号的排后）\nfor core, members in families.items():\n    members.sort(key=lambda x: (not x['version'], x['version']))\n\n_json.dump({'families': families, 'docs': doc_rows}, open(_os.path.join(OUT, 'families.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)\n\nlines = []\nfor core, members in families.items():\n    lines.append('## 家族「%s」(%d 份文件)' % (core, len(members)))\n    for m in members:\n        lines.append('[%d] %s (版本: %s)\\n  摘要: %s' % (\n            m['idx'], m['name'], m['version'] or '未标注', m['summary'][:200]))\n\nprompt = (\n    '下面是知识库中按核心主题聚类出的「同名多版本文件家族」清单。请判定每个家族的版本演进链：\\n'\n    '要求：\\n'\n    '1. 对每个家族：标注版本顺序（旧→新）、谁是现行生效版（版本号最新或摘要标注现行）、废止/替代关系（从摘要中\"已被XX替代/废止\"等表述推断）；\\n'\n    '2. 只输出 JSON 对象（不是数组），禁止任何解释或 Markdown 标记：\\n'\n    '{\"families\":[{\"core\":\"家族名\",\"versions\":[{\"idx\":1,\"version\":\"V1\",\"status\":\"历史|现行\",\"relation\":\"被V2替代|替代V1|现行\"}]}]}\\n'\n    '3. idx 用文件清单里的编号。无版本信息的文件 status 标\"未标注\"，relation 标\"未知\"。\\n\\n'\n    '文件清单：\\n' + '\\n'.join(lines)\n)\nbindings['version_plan_prompt'] = prompt\nbindings['family_count'] = len(families)\nbindings['families_json'] = _os.path.join(OUT, 'families.json')\nprint('[n1] 家族 %d 个（多版本），prompt %d 字 → %s/families.json' % (len(families), len(prompt), OUT))"
-        },
-        "step_seq": 0,
-        "pre_step_ids": [],
-        "next_step_ids": [
-          "n2"
-        ],
-        "queue_name": "build"
-      },
-      {
-        "step_id": "n2",
-        "step_inst": "kb_llm_chat",
-        "step_label": "LLM版本链判定",
-        "step_config": {
-          "model": "{{summary_model_id}}",
-          "prompt": "{{version_plan_prompt}}",
-          "system": "你是文件版本管理专家。只输出 JSON，不要任何解释、前言或代码块标记。",
-          "thinking": "disabled",
-          "max_tokens": 4000,
-          "output_var": "version_raw",
-          "temperature": 0.2
-        },
-        "step_seq": 1,
-        "pre_step_ids": [
-          "n1"
-        ],
-        "next_step_ids": [
-          "n3"
-        ],
-        "queue_name": "build"
-      },
-      {
-        "step_id": "n3",
-        "step_inst": "script",
-        "step_label": "生成版本演进总览",
-        "step_config": {
-          "code": "import sys as _sys, os as _os, json as _json, re as _re\nSD = '/srv/kb/worker/builtin_engine/scripts'\nif SD not in _sys.path:\n    _sys.path.insert(0, SD)\n_os.environ.setdefault('KB_API_BASE_URL', 'http://api-server:8000')\nimport weknora_rpc as wr\nwr.load_config()\nKB = str(bindings.get('kb_id') or '')\nif KB:\n    wr.KB = KB\n    _os.environ['WEKNORA_KB_ID'] = KB\nwr.mcp_init()\n\nOUT = '/tmp/evolution'\nraw = str(bindings.get('version_raw') or '') or str(bindings.get('version_plan') or '')\nm = _re.search(r'\\{.*\\}', raw, _re.S)\nif not m:\n    raise RuntimeError('版本链解析失败: ' + raw[:200])\nplan = _json.loads(m.group(0))\nfamilies_plan = plan.get('families') if isinstance(plan, dict) else plan\nif not isinstance(families_plan, list) or not families_plan:\n    raise RuntimeError('版本链为空')\ndata = _json.load(open(_os.path.join(OUT, 'families.json'), encoding='utf-8'))\nall_docs = {d['idx']: d for d in data['docs']}\n\n# 根下「制度版本演进」目录\nroot_fid = ''\ntry:\n    for f in wr.list_all_folders_cached(kb_id=KB):\n        if f.get('name') == '制度版本演进' and not (f.get('parent_id') or ''):\n            root_fid = f.get('id') or ''\n            break\nexcept Exception as e:\n    print('[n3] 目录缓存不可用:', e)\nif not root_fid:\n    r = wr.create_folder('制度版本演进', parent_id='', kb_id=KB)\n    root_fid = ((r.get('data') or {}) if isinstance(r, dict) else {}).get('id') or ''\nif not root_fid:\n    raise RuntimeError('创建「制度版本演进」目录失败')\nbindings['evolution_folder_id'] = root_fid\nprint('[n3] 根目录:', root_fid)\n\n# 全库真实 slug 集合（双链校验：LLM 自造 slug 降级纯文本，防 broken_link）\nknown_slugs = set()\ntry:\n    page_no = 1\n    while True:\n        rg = wr.list_wiki_pages(kb_id=KB, page=page_no, page_size=300)\n        pages = rg.get('pages') or []\n        if not pages:\n            break\n        for p in pages:\n            known_slugs.add(str(p.get('slug') or ''))\n        if len(pages) < 300:\n            break\n        page_no += 1\nexcept Exception as e:\n    print('[n3] slug 集合拉取失败:', e)\n\n\ndef _link_rep(mm):\n    slug = mm.group(1)\n    disp = mm.group(2) or slug\n    return ('[[%s|%s]]' % (slug, disp)) if slug in known_slugs else disp\n\n\ndef _fix_links(text):\n    return _re.sub(r'\\[\\[([^\\[\\]\\|]+)(?:\\|([^\\[\\]]*))?\\]\\]', _link_rep, text)\n\n\npages = []\nfor fp in families_plan:\n    core = str(fp.get('core') or '').strip()\n    versions = fp.get('versions') or []\n    if not core or not versions:\n        continue\n    members = []\n    for v in versions:\n        try:\n            d = all_docs.get(int(v.get('idx', 0)))\n        except Exception:\n            d = None\n        if d:\n            d['version_info'] = v\n            members.append(d)\n    if not members:\n        print('[n3] 家族「%s」无有效成员，跳过' % core)\n        continue\n    # 素材：各版本摘要 + 原文页双链 + 摘要页双链\n    src_parts = ['### 家族「%s」版本演进素材' % core]\n    for mm in members:\n        vi = mm.get('version_info') or {}\n        src_parts.append('#### %s（%s，状态:%s，关系:%s）' % (\n            mm['name'], mm['version'] or '未标注', vi.get('status', '?'), vi.get('relation', '?')))\n        if mm.get('summary'):\n            src_parts.append(mm['summary'])\n        for sp in (mm.get('sum_pages') or [])[:3]:\n            src_parts.append('- 摘要页：[[%s|%s]]' % (sp['slug'], sp['title']))\n        for sp in (mm.get('src_pages') or [])[:15]:\n            src_parts.append('- 原文页：[[%s|%s]]' % (sp['slug'], sp['title']))\n    src = '\\n'.join(src_parts)\n\n    prompt = (\n        '以下是同一文件家族「%s」的 %d 个版本（含各版本摘要与可引用原文页，slug 全部真实）。\\n' % (core, len(members)) +\n        '请生成该家族的「版本演进总览」wiki 页（通用业务文件版本演进，不限于任何行业），四段式结构：\\n'\n        '1. ## 一、版本演进链：表格 | 版本 | 文号/标识 | 状态 | 废止/替代关系 | 原文依据 |（原文依据用材料中真实 summary 双链）\\n'\n        '2. ## 二、逐版本内容迭代：按版本顺序（最早→最新），每个版本一段「版本要点」（每条要点链材料中真实原文 slug 佐证），相邻版本之间一段迭代表：| # | 迭代方向 | 具体变化 | 原文依据 | 原文核验 |，原文依据列必须双链（旧版+新版各至少一条真实 slug）；原文核验列只能填三态之一：✅原文印证（原文长句可定位）/ ⚠️原文存疑（摘要声称但原文未定位到）/ ➖无原文（该版无独立文档）；\\n'\n        '3. ## 三、版本演进洞察与实操提醒：趋势归纳（制度定位/适用范围/管理颗粒度等维度变化）+ 实操风险提示（从迭代中归纳，不引入新事实）；\\n'\n        '4. ## 四、知识推导过程：检索→溯源→比对→原文核验→归纳 简述；\\n'\n        '硬性要求：\\n'\n        '- 所有差异/要点必须链材料中出现的真实 slug（[[summary/...]] 或 [[longsentence/...]] 或 [[original_sentence/...]]）；\\n'\n        '- 某版本在库内无独立文档/无原文页时，该版要点写「该版在库内无独立文档，无法提取内容要点」，禁止编造；\\n'\n        '- 禁止出现「（依据摘要页）」「（推断）」「（依据）」等占位臆断文字；\\n'\n        '- 中文 Markdown，1000~2200 字，只输出正文（不含 # 标题）。双链只能用材料中出现的真实 slug。\\n\\n' + src\n    )\n    try:\n        content = str(wr.llm_call([{'role': 'user', 'content': prompt}],\n                                  max_tokens=6000, temperature=0.3) or '').strip()\n    except Exception as e:\n        print('[n3] 家族「%s」生成失败: %s' % (core, e))\n        continue\n    if not content:\n        print('[n3] 家族「%s」内容为空，跳过' % core)\n        continue\n    content = _fix_links(content)\n    pages.append({\n        'title': core + '版本演进总览',\n        'content': '# %s 版本演进总览\\n\\n> ⚠️ 本文以现行生效版为准，历史版本仅作沿革参考。\\n\\n%s' % (core, content),\n        'source_refs': ['%s|%s' % (mm['doc_id'], mm['name']) for mm in members],\n    })\n    print('[n3] 家族「%s」: %d 版本, %d 字' % (core, len(members), len(content)))\n\n_json.dump(pages, open(_os.path.join(OUT, 'ev_pages.json'), 'w', encoding='utf-8'),\n           ensure_ascii=False, indent=1)\nbindings['evolution_pages'] = len(pages)\nprint('[n3] 生成 %d 个版本演进页 → %s/ev_pages.json' % (len(pages), OUT))"
-        },
-        "step_seq": 2,
-        "pre_step_ids": [
-          "n2"
-        ],
-        "next_step_ids": [
-          "n4"
-        ],
-        "queue_name": "build"
-      },
-      {
-        "step_id": "n4",
-        "step_inst": "wiki_publish",
-        "step_label": "写入版本演进页",
-        "step_config": {
-          "queue": "build",
-          "source": "/tmp/evolution/ev_pages.json",
-          "folder_id": "{{evolution_folder_id}}",
-          "page_type": "topic_cluster",
-          "slug_prefix": "evolution",
-          "title_field": "title",
-          "content_field": "content",
-          "slug_hash_field": "title",
-          "source_refs_field": "source_refs"
-        },
-        "step_seq": 3,
-        "pre_step_ids": [
-          "n3"
-        ],
-        "next_step_ids": [
-          "n5"
-        ],
-        "queue_name": "build"
-      },
-      {
-        "step_id": "n5",
-        "step_inst": "print",
-        "step_label": "完成汇总",
-        "step_config": {
-          "code": "n = bindings.get('evolution_pages')\nfid = bindings.get('evolution_folder_id')\nprint('[n5] 版本演进构建完成: 生成 %s 页，目录 %s' % (n, fid))"
-        },
-        "step_seq": 4,
-        "pre_step_ids": [
-          "n4"
-        ],
-        "next_step_ids": [],
-        "queue_name": "build"
-      }
-    ]
-  }
+    "type": "custom",
+    "position": {
+     "x": 60,
+     "y": 120
+    }
+   },
+   {
+    "id": "n2",
+    "data": {
+     "label": "LLM版本链判定",
+     "config": {
+      "model": "{{summary_model_id}}",
+      "prompt": "{{version_plan_prompt}}",
+      "system": "你是文件版本管理专家。只输出 JSON，不要任何解释、前言或代码块标记。",
+      "thinking": "disabled",
+      "max_tokens": 4000,
+      "output_var": "version_raw",
+      "temperature": 0.2
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 380,
+     "y": 120
+    }
+   },
+   {
+    "id": "n3",
+    "data": {
+     "label": "生成版本演进总览",
+     "config": {
+      "code": "import sys as _sys, os as _os, json as _json, re as _re\nSD = '/srv/kb/worker/builtin_engine/scripts'\nif SD not in _sys.path:\n    _sys.path.insert(0, SD)\n_os.environ.setdefault('KB_API_BASE_URL', 'http://api-server:8000')\nimport weknora_rpc as wr\nwr.load_config()\nKB = str(bindings.get('kb_id') or '')\nif KB:\n    wr.KB = KB\n    _os.environ['WEKNORA_KB_ID'] = KB\nwr.mcp_init()\n\nOUT = '/tmp/evolution'\nraw = str(bindings.get('version_raw') or '') or str(bindings.get('version_plan') or '')\nm = _re.search(r'\\{.*\\}', raw, _re.S)\nif not m:\n    raise RuntimeError('版本链解析失败: ' + raw[:200])\nplan = _json.loads(m.group(0))\nfamilies_plan = plan.get('families') if isinstance(plan, dict) else plan\nif not isinstance(families_plan, list) or not families_plan:\n    raise RuntimeError('版本链为空')\ndata = _json.load(open(_os.path.join(OUT, 'families.json'), encoding='utf-8'))\nall_docs = {d['idx']: d for d in data['docs']}\n\n# 根下「制度版本演进」目录\nroot_fid = ''\ntry:\n    for f in wr.list_all_folders_cached(kb_id=KB):\n        if f.get('name') == '制度版本演进' and not (f.get('parent_id') or ''):\n            root_fid = f.get('id') or ''\n            break\nexcept Exception as e:\n    print('[n3] 目录缓存不可用:', e)\nif not root_fid:\n    r = wr.create_folder('制度版本演进', parent_id='', kb_id=KB)\n    root_fid = ((r.get('data') or {}) if isinstance(r, dict) else {}).get('id') or ''\nif not root_fid:\n    raise RuntimeError('创建「制度版本演进」目录失败')\nbindings['evolution_folder_id'] = root_fid\nprint('[n3] 根目录:', root_fid)\n\n# 全库真实 slug 集合（双链校验：LLM 自造 slug 降级纯文本，防 broken_link）\nknown_slugs = set()\ntry:\n    page_no = 1\n    while True:\n        rg = wr.list_wiki_pages(kb_id=KB, page=page_no, page_size=300)\n        pages = rg.get('pages') or []\n        if not pages:\n            break\n        for p in pages:\n            known_slugs.add(str(p.get('slug') or ''))\n        if len(pages) < 300:\n            break\n        page_no += 1\nexcept Exception as e:\n    print('[n3] slug 集合拉取失败:', e)\n\n\ndef _link_rep(mm):\n    slug = mm.group(1)\n    disp = mm.group(2) or slug\n    return ('[[%s|%s]]' % (slug, disp)) if slug in known_slugs else disp\n\n\ndef _fix_links(text):\n    return _re.sub(r'\\[\\[([^\\[\\]\\|]+)(?:\\|([^\\[\\]]*))?\\]\\]', _link_rep, text)\n\n\npages = []\nfor fp in families_plan:\n    core = str(fp.get('core') or '').strip()\n    versions = fp.get('versions') or []\n    if not core or not versions:\n        continue\n    members = []\n    for v in versions:\n        try:\n            d = all_docs.get(int(v.get('idx', 0)))\n        except Exception:\n            d = None\n        if d:\n            d['version_info'] = v\n            members.append(d)\n    if not members:\n        print('[n3] 家族「%s」无有效成员，跳过' % core)\n        continue\n    # 素材：各版本摘要 + 原文页双链 + 摘要页双链\n    src_parts = ['### 家族「%s」版本演进素材' % core]\n    for mm in members:\n        vi = mm.get('version_info') or {}\n        src_parts.append('#### %s（%s，状态:%s，关系:%s）' % (\n            mm['name'], mm['version'] or '未标注', vi.get('status', '?'), vi.get('relation', '?')))\n        if mm.get('summary'):\n            src_parts.append(mm['summary'])\n        for sp in (mm.get('sum_pages') or [])[:3]:\n            src_parts.append('- 摘要页：[[%s|%s]]' % (sp['slug'], sp['title']))\n        for sp in (mm.get('src_pages') or [])[:15]:\n            src_parts.append('- 原文页：[[%s|%s]]' % (sp['slug'], sp['title']))\n    src = '\\n'.join(src_parts)\n\n    prompt = (\n        '以下是同一文件家族「%s」的 %d 个版本（含各版本摘要与可引用原文页，slug 全部真实）。\\n' % (core, len(members)) +\n        '请生成该家族的「版本演进总览」wiki 页（通用业务文件版本演进，不限于任何行业），四段式结构：\\n'\n        '1. ## 一、版本演进链：表格 | 版本 | 文号/标识 | 状态 | 废止/替代关系 | 原文依据 |（原文依据用材料中真实 summary 双链）\\n'\n        '2. ## 二、逐版本内容迭代：按版本顺序（最早→最新），每个版本一段「版本要点」（每条要点链材料中真实原文 slug 佐证），相邻版本之间一段迭代表：| # | 迭代方向 | 具体变化 | 原文依据 | 原文核验 |，原文依据列必须双链（旧版+新版各至少一条真实 slug）；原文核验列只能填三态之一：✅原文印证（原文长句可定位）/ ⚠️原文存疑（摘要声称但原文未定位到）/ ➖无原文（该版无独立文档）；\\n'\n        '3. ## 三、版本演进洞察与实操提醒：趋势归纳（制度定位/适用范围/管理颗粒度等维度变化）+ 实操风险提示（从迭代中归纳，不引入新事实）；\\n'\n        '4. ## 四、知识推导过程：检索→溯源→比对→原文核验→归纳 简述；\\n'\n        '硬性要求：\\n'\n        '- 所有差异/要点必须链材料中出现的真实 slug（[[summary/...]] 或 [[longsentence/...]] 或 [[original_sentence/...]]）；\\n'\n        '- 某版本在库内无独立文档/无原文页时，该版要点写「该版在库内无独立文档，无法提取内容要点」，禁止编造；\\n'\n        '- 禁止出现「（依据摘要页）」「（推断）」「（依据）」等占位臆断文字；\\n'\n        '- 中文 Markdown，1000~2200 字，只输出正文（不含 # 标题）。双链只能用材料中出现的真实 slug。\\n\\n' + src\n    )\n    try:\n        content = str(wr.llm_call([{'role': 'user', 'content': prompt}],\n                                  max_tokens=6000, temperature=0.3) or '').strip()\n    except Exception as e:\n        print('[n3] 家族「%s」生成失败: %s' % (core, e))\n        continue\n    if not content:\n        print('[n3] 家族「%s」内容为空，跳过' % core)\n        continue\n    content = _fix_links(content)\n    pages.append({\n        'title': core + '版本演进总览',\n        'content': '# %s 版本演进总览\\n\\n> ⚠️ 本文以现行生效版为准，历史版本仅作沿革参考。\\n\\n%s' % (core, content),\n        'source_refs': ['%s|%s' % (mm['doc_id'], mm['name']) for mm in members],\n    })\n    print('[n3] 家族「%s」: %d 版本, %d 字' % (core, len(members), len(content)))\n\n_json.dump(pages, open(_os.path.join(OUT, 'ev_pages.json'), 'w', encoding='utf-8'),\n           ensure_ascii=False, indent=1)\nbindings['evolution_pages'] = len(pages)\nprint('[n3] 生成 %d 个版本演进页 → %s/ev_pages.json' % (len(pages), OUT))"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 700,
+     "y": 120
+    }
+   },
+   {
+    "id": "n4",
+    "data": {
+     "label": "写入版本演进页",
+     "config": {
+      "queue": "build",
+      "source": "/tmp/evolution/ev_pages.json",
+      "folder_id": "{{evolution_folder_id}}",
+      "page_type": "topic_cluster",
+      "slug_prefix": "evolution",
+      "title_field": "title",
+      "content_field": "content",
+      "slug_hash_field": "title",
+      "source_refs_field": "source_refs"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 1020,
+     "y": 120
+    }
+   },
+   {
+    "id": "n5",
+    "data": {
+     "label": "完成汇总",
+     "config": {
+      "code": "n = bindings.get('evolution_pages')\nfid = bindings.get('evolution_folder_id')\nprint('[n5] 版本演进构建完成: 生成 %s 页，目录 %s' % (n, fid))"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 60,
+     "y": 292
+    }
+   }
+  ],
+  "edges": [
+   {
+    "source": "n1",
+    "target": "n2"
+   },
+   {
+    "source": "n2",
+    "target": "n3"
+   },
+   {
+    "source": "n3",
+    "target": "n4"
+   },
+   {
+    "source": "n4",
+    "target": "n5"
+   }
+  ],
+  "execParams": {
+   "kb_id": ""
+  },
+  "steps": [
+   {
+    "step_id": "n1",
+    "step_inst": "script",
+    "step_label": "收集家族语料",
+    "step_config": {
+     "code": "import json as _json, os as _os, re as _re\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st\nKB = str(bindings.get('kb_id') or '')\nif not KB:\n    raise RuntimeError('缺 kb_id')\nOUT = '/tmp/evolution'\n_os.makedirs(OUT, exist_ok=True)\n\n\ndef _family_core(fname):\n    # 通用家族核心名: 去版本号/文号/通知/修订/附件等包装后缀, 保留主题核心名\n    name = _re.sub(r'\\.[^.]+$', '', fname or '')\n    name = _re.sub(r'^(?:关于)?(?:印发|发布|修订|实施|下达)?\\s*', '', name)\n    name = _re.sub(r'(?:的?通知|的?修订说明|的?附件|的?补充说明)$', '', name)\n    name = _re.sub(r'[\\s（(]*[Vv]?\\d+(?:\\.\\d+)?[\\s版）)]*', '', name)          # V2.0 / 2版\n    name = _re.sub(r'[\\s（(]*\\d{4}\\s*年?[\\s版）)]*', '', name)                  # 2024 / 2024年\n    name = _re.sub(r'[\\s（(]*(?:第)?[一二三四五六七八九十\\d]+版[\\s）)]*', '', name)  # 第X版\n    name = _re.sub(r'[\\s（(]*(?:试行|暂行|修订稿|征求意见稿)[\\s）)]*', '', name)\n    name = _re.sub(r'[\\s（(]*[〔\\[【][^〕\\]】]*[〕\\]】]?[\\s）)]*', '', name)      # 文号\n    return name.strip() or (fname or '')\n\n\ndef _version_tag(fname):\n    # 版本标识提取(排序/标注用), 无版本号返回空\n    m = _re.search(r'([Vv]\\d+(?:\\.\\d+)?|\\d{4}\\s*年?版|第[一二三四五六七八九十\\d]+版|\\d{4})', fname or '')\n    return m.group(1) if m else ''\n\n\ndb = _gsm()()\ntry:\n    docs = db.execute(_st('''\n        select d.id, d.file_name,\n               (select count(*) from wiki_page p where p.kb_id = d.kb_id and p.status='active'\n                  and p.source_refs like concat('%', d.id, '%')) as cnt\n        from kb_document d\n        where d.kb_id = :k and d.parse_state = 'READY'\n        order by d.file_name\n    '''), {'k': KB}).all()\n    doc_rows = []\n    for did, fname, cnt in docs:\n        s = db.execute(_st(\"select coalesce(summary,'') from kb_document where id=:i\"), {'i': did}).scalar() or ''\n        rows = db.execute(_st('''\n            select slug, title, page_type from wiki_page\n            where kb_id=:k and status='active'\n              and source_refs like concat('%', :d, '%')\n            order by page_type, created_at\n            limit 80\n        '''), {'k': KB, 'd': did}).all()\n        src_pages = [{'slug': r[0], 'title': r[1], 'type': r[2]} for r in rows if r[2] not in ('summary',)]\n        sum_pages = [{'slug': r[0], 'title': r[1], 'type': r[2]} for r in rows if r[2] == 'summary']\n        doc_rows.append({'doc_id': did, 'name': fname, 'summary': str(s)[:400],\n                         'src_pages': src_pages[:30], 'sum_pages': sum_pages[:5],\n                         'version': _version_tag(fname), 'core': _family_core(fname)})\nfinally:\n    db.close()\n\n# 家族聚类：core 相同的文档归一组（多版本/多份）\nfamilies = {}\nfor i, d in enumerate(doc_rows, 1):\n    d['idx'] = i\n    families.setdefault(d['core'], []).append(d)\nfamilies = {core: members for core, members in families.items() if len(members) > 1}\n# 家族内按版本标识排序（无版本号的排后）\nfor core, members in families.items():\n    members.sort(key=lambda x: (not x['version'], x['version']))\n\n_json.dump({'families': families, 'docs': doc_rows}, open(_os.path.join(OUT, 'families.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)\n\nlines = []\nfor core, members in families.items():\n    lines.append('## 家族「%s」(%d 份文件)' % (core, len(members)))\n    for m in members:\n        lines.append('[%d] %s (版本: %s)\\n  摘要: %s' % (\n            m['idx'], m['name'], m['version'] or '未标注', m['summary'][:200]))\n\nprompt = (\n    '下面是知识库中按核心主题聚类出的「同名多版本文件家族」清单。请判定每个家族的版本演进链：\\n'\n    '要求：\\n'\n    '1. 对每个家族：标注版本顺序（旧→新）、谁是现行生效版（版本号最新或摘要标注现行）、废止/替代关系（从摘要中\"已被XX替代/废止\"等表述推断）；\\n'\n    '2. 只输出 JSON 对象（不是数组），禁止任何解释或 Markdown 标记：\\n'\n    '{\"families\":[{\"core\":\"家族名\",\"versions\":[{\"idx\":1,\"version\":\"V1\",\"status\":\"历史|现行\",\"relation\":\"被V2替代|替代V1|现行\"}]}]}\\n'\n    '3. idx 用文件清单里的编号。无版本信息的文件 status 标\"未标注\"，relation 标\"未知\"。\\n\\n'\n    '文件清单：\\n' + '\\n'.join(lines)\n)\nbindings['version_plan_prompt'] = prompt\nbindings['family_count'] = len(families)\nbindings['families_json'] = _os.path.join(OUT, 'families.json')\nprint('[n1] 家族 %d 个（多版本），prompt %d 字 → %s/families.json' % (len(families), len(prompt), OUT))"
+    },
+    "step_seq": 0,
+    "pre_step_ids": [],
+    "next_step_ids": [
+     "298ae1b2fb2c::n2"
+    ],
+    "queue_name": "build"
+   },
+   {
+    "step_id": "n2",
+    "step_inst": "kb_llm_chat",
+    "step_label": "LLM版本链判定",
+    "step_config": {
+     "model": "{{summary_model_id}}",
+     "prompt": "{{version_plan_prompt}}",
+     "system": "你是文件版本管理专家。只输出 JSON，不要任何解释、前言或代码块标记。",
+     "thinking": "disabled",
+     "max_tokens": 4000,
+     "output_var": "version_raw",
+     "temperature": 0.2
+    },
+    "step_seq": 1,
+    "pre_step_ids": [
+     "298ae1b2fb2c::n1"
+    ],
+    "next_step_ids": [
+     "298ae1b2fb2c::n3"
+    ],
+    "queue_name": "build"
+   },
+   {
+    "step_id": "n3",
+    "step_inst": "script",
+    "step_label": "生成版本演进总览",
+    "step_config": {
+     "code": "import sys as _sys, os as _os, json as _json, re as _re\nSD = '/srv/kb/worker/builtin_engine/scripts'\nif SD not in _sys.path:\n    _sys.path.insert(0, SD)\n_os.environ.setdefault('KB_API_BASE_URL', 'http://api-server:8000')\nimport weknora_rpc as wr\nwr.load_config()\nKB = str(bindings.get('kb_id') or '')\nif KB:\n    wr.KB = KB\n    _os.environ['WEKNORA_KB_ID'] = KB\nwr.mcp_init()\n\nOUT = '/tmp/evolution'\nraw = str(bindings.get('version_raw') or '') or str(bindings.get('version_plan') or '')\nm = _re.search(r'\\{.*\\}', raw, _re.S)\nif not m:\n    raise RuntimeError('版本链解析失败: ' + raw[:200])\nplan = _json.loads(m.group(0))\nfamilies_plan = plan.get('families') if isinstance(plan, dict) else plan\nif not isinstance(families_plan, list) or not families_plan:\n    raise RuntimeError('版本链为空')\ndata = _json.load(open(_os.path.join(OUT, 'families.json'), encoding='utf-8'))\nall_docs = {d['idx']: d for d in data['docs']}\n\n# 根下「制度版本演进」目录\nroot_fid = ''\ntry:\n    for f in wr.list_all_folders_cached(kb_id=KB):\n        if f.get('name') == '制度版本演进' and not (f.get('parent_id') or ''):\n            root_fid = f.get('id') or ''\n            break\nexcept Exception as e:\n    print('[n3] 目录缓存不可用:', e)\nif not root_fid:\n    r = wr.create_folder('制度版本演进', parent_id='', kb_id=KB)\n    root_fid = ((r.get('data') or {}) if isinstance(r, dict) else {}).get('id') or ''\nif not root_fid:\n    raise RuntimeError('创建「制度版本演进」目录失败')\nbindings['evolution_folder_id'] = root_fid\nprint('[n3] 根目录:', root_fid)\n\n# 全库真实 slug 集合（双链校验：LLM 自造 slug 降级纯文本，防 broken_link）\nknown_slugs = set()\ntry:\n    page_no = 1\n    while True:\n        rg = wr.list_wiki_pages(kb_id=KB, page=page_no, page_size=300)\n        pages = rg.get('pages') or []\n        if not pages:\n            break\n        for p in pages:\n            known_slugs.add(str(p.get('slug') or ''))\n        if len(pages) < 300:\n            break\n        page_no += 1\nexcept Exception as e:\n    print('[n3] slug 集合拉取失败:', e)\n\n\ndef _link_rep(mm):\n    slug = mm.group(1)\n    disp = mm.group(2) or slug\n    return ('[[%s|%s]]' % (slug, disp)) if slug in known_slugs else disp\n\n\ndef _fix_links(text):\n    return _re.sub(r'\\[\\[([^\\[\\]\\|]+)(?:\\|([^\\[\\]]*))?\\]\\]', _link_rep, text)\n\n\npages = []\nfor fp in families_plan:\n    core = str(fp.get('core') or '').strip()\n    versions = fp.get('versions') or []\n    if not core or not versions:\n        continue\n    members = []\n    for v in versions:\n        try:\n            d = all_docs.get(int(v.get('idx', 0)))\n        except Exception:\n            d = None\n        if d:\n            d['version_info'] = v\n            members.append(d)\n    if not members:\n        print('[n3] 家族「%s」无有效成员，跳过' % core)\n        continue\n    # 素材：各版本摘要 + 原文页双链 + 摘要页双链\n    src_parts = ['### 家族「%s」版本演进素材' % core]\n    for mm in members:\n        vi = mm.get('version_info') or {}\n        src_parts.append('#### %s（%s，状态:%s，关系:%s）' % (\n            mm['name'], mm['version'] or '未标注', vi.get('status', '?'), vi.get('relation', '?')))\n        if mm.get('summary'):\n            src_parts.append(mm['summary'])\n        for sp in (mm.get('sum_pages') or [])[:3]:\n            src_parts.append('- 摘要页：[[%s|%s]]' % (sp['slug'], sp['title']))\n        for sp in (mm.get('src_pages') or [])[:15]:\n            src_parts.append('- 原文页：[[%s|%s]]' % (sp['slug'], sp['title']))\n    src = '\\n'.join(src_parts)\n\n    prompt = (\n        '以下是同一文件家族「%s」的 %d 个版本（含各版本摘要与可引用原文页，slug 全部真实）。\\n' % (core, len(members)) +\n        '请生成该家族的「版本演进总览」wiki 页（通用业务文件版本演进，不限于任何行业），四段式结构：\\n'\n        '1. ## 一、版本演进链：表格 | 版本 | 文号/标识 | 状态 | 废止/替代关系 | 原文依据 |（原文依据用材料中真实 summary 双链）\\n'\n        '2. ## 二、逐版本内容迭代：按版本顺序（最早→最新），每个版本一段「版本要点」（每条要点链材料中真实原文 slug 佐证），相邻版本之间一段迭代表：| # | 迭代方向 | 具体变化 | 原文依据 | 原文核验 |，原文依据列必须双链（旧版+新版各至少一条真实 slug）；原文核验列只能填三态之一：✅原文印证（原文长句可定位）/ ⚠️原文存疑（摘要声称但原文未定位到）/ ➖无原文（该版无独立文档）；\\n'\n        '3. ## 三、版本演进洞察与实操提醒：趋势归纳（制度定位/适用范围/管理颗粒度等维度变化）+ 实操风险提示（从迭代中归纳，不引入新事实）；\\n'\n        '4. ## 四、知识推导过程：检索→溯源→比对→原文核验→归纳 简述；\\n'\n        '硬性要求：\\n'\n        '- 所有差异/要点必须链材料中出现的真实 slug（[[summary/...]] 或 [[longsentence/...]] 或 [[original_sentence/...]]）；\\n'\n        '- 某版本在库内无独立文档/无原文页时，该版要点写「该版在库内无独立文档，无法提取内容要点」，禁止编造；\\n'\n        '- 禁止出现「（依据摘要页）」「（推断）」「（依据）」等占位臆断文字；\\n'\n        '- 中文 Markdown，1000~2200 字，只输出正文（不含 # 标题）。双链只能用材料中出现的真实 slug。\\n\\n' + src\n    )\n    try:\n        content = str(wr.llm_call([{'role': 'user', 'content': prompt}],\n                                  max_tokens=6000, temperature=0.3) or '').strip()\n    except Exception as e:\n        print('[n3] 家族「%s」生成失败: %s' % (core, e))\n        continue\n    if not content:\n        print('[n3] 家族「%s」内容为空，跳过' % core)\n        continue\n    content = _fix_links(content)\n    pages.append({\n        'title': core + '版本演进总览',\n        'content': '# %s 版本演进总览\\n\\n> ⚠️ 本文以现行生效版为准，历史版本仅作沿革参考。\\n\\n%s' % (core, content),\n        'source_refs': ['%s|%s' % (mm['doc_id'], mm['name']) for mm in members],\n    })\n    print('[n3] 家族「%s」: %d 版本, %d 字' % (core, len(members), len(content)))\n\n_json.dump(pages, open(_os.path.join(OUT, 'ev_pages.json'), 'w', encoding='utf-8'),\n           ensure_ascii=False, indent=1)\nbindings['evolution_pages'] = len(pages)\nprint('[n3] 生成 %d 个版本演进页 → %s/ev_pages.json' % (len(pages), OUT))"
+    },
+    "step_seq": 2,
+    "pre_step_ids": [
+     "298ae1b2fb2c::n2"
+    ],
+    "next_step_ids": [
+     "298ae1b2fb2c::n4"
+    ],
+    "queue_name": "build"
+   },
+   {
+    "step_id": "n4",
+    "step_inst": "wiki_publish",
+    "step_label": "写入版本演进页",
+    "step_config": {
+     "queue": "build",
+     "source": "/tmp/evolution/ev_pages.json",
+     "folder_id": "{{evolution_folder_id}}",
+     "page_type": "topic_cluster",
+     "slug_prefix": "evolution",
+     "title_field": "title",
+     "content_field": "content",
+     "slug_hash_field": "title",
+     "source_refs_field": "source_refs"
+    },
+    "step_seq": 3,
+    "pre_step_ids": [
+     "298ae1b2fb2c::n3"
+    ],
+    "next_step_ids": [
+     "298ae1b2fb2c::n5"
+    ],
+    "queue_name": "build"
+   },
+   {
+    "step_id": "n5",
+    "step_inst": "print",
+    "step_label": "完成汇总",
+    "step_config": {
+     "code": "n = bindings.get('evolution_pages')\nfid = bindings.get('evolution_folder_id')\nprint('[n5] 版本演进构建完成: 生成 %s 页，目录 %s' % (n, fid))"
+    },
+    "step_seq": 4,
+    "pre_step_ids": [
+     "298ae1b2fb2c::n4"
+    ],
+    "next_step_ids": [],
+    "queue_name": "build"
+   }
+  ]
+ }
 }

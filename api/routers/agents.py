@@ -392,6 +392,11 @@ def agent_qa_stream(
             try:
                 from api.services.chat_sessions import append_message, update_message
 
+                # 2026-10-21 空正文兜底：只有引用没有正文时（LLM 空流/重试耗尽），
+                # 落库内容给可读提示而不是空串——前端刷新后历史消息能看到原因，
+                # 不再出现 content='' 的「幽灵回复」。正常有正文时不受影响。
+                if not content and refs:
+                    content = "模型未返回有效内容，请稍后重试；若持续为空请检查模型服务配置"
                 if assistant_message_id:
                     update_message(
                         db, user_id, req.session_id, assistant_message_id,

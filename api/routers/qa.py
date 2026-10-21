@@ -284,6 +284,11 @@ def _run_generation(
             if not force and now - _last_persist_ts < 1.0:
                 return  # 节流：至少 1 秒写一次
             try:
+                # 2026-10-21 空正文兜底（对齐 agents.py）：只有引用没有正文时
+                # （LLM 空流/重试耗尽），落库内容给可读提示而不是空串——前端
+                # 刷新后历史消息能看到原因，不再出现 content='' 的「幽灵回复」。
+                if not content and refs:
+                    content = "模型未返回有效内容，请稍后重试；若持续为空请检查模型服务配置"
                 if assistant_message_id:
                     update_message(
                         db, user_id, req.session_id, assistant_message_id,
@@ -437,14 +442,29 @@ def _run_generation(
         except Exception as e:  # noqa: BLE001
             logger.exception("qa generation failed")
             store.append_event(stream_id, {"type": "error", "message": str(e)})
+        else:
+            # 2026-10-21 空响应兜底（对齐 agents.py）：生成结束但未产出任何正文
+            # （LLM 空流 0/0、thinking-only、空内容重试耗尽）——此前只有 stage/done
+            # 事件，前端表现为「没有回复」且 refs 非空时仍落 content='' 历史消息。
+            # 补发可见 error，用户至少知道发生了什么（toast + 气泡失败态）。
+            if not answer_parts:
+                logger.warning(
+                    "qa produced empty answer (session=%s refs=%d)",
+                    req.session_id, len(refs),
+                )
+                store.append_event(stream_id, {
+                    "type": "error",
+                    "message": "模型未返回有效内容，请稍后重试；若持续为空请检查模型服务配置",
+                })
         finally:
             # 终更 assistant 消息：增量持久化已建占位则 UPDATE 同一消息（保留中间
             # 已落库内容），否则（无内容场景）回落原 append 逻辑。
             if session and user_id and req.session_id:
                 try:
                     _persist_partial(force=True)
-                    if not assistant_message_id:
-                        # 全程无 delta（如空回答/失败）：与旧行为一致，补一条空助手消息
+                    # 2026-10-21 对齐 agents.py：无正文且无引用时不落空助手消息，
+                    # 避免把网关空响应固化成 content='' 的历史脏数据。
+                    if not assistant_message_id and (answer_parts or refs):
                         saved = append_message(
                             db, user_id, req.session_id, "assistant",
                             "".join(answer_parts), refs=refs,
