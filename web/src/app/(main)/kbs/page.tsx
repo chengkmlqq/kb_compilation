@@ -52,6 +52,7 @@ import {
   ModelItem,
 } from "@/lib/api";
 import { groupBuildEngineOptions } from "@/lib/tape-func";
+import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 import KBConfigModal from "@/components/KBConfigModal";
 import KbDocsPane from "@/components/kb/KbDocsPane";
@@ -133,19 +134,6 @@ const SearchLineIcon = () => (
 const EmptyIllustration = () => (
   <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth={4} aria-hidden>
     <path d="M24 5v6m7 1 4-4m-18 4-4-4m28.5 22H28s-1 3-4 3-4-3-4-3H6.5M40 41H8a2 2 0 0 1-2-2v-8.46a2 2 0 0 1 .272-1.007l6.15-10.54A2 2 0 0 1 14.148 18H33.85a2 2 0 0 1 1.728.992l6.149 10.541A2 2 0 0 1 42 30.541V39a2 2 0 0 1-2 2Z" />
-  </svg>
-);
-
-/** arco IconLeft / IconRight（分页上一页 / 下一页：viewBox 48 / 描边 4） */
-const ChevronLeftIcon = () => (
-  <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth={4} aria-hidden>
-    <path d="M32 8.4 16.444 23.956 32 39.513" />
-  </svg>
-);
-
-const ChevronRightIcon = () => (
-  <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth={4} aria-hidden>
-    <path d="m16 39.513 15.556-15.557L16 8.4" />
   </svg>
 );
 
@@ -284,7 +272,10 @@ export default function KbsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
   const [total, setTotal] = useState(0);
-  const [search, setSearch] = useState("");
+  // 2026-10-21 关键字检索改走后台接口：searchInput = 输入框即时值（回车/防抖提交），
+  // keyword = 已提交给后端的检索关键字（load 依赖，变化即触发 /api/v1/kbs?keyword=）
+  const [searchInput, setSearchInput] = useState("");
+  const [keyword, setKeyword] = useState("");
   const [configKb, setConfigKb] = useState<KbItem | null>(null);
   // 卡片拖拽改分类（2026-10-20）：dragKbId = 正在拖拽的知识库；dropTargetLabel = 当前悬停的分类目标（高亮）
   const [dragKbId, setDragKbId] = useState<string | null>(null);
@@ -307,9 +298,8 @@ export default function KbsPage() {
   >(null);
   const [catName, setCatName] = useState("");
   const [catSubmitting, setCatSubmitting] = useState(false);
-  // DSB 对齐：分类树展开态（DSB 默认展开全部）+ 分页页码输入框文本
+  // DSB 对齐：分类树展开态（DSB 默认展开全部）
   const [treeExpanded, setTreeExpanded] = useState(true);
-  const [jumpText, setJumpText] = useState("1");
   // 知识库导入导出（2026-10-21）：导入 = 上传 zip 文件 + 可选覆盖同名槽位
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -460,21 +450,11 @@ export default function KbsPage() {
     );
   };
 
+  // 分类过滤保留前端（后端 keyword 已过滤关键字；分类树是前端交互，仅按 label 过滤当前页）
   const visibleKbs = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    let list = kbs;
-    if (selectedLabel !== "all") {
-      list = list.filter((k) => (k.label || "无标签") === selectedLabel);
-    }
-    if (q) {
-      list = list.filter(
-        (k) =>
-          k.name.toLowerCase().includes(q) ||
-          (k.label || "").toLowerCase().includes(q)
-      );
-    }
-    return list;
-  }, [kbs, search, selectedLabel]);
+    if (selectedLabel === "all") return kbs;
+    return kbs.filter((k) => (k.label || "无标签") === selectedLabel);
+  }, [kbs, selectedLabel]);
 
   // 2026-10-19 分类树数据源：后端合并 kb_category 行与可见知识库的 label（含计数，倒序）
   const loadCategories = useCallback(async () => {
@@ -489,6 +469,14 @@ export default function KbsPage() {
   useEffect(() => {
     void loadCategories();
   }, [loadCategories]);
+
+  // 2026-10-21 搜索分类框生效：左侧分类树按 categoryKeyword 过滤（此前 Input 绑定了
+  // state 但树渲染未引用，输入关键字目录无反应——空壳搜索框）。
+  const filteredCategories = useMemo(() => {
+    const kw = categoryKeyword.trim().toLowerCase();
+    if (!kw) return categories;
+    return categories.filter((c) => (c.name || "").toLowerCase().includes(kw));
+  }, [categories, categoryKeyword]);
 
   // ---- 知识库导出/导入（2026-10-21）----
   // 导出 = 整库 zip（配置快照 + 文档原文件 + wiki 页快照）；导入 = 上传 zip 建库
@@ -612,23 +600,21 @@ export default function KbsPage() {
     });
   };
 
-  // 分页（DSB 同款：total > 页容量时才出现分页条，页码输入框可跳页）
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const commitJump = () => {
-    const n = Number.parseInt(jumpText, 10);
-    const next = Number.isNaN(n) ? page : Math.min(Math.max(n, 1), pageCount);
-    setJumpText(String(next));
-    if (next !== page) setPage(next);
-  };
-
-  useEffect(() => {
-    setJumpText(String(page));
-  }, [page]);
+  // 关键字提交：回车触发（2026-10-21 改为调后台接口检索，不再前端过滤）
+  const submitSearch = useCallback(
+    (v: string) => {
+      const kw = v.trim();
+      if (kw === keyword) return;
+      setKeyword(kw);
+      setPage(1);
+    },
+    [keyword],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiListKbs(page, pageSize);
+      const res = await apiListKbs(page, pageSize, keyword);
       if (res.success) {
         setKbs(res.data?.items || []);
         setTotal(res.data?.total ?? 0);
@@ -638,7 +624,7 @@ export default function KbsPage() {
     } finally {
       setLoading(false);
     }
-  }, [message, page, pageSize]);
+  }, [message, page, pageSize, keyword]);
 
   useEffect(() => {
     void load();
@@ -895,7 +881,7 @@ export default function KbsPage() {
               </div>
             </Dropdown>
             {treeExpanded &&
-              categories.map((c) => (
+              filteredCategories.map((c) => (
                 <Dropdown
                   key={c.name}
                   trigger={["contextMenu"]}
@@ -962,7 +948,7 @@ export default function KbsPage() {
             </div>
           ) : (
             <Row
-              className={`kb-kbs-rows${total > 30 ? " kb-kbs-rows--paged" : ""}`}
+              className="kb-kbs-rows"
               gutter={[16, 16]}
             >
               {visibleKbs.map((kb) => (
@@ -1057,62 +1043,25 @@ export default function KbsPage() {
           )}
           </div>
 
-          {/* 分页条（对齐 .knowledge-set-pagniation + arco Pagination simple：total > 30 才出现） */}
-          {total > 30 && (
-            <div className="kb-kbs-pagination-bar">
-              <div className="kb-kbs-pagination">
-                <div className="kb-kbs-pagination-total">共 {total} 条</div>
-                <ul className="kb-kbs-pagination-list">
-                  <li
-                    className={`kb-kbs-pagination-item kb-kbs-pagination-item-prev${
-                      page <= 1 ? " kb-kbs-pagination-item-disabled" : ""
-                    }`}
-                    onClick={() => {
-                      if (page > 1) setPage(page - 1);
-                    }}
-                  >
-                    <ChevronLeftIcon />
-                  </li>
-                  <li className="kb-kbs-pagination-item-simple-pager">
-                    <Input
-                      className="kb-kbs-pagination-jumper-input"
-                      value={jumpText}
-                      onChange={(e) => setJumpText(e.target.value)}
-                      onBlur={commitJump}
-                      onPressEnter={commitJump}
-                      disabled={pageCount <= 1}
-                    />
-                    <span className="kb-kbs-pagination-separator">/</span>
-                    <span>{pageCount}</span>
-                  </li>
-                  <li
-                    className={`kb-kbs-pagination-item kb-kbs-pagination-item-next${
-                      page >= pageCount ? " kb-kbs-pagination-item-disabled" : ""
-                    }`}
-                    onClick={() => {
-                      if (page < pageCount) setPage(page + 1);
-                    }}
-                  >
-                    <ChevronRightIcon />
-                  </li>
-                </ul>
-                <div className="kb-kbs-pagination-option">
-                  <Select
-                    value={pageSize}
-                    style={{ width: 96 }}
-                    options={[10, 20, 30, 40, 50].map((n) => ({
-                      label: `${n} 条/页`,
-                      value: n,
-                    }))}
-                    onChange={(v) => {
-                      setPageSize(v);
-                      setPage(1);
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
+          {/* 分页底栏（2026-10-21 参考参数管理页：ModoPagination 常驻底栏，不再 total>30 才出现） */}
+          <div style={{ flexShrink: 0, marginTop: "auto" }}>
+            <ModoPagination
+              current={page}
+              pageSize={pageSize}
+              total={total}
+              showSizeChanger
+              showQuickJumper
+              showTotal={(t) => `共 ${t} 条`}
+              pageSizeOptions={[10, 20, 30, 40, 50]}
+              onChange={(p, ps) => {
+                setPage(p);
+                if (ps && ps !== pageSize) {
+                  setPageSize(ps);
+                  setPage(1);
+                }
+              }}
+            />
+          </div>
         </div>
       </div>
 
@@ -1446,9 +1395,9 @@ export default function KbsPage() {
               className="kb-kbs-search"
               placeholder="输入并搜索..."
               prefix={<SearchColorIcon size={14} />}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onPressEnter={() => setSearch(search.trim())}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onPressEnter={() => submitSearch(searchInput)}
             />
             <Button
               className="kb-kbs-new-btn"
