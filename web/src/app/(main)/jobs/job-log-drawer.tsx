@@ -297,6 +297,11 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
           };
           const payload = data.payload || {};
 
+          if (data.type === "snapshot") {
+            // 编排 run：服务端每轮把 step_results 整体格式化推送，整体替换
+            setLogContent(payload.content || "");
+            return;
+          }
           if (data.type === "chunk") {
             if (payload.content) {
               setLogContent((prev) => `${prev}${payload.content}`);
@@ -347,13 +352,13 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
       setLogContent("");
       void fetchDetail().then((detail) => {
         if (!detail || !activeJobId) return;
-        // 已有 error_message 作为初始日志（SSE 从其后增量追加）
-        setLogContent(detail.error_message || "");
+        // 2026-10-21 全量日志：不再用 error_message 预填 + 以其长度做 offset
+        // （旧逻辑只能看到 error_message 槽位增量，历史日志全丢）。现在
+        // SSE 从 offset=0 开始拉，服务端合并 local 日志文件 / events jsonl /
+        // MinIO / error_message 全量推送（modo_job 增量 chunk / 编排 run 快照）。
         streamFinishedRef.current = false;
-        // 初始 offset：error_message 已有长度（对齐 ds getByteLength 语义）
-        const initOffset = (detail.error_message || "").length;
         const es = new EventSource(
-          `/api/v1/jobs/${encodeURIComponent(activeJobId)}/log-stream?offset=${initOffset}`,
+          `/api/v1/jobs/${encodeURIComponent(activeJobId)}/log-stream`,
         );
         eventSourceRef.current = es;
         es.onopen = () => {
@@ -367,7 +372,10 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
               payload?: { content?: string; message?: string; reason?: string };
             };
             const payload = data.payload || {};
-            if (data.type === "chunk" && payload.content) {
+            if (data.type === "snapshot") {
+              // 编排 run：快照整体替换
+              setLogContent(payload.content || "");
+            } else if (data.type === "chunk" && payload.content) {
               setLogContent((prev) => `${prev}${payload.content}`);
             } else if (data.type === "warning" || data.type === "error") {
               setStreamError(payload.message || "");
@@ -666,7 +674,7 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
                   gap: 12,
                 }}
               >
-                <span>实时日志（Span 进度流）</span>
+                <span>执行日志（全量）</span>
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   当前位置：{logScrollPercent}%
                 </Text>
