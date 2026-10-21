@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from api.config import get_settings
@@ -144,18 +144,26 @@ def list_kbs(
                 .group_by(WikiPage.kb_id)
             ).all()
         )
-        # 高频词页计数（page_type=frequent_keyword）：高频词管理页知识库卡片统计
-        keyword_counts = dict(
-            db.execute(
-                select(WikiPage.kb_id, func.count())
-                .where(
-                    WikiPage.kb_id.in_(kb_ids),
-                    WikiPage.status == "active",
-                    WikiPage.page_type == "frequent_keyword",
-                )
-                .group_by(WikiPage.kb_id)
-            ).all()
-        )
+        # 高频词页计数（page_type=frequent_keyword）：高频词管理页知识库卡片统计。
+        # 2026-10-21 性能：与 page_counts 合并为一次条件聚合（case 求和），
+        # 原两次 group-by 各自全扫 wiki_page 该 kb_id 命中集（远程库 RTT 叠加）。
+        keyword_rows = db.execute(
+            select(
+                WikiPage.kb_id,
+                func.count(),
+                func.coalesce(
+                    func.sum(case((WikiPage.page_type == "frequent_keyword", 1), else_=0)),
+                    0,
+                ),
+            )
+            .where(
+                WikiPage.kb_id.in_(kb_ids),
+                WikiPage.status == "active",
+            )
+            .group_by(WikiPage.kb_id)
+        ).all()
+        page_counts = {kb_id: total for kb_id, total, _kw in keyword_rows}
+        keyword_counts = {kb_id: int(kw) for kb_id, _total, kw in keyword_rows}
         # 反馈计数（未软删）：知识库卡片「反馈 N」统计 → 维护中心
         feedback_counts = dict(
             db.execute(
@@ -1240,7 +1248,11 @@ def doc_branch(
         KbDocument.kb_id == kb_id,
         func.coalesce(KbDocument.folder_id, "") == fid,
     )
-    total_docs = len(db.execute(docs_q).scalars().all())
+    # 2026-10-21 性能修复：计数走 SQL count，原 len(all()) 会把目录下全部文档
+    # 全列（含 summary Text 大列）物化到 Python，大目录下每次分支展开都拖全量。
+    total_docs = int(
+        db.execute(select(func.count()).select_from(docs_q.subquery())).scalar() or 0
+    )
     rows = db.execute(
         docs_q.order_by(KbDocument.created_at.desc())
         .offset((page - 1) * page_size)
@@ -1535,7 +1547,11 @@ def wiki_branch(
     )
     if page_types:
         pages_q = pages_q.where(WikiPage.page_type.in_(page_types))
-    total_pages = len(db.execute(pages_q).scalars().all())
+    # 2026-10-21 性能修复：计数走 SQL count，原 len(all()) 会把目录下全部页面
+    # 全列（含 content Text 正文）物化到 Python，大知识库下主目录每次展开都变慢。
+    total_pages = int(
+        db.execute(select(func.count()).select_from(pages_q.subquery())).scalar() or 0
+    )
     rows = db.execute(
         pages_q.order_by(WikiPage.created_at).offset((page - 1) * page_size).limit(page_size)
     ).scalars().all()
@@ -2717,7 +2733,9 @@ def list_wiki_pages(
             .scalar_subquery()
         )
         stmt = stmt.where((WikiPage.folder_id == folder_id) | (WikiPage.id.in_(sub)))
-    total = len(db.execute(stmt).scalars().all())
+    # 2026-10-21 性能修复：计数走 SQL count，原 len(all()) 会把全部匹配页全列
+    # （content Text 正文）物化到 Python，大知识库分页时一次请求拖回整库正文。
+    total = int(db.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0)
     rows = (
         db.execute(
             stmt.order_by(WikiPage.created_at.desc(), WikiPage.id.desc())

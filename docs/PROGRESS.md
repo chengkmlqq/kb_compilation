@@ -2,9 +2,99 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-21（摘要编排失败回写 FAILED + 文档状态标签区分摘要失败/构建失败/未构建/无摘要）
+最后更新：2026-10-21（列表接口性能修复：RBAC 菜单 N+1 批量 + wiki 页计数条件聚合；验证通过已提交推送）
 
-## 37. 当前状态（2026-10-21 摘要编排失败标记 + 已就绪状态区分）
+## 39. 当前状态（2026-10-21 列表接口性能——GET /api/v1/kbs 慢的根因修复）
+
+- **需求**：用户反馈 `GET /api/v1/kbs?page=1&page_size=30` 很慢（10.1.215.50 线上）。
+- **根因（每次请求 45+ 次串行 DB 往返，全部打到远程库 10.1.206.135:3306/data_supply）**：
+  1. **rbac_guard 中间件菜单 N+1（主因）**：api/middleware.py `_menu_api_guard` 对 my_menus
+     返回的每个菜单单独 `select(Menu)` + `menu_api_perms` 再查一次（~2N 次查询，N=菜单数 30+），
+     且对**所有受控 /api/v1 请求**都生效——所有列表接口慢大概率同一根因。
+  2. **list_kbs 计数查询多**：page_counts / keyword_counts 两次独立 group-by 全扫 wiki_page
+     该 kb_id 命中集（远程库 RTT 叠加）；is_admin 3 次查询。
+- **修复（2 文件，纯 api 层）**：
+  1. `api/middleware.py`：`_menu_api_guard` 改为一次 `WHERE menu_id IN (...)` 批量取回候选菜单，
+     路由匹配 + api_perms 解析在内存完成（新增 `_menu_ext_perms(mrow)` 与
+     services.system_admin.menu_api_perms 语义一致）；每请求菜单查询从 ~2N 降为 1。
+  2. `api/services/kb_admin.py` list_kbs：wiki_page 两次 group-by 合并为一次条件聚合
+     （`func.sum(case((page_type=='frequent_keyword',1),else_=0))` + coalesce），
+     page_counts/keyword_counts 同一条 SQL 产出；import 补 `case`。
+- **验证**：test_kb_admin + test_system_admin 57 过；test_rbac_guard + test_wiki_keywords +
+  test_menu_tree 24 过；全量 pytest 821 passed / 8 failed（8 个全是存量
+  `Missing required env var: DATABASE_URL` 环境问题，与本次无关）。
+- **部署注意**：纯 api 层 → 重建 kb-api-server 生效（CI 拉镜像后
+  `cd deploy && docker-compose pull && docker-compose up -d --no-deps api-server`）；web 无改动。
+- **剩余事项（P2/待续，承接 §38 未竟项）**：可见性 OR 条件（owner_user_id OR team OR scope）
+  拆 UNION 或加 (state, created_at, id) 复合索引；my_menus 角色收集与 check_path_permission
+  重复（每请求 role 关系查 3-4 遍）可合并；is_admin 的 role 查询可批量。
+
+## 38. 当前状态（2026-10-21 性能隐患修复——任务监控全表扫描 / 全库统计 / 计数物化 / N+1）
+
+- **需求**：用户要求检查并修复系统性能隐患（分页/全库查询/统计类）。排查出 P0-P2 隐患清单，
+  按 A→B→C 顺序修复（A=job JSON LIKE 冗余列；B=jobs 列表 SQL 侧分页；C=overview trend 去
+  func.date()），另顺手修 P1 项（计数物化/N+1/反馈统计聚合）。
+- **完成项（全部代码层，含迁移 0035）**：
+  1. **A — modo_job 业务引用冗余列**：`api/models/framework.py` Job 新增
+     `run_id/kb_id/doc_id/datasource_id` 四列（均 index=True），并挂 `before_insert`/
+     `before_update` 事件从 task_params JSON 自动提取（提取键兼容 ORCH_RUN_*/DOC_*/WIKI_SKILL_*/
+     META_*/REPO_* 各任务形态；所有创建路径零改动自动落库）。迁移
+     `migrations/versions/0035_job_ref_columns.py` 补列 + 索引 + 存量回填（主键游标分页，
+     跨 MySQL/PG 用 Python 解析，无引用行跳过不阻塞游标）。查询侧替换 4 处 JSON LIKE：
+     jobs.py:262/665（attached run 判定）、kbs.py:667+1521（WIKI 任务 kb_id 收窄）、
+     metadata.py:129+243（datasource_id）——全部改冗余列等值索引直查。
+  2. **B — jobs 列表 SQL 侧分页**：`api/routers/jobs.py` list_parent_jobs / list_jobs 原「窄列
+     全量载入 + 应用层合并排序切分」，改为两侧各按 (时间,id) 倒序取 top-k（k=offset+page_size）
+     再合并切片——数学上精确等价全局排序分页（反证法：全局前 k 元素必在自己表内排前 k），
+     1000 组随机模拟 0 差异。attached run 排除下沉为 SQL NOT EXISTS（借 run_id 列）。
+     保留窄列排序 → 无 filesort 爆 sort_buffer（1038）风险（dc63463 防护语义不丢）。
+  3. **C — overview/trend 去 func.date() 化**：`api/routers/overview.py` WHERE 改裸列
+     `created_at >= 当天零点`（命中 0029 迁移的 (kb_id, created_at) 复合索引），
+     GROUP BY 仍按 DATE() 分桶；三处（文档/分块/Wiki 页）同改。新增 `_since_dt()`。
+  4. **P1 顺手项**：
+     - `feedback_stats()` 总数/赞踩改 SQL 聚合（case+count），今日/本周窄列只取 feedback_at
+       （原全列物化全部反馈行）；`list_feedback` 每行一次 `_prev_user_question` N+1 改主查询
+       相关子查询一次取回（删 `_prev_user_question`）。
+     - `kb_admin.py` doc_branch/wiki_branch/list_wiki_pages 三处 `total = len(all())` 改 SQL
+       count（原把 content/summary Text 大列全量物化只为计数）。
+     - `agents.py` list_agents / `datasource.py` list total 改 SQL count。
+     - `metadata.py` list_metadata_datasources：表数/最近采集时间批量 group by 聚合（原每数据源
+       2 次查询 N+1）；jobs 逐源查询保留（已走 datasource_id 索引）。
+- **验证**：任务监控 21 用例全过（test_jobs_monitor.py + ext）；test_feedback_stats 7 过；
+  全量 pytest 821 passed / 8 failed（8 个全是存量 `Missing required env var: DATABASE_URL`
+  环境问题，与本改动无关）；web `tsc --noEmit` exit 0；迁移回填逻辑 SQLite 实测 OK
+  （六类 task_params 形态提取正确）；top-k 分页 1000 组随机模拟 0 mismatch。
+- **部署注意**：代码/迁移均属 api+worker 层 → 需跑 `alembic upgrade head`（0035 补列+回填）
+  后重建 kb-api-server + celery worker；web 无改动无需重建前端。存量 job 行回填后
+  LIKE 查询可彻底下线（回填前新代码查询可能漏存量数据——先跑迁移再上线代码）。
+- **坑位**：① SQLAlchemy 事件监听器签名是 `(mapper, connection, target)` 三参，写成单参
+  TypeError（已修）；② before_insert/update 事件对所有 Job 写入生效，scheduler 定时任务的
+  fire_params 非 JSON 或无可提取键 → 事件返回空 dict 不落库，安全；③ run_id 冗余列使
+  attached 判定可在 SQL 侧 NOT EXISTS——注意 modo_job 不在双表隔离名单（ISOLATED_TABLES），
+  dev 环境下子查询仍查正式表，符合语义（attached job 都在 modo_job 一张表）。
+- **剩余事项（P2/待续）**：
+  - [ ] 索引补充：Job.state / Job.task_class / Job.create_time（统计 group by state 与
+    按 task_class 过滤仍全扫）；ChatMessage.feedback（反馈统计）；三张知识表
+    created_at 索引已在 0029（kb_document/doc_chunk/wiki_page 的 (kb_id, created_at)）。
+  - [ ] 可选：TaskRun 双表枚举的统计可下沉 UNION；build_engines/kb_categories 全表查询
+    表很小暂不改；files 探索 group by 全表扫量级可控暂不改。
+  最后更新：2026-10-21（token 使用统计页布局重叠修复——进度见 §38；摘要编排失败标记见 §37）
+
+  ## 38. 当前状态（2026-10-21 token 使用统计页 /wiki/usage 布局重叠修复，未提交）
+
+  - **需求**：token 使用统计页（`web/src/app/(main)/usage/page.tsx`，2026-10-20 补建、工作区 untracked 未提交）内容重叠：图表区内容压在第 2 行分布图与明细表上面
+  - **根因（两层）**：
+    1. **内容滚动区 flex 压塌**：滚动区是 flex column + `overflowY:auto`，第 1 行图表 grid 设了 `minHeight:0` 却没设 `flexShrink:0` → 内容超高时被 flex-shrink 压成 **h=0**，而 grid 子元素（白盒，高 559）`overflow:visible` 照常绘制 → 直接覆盖第 2 行分布图（y=258）与明细表（y=764）。实测 row1 容器 y=242 h=0、其子元素 y=242 h=559
+    2. **趋势图容器高度不匹配**：`TokenTrendChart` 外层套固定 `height:240` 容器，但 Card 本身高约 344（标题栏 36 + EChart 300）→ 卡片底边溢出 100px+；且页面标题「Token 使用趋势」与 Card 自带标题重复
+  - **修复（3 文件，纯前端）**：
+    1. `web/src/app/(main)/usage/page.tsx`：第 1 行 grid 去掉 `minHeight:0`、加 `flexShrink:0`（第 2 行分布图 grid 同样补 `flexShrink:0`）；趋势图外层去掉固定 `height:240` 容器，改 `display:flex;flexDirection:column` + 内层 `flex:1;minHeight:0` 撑满，传 `title=""` 避免与页面标题重复
+    2. `web/src/components/usage/TokenTrendChart.tsx`：新增 `title`/`height` props（默认 title="Token 使用趋势"、height=300，height 支持 "100%"），Card 加 `style={{height:"100%"}}` + body `height:100%` —— 页面用 `height="100%"` 让趋势图随 grid 行高撑满，与右侧知识库分布卡等高
+    3. `web/src/components/usage/DistributionChart.tsx`：去掉 Card 的 `style={{height:"100%"}}`（在 grid 拉伸盒内百分比高度解析异常，KB 卡底边 895 溢出 box 877，压到第 2 行 2px）
+  - **验证（tsc 0 错 + bun run build 过 + playwright 实机）**：1600x900 下内容区三块无重叠——row1 y=242 h=635、row2 y=893 h=496、明细表 y=1405 h=280，趋势卡与 KB 卡等高 566 填满行；明细表 wrapper 底 833 < 分页顶 837 无重叠；滚动区 scrollH 1447 > clientH 648 正常滚动。1280x800 / 1920x1080 两视口未复测（脚本中断）
+  - **部署注意**：纯前端 → 提交推送后 CI 重建 kb-web 生效；页面本身 untracked（`?? web/src/app/(main)/usage/`）+ DistributionChart 有一处未提交改动（`export type Metric`），一并提交
+  - **坑位**：① 滚动区 flex column 里「内容超高时想让它滚动而不是压塌子项」→ 每个内容行必须 `flexShrink:0`，`minHeight:0` 单独用会把行压成 0 且子项照常溢出绘制（重叠假象）；② antd Card `height:100%` 在 grid 拉伸盒内不靠谱，需要撑满时给 Card 加 style height:100% + body height:100% 且父链显式给高度；③ 页面标题与组件 Card 自带标题重复时，组件加 title prop 由页面传 ""；④ 本机验证反代 BACKEND 指向 `127.0.0.1:80`（本地容器栈，账号用构造 cookie 的 chengkai/plat-mgr），非 10.1.215.50（admin/sys 在线上后端不可用）
+
+  ## 37. 当前状态（2026-10-21 摘要编排失败标记 + 已就绪状态区分）
 
 - **需求**：① 摘要编排失败也要在文档列表标出来（此前摘要 run 失败 summary_status 永远留 "" → 灰色「已就绪」，与「没配摘要」无法区分）；② 两个「已就绪」（绿=全流程完成 / 灰=有缺项）在文案上区分
 - **根因**：摘要编排 run 失败时没有任何回写 kb_document.summary_status 的路径（只由 kb_write_doc_summary 原子写 READY，全文搜索确认无写 FAILED 点）→ 摘要失败与摘要未生成同态

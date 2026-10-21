@@ -16,6 +16,8 @@ Ported behaviour from src/proxy.ts + role-actions.ts rawCheckPathPermission:
 
 from __future__ import annotations
 
+import json
+
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
@@ -26,7 +28,6 @@ from api.models.framework import Menu
 from api.services.identity import check_path_permission, decode_identity_cookie
 from api.services.system_admin import (
     is_platform_admin,
-    menu_api_perms,
     my_menus,
 )
 
@@ -117,18 +118,28 @@ def _menu_api_guard(db, identity_user_id: str, path: str, method: str, page_rout
     仅当用户可访问的菜单中、与当前页面 route 匹配的菜单配置了
     api_perms 时才收紧：请求的 API 必须命中其中一条，否则拒绝。
     未配置 api_perms 的菜单保持原行为（不影响现有部署）。
+
+    2026-10-21 性能修复：原实现对 my_menus 返回的每个菜单单独
+    `select(Menu)` + `menu_api_perms`（每请求 N+1 ~ 2N 次查询，
+    叠加远程库 RTT 是列表接口慢的主因之一）；改为一次 `IN (...)` 批量
+    取回全部候选菜单，路由匹配与 api_perms 解析在内存完成。
     """
     menu_data = my_menus(db, identity_user_id, is_admin=False)
     menu_ids = [x["menu_id"] for x in menu_data.get("items", [])]
+    if not menu_ids:
+        return True
+    # 一次批量取回候选菜单行（原实现逐 mid 单查）
+    rows = (
+        db.execute(select(Menu).where(Menu.menu_id.in_(menu_ids)))
+        .scalars()
+        .all()
+    )
     restricted = False
     covered = False
-    for mid in menu_ids:
-        mrow = db.execute(select(Menu).where(Menu.menu_id == mid)).scalars().first()
-        if not mrow:
-            continue
+    for mrow in rows:
         if (mrow.route or "").rstrip("/") != page_route:
             continue
-        perms = menu_api_perms(db, mid)
+        perms = _menu_ext_perms(mrow)
         if not perms:
             continue
         restricted = True
@@ -137,6 +148,21 @@ def _menu_api_guard(db, identity_user_id: str, path: str, method: str, page_rout
     if restricted and not covered:
         return False
     return True
+
+
+def _menu_ext_perms(mrow: Menu) -> list[dict]:
+    """解析菜单 menu_ext_conf 的 api_perms（内存版，不查库）。
+
+    与 services.system_admin.menu_api_perms 的 JSON 结构语义一致；
+    middleware 用它消除逐菜单 N+1（menu_api_perms 每次再查一次 Menu）。
+    """
+    if not mrow or not mrow.menu_ext_conf:
+        return []
+    try:
+        conf = json.loads(mrow.menu_ext_conf)
+        return conf.get("api_perms") or []
+    except (ValueError, TypeError):
+        return []
 
 
 async def rbac_guard(request: Request, call_next):
