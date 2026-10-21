@@ -21,7 +21,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import case, delete, func, or_, select
+from sqlalchemy import case, cast, delete, func, or_, select, update
+from sqlalchemy import String as _String
 from sqlalchemy.orm import Session
 
 from api.config import get_settings
@@ -848,29 +849,44 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
     # 1) wiki 层：该文档专属页（source_refs 仅含本文档）整页删除；共享页
     #    （跨文档合并实体页）只摘除本 kid 引用不删页——防误伤其他文档。
     #    页面删除后，指向这些页的链接一并清；不再被任何页引用的目录删除。
-    pages = db.execute(
-        select(WikiPage).where(
-            WikiPage.kb_id == kb_id, WikiPage.source_refs.isnot(None)
-        )
-    ).scalars().all()
+    # 2026-10-21 性能：原实现 select(WikiPage) 全量物化整库 wiki 页（含
+    #    content 大字段）到 Python 再逐页 startswith——库页数上万时删除请求
+    #    数秒起步。改为 SQL 层先用 source_refs JSON 文本 LIKE 粗筛出候选页
+    #    （只取 id/folder_id/source_refs 三列），Python 侧仍做精判（startswith
+    #    + 引用计数），语义不变但传输/物化量从「全库页」缩到「命中本文档的页」。
+    #    注意：粗筛后的 pages 只有引用本文档的页，不能再用它收集「所有保留页
+    #    的 folder」（会漏掉其他文档页 → 误删目录）；目录保留改由下方
+    #    still_used 精确查询（affected folder 是否还有被删页之外的页引用）。
     doc_prefix = f"{document_id}|"
+    like_pat = f"%{document_id}|%"
+    pages = db.execute(
+        select(WikiPage.id, WikiPage.folder_id, WikiPage.source_refs).where(
+            WikiPage.kb_id == kb_id,
+            WikiPage.source_refs.isnot(None),
+            cast(WikiPage.source_refs, _String).like(like_pat),
+        )
+    ).all()
     page_ids_to_delete: list[str] = []
-    kept_folder_ids: set[str] = set()
+    shared_ref_updates: list[tuple[str, list]] = []  # (page_id, 摘除后的 source_refs)
     for p in pages:
         refs = p.source_refs if isinstance(p.source_refs, list) else []
         hits = [r for r in refs if isinstance(r, str) and r.startswith(doc_prefix)]
         if not hits:
-            if p.folder_id:
-                kept_folder_ids.add(str(p.folder_id))
             continue
         if len(refs) <= len(hits):
             # 专属页：本页所有 source_ref 都属于该文档 → 整页删除
-            page_ids_to_delete.append(p.id)
+            page_ids_to_delete.append(str(p.id))
         else:
             # 共享页：摘除本 kid 引用，保留其他文档引用
-            p.source_refs = [r for r in refs if not r.startswith(doc_prefix)]
-            if p.folder_id:
-                kept_folder_ids.add(str(p.folder_id))
+            shared_ref_updates.append(
+                (str(p.id), [r for r in refs if not r.startswith(doc_prefix)])
+            )
+    for pid, new_refs in shared_ref_updates:
+        db.execute(
+            update(WikiPage)
+            .where(WikiPage.kb_id == kb_id, WikiPage.id == pid)
+            .values(source_refs=new_refs)
+        )
     if page_ids_to_delete:
         db.execute(delete(WikiLink).where(WikiLink.from_page_id.in_(page_ids_to_delete)))
         db.execute(delete(WikiLink).where(WikiLink.to_page_id.in_(page_ids_to_delete)))
@@ -879,17 +895,15 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
         )
     # 该文档目录子树清理：从被删页所在 folder 向上收敛（该文档页专属目录），
     # 不删根目录（parent_id 为空，全库共用）也不误伤其他文档目录。
-    # 收集被删页/共享页的 folder，向上找其根（parent_id 为空即停），只删
-    # 该子树下不再被任何保留页引用的目录。
-    if page_ids_to_delete:
-        affected_folder_ids = {
-            str(p.folder_id)
-            for p in pages
-            if p.id in page_ids_to_delete and p.folder_id
-        }
-    else:
-        affected_folder_ids = set()
-    # 子树内所有目录
+    # folder 是否可删 = 被删页的 folder 中，已无任何被删页之外的页引用
+    # （含其他文档页、共享页、未引用本文档的页）→ 用 SQL 精确判定，避免
+    # 全量拉页统计。
+    affected_folder_ids = {
+        str(p.folder_id)
+        for p in pages
+        if str(p.id) in set(page_ids_to_delete) and p.folder_id
+    }
+    # 子树内所有目录（对齐原实现：folder 必须真实存在于目录树才删）
     all_folder_ids = {
         str(f.id)
         for f in db.execute(
@@ -897,11 +911,22 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
         ).scalars()
         if f.id
     }
-    # 保留页引用的目录（含其他文档页 → 绝不能删）
-    folder_ids_to_delete = [
-        fid for fid in affected_folder_ids
-        if fid not in kept_folder_ids and fid in all_folder_ids
-    ]
+    folder_ids_to_delete: list[str] = []
+    if affected_folder_ids and page_ids_to_delete:
+        still_used = set(
+            db.execute(
+                select(WikiPage.folder_id)
+                .where(
+                    WikiPage.kb_id == kb_id,
+                    WikiPage.folder_id.in_(affected_folder_ids),
+                    WikiPage.id.not_in(page_ids_to_delete),
+                )
+            ).scalars()
+        )
+        folder_ids_to_delete = [
+            fid for fid in affected_folder_ids
+            if fid not in still_used and fid in all_folder_ids
+        ]
     if folder_ids_to_delete:
         db.execute(
             delete(WikiFolder).where(WikiFolder.id.in_(folder_ids_to_delete))
