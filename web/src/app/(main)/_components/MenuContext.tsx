@@ -47,17 +47,23 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "overview", menu_name: "overview", menu_label: "总览", route: "/overview", parent_id: null, menu_icon: "IconHomeColor", sort_num: 0, state: "1" },
   { menu_id: "grp_knowledge", menu_name: "grp_knowledge", menu_label: "知识管理", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 1, state: "1" },
   { menu_id: "kbs", menu_name: "kbs", menu_label: "知识库管理", route: "/kbs", parent_id: "grp_knowledge", menu_icon: "IconBook1Color", sort_num: 1, state: "1" },
+  // 2026-10-21 语义层：一级菜单（知识库之后），四个占位子菜单（元数据/文档库/知识本体/知识图谱）
+  { menu_id: "grp_semantic", menu_name: "grp_semantic", menu_label: "语义层", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 2, state: "1" },
+  { menu_id: "sem_metadata", menu_name: "sem_metadata", menu_label: "元数据", route: "/semantic/metadata", parent_id: "grp_semantic", menu_icon: "DatabaseOutlined", sort_num: 1, state: "1" },
+  { menu_id: "sem_docs", menu_name: "sem_docs", menu_label: "文档库", route: "/semantic/docs", parent_id: "grp_semantic", menu_icon: "FileOutlined", sort_num: 2, state: "1" },
+  { menu_id: "sem_ontology", menu_name: "sem_ontology", menu_label: "知识本体", route: "/semantic/ontology", parent_id: "grp_semantic", menu_icon: "ApartmentOutlined", sort_num: 3, state: "1" },
+  { menu_id: "sem_graph", menu_name: "sem_graph", menu_label: "知识图谱", route: "/semantic/graph", parent_id: "grp_semantic", menu_icon: "PartitionOutlined", sort_num: 4, state: "1" },
   // 2026-10-20 高频词管理（迁移自 WeKnora wiki/keywords/overview；种子为一级菜单，兜底挂知识管理下）
   { menu_id: "wiki_keywords", menu_name: "wiki_keywords", menu_label: "高频词", route: "/wiki-keywords", parent_id: "grp_knowledge", menu_icon: "BarChartOutlined", sort_num: 2, state: "1" },
   // 2026-10-20 维护中心（Wiki 页面反馈汇总与处理；知识库卡片「反馈 N」也可进入）
   { menu_id: "wiki_maintenance", menu_name: "wiki_maintenance", menu_label: "维护中心", route: "/wiki-maintenance", parent_id: "grp_knowledge", menu_icon: "CommentOutlined", sort_num: 2, state: "1" },
   { menu_id: "files", menu_name: "files", menu_label: "文件管理", route: "/files", parent_id: "grp_knowledge", menu_icon: "IconCloudServerColor", sort_num: 2, state: "1" },
   { menu_id: "chunk_verify", menu_name: "chunk_verify", menu_label: "切片核对", route: "/chunk-verify", parent_id: "grp_knowledge", menu_icon: "SafetyOutlined", sort_num: 3, state: "1" },
-  { menu_id: "grp_ai", menu_name: "grp_ai", menu_label: "智能应用", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 2, state: "1" },
+  { menu_id: "grp_ai", menu_name: "grp_ai", menu_label: "智能应用", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 3, state: "1" },
   { menu_id: "chat", menu_name: "chat", menu_label: "智能问答", route: "/chat", parent_id: "grp_ai", menu_icon: "IconSemanticSearchColor", sort_num: 1, state: "1" },
   { menu_id: "agents", menu_name: "agents", menu_label: "智能体配置", route: "/agents", parent_id: "grp_ai", menu_icon: "IconSemanticSearchColor", sort_num: 3, state: "1" },
   { menu_id: "websearch", menu_name: "websearch", menu_label: "联网搜索", route: "/websearch", parent_id: "grp_ai", menu_icon: "SearchOutlined", sort_num: 4, state: "1" },
-  { menu_id: "grp_data", menu_name: "grp_data", menu_label: "数据与任务", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 3, state: "1" },
+  { menu_id: "grp_data", menu_name: "grp_data", menu_label: "数据与任务", route: null, parent_id: null, menu_icon: "FolderOutlined", sort_num: 4, state: "1" },
   { menu_id: "datasources", menu_name: "datasources", menu_label: "数据源", route: "/datasources", parent_id: "grp_data", menu_icon: "IconDatabaseColor", sort_num: 1, state: "1" },
   { menu_id: "jobs", menu_name: "jobs", menu_label: "任务监控", route: "/jobs", parent_id: "grp_data", menu_icon: "IconTaskMonitorColor", sort_num: 2, state: "1" },
   { menu_id: "cron", menu_name: "cron", menu_label: "任务管理", route: "/cron", parent_id: "grp_data", menu_icon: "ScheduleOutlined", sort_num: 3, state: "1" },
@@ -67,9 +73,9 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "feedback_stats", menu_name: "feedback_stats", menu_label: "问答反馈", route: "/feedback-stats", parent_id: "grp_data", menu_icon: "LikeOutlined", sort_num: 6, state: "1" },
   // 2026-10-16 LLM 使用记录与性能监控看板（调用/token/延迟/错误明细，无任何金额统计）
   { menu_id: "llm_usage", menu_name: "llm_usage", menu_label: "LLM 使用", route: "/usage", parent_id: "grp_data", menu_icon: "BarChartOutlined", sort_num: 7, state: "1" },
-  { menu_id: "system", menu_name: "system", menu_label: "系统管理", route: "/system", parent_id: null, menu_icon: "IconSystemMgrColor", sort_num: 4, state: "1" },
+  { menu_id: "system", menu_name: "system", menu_label: "系统管理", route: "/system", parent_id: null, menu_icon: "IconSystemMgrColor", sort_num: 5, state: "1" },
   // 调试工具（2026-10-12 方案H：编排管理/编排模板/编排组件 收拢于此，对齐种子 KB_MENUS）
-  { menu_id: "grp_debug", menu_name: "grp_debug", menu_label: "调试工具", route: null, parent_id: null, menu_icon: "BugOutlined", sort_num: 5, state: "1" },
+  { menu_id: "grp_debug", menu_name: "grp_debug", menu_label: "调试工具", route: null, parent_id: null, menu_icon: "BugOutlined", sort_num: 6, state: "1" },
   { menu_id: "orch_tapes", menu_name: "orch_tapes", menu_label: "编排管理", route: "/orchestrations", parent_id: "grp_debug", menu_icon: "IconResourceOrchestrationColor", sort_num: 1, state: "1" },
   { menu_id: "orch_templates", menu_name: "orch_templates", menu_label: "编排模板", route: "/tape-templates", parent_id: "grp_debug", menu_icon: "AppstoreOutlined", sort_num: 2, state: "1" },
   { menu_id: "orch_defines", menu_name: "orch_defines", menu_label: "编排组件", route: "/orchestrations/steps", parent_id: "grp_debug", menu_icon: "BlockOutlined", sort_num: 3, state: "1" },
