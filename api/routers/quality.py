@@ -100,7 +100,13 @@ def launch_quality(req: QualityLaunchRequest, db: Session = Depends(get_db),
     try:
         tape_name = DIM_TAPE_NAMES.get(dim, QUALITY_TAPE_NAME)
         tape_id = _tape_id_by_name(db, tape_name)
-        r = execute_tape(db, tape_id, inputs)
+        # 2026-10-22 fix：质量评估必须跑 prod 环境。占位行（上方 db.add 在请求默认
+        # prod 上下文）与评估脚本读写（kb_document/doc_chunk/wiki_page + 回写
+        # kb_quality_run/kb_quality_report）都在正式表，UI 也读正式表；若按手动执行
+        # 默认 env=None→dev，脚本 get_sessionmaker() 被 env 路由到 _dev 表——
+        # 读的是旧快照库（未同步新库）、结果落 _dev 表占位行永远 queued，评估不生效。
+        # 与上传链一致：数据在 prod，编排节点须同环境读写。
+        r = execute_tape(db, tape_id, inputs, env="prod")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     run_id = r.get("run_id") or ""

@@ -73,8 +73,8 @@ def test_launch_dim_doc_uses_doc_tape_and_writes_dim(env, monkeypatch) -> None:
         calls.append({"name": name})
         return f"tape-{name}"
 
-    def fake_execute(db_, tape_id: str, inputs: dict) -> dict:
-        calls.append({"tape_id": tape_id, "inputs": inputs})
+    def fake_execute(db_, tape_id: str, inputs: dict, env: str | None = None) -> dict:
+        calls.append({"tape_id": tape_id, "inputs": inputs, "env": env})
         return {"run_id": "run-1"}
 
     monkeypatch.setattr(qmod, "_tape_id_by_name", fake_tape_id)
@@ -93,6 +93,8 @@ def test_launch_dim_doc_uses_doc_tape_and_writes_dim(env, monkeypatch) -> None:
     # inputs 透传 dim
     exec_call = next(c for c in calls if "inputs" in c)
     assert exec_call["inputs"]["dim"] == "doc"
+    # 2026-10-22：质量评估必须跑 prod 环境（读正式表数据、回写正式表结果）
+    assert exec_call["env"] == "prod"
 
     # 占位行 dim 落库
     row = db.execute(select(QualityRun)).scalars().first()
@@ -110,7 +112,7 @@ def test_launch_dims_map_to_tape_names() -> None:
 def test_launch_invalid_dim_400(env, monkeypatch) -> None:
     db, client = env
     monkeypatch.setattr(qmod, "_tape_id_by_name", lambda db_, name: "t")
-    monkeypatch.setattr(qmod, "execute_tape", lambda db_, tape_id, inputs: {"run_id": "r"})
+    monkeypatch.setattr(qmod, "execute_tape", lambda db_, tape_id, inputs, env=None: {"run_id": "r"})
     r = client.post("/api/v1/quality/runs", json={
         "kb_id": "kb1", "dim": "bad_dim",
     })
@@ -128,7 +130,7 @@ def test_launch_default_dim_all(env, monkeypatch) -> None:
         return f"tape-{name}"
 
     monkeypatch.setattr(qmod, "_tape_id_by_name", fake_tape_id)
-    monkeypatch.setattr(qmod, "execute_tape", lambda db_, tape_id, inputs: {"run_id": "r"})
+    monkeypatch.setattr(qmod, "execute_tape", lambda db_, tape_id, inputs, env=None: {"run_id": "r"})
 
     r = client.post("/api/v1/quality/runs", json={"kb_id": "kb1", "doc_ids": ["d1"]})
     assert r.status_code == 200
