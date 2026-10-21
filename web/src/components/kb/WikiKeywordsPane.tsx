@@ -1,16 +1,34 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Drawer, Input, Modal, Pagination, Select, Table, message } from "antd";
+import { Button, Drawer, Input, Modal, Select, Table, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { SearchOutlined, SortAscendingOutlined } from "@ant-design/icons";
+import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import KbsSimplePagination from "@/components/kb/KbsSimplePagination";
 import {
   apiListWikiKeywords,
   apiMarkWikiKeyword,
   apiWikiPage,
   type WikiKeywordStat,
 } from "@/lib/api";
+
+// 把内容里的 [[slug]] 双链转成 markdown 链接（渲染成可点击的 wiki 页跳转；
+// 对齐 wiki 详情页 renderWikiLinks 的同一个实现）。
+function renderWikiLinks(content: string, kbId: string): string {
+  if (!content) return content;
+  const wikiLinkRe = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
+  return content.replace(wikiLinkRe, (_m, slug: string, alias?: string) => {
+    // 命名空间形态 slug（WeKnora 风格 longSENTENCE/xxx）→ 库内扁平 slug（longsentence-xxx）
+    const clean = (slug || "").trim().replace(/\//g, "-");
+    if (!clean) return _m;
+    const label = (alias || "").trim() || clean;
+    const href = `/kbs/${encodeURIComponent(kbId)}/wiki/${encodeURIComponent(clean)}`;
+    return `[${label}](${href})`;
+  });
+}
 
 /**
  * 高频词管理列表（迁移自 WeKnora WikiKeywords.vue，2026-10-20）。
@@ -38,6 +56,7 @@ function presetIconOf(preset: string) {
 }
 
 export default function WikiKeywordsPane({ kbId, kbName }: WikiKeywordsPaneProps) {
+  const router = useRouter();
   const [items, setItems] = useState<WikiKeywordStat[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -45,6 +64,7 @@ export default function WikiKeywordsPane({ kbId, kbName }: WikiKeywordsPaneProps
   const [sortBy, setSortBy] = useState<"freq" | "keyword">("freq");
   const [order, setOrder] = useState<"desc" | "asc">("desc");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE);
 
   // 详情抽屉
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -66,7 +86,7 @@ export default function WikiKeywordsPane({ kbId, kbName }: WikiKeywordsPaneProps
         sort: sortBy,
         order,
         page,
-        page_size: PAGE_SIZE,
+        page_size: pageSize,
       });
       setItems(res.data?.items ?? []);
       setTotal(res.data?.total ?? 0);
@@ -75,7 +95,7 @@ export default function WikiKeywordsPane({ kbId, kbName }: WikiKeywordsPaneProps
     } finally {
       setLoading(false);
     }
-  }, [kbId, search, sortBy, order, page]);
+  }, [kbId, search, sortBy, order, page, pageSize]);
 
   useEffect(() => {
     void load();
@@ -235,32 +255,57 @@ export default function WikiKeywordsPane({ kbId, kbName }: WikiKeywordsPaneProps
         columns={columns}
         dataSource={items}
         pagination={false}
+        scroll={{ x: 1000, y: "calc(100vh - 216px)" }}
         locale={{ emptyText: "暂无高频词，上传文档并启用 Wiki 后将自动生成高频词页面" }}
       />
 
-      <div className="kb-wk-pagination">
-        <Pagination
-          current={page}
-          pageSize={PAGE_SIZE}
-          total={total}
-          showSizeChanger={false}
-          showTotal={(t) => `共 ${t} 个高频词`}
-          onChange={(p) => setPage(p)}
-        />
-      </div>
+      {/* 分页条：对齐知识库详情 · 文档列表（KbsSimplePagination + kb-doc-pagination-bar）——
+          共 N 个高频词 + 页码输入 + 条/页下拉；仅当总数超过一页时渲染 */}
+      <KbsSimplePagination
+        containerClassName="kb-doc-pagination-bar"
+        current={page}
+        pageSize={pageSize}
+        total={total}
+        showTotal={(t) => `共 ${t} 个高频词`}
+        onChange={(p, ps) => {
+          setPage(p);
+          setPageSize(ps);
+        }}
+      />
 
       {/* 详情抽屉：展示该高频词 wiki 页面内容 */}
       <Drawer
         title={drawerKeyword}
         open={drawerOpen}
-        width={560}
+        width={640}
         onClose={() => setDrawerOpen(false)}
       >
         {drawerLoading ? (
           <div className="kb-wk-drawer-loading">加载中…</div>
         ) : drawerContent ? (
-          <div className="kb-wk-drawer-content">
-            <ReactMarkdown>{drawerContent}</ReactMarkdown>
+          <div className="kb-markdown kb-wk-drawer-content">
+            {/* 对齐 wiki 详情页渲染：remarkGfm 解析表格/任务列表/删除线等 GFM 语法，
+                双链 [[slug]] 转可点击 wiki 页跳转（wiki 详情页同款实现） */}
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                a: ({ href, children }) => (
+                  <a
+                    href={href}
+                    onClick={(e) => {
+                      if (href && href.startsWith("/kbs/")) {
+                        e.preventDefault();
+                        void router.push(href);
+                      }
+                    }}
+                  >
+                    {children}
+                  </a>
+                ),
+              }}
+            >
+              {renderWikiLinks(drawerContent, kbId)}
+            </ReactMarkdown>
           </div>
         ) : (
           <div className="kb-wk-empty">暂无页面内容</div>

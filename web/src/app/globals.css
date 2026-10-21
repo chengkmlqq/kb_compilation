@@ -164,7 +164,8 @@ html[data-theme="dark"] body {
 .orchestrations-page .ant-table-body,
 .steps-page .ant-table-body,
 .chunk-verify-page .ant-table-body,
-.feedback-stats-page .ant-table-body {
+.feedback-stats-page .ant-table-body,
+.kb-wk-root .ant-table-body {
   overflow-y: auto !important;
 }
 
