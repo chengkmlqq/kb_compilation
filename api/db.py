@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from functools import lru_cache
 from typing import Optional
 
@@ -40,6 +40,30 @@ ENV_PROD = "prod"
 ENV_DEV = "dev"
 
 _ENV: ContextVar[str] = ContextVar("kb_env", default=ENV_PROD)
+
+# 2026-10-21 请求级会话复用：rbac_guard 中间件创建的 session 写入本 contextvar，
+# 端点 get_db 优先复用（省一次远程库连接建立 ~100ms）。token 供中间件恢复。
+_REQUEST_DB: ContextVar[Session | None] = ContextVar("kb_request_db", default=None)
+_REQUEST_DB_TOKEN: ContextVar[Token | None] = ContextVar(
+    "kb_request_db_token", default=None
+)
+
+
+def set_request_db(db: Session | None) -> None:
+    """中间件入口调用：把会话挂到请求上下文供 get_db 复用。"""
+    tok = _REQUEST_DB.set(db)
+    _REQUEST_DB_TOKEN.set(tok)
+
+
+def reset_request_db() -> None:
+    """中间件结束调用：恢复 contextvar（异常路径防泄漏）。"""
+    tok = _REQUEST_DB_TOKEN.get()
+    if tok is not None:
+        try:
+            _REQUEST_DB.reset(tok)
+        except ValueError:  # noqa: BLE001 — token 已失效（嵌套覆盖）时忽略
+            pass
+        _REQUEST_DB_TOKEN.set(None)
 
 
 def current_env() -> str:
@@ -164,7 +188,21 @@ def get_knowledge_sessionmaker(env: Optional[str] = None) -> sessionmaker[Sessio
 
 
 def get_db() -> Iterator[Session]:
-    """FastAPI dependency: yield a scoped framework session."""
+    """FastAPI dependency: yield a scoped framework session.
+
+    2026-10-21 连接复用：rbac_guard 中间件创建的 session 写入 _REQUEST_DB
+    contextvar，端点 get_db 优先复用同一连接（省一次远程库连接建立 ~100ms）；
+    contextvar 为空（脚本/测试直调、中间件未挂载）时新建。
+    """
+    db = _REQUEST_DB.get()
+    if db is not None:
+        try:
+            yield db
+        finally:
+            # 复用中间件连接：端点用完即归还（close 后连接回池），
+            # 中间件放行路径不再 close（生命周期交给端点）。
+            db.close()
+        return
     db = get_sessionmaker()()
     try:
         yield db

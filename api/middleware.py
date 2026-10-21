@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
 from api.config import get_settings
-from api.db import get_sessionmaker
+from api.db import get_sessionmaker, reset_request_db, set_request_db
 from api.models.framework import Menu
 from api.services.identity import check_path_permission, decode_identity_cookie
 from api.services.system_admin import (
@@ -185,6 +185,12 @@ async def rbac_guard(request: Request, call_next):
         )
 
     db = get_sessionmaker()()
+    # 2026-10-21 连接复用：中间件 session 写入 _REQUEST_DB contextvar，
+    # 端点 get_db 优先复用同一连接。远程库（10.1.206.135）连接建立 ~100ms，
+    # 此前中间件与端点各建一个 session = 每请求两次连接成本，列表接口显著变慢。
+    # 生命周期：放行后由端点 get_db 负责 close（BaseHTTPMiddleware 的 finally
+    # 早于端点执行，不能在此 close）；仅提前返回（403）与异常路径自行 close。
+    set_request_db(db)
     try:
         settings = get_settings()
         admin_users = [u.strip() for u in settings.AUTH_ADMIN_USERS.split(",") if u.strip()]
@@ -192,11 +198,15 @@ async def rbac_guard(request: Request, call_next):
             return await call_next(request)
         allowed, reason = check_path_permission(db, identity.user_id, page_route)
         if not allowed:
+            reset_request_db()
+            db.close()
             return JSONResponse(
                 status_code=403,
                 content={"success": False, "error": "访问被拒绝", "reason": reason},
             )
         if not _menu_api_guard(db, identity.user_id, path, request.method.upper(), page_route):
+            reset_request_db()
+            db.close()
             return JSONResponse(
                 status_code=403,
                 content={
@@ -205,9 +215,19 @@ async def rbac_guard(request: Request, call_next):
                     "reason": "该 API 未被菜单服务授权",
                 },
             )
+    except Exception:
+        # 异常路径：端点不会执行，自行归还连接并恢复 contextvar
+        reset_request_db()
+        db.close()
+        raise
+    # 放行：db 交端点 get_db 复用（其 finally db.close() 归还连接）。
+    # 端点若未依赖 get_db（无 DB 路由），此处 finally 兜底归还；
+    # Session.close() 幂等，端点已 close 再 close 无害。
+    try:
+        return await call_next(request)
     finally:
         db.close()
-    return await call_next(request)
+        reset_request_db()
 
 
 __all__ = ["rbac_guard", "is_whitelisted", "resolve_page_route"]
