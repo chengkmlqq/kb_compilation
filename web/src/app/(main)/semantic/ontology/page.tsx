@@ -8,48 +8,23 @@
  *
  * 绑定知识库 id 由参数管理表（modo_dim，SEMANTIC_LAYER 组）读取；
  * 参数缺失时自动按「电信语义层」库名发现。
+ *
+ * 动态选项卡（2026-10-21）：套用知识库页面 ModoTabs 模式——首 tab
+ * 「知识本体」= wiki 浏览；wiki 页内「在图谱中查看」打开 wiki 关系图
+ * 选项卡、「来源文档」打开文档详情选项卡。
  */
-import { Spin, Typography } from "antd";
 import KbWikiPane from "@/components/kb/KbWikiPane";
 import { useSemanticBinding } from "../_lib/use-semantic-binding";
+import SemanticTabsFrame from "../_components/semantic-tabs-frame";
 
 export default function SemanticOntologyPage() {
   const { kbId, loading, error } = useSemanticBinding();
 
-  if (loading) {
-    return (
-      <div style={{ padding: 10, height: "100%" }}>
-        <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Spin tip="加载语义层绑定…" />
-        </div>
-      </div>
-    );
-  }
-
-  if (!kbId) {
-    return (
-      <div style={{ padding: 10, height: "100%" }}>
-        <div
-          style={{
-            height: "100%",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "#fff",
-            borderRadius: 8,
-          }}
-        >
-          <Typography.Text type="warning">
-            {error || "未绑定知识库，请在「参数管理」配置 SEMANTIC_LAYER 组参数"}
-          </Typography.Text>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ padding: 10, height: "100%", boxSizing: "border-box" }}>
-      <KbWikiPane kbId={kbId} />
-    </div>
+    <SemanticTabsFrame title="知识本体" kbId={kbId} loading={loading} error={error}>
+      {({ openDocById, openGraph }) => (
+        <KbWikiPane kbId={kbId} onOpenGraph={openGraph} onOpenDoc={openDocById} />
+      )}
+    </SemanticTabsFrame>
   );
 }

@@ -8,48 +8,21 @@
  *
  * 绑定知识库 id 由参数管理表（modo_dim，SEMANTIC_LAYER 组）读取；
  * 参数缺失时自动按「电信语义层」库名发现。
+ *
+ * 动态选项卡（2026-10-21）：套用知识库页面 ModoTabs 模式——首 tab
+ * 「知识图谱」= 全库关系图概览；页面标题由选项卡承担（对齐知识库页面
+ * 外壳，白底满屏 + 可关闭详情页签）。
  */
-import { Spin, Typography } from "antd";
 import WikiGraphView from "@/components/WikiGraphView";
 import { useSemanticBinding } from "../_lib/use-semantic-binding";
+import SemanticTabsFrame from "../_components/semantic-tabs-frame";
 
 export default function SemanticGraphPage() {
   const { kbId, loading, error } = useSemanticBinding();
 
-  if (loading) {
-    return (
-      <div style={{ padding: 10, height: "100%" }}>
-        <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Spin tip="加载语义层绑定…" />
-        </div>
-      </div>
-    );
-  }
-
-  if (!kbId) {
-    return (
-      <div style={{ padding: 10, height: "100%" }}>
-        <div
-          style={{
-            height: "100%",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "#fff",
-            borderRadius: 8,
-          }}
-        >
-          <Typography.Text type="warning">
-            {error || "未绑定知识库，请在「参数管理」配置 SEMANTIC_LAYER 组参数"}
-          </Typography.Text>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ padding: 10, height: "100%", boxSizing: "border-box" }}>
-      <WikiGraphView kbId={kbId} />
-    </div>
+    <SemanticTabsFrame title="知识图谱" kbId={kbId} loading={loading} error={error}>
+      {() => <WikiGraphView kbId={kbId} />}
+    </SemanticTabsFrame>
   );
 }

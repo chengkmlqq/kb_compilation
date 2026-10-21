@@ -9,48 +9,35 @@
  *
  * 绑定知识库 id 由参数管理表（modo_dim，SEMANTIC_LAYER 组）读取；
  * 参数缺失时自动按「电信语义层」库名 + 「文档库」根目录名发现。
+ *
+ * 动态选项卡（2026-10-21）：套用知识库页面 ModoTabs 模式——首 tab
+ * 「文档库」= 文档面板；点击文档文件在动态选项卡中打开详情，不再无响应。
  */
-import { Spin, Typography } from "antd";
 import KbDocsPane from "@/components/kb/KbDocsPane";
 import { useSemanticBinding } from "../_lib/use-semantic-binding";
+import SemanticTabsFrame from "../_components/semantic-tabs-frame";
 
 export default function SemanticDocsPage() {
   const { kbId, docsFolderId, loading, error } = useSemanticBinding();
 
-  if (loading) {
-    return (
-      <div style={{ padding: 10, height: "100%" }}>
-        <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Spin tip="加载语义层绑定…" />
-        </div>
-      </div>
-    );
-  }
-
-  if (!kbId || !docsFolderId) {
-    return (
-      <div style={{ padding: 10, height: "100%" }}>
-        <div
-          style={{
-            height: "100%",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "#fff",
-            borderRadius: 8,
-          }}
-        >
-          <Typography.Text type="warning">
-            {error || "未绑定知识库/文档库目录，请在「参数管理」配置 SEMANTIC_LAYER 组参数"}
-          </Typography.Text>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ padding: 10, height: "100%", boxSizing: "border-box" }}>
-      <KbDocsPane kbId={kbId} lockedFolderId={docsFolderId} onOpenDoc={() => undefined} />
-    </div>
+    <SemanticTabsFrame
+      title="文档库"
+      kbId={kbId}
+      loading={loading}
+      error={error}
+      ready={!!docsFolderId}
+    >
+      {({ openDoc, refreshTick, onDocsChange, onDocRemoved }) => (
+        <KbDocsPane
+          kbId={kbId}
+          lockedFolderId={docsFolderId}
+          refreshTick={refreshTick}
+          onOpenDoc={openDoc}
+          onDocsChange={onDocsChange}
+          onDocRemoved={onDocRemoved}
+        />
+      )}
+    </SemanticTabsFrame>
   );
 }
