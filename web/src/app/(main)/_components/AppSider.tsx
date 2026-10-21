@@ -35,6 +35,9 @@ import {
   ScheduleOutlined,
   SearchOutlined,
   BarChartOutlined,
+  // 2026-10-21 质量评估拆分：文档转换/切片评估菜单图标
+  SwapOutlined,
+  FileTextOutlined,
 } from "@ant-design/icons";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useMenuContext, MenuTreeNode } from "./MenuContext";
@@ -85,6 +88,9 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   ScheduleOutlined: <ScheduleOutlined />,
   SearchOutlined: <SearchOutlined />,
   BarChartOutlined: <BarChartOutlined />,
+  // 2026-10-21 质量评估拆分：文档转换/切片评估菜单图标
+  SwapOutlined: <SwapOutlined />,
+  FileTextOutlined: <FileTextOutlined />,
   // 2026-10-16 补充：shandong 数据供给平台菜单实际使用的 modo 彩色图标（ModoMenuIcons.tsx 内联）
   IconBook1Color: <ModoIconBook1 />,
   IconCloudAddColor: <ModoIconCloudAdd />,

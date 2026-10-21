@@ -1,9 +1,10 @@
-"""质量评估 API（质量评估页面 v1，2026-10-14）。
+"""质量评估 API（质量评估页面 v1，2026-10-14；单维度评估拆分 2026-10-21）。
 
 页面能力：
-- 发起评估：单文档 / 批量文档（调「质量评估-QA」编排 execute，异步）
-- 任务列表：kb_quality_run 分页（状态/三维度得分/综合分/问题数）
-- 任务详情：kb_quality_run + kb_quality_report 明细（三维度指标/问题/归因）
+- 发起评估：单文档 / 批量文档（调「质量评估-QA」编排 execute，异步）；
+  单维度评估（文档转换/切片/图数据）按 dim 走独立编排
+- 任务列表：kb_quality_run 分页（状态/得分/问题数），支持 dim 过滤
+- 任务详情：kb_quality_run + kb_quality_report 明细（指标/问题/归因）
 
 鉴权：_require_caller（登录态；管理页操作由编排执行链路负责）。
 """
@@ -26,8 +27,15 @@ logger = logging.getLogger("kb.quality")
 
 router = APIRouter(prefix="/quality", tags=["quality"])
 
-# 「质量评估-QA」种子编排名（seed_framework_db.py 固化）
+# 编排名（seed_framework_db.py / seed_tape_data/ 固化）
 QUALITY_TAPE_NAME = "质量评估-QA"
+# dim → 单维度编排名（2026-10-21 拆分）
+DIM_TAPE_NAMES = {
+    "doc": "文档转换评估",
+    "chunk": "切片评估",
+    "graph": "图数据评估",
+}
+DIMS = ("all", "doc", "chunk", "graph")
 
 
 def _require_caller(
@@ -45,6 +53,7 @@ class QualityLaunchRequest(BaseModel):
     kb_id: str
     doc_ids: list[str] = []
     scope: str = "all"  # single|multi|all
+    dim: str = "all"  # all|doc|chunk|graph（2026-10-21 单维度评估）
 
 
 def _tape_id_by_name(db: Session, name: str) -> str:
@@ -59,10 +68,17 @@ def _tape_id_by_name(db: Session, name: str) -> str:
 @router.post("/runs")
 def launch_quality(req: QualityLaunchRequest, db: Session = Depends(get_db),
                    caller: dict = Depends(_require_caller)) -> dict:
-    """发起质量评估（异步）：调「质量评估-QA」编排 execute。
+    """发起质量评估（异步）：调对应编排 execute。
+
+    dim=all 走「质量评估-QA」（三维度合一，默认，兼容旧调用方）；
+    dim=doc|chunk|graph 走单维度编排（文档转换评估/切片评估/图数据评估），
+    任务行记 dim，页面按 dim 过滤渲染。
 
     scope 自动推导：doc_ids 1 个 = single，>1 = multi，空 = all（整库）。
     """
+    dim = (req.dim or "all").strip().lower()
+    if dim not in DIMS:
+        raise HTTPException(status_code=400, detail=f"不支持的评估维度: {dim}（可选 {list(DIMS)}）")
     scope = req.scope
     if not scope or scope not in ("single", "multi", "all"):
         scope = "all" if not req.doc_ids else ("single" if len(req.doc_ids) == 1 else "multi")
@@ -70,7 +86,7 @@ def launch_quality(req: QualityLaunchRequest, db: Session = Depends(get_db),
     from uuid import uuid4
 
     qrun = QualityRun(id=uuid4().hex[:32], kb_id=req.kb_id, scope=scope,
-                      doc_ids=req.doc_ids or None, status="queued",
+                      doc_ids=req.doc_ids or None, status="queued", dim=dim,
                       created_by=caller.get("user_id") or "")
     db.add(qrun)
     db.commit()
@@ -79,27 +95,33 @@ def launch_quality(req: QualityLaunchRequest, db: Session = Depends(get_db),
         "doc_ids": ",".join(req.doc_ids),
         "scope": scope,
         "quality_id": qrun.id,
+        "dim": dim,
     }
     try:
-        tape_id = _tape_id_by_name(db, QUALITY_TAPE_NAME)
+        tape_name = DIM_TAPE_NAMES.get(dim, QUALITY_TAPE_NAME)
+        tape_id = _tape_id_by_name(db, tape_name)
         r = execute_tape(db, tape_id, inputs)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     run_id = r.get("run_id") or ""
     return {"success": True, "data": {"run_id": run_id, "quality_id": qrun.id,
-                                      "scope": scope, "status": "queued"}}
+                                      "scope": scope, "status": "queued", "dim": dim}}
 
 
 @router.get("/runs")
 def list_quality_runs(
     kb_id: str = Query("", max_length=64),
     status: str = Query("", max_length=20),
+    dim: str = Query("", max_length=20),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     caller: dict = Depends(_require_caller),
 ) -> dict:
-    """质量评估任务列表（kb_quality_run 分页）。"""
+    """质量评估任务列表（kb_quality_run 分页）。
+
+    dim 可选：'' = 全部（含 all 三维度合一与单维度任务）；'all'/'doc'/'chunk'/'graph' 精确过滤。
+    """
     from sqlalchemy import func
 
     # 2026-10-16 fix(1038 Out of sort memory)：kb_quality_run.issues 是聚合后的
@@ -113,6 +135,8 @@ def list_quality_runs(
         conds.append(QualityRun.kb_id == kb_id)
     if status:
         conds.append(QualityRun.status == status)
+    if dim:
+        conds.append(QualityRun.dim == dim)
 
     total_stmt = select(func.count()).select_from(QualityRun)
     id_stmt = select(QualityRun.id)
@@ -184,7 +208,8 @@ def delete_quality_run(
 
 def _run_item(r: QualityRun) -> dict:
     scores = {}
-    for dim, key in (("chunk", "chunk_metrics"), ("wiki", "wiki_metrics"), ("graph", "graph_metrics")):
+    for dim, key in (("doc", "doc_metrics"), ("chunk", "chunk_metrics"),
+                     ("wiki", "wiki_metrics"), ("graph", "graph_metrics")):
         m = getattr(r, key) or {}
         if not isinstance(m, dict):
             m = {}
@@ -196,6 +221,7 @@ def _run_item(r: QualityRun) -> dict:
         "scope": r.scope,
         "doc_ids": r.doc_ids or [],
         "status": r.status,
+        "dim": r.dim or "all",
         "scores": scores,
         "issues_count": len(r.issues or []),
         "attribution": r.attribution or [],

@@ -458,6 +458,8 @@ class QualityRun(Base):
 
     scope=single|multi|all；三维度指标 + 问题清单 + 规则归因，供质量评估页面
     查询/汇总。编排汇总节点落库。
+    dim=all|doc|chunk|graph（2026-10-21）：all=三维度合一旧行为；doc/chunk/graph=
+    单维度评估（独立编排），各自只写对应 metrics 列。
     """
 
     __tablename__ = "kb_quality_run"
@@ -467,6 +469,8 @@ class QualityRun(Base):
     scope: Mapped[str] = mapped_column(String(32), default="single")  # single|multi|all
     doc_ids: Mapped[list | None] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(32), default="queued")  # queued|running|success|failed
+    dim: Mapped[str] = mapped_column(String(32), default="all")  # all|doc|chunk|graph
+    doc_metrics: Mapped[dict | None] = mapped_column(JSON)
     chunk_metrics: Mapped[dict | None] = mapped_column(JSON)
     wiki_metrics: Mapped[dict | None] = mapped_column(JSON)
     graph_metrics: Mapped[dict | None] = mapped_column(JSON)

@@ -4343,6 +4343,7 @@ export function apiGetTableSample(kbId: string, docId: string, limit = 50) {
 /* ── 质量评估（2026-10-14 v1）────────────────────────────────── */
 
 export interface QualityScores {
+  doc?: number | null;
   chunk?: number | null;
   wiki?: number | null;
   graph?: number | null;
@@ -4361,6 +4362,7 @@ export interface QualityRunItem {
   scope: string;
   doc_ids?: string[];
   status: string;
+  dim?: string;
   scores: QualityScores;
   issues_count: number;
   attribution?: QualityAttribution[];
@@ -4398,6 +4400,14 @@ export interface QualityMetrics {
   error_pages?: number;
   nodes_sampled?: number;
   rels_sampled?: number;
+  // 文档转换评估（dim=doc，2026-10-21）
+  docs?: number;
+  ready?: number;
+  failed?: number;
+  pending?: number;
+  empty_conversion?: number;
+  fail_ratio?: number;
+  by_state?: Record<string, number>;
 }
 
 export interface QualityRunDetail extends QualityRunItem {
@@ -4407,6 +4417,7 @@ export interface QualityRunDetail extends QualityRunItem {
 export function apiListQualityRuns(params: {
   kb_id?: string;
   status?: string;
+  dim?: string;
   page?: number;
   page_size?: number;
 }) {
@@ -4416,6 +4427,7 @@ export function apiListQualityRuns(params: {
   });
   if (params.kb_id) sp.set("kb_id", params.kb_id);
   if (params.status) sp.set("status", params.status);
+  if (params.dim) sp.set("dim", params.dim);
   return request<PageList<QualityRunItem>>(`/api/v1/quality/runs?${sp.toString()}`);
 }
 
@@ -4423,8 +4435,13 @@ export function apiGetQualityRun(qualityId: string) {
   return request<QualityRunDetail>(`/api/v1/quality/runs/${encodeURIComponent(qualityId)}`);
 }
 
-export function apiLaunchQualityRun(payload: { kb_id: string; doc_ids?: string[]; scope?: string }) {
-  return request<{ run_id: string; quality_id: string; scope: string; status: string }>(
+export function apiLaunchQualityRun(payload: {
+  kb_id: string;
+  doc_ids?: string[];
+  scope?: string;
+  dim?: string;
+}) {
+  return request<{ run_id: string; quality_id: string; scope: string; status: string; dim?: string }>(
     "/api/v1/quality/runs",
     { method: "POST", body: JSON.stringify(payload) },
   );

@@ -202,6 +202,10 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     # 2026-10-21 调整：质量评估（wiki评估）从「调试工具」提为顶级目录，业务功能归位
     ("grp_quality", "grp_quality", "质量评估", None, None, "CheckCircleOutlined", 10),
     ("quality", "quality", "wiki评估", "/quality", "grp_quality", "CheckCircleOutlined", 1),
+    # 2026-10-21 质量评估拆分：单维度评估（文档转换/切片/图数据），走独立编排
+    ("quality_doc", "quality_doc", "文档转换评估", "/quality-doc", "grp_quality", "SwapOutlined", 2),
+    ("quality_chunk", "quality_chunk", "切片评估", "/quality-chunk", "grp_quality", "FileTextOutlined", 3),
+    ("quality_graph", "quality_graph", "图数据评估", "/quality-graph", "grp_quality", "ApiOutlined", 4),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，

@@ -502,8 +502,14 @@ def _create_tape_run(db, tape_id: str, inputs: dict | None = None, env: str | No
         step_results=[],
         bindings=bindings0,
     )
-    db.add(run)
-    db.commit()
+    # 2026-10-21 fix：建行必须与执行同环境——execute_tape 手动路径 env=None→dev，
+    # 若用 API 默认 prod 上下文 INSERT，行落正式表而 worker 按 dev 查 _dev 表 →
+    # execute_run 报 run not found（双表改造回归，质量评估/编排页手动执行均中招）；
+    # 上传链显式传 "prod" 不受影响（env_scope(prod) 路由关闭零开销）。
+    # Tape 校验查询留在 prod 上下文（Tape/TapeStep 不在隔离名单，不受路由影响）。
+    with env_scope(run_env):
+        db.add(run)
+        db.commit()
     return {"run_id": run_id, "run_env": run_env}
 
 
@@ -514,13 +520,16 @@ def execute_tape(db, tape_id: str, inputs: dict | None = None, env: str | None =
     前端通过 GET runs/{run_id} 轮询逐步日志。
     env：None 按原逻辑（路由开启时编排→dev）；worker 上传链传 "prod"。
     """
+    run_env_resolved = env or ENV_DEV
     # 防重复发起（2026-10-14）：同一编排已有未结束（queued/running）的运行时不重复投递。
     # 只拦手动执行路径（API/质量评估）；worker 自动构建走 _create_tape_run 直调，不受影响。
-    active = (
-        db.query(TapeRun)
-        .filter(TapeRun.tape_id == tape_id, TapeRun.status.in_(("queued", "running")))
-        .first()
-    )
+    # 2026-10-21：按本次执行环境查（dev 查 _dev 表），否则漏判 dev 表里的在跑任务。
+    with env_scope(run_env_resolved):
+        active = (
+            db.query(TapeRun)
+            .filter(TapeRun.tape_id == tape_id, TapeRun.status.in_(("queued", "running")))
+            .first()
+        )
     if active:
         raise ValueError("该编排已有运行中的任务，请等待其结束后再执行（可查看运行历史）")
 
@@ -537,12 +546,14 @@ def execute_tape(db, tape_id: str, inputs: dict | None = None, env: str | None =
             queue="orch",
         )
     except Exception as exc:  # noqa: BLE001
-        run = db.get(TapeRun, run_id)
-        if run:
-            run.status = "failed"
-            run.error = f"编排任务投递失败: {exc}"
-            db.commit()
-        raise ValueError(f"编排任务投递失败: {exc}")
+        # 回写失败态：run 行在 run_env 对应表，须同环境写（2026-10-21）
+        with env_scope(run_env):
+            run = db.get(TapeRun, run_id)
+            if run:
+                run.status = "failed"
+                run.error = f"编排任务投递失败: {exc}"
+                db.commit()
+        raise ValueError(f"编排任务投递失败: {exc}") from exc
 
     return {"success": True, "run_id": run_id, "tape_id": tape_id, "status": "queued"}
 

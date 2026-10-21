@@ -82,6 +82,10 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   // 2026-10-21 质量评估（wiki评估）提为顶级目录，业务功能归位（对齐种子 KB_MENUS）
   { menu_id: "grp_quality", menu_name: "grp_quality", menu_label: "质量评估", route: null, parent_id: null, menu_icon: "CheckCircleOutlined", sort_num: 7, state: "1" },
   { menu_id: "quality", menu_name: "quality", menu_label: "wiki评估", route: "/quality", parent_id: "grp_quality", menu_icon: "CheckCircleOutlined", sort_num: 1, state: "1" },
+  // 2026-10-21 质量评估拆分：单维度评估（文档转换/切片/图数据），对齐种子 KB_MENUS
+  { menu_id: "quality_doc", menu_name: "quality_doc", menu_label: "文档转换评估", route: "/quality-doc", parent_id: "grp_quality", menu_icon: "SwapOutlined", sort_num: 2, state: "1" },
+  { menu_id: "quality_chunk", menu_name: "quality_chunk", menu_label: "切片评估", route: "/quality-chunk", parent_id: "grp_quality", menu_icon: "FileTextOutlined", sort_num: 3, state: "1" },
+  { menu_id: "quality_graph", menu_name: "quality_graph", menu_label: "图数据评估", route: "/quality-graph", parent_id: "grp_quality", menu_icon: "ApiOutlined", sort_num: 4, state: "1" },
   { menu_id: "sys_users", menu_name: "sys_users", menu_label: "用户管理", route: "/system/users", parent_id: "system", menu_icon: "TeamOutlined", sort_num: 1, state: "1" },
   { menu_id: "sys_roles", menu_name: "sys_roles", menu_label: "角色管理", route: "/system/roles", parent_id: "system", menu_icon: "SafetyOutlined", sort_num: 2, state: "1" },
   { menu_id: "sys_teams", menu_name: "sys_teams", menu_label: "团队管理", route: "/system/teams", parent_id: "system", menu_icon: "PartitionOutlined", sort_num: 3, state: "1" },
