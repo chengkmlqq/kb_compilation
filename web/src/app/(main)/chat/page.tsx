@@ -97,6 +97,8 @@ interface UiMessage extends ChatMessageItem {
     toolEvents?: ToolCallEvent[];
   /** 2026-10-13 对齐 WeKnora：智能体模式回复（隐藏思考大块，思考折叠进工具步骤） */
   agent?: boolean;
+  /** 2026-10-21 对齐 WeKnora done 事件统计：整体耗时/思考轮次/工具调用数（树根摘要用） */
+  agentStats?: { totalDurationMs?: number; thinkingRounds?: number; toolCalls?: number };
   }
 
 // 切页续传锚点：qa-resume:{sessionId} → {stream_id, offset}
@@ -567,6 +569,24 @@ export default function ChatPage() {
                 );
                 applyId = serverId;
               }
+              // 2026-10-21 done 统计写入消息（续传分支与主发送对齐）
+              if (ev.total_duration_ms != null || ev.thinking_rounds != null || ev.tool_calls_count != null) {
+                const doneId = applyId;
+                setMsgs((prev) =>
+                  prev.map((m) =>
+                    m.id === doneId
+                      ? {
+                          ...m,
+                          agentStats: {
+                            totalDurationMs: ev.total_duration_ms ?? m.agentStats?.totalDurationMs,
+                            thinkingRounds: ev.thinking_rounds ?? m.agentStats?.thinkingRounds,
+                            toolCalls: ev.tool_calls_count ?? m.agentStats?.toolCalls,
+                          },
+                        }
+                      : m,
+                  ),
+                );
+              }
               resumeDone = true;
               break;
             }
@@ -912,6 +932,16 @@ export default function ChatPage() {
               // 2026-10-14 对齐服务端 id：本轮流已持久化，改用服务端消息 id
               // （否则点赞/反馈仍按本地占位 id 请求，报「消息不存在」）
               placeholder.id = adoptServerMessageIds(evt, placeholder.id, userMsg.id);
+              // 2026-10-21 对齐 WeKnora done 事件统计：整体耗时/思考轮次/工具调用数
+              // 存入消息，AgentToolCalls 树根摘要用（优先后端真实值）
+              if (evt.total_duration_ms != null || evt.thinking_rounds != null || evt.tool_calls_count != null) {
+                const prevStats = placeholder.agentStats || {};
+                placeholder.agentStats = {
+                  totalDurationMs: evt.total_duration_ms ?? prevStats.totalDurationMs,
+                  thinkingRounds: evt.thinking_rounds ?? prevStats.thinkingRounds,
+                  toolCalls: evt.tool_calls_count ?? prevStats.toolCalls,
+                };
+              }
               streamDone = true;
               break;
             }
@@ -1118,7 +1148,12 @@ export default function ChatPage() {
 
   const addImageFiles = (files: FileList | File[] | null) => {
     if (!files || !files.length) return;
-    if (!canUploadImage) return;
+    if (!canUploadImage) {
+      // 2026-10-21 门禁拦截给提示（此前静默 return，用户粘贴图片毫无反馈，
+      // 表现为「不能粘贴图片」；对齐拖放路径 handleChatDrop 的同款提示）
+      toast.warning("当前未启用图片上传，图片已忽略");
+      return;
+    }
     const arr = Array.from(files).filter((f) => f.type.startsWith("image/"));
     if (!arr.length) return;
     setImagePreviews((prev) => {
@@ -1467,7 +1502,7 @@ export default function ChatPage() {
                       <AgentThinkingRow thinking={m.thinking} streaming={!!m.streaming} />
                     ) : null}
                     {m.toolEvents && m.toolEvents.length > 0 ? (
-                      <AgentToolCalls events={m.toolEvents} />
+                      <AgentToolCalls events={m.toolEvents} stats={m.agentStats} answerStreaming={!!m.streaming} />
                     ) : null}
                     {/* 2026-10-16 DSB 对齐：RAG 步骤树/工具卡移除，思考折叠为 think-btn + think-view
                         2026-10-20：智能体模式（m.agent）的思考已在顶部 AgentThinkingRow 展示，
