@@ -491,12 +491,12 @@ export default function QualityPage() {
             </Button>
           </Space>
         }
-        items={[{ key: "home", label: "质量评估", children: listPane }]}
+        items={[{ key: "home", label: "wiki评估", children: listPane }]}
       />
 
       {/* 发起评估弹窗 */}
       <ModoModal
-        title="发起质量评估"
+        title="发起 wiki评估"
         open={launchOpen}
         onOk={doLaunch}
         confirmLoading={launching}
