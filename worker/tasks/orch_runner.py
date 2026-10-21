@@ -196,11 +196,32 @@ def _update_run(run_id: str, env: str | None = None, **fields) -> None:
         _mark_summary_failed(run_inputs, str(fields.get("error") or ""))
 
 
-def _bindings_from_run(run_id: str, env: str | None = None) -> dict:
+def _merge_run_bindings(run_id: str, additions: dict, env: str | None = None) -> None:
+    """行锁内合并 bindings（2026-10-22 修复并行节点 lost-update）。
+
+    此前模式：并行节点各自 _bindings_from_run（无锁读）→ merge → _update_run
+    （写时才对整行加锁）。三个 fan-out 并行节点在同毫秒级完成时（小库/快速
+    脚本，实测 电信语义层 dim=all：n02/n03/n04 全部 ~100-250ms 内完成），
+    A 节点读到的旧 bindings 会在 B/C 节点后提交时被整体覆盖——后写者把先写
+    者的 key（如 chunk_r/wiki_r/graph_r）丢掉，汇总节点读到空 → 评估结果全
+    None（该 KB 全部维度失分）。大库单节点耗时数秒自然错开，罕见触发。
+
+    修复：读-改-写全在 `_lock_run`（SELECT FOR UPDATE）内完成，同 run 的
+    并行节点提交串行化，后写者基于最新 bindings 合并，先写者的 key 保留。
+    """
     db = _run_db(env)
     try:
+        _lock_run(db, run_id)
         run = db.get(TapeRun, run_id)
-        return dict(run.bindings or {})
+        if not run:
+            return
+        cur = dict(run.bindings or {})
+        merged = {**cur, **(additions or {})}
+        # 2026-10-09 loop 修复：调度中枢的循环迭代状态由中枢独占，节点合并不得覆盖
+        if orch_loop.LOOP_STATE_KEY in cur:
+            merged[orch_loop.LOOP_STATE_KEY] = cur[orch_loop.LOOP_STATE_KEY]
+        run.bindings = merged
+        db.commit()
     finally:
         db.close()
 
@@ -517,14 +538,11 @@ def _run_node_impl(run_id: str, step_id: str, bindings: dict, round_no: int = 0,
     }
     _append_step_result(run_id, result, env)
 
-    # 新 bindings 写回 run（与库里现有值合并，不整体覆盖）。
-    # 2026-10-09 loop 修复：整体覆盖会把调度中枢维护的 loop 迭代状态
-    # (__loop_state__) 冲掉 → 下一轮投不出循环体。loop_state 由调度中枢独占。
-    cur = _bindings_from_run(run_id, env)
-    merged = {**cur, **context.bindings}
-    if orch_loop.LOOP_STATE_KEY in cur:
-        merged[orch_loop.LOOP_STATE_KEY] = cur[orch_loop.LOOP_STATE_KEY]
-    _update_run(run_id, env, bindings=merged)
+    # 新 bindings 写回 run（2026-10-22 改为行锁内合并——并行节点各自
+    # read-merge-write 会 lost-update，后写者覆盖先写者的 key）。
+    # 2026-10-09 loop 修复语义保留：loop 迭代状态由调度中枢独占，_merge_run_bindings
+    # 内部不覆盖 __loop_state__。
+    _merge_run_bindings(run_id, context.bindings, env)
     _send_advance(run_id, step_id, env)
     logger.info("编排节点[%s %s] %s (%.0fms) run=%s", s["inst"], s["label"], status, (time.time() - start) * 1000, run_id)
     return {"success": status == "success", "step_id": step_id}
