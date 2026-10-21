@@ -820,7 +820,7 @@ def main(argv: list[str] | None = None) -> None:
         #    已停用（保留仅供查阅）——以常量为准会与线上编排数据脱节。
         _seed_tapes_from_exports(db)
 
-        # 15) 种子本体 Schema：24 套领域/业务本体（2026-10-15 固化，数据 seed_ontology_data/*.json）
+        # 15) 种子本体 Schema：25 套领域/业务本体（2026-10-21 固化，数据 seed_ontology_data/*.json）
         _seed_ontology_schemas(db)
 
         print("\nDONE — 登录: " + SEED_USER_ID + "/" + SEED_PASSWORD + "（编排内置组件 " + str(len(ORCH_STEP_DEFINES)) + " 个）")
@@ -2646,7 +2646,7 @@ def _seed_tapes_from_exports(db) -> None:
     是编排数据的唯一真源**：由 scripts/export_orchestrations_to_seed.py 从线上
     kb_tape/kb_tape_step 导出，改动线上编排后重跑该脚本即可让种子与线上一致。
 
-    编排集合（2026-10-17 与线上编排管理一致，共 26 条）：20 个领域 wiki 构建 +
+    编排集合（2026-10-21 与线上编排管理一致，共 27 条）：21 个领域 wiki 构建 +
     表构建Wiki-基础原子版 + 摘要三模式（Stuff/Map-Reduce/Refine）+ 题材分析-领域判定
     + 质量评估-QA。
 
@@ -2739,7 +2739,7 @@ def _seed_tapes_from_exports(db) -> None:
 
 
 def _seed_ontology_schemas(db) -> None:
-    """幂等建本体 Schema（24 套领域/业务本体，数据 scripts/seed_ontology_data/*.json，2026-10-15 固化）。
+    """幂等建本体 Schema（25 套领域/业务本体，数据 scripts/seed_ontology_data/*.json，2026-10-21 固化）。
 
     每 JSON 为 schema export（schema_name/label/desc + 4 列 LLM 配置 + items[] 分类行）。
     存在则 skip；KB↔schema 绑定（kb_ontology_schema）按 kb_id 属环境数据不固化，
