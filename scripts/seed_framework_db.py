@@ -199,7 +199,9 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("orch_defines", "orch_defines", "编排组件", "/orchestrations/steps", "grp_debug", "BlockOutlined", 5),
     ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_debug", "IconCloudServerColor", 6),
     ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_debug", "TableOutlined", 7),
-    ("quality", "quality", "wiki评估", "/quality", "grp_debug", "CheckCircleOutlined", 8),
+    # 2026-10-21 调整：质量评估（wiki评估）从「调试工具」提为顶级目录，业务功能归位
+    ("grp_quality", "grp_quality", "质量评估", None, None, "CheckCircleOutlined", 10),
+    ("quality", "quality", "wiki评估", "/quality", "grp_quality", "CheckCircleOutlined", 1),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，
