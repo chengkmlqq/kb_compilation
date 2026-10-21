@@ -2,16 +2,15 @@
 """元数据采集 HTTP 层 e2e（部署 50 后在容器内或本机跑）。
 
 覆盖功能点（逐项 PASS/FAIL 输出）：
-  1. metadata/config 读取全量采集开关
-  2. metadata/datasources 可采集数据源列表（结构 + 状态字段）
-  3. metadata/tables 表列表分页（无数据源时 total=0 也算 PASS）
-  4. metadata/collection 提交采集任务（有可采集数据源时）→ 返回 job_id
-  5. metadata/collection/{job_id} 任务状态可查
-  6. metadata/template 导入模板可下载（xlsx 魔数 PK）
-  7. metadata/runs 采集记录列表
-  8. 无 token → 401
-  9. DELETE 不存在数据源 → 404 或 400（不能 500）
- 10. kb_metadata_table/column 表在库中存在
+  1. metadata/datasources 可采集数据源列表（结构 + 状态字段）
+  2. metadata/tables 表列表分页（无数据源时 total=0 也算 PASS）
+  3. metadata/collection 提交采集任务（有可采集数据源时）→ 返回 job_id
+  4. metadata/collection/{job_id} 任务状态可查
+  5. metadata/template 导入模板可下载（xlsx 魔数 PK）
+  6. metadata/runs 采集记录列表
+  7. 无 token → 401
+  8. DELETE 不存在数据源 → 404 或 400（不能 500）
+  9. kb_metadata_table/column 表在库中存在
 
 用法（容器内）：
   docker cp scripts/metadata-e2e.py kb-api-server:/tmp/ && \
@@ -56,12 +55,7 @@ def main() -> int:
     H = {"Cookie": f"x-next-identity={tok}"}
     check("login", True, f"token len={len(tok)}")
 
-    # ---- 1. config ----
-    r = c.get(f"{BASE}/api/v1/metadata/config", headers=H)
-    ok = r.status_code == 200 and r.json().get("success") is True
-    check("metadata/config", ok, f"{r.status_code} {r.text[:120]}")
-
-    # ---- 2. datasources ----
+    # ---- 1. datasources ----
     r = c.get(f"{BASE}/api/v1/metadata/datasources", headers=H)
     ok = r.status_code == 200
     dss: list[dict] = []

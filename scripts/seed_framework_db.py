@@ -223,6 +223,9 @@ REMOVED_SYSTEM_CONFIG_DIMS: set[str] = {
     "ai_chat_api_key",
     "ai_chat_model",
     "dify_chat_api_endpoint",
+    # 2026-10-21 移除：元数据采集页已有 full/incremental 模式选择，此开关仅渲染
+    # 警示条、不拦截任何操作（POST /metadata/collection 不校验），属冗余配置
+    "metadata_full_collection_enabled",
 }
 
 SYSTEM_CONFIG_DIMS: list[tuple[str, str, str, int]] = [
@@ -230,7 +233,6 @@ SYSTEM_CONFIG_DIMS: list[tuple[str, str, str, int]] = [
     ("EMBEDDING_API_KEY", "", "向量模型密钥（留空=容器 env EMBEDDING_API_KEY）", 1),
     ("EMBEDDING_MODEL", "", "向量模型，如 BAAI/bge-m3（留空=容器 env EMBEDDING_MODEL）", 2),
     ("EMBEDDING_DIM", "", "向量维度，如 1024（留空=容器 env EMBEDDING_DIM）", 3),
-    ("metadata_full_collection_enabled", "true", "元数据全量采集开关（true/false）", 9),
     # 2026-10-13 上传链摘要：三个标准摘要编排的 tape_id（Stuff/Map-Reduce/Refine）。
     # 留空 = 上传不触发摘要（即使 KB summary_strategy=auto 也静默跳过）；
     # 写入后 KB 上传按策略自动路由。运维换编排（自建复制）改这里即可，无需改代码。

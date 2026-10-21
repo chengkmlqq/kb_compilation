@@ -4282,10 +4282,6 @@ export function apiDeleteMetadataByDatasource(datasourceId: string) {
   });
 }
 
-export function apiGetMetadataConfig() {
-  return request<{ fullCollectionEnabled: boolean }>("/api/v1/metadata/config");
-}
-
 /** 下载导入模板（xlsx 二进制，需 blob 下载不走 request envelope） */
 export async function apiDownloadMetadataTemplate(datasourceId: string): Promise<{ blob: Blob; filename: string }> {
   const res = await fetch(`/api/v1/metadata/template?datasource_id=${encodeURIComponent(datasourceId)}`, {
