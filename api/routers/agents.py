@@ -516,7 +516,7 @@ def agent_qa_stream(
                     is_sys_admin=ctx_is_admin,
                     tools=per_kb_tools or None,
                     tool_executor=per_kb_executor,
-                    thinking=req.thinking,  # 2026-10-20 深度思考开关（None=跟随 agent 配置）
+                    thinking=req.thinking if req.thinking is not None else agent_cfg.thinking,  # 2026-10-20 深度思考开关：请求显式传值优先，否则回落 agent 配置（此前仅透传 None → chat.py 不注入 thinking 字段 → 网关默认开思考，deepseek-v4-pro 只输出 reasoning 无正文）
                     max_tool_iterations=per_kb_iterations,
                 ):
                     event["kb_id"] = kb.id
@@ -534,10 +534,15 @@ def agent_qa_stream(
             logger.exception("agent qa failed for kb %s", last_kb_id)
             yield _sse({"type": "error", "message": str(e), "kb_id": last_kb_id})
         else:
-            # 2026-10-20 空响应兜底：生成结束但未产出任何正文/引用（LLM 空流、空内容重试
-            # 耗尽）——此前只有 stage/done 事件，前端表现为「没有回复」；这里补一条可见提示。
-            if not answer_parts and not refs:
-                logger.warning("agent qa produced empty answer for kb %s", last_kb_id)
+            # 2026-10-20 空响应兜底：生成结束但未产出任何正文（LLM 空流、thinking-only、
+            # 空内容重试耗尽）——此前只有 stage/done 事件，前端表现为「没有回复」；这里补一条
+            # 可见提示。判断只看正文有无：即使有检索引用（refs 非空）但模型没给出回答，
+            # 同样要提示，否则会静默 done（2026-10-21 实测：refs 10 条但正文为空 → 无任何提示）。
+            if not answer_parts:
+                logger.warning(
+                    "agent qa produced empty answer for kb %s (refs=%d)",
+                    last_kb_id, len(refs),
+                )
                 yield _sse(
                     {
                         "type": "error",

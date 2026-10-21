@@ -1116,6 +1116,29 @@ export function apiAgentPromptDefaults() {
   return request<AgentPromptDefaults>("/api/v1/agents/prompt-defaults");
 }
 
+/** 提示词模板库条目（2026-10-21 对齐 WeKnora PromptTemplate 结构） */
+export interface AgentPromptTemplate {
+  id: string;
+  name: string;
+  description: string;
+  content: string;
+  user?: string;
+  default?: boolean;
+  has_knowledge_base?: boolean;
+  has_web_search?: boolean;
+  mode?: string;
+}
+
+/** 提示词模板库（类型 → 模板列表；对齐 WeKnora PromptTemplatesConfig 键） */
+export interface AgentPromptTemplates {
+  system_prompt: AgentPromptTemplate[];
+  context_template: AgentPromptTemplate[];
+}
+
+export function apiAgentPromptTemplates() {
+  return request<AgentPromptTemplates>("/api/v1/agents/prompt-templates");
+}
+
 export function apiDeleteAgent(agentId: string) {
   return request(`/api/v1/agents/${agentId}`, { method: "DELETE" });
 }

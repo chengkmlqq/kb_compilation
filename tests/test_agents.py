@@ -86,6 +86,50 @@ def test_agents_prompt_defaults_route() -> None:
     assert "contexts" in body["data"]["placeholders"]
 
 
+def test_agents_prompt_templates_route() -> None:
+    """GET /agents/prompt-templates 返回模板库（2026-10-21 对齐 WeKnora）。
+
+    校验加载器形状与默认标记语义：system_prompt/context_template 两类、
+    每个模板含 id/name/description/content、有且仅有一个 default 模板。
+    """
+    from api.routers.agents import prompt_templates_route
+
+    body = prompt_templates_route()
+    assert body["success"] is True
+    data = body["data"]
+    assert set(data.keys()) == {"system_prompt", "context_template"}
+    for key in ("system_prompt", "context_template"):
+        templates = data[key]
+        assert len(templates) >= 1, key
+        for t in templates:
+            assert t["id"] and t["name"] and t["description"] and t["content"]
+            assert "i18n" not in t  # 已本地化剥离
+        defaults = [t for t in templates if t.get("default")]
+        assert len(defaults) == 1, key
+
+
+def test_prompt_templates_localized_zh_cn() -> None:
+    """i18n.zh-CN 的名称/描述优先生效（对齐 WeKnora LocalizeTemplates）。"""
+    from api.services.prompt_templates import get_prompt_templates
+
+    templates = get_prompt_templates()["system_prompt"]
+    kb_default = next(t for t in templates if t.get("default"))
+    assert kb_default["name"] == "知识库问答助手"  # zh-CN 覆盖英文名
+    assert "{{contexts}}" in kb_default["content"]  # 正文保持模板占位符
+
+
+def test_prompt_templates_default_template_fallback() -> None:
+    """无 default 标记的列表取第一个（对齐 WeKnora DefaultTemplate）。"""
+    from api.services.prompt_templates import get_default_template
+
+    lst = [{"id": "a"}, {"id": "b", "default": True}]
+    assert get_default_template(lst) is not None
+    assert get_default_template(lst)["id"] == "b"  # type: ignore[index]
+    assert get_default_template([{"id": "x"}]) is not None
+    assert get_default_template([{"id": "x"}])["id"] == "x"  # type: ignore[index]
+    assert get_default_template([]) is None
+
+
 @pytest.fixture()
 def agent_db():
     engine = create_engine("sqlite:///:memory:")
