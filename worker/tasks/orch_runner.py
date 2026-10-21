@@ -327,12 +327,58 @@ def _advance_impl(run_id: str, env: str | None = None) -> None:
     if all_done:
         failed = [r for r in results if r.get("status") == "failed"]
         status = "failed" if failed else "success"
-        _update_run(run_id, env, status=status, bindings=bindings,
-                    error="; ".join(f"{r['step_id']}: {r.get('error','')}" for r in failed) if failed else None)
+        error_text = ("; ".join(f"{r['step_id']}: {r.get('error','')}" for r in failed)
+                      if failed else None)
+        _update_run(run_id, env, status=status, bindings=bindings, error=error_text)
+        # 2026-10-21 任务监控一致性：run 终态回写关联的 ORCH_RUN_* modo_job。
+        # 此前 _handle_run 对 execute_run 异步立即返回 → scheduler 无条件标 SUCCESS，
+        # run 实际 failed 时任务监控仍显示成功（假成功）。按 run 真实终态回写。
+        _sync_orch_job_status(run_id, status, error_text)
         logger.info("编排 run=%s 终态 %s (%d 步)", run_id, status, len(results))
     else:
         # 有未执行但 pre 未完成（依赖等待中）—— 不动作，等节点回调
         logger.info("编排 run=%s 等待依赖完成 (done=%d/%d)", run_id, len(pairs), len(steps))
+
+
+def _sync_orch_job_status(run_id: str, status: str, error_text: str | None) -> None:
+    """run 终态回写 KbOrchestrationRunTask（ORCH_RUN_*）job 状态，任务监控与
+    kb_tape_run 保持一致。找不到 job 行（手动在编排页执行的 run 无承接 job）
+    则跳过——不影响业务，仅同步监控展示。
+    """
+    try:
+        from sqlalchemy import select
+
+        from api.db import get_sessionmaker
+        from api.models.framework import Job
+
+        db = get_sessionmaker()()
+        try:
+            job = db.execute(
+                select(Job).where(Job.run_id == run_id)
+            ).scalars().first()
+            if job is None:
+                # 旧数据 run_id 冗余列可能未回填：按 task_params 里 runId 兜底
+                like = "%" + run_id + "%"
+                job = db.execute(
+                    select(Job).where(Job.task_class == "KbOrchestrationRunTask",
+                                      Job.task_params.like(like))
+                ).scalars().first()
+            if job is None:
+                return
+            if job.state == "STOPPED":
+                return  # 用户手动停止的保持取消态，不覆盖
+            import datetime as _dt
+
+            job.state = "SUCCESS" if status == "success" else "FAILED"
+            if error_text:
+                job.error_message = error_text[:1000]
+            job.end_time = _dt.datetime.now(_dt.timezone.utc)
+            db.commit()
+            logger.info("run=%s 终态 %s 已回写 job=%s", run_id, status, job.id)
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 — 回写失败不影响编排推进
+        logger.warning("sync orch job status failed for run=%s", run_id, exc_info=True)
 
 
 def execute_run(run_id: str, env: str | None = None) -> dict:

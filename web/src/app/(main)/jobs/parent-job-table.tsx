@@ -149,11 +149,18 @@ function childProgress(record: ParentJobItem): string {
  *  SUCCESS，不等编排子任务），后端 child_states 已按编排 run 真实状态聚合。
  *  自身终态但存在非终态子任务（RUNNING/PENDING）时主任务展示为「运行中」，
  *  全部子任务终态后才显示自身状态。
+ *  2026-10-21 失败优先：子任务存在 FAILED 时主任务展示「失败」——此前
+ *  链头 SUCCESS 而编排 run 失败时主任务仍显示成功（用户反馈「子任务失败
+ *  了，父任务却显示成功」），页面状态对不上账。失败优先级最高（用户最关心
+ *  是否出错），其后是运行中，最后才是链头自身终态。
  */
 function effectiveState(record: ParentJobItem): string {
   const own = String(record.state || "");
   if (own === "RUNNING" || own === "running") return own;
   const states = record.child_states || {};
+  const failed =
+    (states.FAILED || 0) + (states.failed || 0) + (states.cancelled || 0);
+  if (failed > 0) return "FAILED";
   const pending =
     (states.RUNNING || 0) +
     (states.PENDING || 0) +
