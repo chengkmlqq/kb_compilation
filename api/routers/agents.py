@@ -479,28 +479,43 @@ def agent_qa_stream(
             # 多 KB 时均摊工具迭代轮数，避免「6 库 × 每库 10 轮」工具循环爆炸（实测 120s+ 无 done）
             kbs_effective = kbs or []
             per_kb_iterations = max(1, int(agent_cfg.max_iterations or 10) // max(1, len(kbs_effective)))
+            # 2026-10-21 运行模式生效（对齐 WeKnora qaMode 路由）：
+            # quick-answer = 纯 RAG 单轮，不注入目录工具（kb_tools 全空）——
+            # 模型拿到 tools 就会自行规划多轮调用，与「快速问答」语义相悖；
+            # smart-reasoning = 注入全套工具走 agent 多轮循环。
+            # 动态工具（web_search / run_skill_script）不受运行模式影响，
+            # 仍由各自 enabled 开关控制（WeKnora 同语义：联网/技能是独立开关）。
+            is_agent_mode = str(agent_cfg.agent_mode or "") == "smart-reasoning"
             for idx, kb in enumerate(kbs_effective):
                 last_kb_id = kb.id
                 extra = attachment_ctx if idx == 0 else ""
                 # 知识库工具（对齐 WeKnora 全套：RAG/图谱/Wiki 读写/数据分析；按 kb 绑定）
                 kb_tools: list[dict] = []
                 kb_executor = None
-                try:
-                    from api.services.agent_tools_full import build_full_tool_context
+                if is_agent_mode:
+                    try:
+                        from api.services.agent_tools_full import build_full_tool_context
 
-                    kb_tools, kb_executor = build_full_tool_context(
-                        db,
-                        agent,
-                        kb=kb,
-                        caller_user_id=ctx_user_id,
-                        caller_team_name=ctx_team_name,
-                        is_sys_admin=ctx_is_admin,
-                    )
-                except Exception:  # noqa: BLE001 — 工具装配失败不阻断问答
-                    logger.exception("agent full tools resolution failed; tools disabled for this call")
-                    kb_tools, kb_executor = [], None
+                        kb_tools, kb_executor = build_full_tool_context(
+                            db,
+                            agent,
+                            kb=kb,
+                            caller_user_id=ctx_user_id,
+                            caller_team_name=ctx_team_name,
+                            is_sys_admin=ctx_is_admin,
+                        )
+                    except Exception:  # noqa: BLE001 — 工具装配失败不阻断问答
+                        logger.exception("agent full tools resolution failed; tools disabled for this call")
+                        kb_tools, kb_executor = [], None
                 # allowed_tools 白名单裁剪（非空仅注入白名单内工具；空=全部允许）
-                per_kb_tools = filter_by_whitelist((merged_tools or []) + kb_tools)
+                # quick-answer（纯 RAG 单轮）：目录工具已空，动态工具也不注入
+                # （联网/技能是 agent 多轮循环侧能力，WeKnora 同语义 qaModeNormal
+                # 不装配任何工具）→ tools 恒为空列表 → answer_question 走单轮流式。
+                per_kb_tools = (
+                    filter_by_whitelist((merged_tools or []) + kb_tools)
+                    if is_agent_mode
+                    else []
+                )
 
                 def per_kb_executor(tool_call: dict) -> str:
                     name = str(tool_call.get("name") or "")
