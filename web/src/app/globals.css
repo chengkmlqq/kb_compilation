@@ -5021,8 +5021,10 @@ html[data-theme="dark"] .kb-citation-web:hover {
   padding: 0 16px;
   overflow-y: auto;
 }
-/* 卡片行底部留白（对齐 .mt-sixteen） */
+/* 卡片行顶部留白（对齐 .mt-sixteen：卡片区与导航条底 border 拉开 16px）；
+   底部留白同款 16px */
 .kb-kbs-rows {
+  padding-top: 16px;
   padding-bottom: 16px;
 }
 
