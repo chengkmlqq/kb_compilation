@@ -20,7 +20,7 @@
  * 深链 focusSlug 时沿父链逐级加载并自动展开；编辑/删除页面后全树按展开状态刷新。
  * 双链 [[slug]] 原地切换页面，不跳独立阅读页；编辑/反馈弹窗内嵌。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   App,
   Button,
@@ -202,6 +202,94 @@ function renderWikiLinks(content: string, kbId: string): string {
   });
 }
 
+/** 左树目录行（memo 化：wiki 很多时避免点击行导致整树重建——
+    仅 expanded/懒加载结果变化影响本行重渲染） */
+const WikiDirectoryRow = memo(function WikiDirectoryRow({
+  folderId,
+  label,
+  pageTotal,
+  depth,
+  expanded,
+  onToggle,
+}: {
+  folderId: string;
+  label: string;
+  pageTotal: number;
+  depth: number;
+  expanded: boolean;
+  onToggle: (folderId: string) => void;
+}) {
+  return (
+    <div
+      className="kb-wiki-directory-item"
+      style={{ "--kb-wiki-depth": depth } as React.CSSProperties}
+      onClick={() => onToggle(folderId)}
+    >
+      <DownOutlined
+        className={`kb-wiki-directory-toggle${expanded ? " kb-wiki-directory-toggle--expanded" : ""}`}
+      />
+      <span className="kb-wiki-directory-title">{label}</span>
+      <div className="kb-wiki-tree-trailing">
+        <span className="kb-wiki-directory-count">{pageTotal}</span>
+      </div>
+    </div>
+  );
+});
+
+/** 左树页面行（memo 化：仅 active 变化影响本行重渲染） */
+const WikiPageRow = memo(function WikiPageRow({
+  slug,
+  title,
+  pageType,
+  depth,
+  active,
+  onSelect,
+}: {
+  slug: string;
+  title: string;
+  pageType: string;
+  depth: number;
+  active: boolean;
+  onSelect: (slug: string) => void;
+}) {
+  return (
+    <Tooltip title={title} placement="top" mouseEnterDelay={0.6}>
+      <div
+        className={`kb-wiki-page-item kb-wiki-page-item--tree${active ? " active" : ""}`}
+        style={{ "--kb-wiki-depth": depth } as React.CSSProperties}
+        onClick={() => onSelect(slug)}
+      >
+        <span
+          className="kb-wiki-page-file-icon"
+          style={{ color: PAGE_ICON_COLOR[pageType] || undefined }}
+        >
+          {pageIconOf(pageType)}
+        </span>
+        <span className="kb-wiki-page-item-title">{title}</span>
+      </div>
+    </Tooltip>
+  );
+});
+
+/** 正文 markdown 渲染（memo 化：页面内容不变时不重新解析——
+    点击左树行时 loading 触发组件重渲染，但 page 引用未变 → markdown 不重算） */
+const WikiMarkdownBody = memo(function WikiMarkdownBody({
+  content,
+  onLocalLink,
+}: {
+  content: string;
+  onLocalLink: (e: React.MouseEvent<HTMLAnchorElement>) => void;
+}) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{ a: (props) => <a {...props} onClick={onLocalLink} /> }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+});
+
 /** 扁平化的树行（目录 / 页面），带深度用于缩进 */
 type TreeRow =
   | { kind: "directory"; key: string; folderId: string; label: string; count: number; pageCount: number; pageTotal: number; depth: number; hasChildren: boolean }
@@ -245,6 +333,11 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
 
   const expandedRef = useRef<string[]>([]);
   const selectedRef = useRef<string>(focusSlug || "");
+  // 2026-10-22 性能：branches 最新值镜像到 ref，供稳定回调读取——
+  // onExpandDirectory 不再依赖 branches state，引用保持稳定，
+  // memo 树行收到同一回调引用，点击时才不会整树重建
+  const branchesRef = useRef(branches);
+  branchesRef.current = branches;
 
   // 编辑
   const [editOpen, setEditOpen] = useState(false);
@@ -422,10 +515,13 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
     });
   }, []);
 
-  /** 展开目录时懒加载该目录的直接子项（对齐 WeKnora） */
+  /** 展开目录时懒加载该目录的直接子项（对齐 WeKnora）；
+      2026-10-22 性能：读 branchesRef 而非 branches state，回调引用恒定，
+      配合 memo 树行避免 wiki 量大时点击目录整树重建 */
   const onExpandDirectory = useCallback(
     async (folderId: string) => {
-      if (branches[folderId]) {
+      const cur = branchesRef.current;
+      if (cur[folderId]) {
         onToggleDirectory(folderId);
         return;
       }
@@ -433,7 +529,7 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
       setBranches((prev) => ({ ...prev, [folderId]: branch }));
       onToggleDirectory(folderId);
     },
-    [branches, fetchBranch, onToggleDirectory],
+    [fetchBranch, onToggleDirectory],
   );
 
   // 编辑/删除等树外变更后：按当前展开状态刷新已加载分支
@@ -520,10 +616,13 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
     }
   };
 
-  const handleSelectPage = (slug: string) => {
-    if (slug === selectedRef.current) return;
-    void loadPage(slug, { pushNav: true });
-  };
+  const handleSelectPage = useCallback(
+    (slug: string) => {
+      if (slug === selectedRef.current) return;
+      void loadPage(slug, { pushNav: true });
+    },
+    [loadPage],
+  );
 
   /** 返回上一页（页面栈） */
   const goBack = () => {
@@ -536,14 +635,14 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
     });
   };
 
-  const onLocalLink = (e: React.MouseEvent<HTMLAnchorElement>) => {
+  const onLocalLink = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
     const href = e.currentTarget.getAttribute("href") || "";
     const m = href.match(/\/wiki\/([^/]+)$/);
     if (m) {
       e.preventDefault();
       void loadPage(decodeURIComponent(m[1]), { pushNav: true });
     }
-  };
+  }, [loadPage]);
 
   const openGraph = () => {
     if (!page) return;
@@ -554,46 +653,18 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
   const hasContentPages = treeRows.length > 0;
   const sourceRefs = parseSourceRefs(page?.source_refs || []);
   const searchMode = searchResults !== null;
+  // 2026-10-22 性能：展开键转 Set，行渲染判断 O(1)（此前每行 includes O(n)）
+  const expandedSet = useMemo(() => new Set(expandedKeys), [expandedKeys]);
+  // 双链 [[slug]] 预处理结果按 page 引用缓存（loadPage 成功才换新 page 引用，
+  // 点击行触发的 loading 重渲染不会重跑正则替换）
+  const markdownContent = useMemo(
+    () => (page ? renderWikiLinks(page.content || "", kbId) : ""),
+    [page, kbId],
+  );
 
-  // ── 左栏行渲染 ──
-  const renderSidebarRow = (row: TreeRow) => {
-    if (row.kind === "directory") {
-      const expanded = expandedKeys.includes(row.folderId);
-      return (
-        <div
-          key={row.key}
-          className="kb-wiki-directory-item"
-          style={{ "--kb-wiki-depth": row.depth } as React.CSSProperties}
-          onClick={() => void onExpandDirectory(row.folderId)}
-        >
-          <DownOutlined className={`kb-wiki-directory-toggle${expanded ? " kb-wiki-directory-toggle--expanded" : ""}`} />
-          <span className="kb-wiki-directory-title">{row.label}</span>
-          <div className="kb-wiki-tree-trailing">
-            <span className="kb-wiki-directory-count">{row.pageTotal}</span>
-          </div>
-        </div>
-      );
-    }
-    const p = row.page;
-    const active = p.slug === selectedSlug;
-    return (
-      <Tooltip key={row.key} title={p.title} placement="top" mouseEnterDelay={0.6}>
-        <div
-          className={`kb-wiki-page-item kb-wiki-page-item--tree${active ? " active" : ""}`}
-          style={{ "--kb-wiki-depth": row.depth } as React.CSSProperties}
-          onClick={() => handleSelectPage(p.slug)}
-        >
-          <span
-            className="kb-wiki-page-file-icon"
-            style={{ color: PAGE_ICON_COLOR[p.page_type] || undefined }}
-          >
-            {pageIconOf(p.page_type)}
-          </span>
-          <span className="kb-wiki-page-item-title">{p.title}</span>
-        </div>
-      </Tooltip>
-    );
-  };
+  // ── 左栏行渲染（2026-10-22 树行改用组件外 memo 行 WikiDirectoryRow /
+  //    WikiPageRow：内联 renderSidebarRow 每次渲染都重建全部 JSX，wiki 量大时
+  //    点击任意行触发 setLoading 全树重建 + 数百 Tooltip 重挂载 → 明显卡顿）──
 
   const renderListItem = (p: WikiPageItem | WikiSearchItem) => {
     const active = p.slug === selectedSlug;
@@ -653,7 +724,31 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
           ) : (
             // 2026-10-15：仅保留树视图（列表视图切换已移除）
             <div className="kb-wiki-tree-panel">
-              <div className="kb-wiki-tree-list">{treeRows.map(renderSidebarRow)}</div>
+              <div className="kb-wiki-tree-list">
+                {treeRows.map((row) =>
+                  row.kind === "directory" ? (
+                    <WikiDirectoryRow
+                      key={row.key}
+                      folderId={row.folderId}
+                      label={row.label}
+                      pageTotal={row.pageTotal}
+                      depth={row.depth}
+                      expanded={expandedSet.has(row.folderId)}
+                      onToggle={onExpandDirectory}
+                    />
+                  ) : (
+                    <WikiPageRow
+                      key={row.key}
+                      slug={row.page.slug}
+                      title={row.page.title}
+                      pageType={row.page.page_type}
+                      depth={row.depth}
+                      active={row.page.slug === selectedSlug}
+                      onSelect={handleSelectPage}
+                    />
+                  ),
+                )}
+              </div>
             </div>
           )}
 
@@ -734,14 +829,10 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
                 </div>
               )}
 
-              {/* 正文 */}
+              {/* 正文（2026-10-22 性能：内容经 useMemo 缓存 + memo 组件渲染，
+                  点击左树行导致的重渲染不再重复解析大 markdown） */}
               <div className="kb-wiki-reader-body">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{ a: (props) => <a {...props} onClick={onLocalLink} /> }}
-                >
-                  {renderWikiLinks(page.content || "", kbId)}
-                </ReactMarkdown>
+                <WikiMarkdownBody content={markdownContent} onLocalLink={onLocalLink} />
               </div>
 
               {/* 出链（本页引用） */}
