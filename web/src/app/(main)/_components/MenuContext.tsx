@@ -86,6 +86,8 @@ const FALLBACK_MENUS: SysMenuItem[] = [
   { menu_id: "quality_doc", menu_name: "quality_doc", menu_label: "文档转换评估", route: "/quality-doc", parent_id: "grp_quality", menu_icon: "SwapOutlined", sort_num: 2, state: "1" },
   { menu_id: "quality_chunk", menu_name: "quality_chunk", menu_label: "切片评估", route: "/quality-chunk", parent_id: "grp_quality", menu_icon: "FileTextOutlined", sort_num: 3, state: "1" },
   { menu_id: "quality_graph", menu_name: "quality_graph", menu_label: "图数据评估", route: "/quality-graph", parent_id: "grp_quality", menu_icon: "ApiOutlined", sort_num: 4, state: "1" },
+  // 2026-10-22 构建任务完成检查：任务监控「成功」≠ 真的成功，逐条核对状态/节点/产物
+  { menu_id: "quality_build_check", menu_name: "quality_build_check", menu_label: "构建任务检查", route: "/quality-build-check", parent_id: "grp_quality", menu_icon: "SafetyOutlined", sort_num: 5, state: "1" },
   { menu_id: "sys_users", menu_name: "sys_users", menu_label: "用户管理", route: "/system/users", parent_id: "system", menu_icon: "TeamOutlined", sort_num: 1, state: "1" },
   { menu_id: "sys_roles", menu_name: "sys_roles", menu_label: "角色管理", route: "/system/roles", parent_id: "system", menu_icon: "SafetyOutlined", sort_num: 2, state: "1" },
   { menu_id: "sys_teams", menu_name: "sys_teams", menu_label: "团队管理", route: "/system/teams", parent_id: "system", menu_icon: "PartitionOutlined", sort_num: 3, state: "1" },

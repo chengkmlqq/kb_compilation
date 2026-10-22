@@ -2,7 +2,65 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-22（质量评估全库跑通：env=prod 修复 + 并行节点 bindings lost-update 修复；7 库 4 维度评估全部完成）
+最后更新：2026-10-22（质量评估目录新增「构建任务检查」子菜单——构建任务真实性校验）
+
+## 43. 当前状态（2026-10-22 构建任务完成检查——质量评估目录新子菜单）
+
+- **需求**：「在质量评估菜单目录下开发一个构建任务完成检查的子菜单，用来检查任务
+  监控页面的构建任务是否真的成功了」——任务监控把构建链任务（文档解析/摘要编排/
+  wiki构建编排/题材分析编排）显示为「成功」，但历史上出现过多类「假成功」
+  （ORCH job 状态未回写 e01d707、run 成功但节点 failed、run 成功但产物缺失），
+  本页逐条核对真实性。
+- **后端**（新增 `api/routers/quality_build_check.py`，prefix `/quality/build-check`，
+  已注册 main.py）：
+  - `GET /tasks`：构建链任务列表（modo_job 三类任务类 KbDocumentProcessTask/
+    KbPreChunkedIngestTask/KbOrchestrationRunTask + kb_tape_run 双表按
+    构建/摘要/题材 关键词匹配；ORCH job 预关联 run 批量反查、独立 run 无承接
+    job 也纳入、双表同名去重；支持 kb/kind/result 筛选 + 分页）
+  - `GET /overview`：按检查结果/类型分组计数（顶部统计卡）
+  - `GET /tasks/{id}`：详情 + 编排节点 step_results 明细（job id 或 run id 均可查；
+    ORCH job 关联 run 不存在 → 返回 unknown 而非 404）
+  - **4 项检查**（每行输出 checks[] + result）：
+    1. consistency 状态一致性：任务监控显示（modo_job.state 大写） vs 真实状态
+       （run.status / parse_state 推断）——job SUCCESS 但 run failed/cancelled =
+       假成功；job PENDING/RUNNING 但 run 已终态 = job 未回写
+    2. internal 节点一致性：run=success 但 step_results 有 failed 节点（引擎内部
+       矛盾）或全部 skipped（空转）→ 假成功
+    3. artifact 产物验证（run 成功时按类型）：summary → kb_document.summary_status
+       ==READY；build → bindings 建页统计键（summary_slug/kw_created/kw_merged/
+       rule_created/rule_merged/biz_created/biz_merged，值非空判定），无键兜底
+       wiki_page 计数（单文档按 source_refs 含 doc_id）；domain_resolve →
+       bindings.resolved_tape_id 非空。产物查询按 run_env 路由（dev run 查 _dev 表）
+    4. zombie 僵尸检测：queued/running 且 updated_at 超 6h 未推进（对齐
+       NODE_STALE_S）→ 疑似卡死
+  - **result 判定优先级**：stale > unknown > fake_success > failed > running > ok；
+    解析任务真实状态由 kb_document.parse_state 推断（READY→success/FAILED→failed）
+- **前端**（`web/src/app/(main)/quality-build-check/page.tsx` + api.ts 类型/接口）：
+  顶部 6 统计卡（构建任务/真实完成/疑似假成功/失败/疑似卡死/进行中，仿 job-stats
+  形态）+ 筛选（知识库/类型/检查结果）+ ModoTable 列表（检查结果 Tag 带失败检查点
+  Tooltip、任务/类型/知识库/文档/页面显示/真实状态/产物/时间/详情）+ 详情抽屉
+  （检查项明细 ✓/✗/⚠ + 编排节点执行记录表）
+- **菜单**：seed_framework_db.py KB_MENUS + MenuContext FALLBACK_MENUS 加
+  `("quality_build_check", "构建任务检查", "/quality-build-check", "grp_quality",
+  "SafetyOutlined", 5)`（AppSider ICON_MAP 已有 SafetyOutlined）
+- **测试**：tests/test_quality_build_check.py 21 用例（解析假成功/真实成功/真实失败、
+  ORCH job 假成功、run 节点 failed 假成功、全 skipped 假成功、产物键命中 ok、
+  产物缺失假成功、wiki 页兜底 ok、摘要未落库假成功、摘要 READY ok、僵尸、进行中、
+  独立 run 纳入、非构建 run 排除、run 缺失 unknown、筛选/overview/detail）；回归
+  test_quality_dim_runs + test_quality_runs_delete + test_jobs_monitor +
+  test_orch_job_status_sync + test_summary_failed_mark = 45 passed；web tsc --noEmit 0 错
+- **坑位**：① 双表循环聚合必须按主键去重（测试环境 prod/dev 两轮 env_scope 查
+  同一物理表）；② run 侧 like 匹配要覆盖 构建/摘要/题材 三关键词（只 like 构建
+  漏摘要与题材分析）；③ 产物验证的 DB 查询用请求注入 session + env_scope(run_env)
+  路由，不能 get_sessionmaker()()（测试环境连真实库）；④ job.create_time 列类型
+  标注 object，序列化走 _iso() 安全包装；⑤ 列表 result 筛选必须在全量检查后做
+  （result 依赖检查结果），构建链任务量小全量检查可接受
+- **部署注意**：api 层（新 router + main.py）→ 重建 kb-api-server；前端（页面 +
+  api.ts + 菜单兜底）→ 重建 kb-web；菜单属库内数据 → docker cp
+  seed_framework_db.py 跑（幂等 upsert 补 quality_build_check 行，种子角色自动授权）
+- **遗留**：result=stale 的僵尸任务页面仅展示，未提供「一键重投/终止」操作（编排页
+  可手动重跑）；产物验证的 wiki 兜底仅按页面计数，未做页面内容非空校验（质量评估
+  wiki 维度已覆盖）
 
 ## 42. 当前状态（2026-10-22 质量评估批量跑通——两处 bug 修复 + 全库评估完成）
 

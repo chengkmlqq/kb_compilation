@@ -206,6 +206,8 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("quality_doc", "quality_doc", "文档转换评估", "/quality-doc", "grp_quality", "SwapOutlined", 2),
     ("quality_chunk", "quality_chunk", "切片评估", "/quality-chunk", "grp_quality", "FileTextOutlined", 3),
     ("quality_graph", "quality_graph", "图数据评估", "/quality-graph", "grp_quality", "ApiOutlined", 4),
+    # 2026-10-22 构建任务完成检查：任务监控「成功」≠ 真的成功，逐条核对状态/节点/产物
+    ("quality_build_check", "quality_build_check", "构建任务检查", "/quality-build-check", "grp_quality", "SafetyOutlined", 5),
 ]
 
 # 除种子角色外，这些角色（若存在）同样授权全量 KB 菜单，

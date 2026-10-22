@@ -4454,6 +4454,83 @@ export function apiDeleteQualityRun(qualityId: string) {
   );
 }
 
+/* ── 构建任务完成检查（2026-10-22，质量评估目录子菜单）────────────────── */
+
+export interface BuildCheckItem {
+  id: string;
+  kind: string; // doc_parse | summary | build | domain_resolve | unknown
+  kind_label: string;
+  task_class: string;
+  tape_name: string;
+  kb_id: string;
+  kb_name: string;
+  doc_id: string;
+  doc_name: string;
+  env: string; // prod | dev
+  display_state: string; // 页面显示状态（modo_job.state 大写）
+  real_state: string; // 真实状态（run.status / parse_state 推断）
+  result: string; // ok | fake_success | failed | running | stale | unknown
+  result_label: string;
+  checks: Array<{
+    key: string;
+    label: string;
+    ok: boolean | null;
+    detail: string;
+  }>;
+  artifact_summary: string;
+  created_at?: string | null;
+  has_run: boolean;
+  run_id?: string;
+  error?: string;
+}
+
+export interface BuildCheckStep {
+  step_id?: string;
+  step_label?: string;
+  step_inst?: string;
+  status?: string;
+  duration_ms?: number;
+  round?: number;
+  error?: string;
+}
+
+export interface BuildCheckDetail extends BuildCheckItem {
+  steps: BuildCheckStep[];
+}
+
+export interface BuildCheckOverview {
+  total: number;
+  by_result: Record<string, number>;
+  by_kind: Record<string, number>;
+}
+
+export function apiBuildCheckOverview() {
+  return request<BuildCheckOverview>("/api/v1/quality/build-check/overview");
+}
+
+export function apiListBuildCheckTasks(params: {
+  kb_id?: string;
+  kind?: string;
+  result?: string;
+  page?: number;
+  page_size?: number;
+}) {
+  const sp = new URLSearchParams({
+    page: String(params.page ?? 1),
+    page_size: String(params.page_size ?? 20),
+  });
+  if (params.kb_id) sp.set("kb_id", params.kb_id);
+  if (params.kind) sp.set("kind", params.kind);
+  if (params.result) sp.set("result", params.result);
+  return request<PageList<BuildCheckItem>>(`/api/v1/quality/build-check/tasks?${sp.toString()}`);
+}
+
+export function apiGetBuildCheckTask(taskId: string) {
+  return request<BuildCheckDetail>(
+    `/api/v1/quality/build-check/tasks/${encodeURIComponent(taskId)}`,
+  );
+}
+
 // ---- 知识库分类（左侧分类树 CRUD，2026-10-19）----
 export interface KbCategoryItem {
   id?: string | null;
