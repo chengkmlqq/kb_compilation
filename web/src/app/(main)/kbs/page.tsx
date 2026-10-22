@@ -13,6 +13,7 @@ import {
   Row,
   Select,
   Space,
+  Spin,
   Switch,
   Tag,
   Typography,
@@ -936,7 +937,14 @@ export default function KbsPage() {
 
         <div className="kb-kbs-list-panel">
           <div className="kb-kbs-content">
-          {visibleKbs.length === 0 ? (
+          {loading && visibleKbs.length === 0 ? (
+            /* 首载/查询加载中（2026-10-22：此前 loading 状态未消费，加载期间
+               误显示「暂无数据」空态，接口慢时无任何反馈——对齐 models 页
+               loading && items.length===0 ? <Spin 居中> 惯例） */
+            <div style={{ display: "flex", justifyContent: "center", paddingTop: 96 }}>
+              <Spin size="large" tip="正在加载知识库..." />
+            </div>
+          ) : visibleKbs.length === 0 ? (
             /* 空态（对齐 arco Empty 原生规格：48px 插画 + 「暂无数据」） */
             <div className="kb-kbs-empty">
               <div className="kb-kbs-empty-wrapper">
