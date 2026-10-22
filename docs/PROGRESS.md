@@ -425,6 +425,17 @@
 - **验证**：`web` tsc --noEmit exit 0；`bun run build` 通过；**本地构建 + 反代线上后端**（playwright）实机断言：供管制度知识库 18 篇 → 图标命中 `doc.png`（.doc/.docx）与 `txt.png`（.zip 回落），`/wiki/images/dsb/file-icons/*.png` 全 200 image/png；**部署后线上复验**（nginx :80，同上 KB）18 处图标命中、无 console error，截图 /tmp/kb_doc_icons_live.png
 - **坑位**：① 图标是 `<img>`，容器 `font-size` 不再决定大小，尺寸必须显式传 `size`（卡片 28/表格 16/详情 18）；② 静态资源路径必须带 basePath（`/wiki/...`），漏前缀会 404；③ DSB 文档树（染色单图标）与文档列表（逐类型 PNG）是两套图标语言，抄之前先确认抄的是哪一套；④ `export { x } from "..."` 不建立本地绑定——同文件内还要用该符号时必须 `import` + 再 `export`
 
+## 26. 当前状态（2026-10-22 压缩包嵌套递归解包）
+
+- **需求**：「压缩包内部的压缩包也要解压出来」——此前 upload-archive 只解顶层，包内再嵌的 zip/rar 被白名单当「不支持格式」跳过
+- **后端改动**：`api/routers/kbs.py` upload-archive 主循环重构为递归 `_expand(file_infos, prefix, depth)`：
+  - 嵌套 zip/rar 条目递归解包；`keep_structure=true` 时子包名（去扩展名）作为一层目录挂到当前路径（如 制度/内层.zip → 制度/内层/…），完整保留层级；`false` 时仍平铺 folder_id
+  - 深度上限 `MAX_ARCHIVE_DEPTH=5`（超限子包跳过、计入 skipped.failed + errors，不阻断整包）；损坏子包同样跳过；子包体积计入全局解压总量（保守防 zip-of-zip 炸弹）；新增跨层入库总数 `total_created` 上限（防规模爆炸，超限 400 整体拒绝）
+  - 新增常量 `MAX_ARCHIVE_DEPTH`；返回结构不变（skipped 键不变，前端无需改动）
+- **测试**：`tests/test_upload_file_types.py` 新增 4 用例（zip 嵌 zip 保留层级/坏子包跳过/深度上限/zip 嵌 rar 递归进 bsdtar 分支）；`tests/_rar_builder.py` 补注释说明夹具限制（HEAD_SIZE=32 为 bsdtar 可解析的最小构造；含 zip 二进制内容的 rar 会让 bsdtar 误读内部字节，故 rar 嵌套用例以 zip 作外层）。`uv run pytest tests/test_upload_file_types.py` **21 passed**
+- **全量回归**：`uv run pytest tests/` 883 passed / 8 failed（8 个失败为 test_doc_download_fallback + test_engine_admin 的 `Missing required env var: DATABASE_URL` 环境性失败，与本改动无关）
+- **部署注意**：仅后端 kb-api-server 需重建；旧前端兼容（返回结构未变）
+
 ## 25. 当前状态（2026-10-20 上传格式门禁 + zip 压缩包自动解包）
 
 - **需求**：「知识库上传文件时，系统支持处理哪些格式就允许传哪些格式，不要传了又处理不了；另外支持 zip 打包上传并自动解包」

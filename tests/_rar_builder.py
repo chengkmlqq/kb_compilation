@@ -35,7 +35,9 @@ def _end_arc() -> bytes:
 def _file_head(name: str, data: bytes) -> bytes:
     name_bytes = name.encode("utf-8")
     # HEAD_TYPE=0x74 / FLAGS=0x8000(沿用前一个文件的字典位，store 场景无关)
-    # HEAD_SIZE = 32 + name_len
+    # HEAD_SIZE = 32 + name_len（实测：libarchive/bsdtar 仅对 HEAD_SIZE>=32 的
+    # 构造可稳定解析；<=30 报 "Invalid header size"。含 zip 二进制内容的条目
+    # 会让 bsdtar 误读内部字节——夹具仅支持纯文本条目的 rar）
     head_size = 32 + len(name_bytes)
     # PACK_SIZE / UNP_SIZE / HOST_OS(3=Unix) / FILE_CRC / FTIME / UNP_VER(20=RAR2.0)
     # / METHOD(0x30=store) / NAME_SIZE / ATTR

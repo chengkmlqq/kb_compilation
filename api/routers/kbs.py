@@ -114,6 +114,8 @@ MAX_UPLOAD_BYTES = 600 * 1024 * 1024  # 600 MB（2026-10-16 心电图 pdf转word
 # 压缩包上传（自动解包）限制：条目数 + 解压后总量（防解压炸弹）
 MAX_ARCHIVE_ENTRIES = 2000
 MAX_ARCHIVE_UNCOMPRESSED_BYTES = 2 * MAX_UPLOAD_BYTES
+# 嵌套压缩包递归解包深度上限（防 zip-of-zip 无限展开；顶层包算第 1 层）
+MAX_ARCHIVE_DEPTH = 5
 # 知识库导入包（zip）上限：条目数 + 总量（对齐 upload-archive 口径，2026-10-21）
 MAX_IMPORT_ENTRIES = 3000
 MAX_IMPORT_UNCOMPRESSED_BYTES = 2 * MAX_UPLOAD_BYTES
@@ -1172,9 +1174,11 @@ async def upload_archive(
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    """上传压缩包并**自动解包**入库（2026-10-20 zip；2026-10-21 增 rar）。
+    """上传压缩包并**自动解包**入库（2026-10-20 zip；2026-10-21 增 rar；2026-10-22 嵌套递归）。
 
     - 包内目录结构 → 知识库文档目录（同级同名复用；keep_structure=false 时全部落到 folder_id）；
+    - 嵌套压缩包（zip/rar 内再嵌 zip/rar）递归解包：子包名（去扩展名）作为一层目录保留完整
+      层级；深度上限 MAX_ARCHIVE_DEPTH，超限/损坏的子包跳过（计入 failed）不阻断整包；
     - 跳过：目录项、隐藏/系统垃圾文件（. 开头 / Thumbs.db 等）、空文件、非白名单格式、超大文件；
     - 每个文件仍走「存储 → kb_document(PENDING) → Celery 解析」同一条链路（与单文件上传一致）；
     - 返回 created + skipped 统计，前端据此提示「已解压上传 N 个、跳过 M 个」。
@@ -1221,25 +1225,19 @@ async def upload_archive(
 
     try:
         file_infos = entries
+        # 顶层条目数预检（原子拒绝，不做部分入库）
         if len(file_infos) > MAX_ARCHIVE_ENTRIES:
             raise HTTPException(
                 status_code=400,
                 detail=f"压缩包内文件过多（{len(file_infos)} 个，上限 {MAX_ARCHIVE_ENTRIES} 个），请拆分后上传",
             )
-        # zip 条目带真实大小可预检总量；rar 大小未知，总量在逐条提取时累加校验
-        known_sizes = [e.size for e in file_infos if e.size is not None]
-        if known_sizes and sum(known_sizes) > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"压缩包解压后过大（约 {sum(known_sizes) // (1024 * 1024)}MB，上限 "
-                f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)}MB），请拆分后上传",
-            )
-        real_total = 0  # rar 解压总量（逐条累加，防解压炸弹）
 
         # 目录映射（同级同名复用）："(parent_id)\0(name)" → folder_id
         existing = {f"{f['parent_id']}\0{f['name']}": f["id"] for f in doc_folders(db, kb_id)}
         folder_seed_count = len(existing)
         user_id = str(caller.get("user_id") or "")
+        real_total = 0  # 解压产物总量（逐条累加，防解压炸弹；子包体积保守双计）
+        total_created = 0  # 实际入库文件数（跨嵌套层累计，防 zip-of-zip 规模爆炸）
 
         def _ensure_folder(segments: list[str]) -> str:
             parent = folder_id
@@ -1252,75 +1250,150 @@ async def upload_archive(
                 parent = fid
             return parent
 
-        for entry in file_infos:
-            raw_name = (entry.name or "").replace("\\", "/")
-            parts = archive_entry_parts(raw_name)
-            if not parts:
-                continue  # 非法路径（含 .. / 全空段）直接丢弃
-            if is_hidden_or_junk(raw_name):
-                skipped["hidden"] += 1
-                continue
-            base_name = parts[-1]
-            entry_ext = ext_of(base_name)
-            if not is_supported_ext(entry_ext):
-                skipped["unsupported"] += 1
-                unsupported_types.add(entry_ext or base_name)
-                continue
-            if entry.size == 0:
-                skipped["empty"] += 1
-                continue
-            if entry.size is not None and entry.size > MAX_UPLOAD_BYTES:
-                skipped["oversize"] += 1
-                continue
+        def _expand(file_infos: list[_ArchiveEntry], prefix: list[str], depth: int) -> None:
+            """展开一层压缩包条目（嵌套压缩包递归调用；prefix 为继承的目录段前缀）。"""
+            nonlocal real_total, total_created
+            # zip 条目带真实大小可预检总量；rar 大小未知，总量在逐条提取时累加校验
+            known_sizes = [e.size for e in file_infos if e.size is not None]
+            if known_sizes and sum(known_sizes) > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"压缩包解压后过大（约 {sum(known_sizes) // (1024 * 1024)}MB，上限 "
+                    f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)}MB），请拆分后上传",
+                )
+            for entry in file_infos:
+                raw_name = (entry.name or "").replace("\\", "/")
+                parts = archive_entry_parts(raw_name)
+                if not parts:
+                    continue  # 非法路径（含 .. / 全空段）直接丢弃
+                if is_hidden_or_junk(raw_name):
+                    skipped["hidden"] += 1
+                    continue
+                base_name = parts[-1]
+                entry_ext = ext_of(base_name)
 
-            target_folder = _ensure_folder(parts[:-1]) if keep_structure else folder_id
-            try:
-                data = entry.read()
-            except Exception as exc:  # noqa: BLE001 - 单个坏条目不阻断整包
-                logger.warning("archive entry read failed: %s (%s)", raw_name, exc)
-                skipped["failed"] += 1
-                errors.append(f"{base_name}: 读取失败")
-                continue
-            # rar 条目大小未知 → 提取后校验空/超大/总量
-            if entry.size is None:
-                if not data:
+                # ── 嵌套压缩包：递归解包（子包名去扩展名作为一层目录，保留完整层级）──
+                if is_archive_ext(entry_ext):
+                    if entry.size == 0:
+                        skipped["empty"] += 1
+                        continue
+                    if depth >= MAX_ARCHIVE_DEPTH:
+                        skipped["failed"] += 1
+                        errors.append(
+                            f"{base_name}: 嵌套压缩包层级过深（超过 {MAX_ARCHIVE_DEPTH} 层），已跳过"
+                        )
+                        continue
+                    try:
+                        data = entry.read()
+                    except Exception as exc:  # noqa: BLE001 - 单个坏条目不阻断整包
+                        logger.warning("archive entry read failed: %s (%s)", raw_name, exc)
+                        skipped["failed"] += 1
+                        errors.append(f"{base_name}: 读取失败")
+                        continue
+                    if not data:
+                        skipped["empty"] += 1
+                        continue
+                    # 子包体积计入全局总量（其内部文件还会再计一次，保守防炸弹）
+                    real_total += len(data)
+                    if real_total > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"压缩包解压后过大（超过 "
+                            f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)}MB），请拆分后上传",
+                        )
+                    try:
+                        sub_entries, _sub_close = _read_archive_entries(data, entry_ext, base_name)
+                    except HTTPException as exc:
+                        if "无法解压" not in str(exc.detail):
+                            raise  # 条目数/体积超限等：整体失败
+                        skipped["failed"] += 1
+                        errors.append(f"{base_name}: 无法解压（不是有效的压缩包或文件已损坏）")
+                        continue
+                    if len(sub_entries) > MAX_ARCHIVE_ENTRIES:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"压缩包内文件过多（{len(sub_entries)} 个，上限 "
+                            f"{MAX_ARCHIVE_ENTRIES} 个），请拆分后上传",
+                        )
+                    # keep_structure=true：子包名（去扩展名）作为一层目录挂到当前路径下
+                    sub_prefix = (
+                        prefix + parts[:-1] + [base_name[: -(len(entry_ext) + 1)]]
+                        if keep_structure
+                        else []
+                    )
+                    try:
+                        _expand(sub_entries, sub_prefix, depth + 1)
+                    finally:
+                        _sub_close()
+                    continue
+
+                if not is_supported_ext(entry_ext):
+                    skipped["unsupported"] += 1
+                    unsupported_types.add(entry_ext or base_name)
+                    continue
+                if entry.size == 0:
                     skipped["empty"] += 1
                     continue
-                if len(data) > MAX_UPLOAD_BYTES:
+                if entry.size is not None and entry.size > MAX_UPLOAD_BYTES:
                     skipped["oversize"] += 1
                     continue
-                real_total += len(data)
-                if real_total > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+
+                target_folder = _ensure_folder(prefix + parts[:-1]) if keep_structure else folder_id
+                if total_created >= MAX_ARCHIVE_ENTRIES:
                     raise HTTPException(
-                        status_code=413,
-                        detail=f"压缩包解压后过大（超过 "
-                        f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)}MB），请拆分后上传",
+                        status_code=400,
+                        detail=f"压缩包内文件过多（已超过 {MAX_ARCHIVE_ENTRIES} 个），请拆分后上传",
                     )
+                try:
+                    data = entry.read()
+                except Exception as exc:  # noqa: BLE001 - 单个坏条目不阻断整包
+                    logger.warning("archive entry read failed: %s (%s)", raw_name, exc)
+                    skipped["failed"] += 1
+                    errors.append(f"{base_name}: 读取失败")
+                    continue
+                # rar 条目大小未知 → 提取后校验空/超大/总量
+                if entry.size is None:
+                    if not data:
+                        skipped["empty"] += 1
+                        continue
+                    if len(data) > MAX_UPLOAD_BYTES:
+                        skipped["oversize"] += 1
+                        continue
+                    real_total += len(data)
+                    if real_total > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"压缩包解压后过大（超过 "
+                            f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)}MB），请拆分后上传",
+                        )
 
-            doc_id = uuid.uuid4().hex
-            storage_path = storage_svc.resolve_new_path(f"kb_documents/{kb_id}/{doc_id}.{entry_ext}")
-            try:
-                storage_svc.put_bytes(storage_path, data)
-            except Exception:  # noqa: BLE001
-                logger.exception("archive entry store failed: %s", raw_name)
-                skipped["failed"] += 1
-                errors.append(f"{base_name}: 存储失败")
-                continue
+                doc_id = uuid.uuid4().hex
+                storage_path = storage_svc.resolve_new_path(f"kb_documents/{kb_id}/{doc_id}.{entry_ext}")
+                try:
+                    storage_svc.put_bytes(storage_path, data)
+                except Exception:  # noqa: BLE001
+                    logger.exception("archive entry store failed: %s", raw_name)
+                    skipped["failed"] += 1
+                    errors.append(f"{base_name}: 存储失败")
+                    continue
 
-            doc = create_document(
-                db,
-                kb_id=kb_id,
-                file_name=base_name,
-                file_ext=entry_ext,
-                file_size=len(data),
-                storage_path=storage_path,
-                folder_id=target_folder,
-            )
-            try:
-                _enqueue_document_process(kb_id, doc.id, caller_identity=x_next_identity or "")
-            except Exception:  # noqa: BLE001 - 保留 PENDING 行，可手动重试
-                logger.exception("failed to enqueue archived doc %s", doc.id)
-            created.append({"id": doc.id, "file_name": doc.file_name, "folder_id": target_folder})
+                doc = create_document(
+                    db,
+                    kb_id=kb_id,
+                    file_name=base_name,
+                    file_ext=entry_ext,
+                    file_size=len(data),
+                    storage_path=storage_path,
+                    folder_id=target_folder,
+                )
+                try:
+                    _enqueue_document_process(kb_id, doc.id, caller_identity=x_next_identity or "")
+                except Exception:  # noqa: BLE001 - 保留 PENDING 行，可手动重试
+                    logger.exception("failed to enqueue archived doc %s", doc.id)
+                created.append({"id": doc.id, "file_name": doc.file_name, "folder_id": target_folder})
+                total_created += 1
+
+        _expand(file_infos, [], 1)
     finally:
         _close_archive()
 
