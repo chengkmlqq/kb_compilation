@@ -69,17 +69,17 @@ def main() -> None:
         print(f"[backfill] kb_document.file_name 回填 {doc_fixed} 条")
 
         # 2) doc_chunk.meta.source_file 回填（JSON 字段，text() 下是字符串需手动解析）
+        #    用无 OFFSET 的游标模式：已更新的行不再匹配 LIKE，每轮 LIMIT 从头取，
+        #    避免 OFFSET 分页在 UPDATE 后匹配行减少导致尾部行永远取不到。
         chunk_fixed = 0
-        offset = 0
         batch = 500
         while True:
             chunk_rows = db.execute(
-                text("SELECT id, meta FROM doc_chunk WHERE meta LIKE '%╓%' LIMIT :lim OFFSET :off"),
-                {"lim": batch, "off": offset},
+                text("SELECT id, meta FROM doc_chunk WHERE meta LIKE '%╓%' LIMIT :lim"),
+                {"lim": batch},
             ).all()
             if not chunk_rows:
                 break
-            offset += len(chunk_rows)
             for cid, meta in chunk_rows:
                 try:
                     m = json.loads(meta) if isinstance(meta, str) else (meta or {})
@@ -98,7 +98,7 @@ def main() -> None:
                 )
                 chunk_fixed += 1
             db.commit()
-            print(f"[backfill] doc_chunk 批次 {offset} 条，已回填 {chunk_fixed} 条")
+            print(f"[backfill] doc_chunk 游标轮次，累计回填 {chunk_fixed} 条")
         db.commit()
         print(f"[backfill] 完成：文档 {doc_fixed} 条 + 切片元数据 {chunk_fixed} 条")
     finally:
