@@ -95,21 +95,22 @@ def list_metadata_datasources(
     db: Session = Depends(get_db),
 ) -> dict:
     """可采集数据源列表（表数量 + 最近采集时间 + 状态）。"""
-    from api.services.agg_cache import agg_cached
+    from api.services.agg_cache import agg_cached_swr
     from api.services.metadata_collector import DS_TYPE_GROUPS
 
-    def _load() -> list[dict]:
+    def _load(s) -> list[dict]:
         types = _collectable_types()
-        dss = db.execute(
+        dss = s.execute(
             select(Datasource).where(
                 Datasource.ds_type.in_(types),
                 or_(Datasource.state.is_(None), Datasource.state == "1"),
             )
         ).scalars().all()
-        return _datasource_items(db, dss, DS_TYPE_GROUPS)
+        return _datasource_items(s, dss, DS_TYPE_GROUPS)
 
-    # 2026-10-23 性能审计：逐源最近任务查询冷缓冲池秒级，列表页走 15s 缓存
-    out = agg_cached("metadata_datasources", 15.0, _load)
+    # 2026-10-23 性能审计：逐源最近任务查询冷缓冲池秒级，列表页走 15s
+    # stale-while-revalidate 缓存（过期先返回旧值后台刷新）
+    out = agg_cached_swr("metadata_datasources", 15.0, _load, db=db)
     return {"success": True, "data": {"items": out, "total": len(out)}}
 
 

@@ -25,7 +25,129 @@ async def lifespan(app: FastAPI):
     # column changes reach the DB without manual migrate steps (create_all
     # never alters existing tables). Fail-fast: refuse to serve on bad schema.
     run_migrations_on_startup()
+    # 2026-10-23：启动后后台预热聚合缓存（admin 视角 + 默认参数）——重启/冷启动后
+    # 首个页面请求不支付远端库冷缓冲池的秒级聚合（看板/知识库卡片计数），
+    # 预热线程在后台跑，失败不影响启动。
+    _warm_aggregate_cache()
     yield
+
+
+def _warm_aggregate_cache() -> None:
+    """后台预热聚合缓存（stale-while-revalidate 的冷启动补位）。
+
+    每个聚合独立线程并行跑（冷缓冲下单个聚合 5-20s，串行会拖到 1 分多钟，
+    用户在预热完成前访问仍会同步计算）；list_kbs 排最前（最高频页面）。
+    预热失败不影响启动（单个失败只少一个缓存项，请求走同步/stale 兜底）。
+    """
+    import threading
+    import time as _time
+    from typing import Callable
+
+    def _job(fn: Callable[[], None]) -> None:
+        def _run() -> None:
+            try:
+                fn()
+            except Exception:
+                pass
+
+        threading.Thread(target=_run, daemon=True, name="kb-warm-agg").start()
+
+    # 高频/看板项并行预热（每个都自建 session，含 1s 启动延迟）
+    def _make(fn: Callable[[], None]) -> Callable[[], None]:
+        def _wrapped() -> None:
+            _time.sleep(1)
+            fn()
+        return _wrapped
+
+    from api.db import get_sessionmaker
+    from api.routers.overview import overview_kb_stats, overview_summary, overview_trend
+    from api.services.identity import Identity
+    from api.services.kb_admin import list_kbs
+    from api.routers.metadata import list_metadata_datasources
+    from api.routers.usage import summary as usage_summary
+    from api.routers.usage import trend as usage_trend
+
+    def _warm_list_kbs() -> None:
+        s = get_sessionmaker()()
+        try:
+            list_kbs(
+                s, 1, 30,
+                caller_user_id="admin", caller_team_name="ROOT", is_sys_admin=True,
+            )
+        finally:
+            s.close()
+
+    def _warm_overview_summary() -> None:
+        s = get_sessionmaker()()
+        try:
+            overview_summary(db=s, caller={"user_id": "admin", "team_name": "ROOT", "is_admin": True})
+        finally:
+            s.close()
+
+    def _warm_overview_kb_stats() -> None:
+        s = get_sessionmaker()()
+        try:
+            overview_kb_stats(db=s, caller={"user_id": "admin", "team_name": "ROOT", "is_admin": True})
+        finally:
+            s.close()
+
+    def _warm_overview_trend() -> None:
+        s = get_sessionmaker()()
+        try:
+            overview_trend(days=7, db=s, caller={"user_id": "admin", "team_name": "ROOT", "is_admin": True})
+        finally:
+            s.close()
+
+    def _warm_usage_summary() -> None:
+        s = get_sessionmaker()()
+        try:
+            idn = Identity(login_id="admin", user_id="admin", user_name="系统管理员", team_name="ROOT")
+            usage_summary(preset="24h", start="", end="", kb_id="", model="", operation="", db=s, idn=idn)
+        finally:
+            s.close()
+
+    def _warm_usage_trend_day() -> None:
+        s = get_sessionmaker()()
+        try:
+            idn = Identity(login_id="admin", user_id="admin", user_name="系统管理员", team_name="ROOT")
+            usage_trend(granularity="day", preset="24h", start="", end="", kb_id="", model="", operation="", db=s, idn=idn)
+        finally:
+            s.close()
+
+    def _warm_usage_trend_hour() -> None:
+        s = get_sessionmaker()()
+        try:
+            idn = Identity(login_id="admin", user_id="admin", user_name="系统管理员", team_name="ROOT")
+            usage_trend(granularity="hour", preset="24h", start="", end="", kb_id="", model="", operation="", db=s, idn=idn)
+        finally:
+            s.close()
+
+    def _warm_metadata_dss() -> None:
+        s = get_sessionmaker()()
+        try:
+            idn = Identity(login_id="admin", user_id="admin", user_name="系统管理员", team_name="ROOT")
+            list_metadata_datasources(identity=idn, db=s)
+        finally:
+            s.close()
+
+    def _warm_jobs_statistics() -> None:
+        from api.routers.jobs import job_statistics
+
+        s = get_sessionmaker()()
+        try:
+            job_statistics(_user_id="admin", db=s)
+        finally:
+            s.close()
+
+    _job(_make(_warm_list_kbs))
+    _job(_make(_warm_overview_summary))
+    _job(_make(_warm_overview_kb_stats))
+    _job(_make(_warm_overview_trend))
+    _job(_make(_warm_usage_summary))
+    _job(_make(_warm_usage_trend_day))
+    _job(_make(_warm_usage_trend_hour))
+    _job(_make(_warm_metadata_dss))
+    _job(_make(_warm_jobs_statistics))
 
 
 app = FastAPI(

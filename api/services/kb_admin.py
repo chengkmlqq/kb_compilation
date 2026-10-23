@@ -128,15 +128,16 @@ def list_kbs(
     keyword_counts: dict[str, int] = {}
     feedback_counts: dict[str, int] = {}
     if kb_ids:
-        # 2026-10-23 性能审计：四组计数整块走 15s 进程内缓存。计数 SQL 会全扫含
+        # 2026-10-23 性能审计：四组计数整块走 15s 进程内缓存（stale-while-revalidate：
+        # 过期先返回旧值 + 后台刷新，页面请求恒定毫秒级）。计数 SQL 会全扫含
         # MEDIUMTEXT content 的大表（doc_chunk/wiki_page），远端库缓冲池小、冷
         # 索引页读取秒级（热时 100-300ms）；卡片计数（文件/Wiki/反馈数）容忍
-        # 短时陈旧，缓存后页面响应确定性地降到毫秒级。
-        from api.services.agg_cache import agg_cached
+        # 短时陈旧。fn 自建 session（后台刷新线程无请求上下文）。
+        from api.services.agg_cache import agg_cached_swr
 
-        def _load_counts() -> tuple[dict, dict, dict, dict]:
+        def _load_counts(s) -> tuple[dict, dict, dict, dict]:
             c_doc = dict(
-                db.execute(
+                s.execute(
                     select(KbDocument.kb_id, func.count())
                     .where(KbDocument.kb_id.in_(kb_ids))
                     .group_by(KbDocument.kb_id)
@@ -144,7 +145,7 @@ def list_kbs(
             )
             # 高频词页计数（page_type=frequent_keyword）+ 总页数：一次条件聚合产出
             # （2026-10-21 合并，原两次 group-by 各自全扫 wiki_page 命中集）。
-            keyword_rows = db.execute(
+            keyword_rows = s.execute(
                 select(
                     WikiPage.kb_id,
                     func.count(),
@@ -163,7 +164,7 @@ def list_kbs(
             c_kw = {kb_id: int(kw) for kb_id, _total, kw in keyword_rows}
             # 反馈计数（未软删）：知识库卡片「反馈 N」统计 → 维护中心
             c_fb = dict(
-                db.execute(
+                s.execute(
                     select(WikiFeedback.kb_id, func.count())
                     .where(WikiFeedback.kb_id.in_(kb_ids), WikiFeedback.deleted_at.is_(None))
                     .group_by(WikiFeedback.kb_id)
@@ -171,8 +172,8 @@ def list_kbs(
             )
             return c_doc, c_page, c_kw, c_fb
 
-        doc_counts, page_counts, keyword_counts, feedback_counts = agg_cached(
-            "kbs_counts:" + ",".join(sorted(kb_ids)), 15.0, _load_counts
+        doc_counts, page_counts, keyword_counts, feedback_counts = agg_cached_swr(
+            "kbs_counts:" + ",".join(sorted(kb_ids)), 15.0, _load_counts, db=db
         )
 
     items = [

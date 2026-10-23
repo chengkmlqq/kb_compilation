@@ -45,9 +45,10 @@ def summary(
     idn: Identity = Depends(_require_identity),
 ) -> dict:
     start_dt, end_dt = svc.resolve_range(preset, start or None, end or None)
-    # 2026-10-23 性能审计：kb_llm_usage 聚合冷缓冲池扫描秒级——看板统计走 30s 缓存。
-    # 注意 preset 非 custom 时 start/end 随 now() 每次变化（微秒），不能进 key。
-    from api.services.agg_cache import agg_cached
+    # 2026-10-23 性能审计：kb_llm_usage 聚合冷缓冲池扫描秒级——看板统计走 30s
+    # stale-while-revalidate 缓存（过期先返回旧值后台刷新）。preset 非 custom
+    # 时 start/end 随 now() 每次变化（微秒），不能进 key。
+    from api.services.agg_cache import agg_cached_swr
 
     if preset == "custom":
         key = "usage_summary:custom:%s:%s:%s:%s" % (
@@ -55,9 +56,13 @@ def summary(
         )
     else:
         key = "usage_summary:%s:%s:%s" % (preset, kb_id or "", f"{model}|{operation}")
-    data = agg_cached(key, 30.0, lambda: svc.summary(
-        db, start=start_dt, end=end_dt, kb_id=kb_id, model=model, operation=operation
-    ))
+
+    def _load(s) -> dict:
+        return svc.summary(
+            s, start=start_dt, end=end_dt, kb_id=kb_id, model=model, operation=operation
+        )
+
+    data = agg_cached_swr(key, 30.0, _load, db=db)
     return {"success": True, "data": data}
 
 
@@ -105,9 +110,9 @@ def trend(
     start_dt, end_dt = svc.resolve_range(preset, start or None, end or None)
     if granularity not in ("hour", "day"):
         raise HTTPException(status_code=422, detail="granularity 仅支持 hour / day")
-    # 2026-10-23 性能审计：kb_llm_usage 按天分桶冷缓冲池扫描秒级——走 30s 缓存。
-    # preset 非 custom 时 start/end 随 now() 变化，不进 key。
-    from api.services.agg_cache import agg_cached
+    # 2026-10-23 性能审计：kb_llm_usage 按天分桶冷缓冲池扫描秒级——走 30s
+    # stale-while-revalidate 缓存。preset 非 custom 时 start/end 随 now() 变化，不进 key。
+    from api.services.agg_cache import agg_cached_swr
 
     if preset == "custom":
         key = "usage_trend:%s:custom:%s:%s:%s:%s" % (
@@ -115,15 +120,19 @@ def trend(
         )
     else:
         key = "usage_trend:%s:%s:%s:%s" % (granularity, preset, kb_id or "", f"{model}|{operation}")
-    data = agg_cached(key, 30.0, lambda: svc.trend(
-        db,
-        start=start_dt,
-        end=end_dt,
-        granularity=granularity,
-        kb_id=kb_id,
-        model=model,
-        operation=operation,
-    ))
+
+    def _load(s) -> dict:
+        return svc.trend(
+            s,
+            start=start_dt,
+            end=end_dt,
+            granularity=granularity,
+            kb_id=kb_id,
+            model=model,
+            operation=operation,
+        )
+
+    data = agg_cached_swr(key, 30.0, _load, db=db)
     return {"success": True, "data": data}
 
 

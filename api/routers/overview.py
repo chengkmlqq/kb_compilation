@@ -83,14 +83,18 @@ def overview_summary(
     含 MEDIUMTEXT content 的大表（doc_chunk/wiki_page/wiki_link），远端库
     缓冲池小、冷索引页读取秒级；看板统计容忍短时陈旧，缓存后响应毫秒级。
     """
-    from api.services.agg_cache import agg_cached
+    from api.services.agg_cache import agg_cached_swr
 
     key = "ov_summary:%s:%s:%s" % (
         caller.get("user_id") or "",
         caller.get("team_name") or "",
         bool(caller.get("is_admin")),
     )
-    data = agg_cached(key, 30.0, lambda: _summary_data(db, caller))
+
+    def _load(s) -> dict:
+        return _summary_data(s, caller)
+
+    data = agg_cached_swr(key, 30.0, _load, db=db)
     return {"success": True, "data": data}
 
 
@@ -224,14 +228,18 @@ def overview_kb_stats(
     聚合方式：全部按 kb_id 一次 GROUP BY 分批取，避免每库 N+1 查询。
     2026-10-23 性能审计：整段结果走 30s 进程内缓存（大表计数，缓冲池冷热波动）。
     """
-    from api.services.agg_cache import agg_cached
+    from api.services.agg_cache import agg_cached_swr
 
     key = "ov_kb_stats:%s:%s:%s" % (
         caller.get("user_id") or "",
         caller.get("team_name") or "",
         bool(caller.get("is_admin")),
     )
-    items = agg_cached(key, 30.0, lambda: _kb_stats_data(db, caller))
+
+    def _load(s) -> list:
+        return _kb_stats_data(s, caller)
+
+    items = agg_cached_swr(key, 30.0, _load, db=db)
     return {"success": True, "data": {"items": items}}
 
 
@@ -339,7 +347,7 @@ def overview_trend(
     2026-10-23 性能审计：分组聚合会扫大表（doc_chunk/wiki_page），远端库
     缓冲池冷热波动秒级——看板趋势容忍短时陈旧，整段结果走 30s 进程内缓存。
     """
-    from api.services.agg_cache import agg_cached
+    from api.services.agg_cache import agg_cached_swr
 
     key = "ov_trend:%s:%s:%s:%d" % (
         caller.get("user_id") or "",
@@ -347,7 +355,11 @@ def overview_trend(
         bool(caller.get("is_admin")),
         days,
     )
-    days_out = agg_cached(key, 30.0, lambda: _trend_days(db, caller, days))
+
+    def _load(s) -> list:
+        return _trend_days(s, caller, days)
+
+    days_out = agg_cached_swr(key, 30.0, _load, db=db)
     return {"success": True, "data": {"days": days_out}}
 
 

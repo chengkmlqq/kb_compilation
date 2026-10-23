@@ -663,7 +663,21 @@ def job_statistics(
          run 已作为链头的子任务展示），与顶层列表一致；
       3. run 双表（正式 + _dev）统计，与列表同口径。
     统计卡与「主任务」表格合计可对上（此前统计含全部子任务导致卡数 > 列表行数）。
+
+    2026-10-23 性能：语法主体拆入 _job_statistics_data，端点走 30s
+    stale-while-revalidate 缓存——远端库缓冲池小，kb_tape_run 低频索引页
+    冷读秒级；统计卡容忍短时陈旧，过期先返回旧值后台刷新。
     """
+    from api.services.agg_cache import agg_cached_swr
+
+    def _load(s) -> dict:
+        return _job_statistics_data(s)
+
+    data = agg_cached_swr("jobs_statistics", 30.0, _load, db=db)
+    return {"success": True, "data": data}
+
+
+def _job_statistics_data(db) -> dict:
     from api.models.orchestration import TapeRun
 
     # ── modo_job：链头 + 非系统周期任务（与 list_parent_jobs 同款筛选）──
@@ -708,15 +722,12 @@ def job_statistics(
         counts[key] = counts.get(key, 0) + 1
 
     return {
-        "success": True,
-        "data": {
-            "total": sum(counts.values()),
-            "running": counts.get("RUNNING", 0),
-            "success": counts.get("SUCCESS", 0),
-            "failed": counts.get("FAILED", 0),
-            "stopped": counts.get("STOPPED", 0),
-            "queued": counts.get("PENDING", 0),
-        },
+        "total": sum(counts.values()),
+        "running": counts.get("RUNNING", 0),
+        "success": counts.get("SUCCESS", 0),
+        "failed": counts.get("FAILED", 0),
+        "stopped": counts.get("STOPPED", 0),
+        "queued": counts.get("PENDING", 0),
     }
 
 
