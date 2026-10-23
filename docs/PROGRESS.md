@@ -40,6 +40,35 @@
   建议 DB 侧调大 buffer_pool（如 2-4GB）或入库定期 ANALYZE；kb_visible_clauses
   owner_user_id 单列索引（§39 P2 未变）。缓存 TTL 30s 内页面统计有短暂陈旧属预期。
 
+### 47.1 用户实测线上 /kbs 7s → swr + 预热 + 持久化（commit e873c82）
+
+- **现象**：用户实测 http://10.1.215.50/api/v1/kbs 返回 7s（10.1.215.50 即本机
+  对外 IP，nginx→api-server 同一栈）。复现：随机重启容器后首访 6.6s；long-idle
+  后缓存过期（ttl 15s）回落同步算同样秒级。
+- **根因**：① 重启后聚合缓存空 + 远端库缓冲池冷 → 首访同步算；② agg_cache 的
+  staleness_ok=300s：距上次访问超 5 分钟，过期缓存被判定「太旧」弃用 → 同步算。
+- **二次增强（均已推送且容器热更生效）**：
+  1. `agg_cached_swr`（stale-while-revalidate）：过期先返回旧值 + 单飞后台线程
+     刷新，staleness_ok 默认 3600s；fn(db) 签名（同步路径复用请求 db 兼容测试
+     monkeypatch，后台自建 session）。
+  2. `api/main.py` 启动预热：9 个聚合（kbs/overview×3/usage×2/metadata/
+     jobs-statistics）并行线程预填，失败不影响启动。
+  3. agg_cache 文件持久化 `/srv/kb/data/agg_cache.json`：docker restart 恢复
+     缓存项（**含已过期项**——stale 分支必须有旧值才能快返回；exp 为
+     CLOCK_MONOTONIC 跨进程一致）；容器重建丢文件由预热兜底。
+  4. jobs/statistics 拆 `_job_statistics_data` + 30s swr 缓存（kb_tape_run 低频
+     索引页冷读秒级）；预热列表新增。
+- **实测**：缓存命中 kbs 27-111ms / jobs 25ms / usage 22ms / metadata 6ms /
+  overview 8-10ms；过期瞬间 stale 75ms；重启后首访 1.3s（剩余为远端库冷缓冲下
+  中间件 RBAC+主查询开销，agg_cache 无法覆盖）。
+- **坑位**：① swr 后台刷新线程用 fn(db) 传参而非闭包捕获请求 session（线程无
+  请求上下文，Session 非线程安全）；② 持久化恢复必须含过期项（只恢复未过期项
+  会让高频键 ttl=15s 在重启后缺失 → 首访同步算，实测 10-27s）；③ 预热线程
+  并行跑 + 请求并发时远端库慢是环境噪声，EXPLAIN Using index 仍 1s+ 时先查
+  缓冲池/服务器负载，勿为噪声改代码；④ 预热聚合本身是 agg_cached_swr 调用，
+  恢复的过期键会让预热走 stale 分支而非真正填充——预热依赖后台刷新线程完成
+  set（10-40s），故预热后需等刷新完成缓存才新鲜。
+
 ## 46. 当前状态（2026-10-23 知识库列表接口效率修复——wiki 聚合覆盖索引 + 死查询清理）
 
 - **需求**：「查一下 /kbs 接口效率」→ 实测定位 + 用户确认修复（commit 98448e4，已推送）
