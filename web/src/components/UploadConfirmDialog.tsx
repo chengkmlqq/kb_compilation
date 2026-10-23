@@ -341,7 +341,7 @@ export default function UploadConfirmDialog({
                 <Text style={{ fontSize: 12 }}>保留子目录结构</Text>
               </Space>
               <div style={{ fontSize: 11, color: "rgba(0,0,0,.45)", marginTop: 2 }}>
-                按子目录自动创建文档目录（所选目录本身不创建）；关闭则全部上传到当前所选目录
+                按文件夹结构自动创建文档目录（含所选文件夹本身，2026-10-20 起）；关闭则全部上传到当前所选目录
               </div>
             </div>
           )}

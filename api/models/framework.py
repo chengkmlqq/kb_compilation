@@ -12,6 +12,8 @@ can share the same database as the existing legacy deployment.
 
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -328,6 +330,72 @@ class Job(Base):
     )
     # 父子任务（2026-10-12）：子任务写链头父任务 job id（如 DOC_{docId}）；NULL=父任务
     parent_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    # 业务引用冗余列（2026-10-21 性能修复）：task_params 是 Text JSON，此前按
+    # 引用检索只能 `task_params LIKE '%runId%'` 全文扫（jobs 列表/统计、文档列表
+    # WIKI 状态、元数据采集记录 4 处）。加冗余列 + 索引，写入时由 before_insert/
+    # before_update 事件从 task_params 自动提取，检索改等值条件走索引。
+    run_id: Mapped[str | None] = mapped_column(String(64), index=True)  # 编排执行 run id（ORCH_RUN_*/RESOLVE_RUN_*）
+    kb_id: Mapped[str | None] = mapped_column(String(64), index=True)  # 知识库 id（DOC_*/WIKI_*/REPO_*）
+    doc_id: Mapped[str | None] = mapped_column(String(64), index=True)  # 文档 id（DOC_*/WIKI_SKILL_*）
+    datasource_id: Mapped[str | None] = mapped_column(String(64), index=True)  # 数据源 id（META_*）
+
+
+# ── Job 业务引用冗余列自动提取（2026-10-21）──────────────────────────────
+# task_params 内嵌的业务引用（runId/kbId/documentId/datasource_id 等）此前只能
+# LIKE 全文扫检索；这里在 flush 前从 JSON 提取到专用列，所有创建/更新路径
+# （api routers、worker tasks、scheduler 定时任务）零改动自动落库。
+# 提取键兼容现有各任务类的 params 形态：
+#   ORCH_RUN_*/RESOLVE_RUN_* → {"runId": ..., "env": ...}
+#   DOC_* → {"kbId": ..., "documentId": ..., "cookie": ...}
+#   WIKI_SKILL_* → {"config": {"skill": ..., "kb_id": ..., "doc_name": <document_id>}, "env": ...}
+#   META_* → {"datasource_id": ..., "collection_mode": ...}
+#   REPO_* → {"kbId": ..., "cookie": ...}
+def _extract_job_refs(task_params: str | None) -> dict[str, str]:
+    if not task_params:
+        return {}
+    try:
+        params = json.loads(task_params)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(params, dict):
+        return {}
+    config = params.get("config") or {}
+    if not isinstance(config, dict):
+        config = {}
+    refs: dict[str, str] = {}
+    run_id = params.get("runId") or params.get("run_id")
+    if run_id:
+        refs["run_id"] = str(run_id)
+    kb_id = params.get("kbId") or params.get("kb_id") or config.get("kb_id")
+    if kb_id:
+        refs["kb_id"] = str(kb_id)
+    doc_id = (
+        params.get("documentId")
+        or params.get("document_id")
+        or config.get("knowledge_id")
+        or config.get("kid")
+        or config.get("doc_name")
+    )
+    if doc_id:
+        refs["doc_id"] = str(doc_id)
+    ds_id = params.get("datasource_id") or params.get("datasourceId")
+    if ds_id:
+        refs["datasource_id"] = str(ds_id)
+    return refs
+
+
+def _apply_job_refs(_mapper, _connection, job: Job) -> None:
+    refs = _extract_job_refs(job.task_params)
+    job.run_id = refs.get("run_id")
+    job.kb_id = refs.get("kb_id")
+    job.doc_id = refs.get("doc_id")
+    job.datasource_id = refs.get("datasource_id")
+
+
+from sqlalchemy import event as _sa_event  # noqa: E402
+
+_sa_event.listen(Job, "before_insert", _apply_job_refs)
+_sa_event.listen(Job, "before_update", _apply_job_refs)
 
 
 class JobQueue(Base):

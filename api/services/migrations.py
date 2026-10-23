@@ -119,6 +119,95 @@ def _ensure_version_table_width(url: str) -> None:
         engine.dispose()
 
 
+#: 框架种子 SQL（scripts/framework_seed.sql，由 scripts/export_framework_seed.py
+#: 从 data_supply 导出：用户/角色/菜单/团队/数据源类型等配置型数据；
+#: 不含运行时数据（modo_job/oper_log/sys_file/seq 等））。
+SEED_FILE = ROOT / "scripts" / "framework_seed.sql"
+#: 判空用表：modo_user 有行 = 框架种子已灌（空库才播，避免覆盖现有数据）
+SEED_PROBE_TABLE = "modo_user"
+
+
+def ensure_schema_and_seed(url: str) -> None:
+    """空库自举：建全量 ORM 表 + 灌框架种子（幂等）。
+
+    2026-10-21：新增 data_supply_ontology 等「空库」部署场景后，原启动
+    流程只跑 Alembic 增量迁移，而 0001_baseline 是空锚点（不建表）、
+    27 张框架表（modo_*）也无任何建表入口 → 空库启动后缺表 500。
+    这里补齐：
+      1. Base.metadata.create_all 建全部 ORM 表（已存在则跳过）
+      2. 框架表为空时导入 scripts/framework_seed.sql（INSERT IGNORE 幂等）
+
+    失败只告警不抛出：建表/播种失败不阻断启动（后续 Alembic 仍会跑，
+    真实缺表由业务查询暴露），避免因权限不足导致整站无法启动。
+    """
+    from sqlalchemy import create_engine, inspect, text
+
+    try:
+        engine = create_engine(url)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[migrate] 建表引擎创建失败（跳过建表）：%s", exc)
+        return
+    try:
+        # 1) 建全量 ORM 表（幂等）
+        try:
+            import api.models.chat_session  # noqa: F401
+            import api.models.framework  # noqa: F401
+            import api.models.knowledge  # noqa: F401
+            import api.models.mcp_skill  # noqa: F401
+            import api.models.metadata  # noqa: F401
+            import api.models.model  # noqa: F401
+            import api.models.ontology  # noqa: F401
+            import api.models.orchestration  # noqa: F401
+            import api.models.websearch  # noqa: F401
+            from api.db import Base
+
+            Base.metadata.create_all(engine)
+            logger.info("[migrate] ORM 表已就绪（%d 张）", len(Base.metadata.tables))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[migrate] 自动建表失败（继续执行迁移）：%s", exc)
+
+        # 2) 框架种子（仅空表时播）
+        try:
+            inspector = inspect(engine)
+            if SEED_PROBE_TABLE not in inspector.get_table_names():
+                logger.info("[migrate] 框架表 %s 不存在，跳过播种", SEED_PROBE_TABLE)
+                return
+            with engine.connect() as conn:
+                has_rows = bool(
+                    conn.execute(text(f"SELECT 1 FROM `{SEED_PROBE_TABLE}` LIMIT 1")).first()
+                )
+            if has_rows:
+                logger.info("[migrate] 框架种子已存在（%s 非空），跳过播种", SEED_PROBE_TABLE)
+                return
+            if not SEED_FILE.exists():
+                logger.warning("[migrate] 种子文件不存在：%s（跳过播种）", SEED_FILE)
+                return
+            sql_text = SEED_FILE.read_text(encoding="utf-8")
+            with engine.begin() as conn:
+                for stmt in _split_sql_statements(sql_text):
+                    try:
+                        conn.execute(text(stmt))
+                    except Exception as exc:  # noqa: BLE001 — 单条失败不阻断其余
+                        logger.warning("[migrate] 种子语句失败（跳过该条）：%s", exc)
+            logger.info("[migrate] 框架种子已导入（%s）", SEED_FILE.name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[migrate] 框架播种失败（继续执行迁移）：%s", exc)
+    finally:
+        engine.dispose()
+
+
+def _split_sql_statements(sql_text: str) -> list[str]:
+    """按分号切分 SQL（跳过空行与注释行）。种子文件由本仓脚本生成，
+    值为转义后的字符串字面量，不含分号，无需复杂解析。"""
+    out: list[str] = []
+    for raw in sql_text.split(";"):
+        line = raw.strip()
+        if not line or line.startswith("--"):
+            continue
+        out.append(line)
+    return out
+
+
 def run_migrations_on_startup() -> None:
     """Apply pending Alembic migrations to the framework store.
 
@@ -138,6 +227,9 @@ def run_migrations_on_startup() -> None:
     cfg = _alembic_config()
     # 密码可能含 URL 编码的 %：configparser 插值前先转义为 %%（get 时还原）
     cfg.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
+    # 2026-10-21 空库自举：先建全量 ORM 表 + 框架种子，再 Alembic 增量
+    # （0001_baseline 是空锚点、增量迁移带 _table_exists 守卫，空库/老库都幂等）。
+    ensure_schema_and_seed(url)
     _ensure_version_table_width(url)
     logger.info("[migrate] alembic upgrade head (framework store)")
     command.upgrade(cfg, "head")

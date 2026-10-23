@@ -93,6 +93,8 @@ const { Text } = Typography;
 interface UiMessage extends ChatMessageItem {
   streaming?: boolean;
   error?: boolean;
+  /** 2026-10-21 失败原因文案（后端 error 事件带回），气泡内展示，避免只弹 toast 后页面无提示 */
+  errorText?: string;
     steps?: RagStep[];
     toolEvents?: ToolCallEvent[];
   /** 2026-10-13 对齐 WeKnora：智能体模式回复（隐藏思考大块，思考折叠进工具步骤） */
@@ -952,6 +954,17 @@ export default function ChatPage() {
               }
             } else if (evt.type === "error") {
               toast.error(evt.message || "问答失败");
+              // 2026-10-21 空回复/失败可见化：把占位消息标记为失败态并保留错误文案
+              // （此前只弹 toast，3 秒后页面只剩空白气泡，用户不知为何没有回复）。
+              // 复用它已有的 m.error 分支（红色提示 + 重试按钮），文案带出具体原因。
+              const errMsg = evt.message || "问答失败";
+              setMsgs((prev) =>
+                prev.map((m) =>
+                  m.id === placeholder.id
+                    ? { ...m, content: "", streaming: false, error: true, errorText: errMsg }
+                    : m,
+                ),
+              );
             } else if (evt.type === "done") {
               // 后端已确认生成结束：立即退出循环并复位 streaming，
               // 不再依赖 HTTP 连接关闭（连接可能因 keep-alive/代理延迟关闭，
@@ -1572,7 +1585,7 @@ export default function ChatPage() {
                     )}
                     {m.error ? (
                       <div>
-                        <Text type="danger">回答失败，请重试</Text>
+                        <Text type="danger">{m.errorText || "回答失败，请重试"}</Text>
                         <Button
                           size="small"
                           type="primary"

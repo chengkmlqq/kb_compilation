@@ -841,6 +841,62 @@ def test_orchestration_child_duration_follows_run(monkeypatch) -> None:
         app.dependency_overrides.clear()
 
 
+def test_parent_duration_follows_child_run_span(monkeypatch) -> None:
+    """2026-10-20 主任务耗时口径：链头 job 的 duration 跟随其编排子任务 run 的
+    真实执行时间范围（earliest run.created_at → latest run.updated_at）。
+
+    链头 job 是「投递」秒级（解析完成即 SUCCESS，end_time 早于子任务真实结束），
+    此前主任务耗时 << 子任务耗时总和对不上账——与 children 接口同口径，把
+    start/end/duration 按子任务 run 聚合范围覆盖，原始 job 耗时保留在
+    job_start_time/job_end_time/job_duration_ms。
+    """
+    from api.models.orchestration import TapeRun
+
+    db = _make_session()
+    db.query(Job).delete()
+    db.query(TapeRun).delete()
+    db.commit()
+
+    t0 = datetime(2026, 10, 20, 9, 0, 0)
+    # 链头 job：投递完成（end 仅比 start 晚 2s，投递语义）
+    db.add(Job(id="DOC_doc1", task_id="doc1", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"kbId": "kb1", "documentId": "doc1"}),
+               trigger_type="API", state="SUCCESS",
+               start_time=t0, end_time=t0 + timedelta(seconds=2), duration_ms=2000))
+    # 3 个编排子任务：job 投递秒级，run 真实执行分钟级、时间错开
+    for i, rid in enumerate(["run_a", "run_b", "run_c"]):
+        db.add(Job(id=f"SUMMARY_RUN_{rid}", task_id=f"SUMMARY_RUN_{rid}",
+                   task_class="KbOrchestrationRunTask", queue_name="orch",
+                   task_params=json.dumps({"runId": rid, "env": "prod"}),
+                   trigger_type="API", state="SUCCESS", parent_id="DOC_doc1",
+                   start_time=t0 + timedelta(seconds=3),
+                   end_time=t0 + timedelta(seconds=3),
+                   duration_ms=97))
+        db.add(TapeRun(id=rid, tape_id="tape1", tape_name="摘要-Map-Reduce（分块合并）",
+                       status="success", inputs={"kb_id": "kb1"},
+                       created_at=t0 + timedelta(seconds=5 + i * 30),
+                       updated_at=t0 + timedelta(seconds=65 + i * 30),
+                       step_results=[{"step_id": "n1", "step_inst": "kb_read_doc", "status": "success"}]))
+    db.commit()
+
+    client = _jobs_client(db, monkeypatch)
+    try:
+        r = client.get("/api/v1/jobs/parents")
+        assert r.status_code == 200
+        by_id = {it["id"]: it for it in r.json()["data"]["items"]}
+        parent = by_id["DOC_doc1"]
+        # 主任务耗时 = 最晚 run 结束（t0+125s）− 最早 run 开始（t0+5s）= 120s
+        assert parent["duration_ms"] == 120000, parent["duration_ms"]
+        assert parent["start_time"] == "2026-10-20T09:00:05"
+        assert parent["end_time"] == "2026-10-20T09:02:05"
+        # 原始 job 投递耗时保留，供排障对比
+        assert parent["job_duration_ms"] == 2000
+        assert parent["job_start_time"] == "2026-10-20T09:00:00"
+        assert parent["job_end_time"] == "2026-10-20T09:00:02"
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_parents_run_state_filter_mapping_and_mixed_paging(monkeypatch) -> None:
     """编排 run 与任务监控枚举对齐（2026-10-13）：
 

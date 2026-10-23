@@ -22,7 +22,7 @@ export interface UsageDistItem {
   cacheTokens: number;
 }
 
-type Metric = "tokens" | "requests";
+export type Metric = "tokens" | "requests";
 
 interface DistributionChartProps {
   title: string;
@@ -121,7 +121,6 @@ export default function DistributionChart({
         </div>
       }
       styles={{ body: { paddingTop: 8 } }}
-      style={{ height: "100%" }}
     >
       <ChartInner data={data} metric={metric} chartTitle={title} />
       <Table<UsageDistItem>

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, aliased
 
 from api.models.chat_session import ChatMessage, ChatSession
@@ -32,25 +32,51 @@ def feedback_stats(db: Session, user_id: str = "") -> dict:
 
     user_id 非 admin/ROOT 时仅统计该用户自己的反馈（对齐数据查询团队授权口径，
     预留按用户隔离；admin 看全量）。
+
+    2026-10-21 性能修复：总数/赞踩改 SQL 聚合（原实现把全部反馈行全列物化到
+    Python 再计数，chat_message 累积后每次首页加载都拖全表）；今日/本周回看
+    窗口仍需 Python 计算，只窄列取 feedback_at（不触碰 content 大列）。
     """
-    stmt = select(ChatMessage).where(
+    conds: list = [
         ChatMessage.role == "assistant",
         ChatMessage.feedback.is_not(None),
-    )
+    ]
     if user_id and user_id not in ("admin", "ROOT", ""):
-        stmt = stmt.join(ChatSession, ChatSession.id == ChatMessage.session_id).where(
-            ChatSession.user_id == user_id
+        # 按用户隔离：session_id ∈ 该用户会话（子查询，避免 join 条件展开）
+        conds.append(
+            ChatMessage.session_id.in_(
+                select(ChatSession.id).where(ChatSession.user_id == user_id)
+            )
         )
-    rows = db.execute(stmt).scalars().all()
 
-    total_messages = len(rows)
-    like_count = sum(1 for m in rows if m.feedback == "like")
-    dislike_count = sum(1 for m in rows if m.feedback == "dislike")
-    now = datetime.now(timezone.utc)
-    today_count = sum(
-        1 for m in rows if _within_days(_parse_iso(m.feedback_at), now, 1)
+    total_messages, like_count, dislike_count = (
+        db.execute(
+            select(
+                func.count(ChatMessage.id),
+                func.coalesce(
+                    func.sum(case((ChatMessage.feedback == "like", 1), else_=0)), 0
+                ),
+                func.coalesce(
+                    func.sum(case((ChatMessage.feedback == "dislike", 1), else_=0)), 0
+                ),
+            ).where(*conds)
+        ).one()
     )
-    week_count = sum(1 for m in rows if _within_days(_parse_iso(m.feedback_at), now, 7))
+    total_messages = int(total_messages or 0)
+    like_count = int(like_count or 0)
+    dislike_count = int(dislike_count or 0)
+
+    now = datetime.now(timezone.utc)
+    # 今日/本周：窄列取 feedback_at（避免全列物化 content 正文）
+    ats = (
+        db.execute(
+            select(ChatMessage.feedback_at).where(*conds)
+        )
+        .scalars()
+        .all()
+    )
+    today_count = sum(1 for ts in ats if _within_days(_parse_iso(ts), now, 1))
+    week_count = sum(1 for ts in ats if _within_days(_parse_iso(ts), now, 7))
 
     return {
         "success": True,
@@ -85,9 +111,26 @@ def list_feedback(
     """反馈明细分页：回答内容 + 问题 + 用户 + 会话标题 + 反馈类型/时间。
 
     keyword 模糊匹配 问题/回答 文本；feedback_type 取值 like / dislike / None=全部。
+
+    2026-10-21 性能修复：每行的「前驱 user 问题」原实现逐行查一次
+    （N+1，一页 20 行 = 21 条查询），改为相关子查询并入主 select 一次取回。
     """
+    UserMsg = aliased(ChatMessage)
+    # 该 assistant 消息之前最近的 user 消息内容（问题文本）——相关子查询
+    prev_question = (
+        select(UserMsg.content)
+        .where(
+            UserMsg.session_id == ChatMessage.session_id,
+            UserMsg.role == "user",
+            UserMsg.seq < ChatMessage.seq,
+        )
+        .order_by(UserMsg.seq.desc())
+        .limit(1)
+        .correlate(ChatMessage)
+        .scalar_subquery()
+    )
     stmt = (
-        select(ChatMessage, ChatSession)
+        select(ChatMessage, ChatSession, prev_question)
         .join(ChatSession, ChatSession.id == ChatMessage.session_id)
         .where(
             ChatMessage.role == "assistant",
@@ -102,7 +145,6 @@ def list_feedback(
         like = f"%{keyword}%"
         # 匹配回答文本 / 会话标题 / 用户；
         # 以及「该 assistant 消息之前最近的 user 消息(问题)」含关键字（精确对应，非整会话）
-        UserMsg = aliased(ChatMessage)
         prev_user_seq = (
             select(func.max(UserMsg.seq))
             .where(
@@ -145,8 +187,7 @@ def list_feedback(
     )
 
     items: list[dict] = []
-    for msg, sess in rows:
-        question = _prev_user_question(db, msg)
+    for msg, sess, question in rows:
         items.append(
             {
                 "id": msg.id,
@@ -155,7 +196,7 @@ def list_feedback(
                 "user_id": sess.user_id or "",
                 "feedback": msg.feedback,
                 "feedback_at": msg.feedback_at,
-                "question": question,
+                "question": question or "",
                 "answer": msg.content,
             }
         )
@@ -169,18 +210,3 @@ def list_feedback(
             "page_size": page_size,
         },
     }
-
-
-def _prev_user_question(db: Session, msg: ChatMessage) -> str:
-    """该 assistant 消息之前最近的 user 消息内容（问题文本）。"""
-    row = db.execute(
-        select(ChatMessage.content)
-        .where(
-            ChatMessage.session_id == msg.session_id,
-            ChatMessage.role == "user",
-            ChatMessage.seq < msg.seq,
-        )
-        .order_by(ChatMessage.seq.desc())
-        .limit(1)
-    ).scalar()
-    return row or ""
