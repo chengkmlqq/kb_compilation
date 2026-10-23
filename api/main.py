@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from api.config import get_settings
 from api.db import get_db
 from api.middleware import normalize_content_type, rbac_guard
-from api.routers import agents, auth, chat_sessions, chunking, cron, datasources, datagrid, feedback, files, graph, jobs, kb_categories, kbs, mcps, metadata, models, ontology, orchestrations, overview, qa, quality, quality_build_check, skills, system, system_config, usage, websearch, workers
+from api.routers import agents, auth, chat_sessions, chat_traces, chunking, cron, datasources, datagrid, feedback, files, graph, jobs, kb_categories, kbs, mcps, metadata, models, ontology, orchestrations, overview, qa, quality, quality_build_check, skills, system, system_config, usage, websearch, workers
 from api.services.identity import Identity, decode_identity_cookie
 from api.services.migrations import run_migrations_on_startup
 
@@ -48,6 +48,7 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(datasources.router, prefix="/api/v1/open")
 app.include_router(qa.router, prefix="/api/v1")
 app.include_router(chat_sessions.router, prefix="/api/v1")
+app.include_router(chat_traces.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
 app.include_router(kbs.router, prefix="/api/v1")
 app.include_router(jobs.router, prefix="/api/v1")

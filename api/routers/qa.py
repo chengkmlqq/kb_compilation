@@ -314,6 +314,11 @@ def _run_generation(
             except Exception as e:  # noqa: BLE001
                 logger.warning("incremental persist assistant failed: %s", e)
 
+        # 2026-10-23 过程追踪 collector（先声明，防 try 中断后 finally 引用未绑定）
+        from api.services.chat_trace import TraceCollector, save_trace
+
+        trace_col = None
+
         try:
             requested_cfg = None
             if req.model_id:
@@ -395,6 +400,17 @@ def _run_generation(
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception("websearch tool resolution failed; websearch disabled for this call")
+            # 2026-10-23 过程追踪：收敛 stage/context/thinking/tool_call 等事件，
+            # 会话模式下 finally 落 chat_trace（分析思考过程/工具调用链/检索命中）
+            trace_col = TraceCollector(
+                session_id=req.session_id or "",
+                user_id=ctx_user_id,
+                team_name=ctx_team_name or "",
+                kb_id=kb.id if kb is not None else (kbs[0].id if kbs else ""),
+                kind="quick",
+                question=req.question,
+                model=(requested_cfg.model or "") if requested_cfg else "",
+            )
             for event in answer_question(
                 kb_db=db,
                 kb=kb,
@@ -439,6 +455,7 @@ def _run_generation(
                     _persist_partial()  # 2026-10-20 增量落库：生成中定期保存已生成部分
                 else:
                     store.append_event(stream_id, event)
+                trace_col.on_event(event)
         except Exception as e:  # noqa: BLE001
             logger.exception("qa generation failed")
             store.append_event(stream_id, {"type": "error", "message": str(e)})
@@ -473,6 +490,12 @@ def _run_generation(
                         assistant_message_id = saved.get("id") or ""
                 except Exception as e:  # noqa: BLE001
                     logger.warning("persist assistant failed: %s", e)
+                # 2026-10-23 过程追踪落库（含空响应尝试，失败分析用）
+                try:
+                    if trace_col is not None:
+                        save_trace(db, trace_col, message_id=assistant_message_id)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("persist chat trace failed: %s", e)
             # 2026-10-14 done 事件带回持久化消息 id：前端据此把本地占位 id
             # （local-ai-*）替换为服务端 id，点赞/反馈接口才能按 id 命中消息。
             store.append_event(

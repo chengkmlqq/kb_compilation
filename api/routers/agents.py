@@ -182,6 +182,10 @@ def agent_qa_stream(
         _t0 = time.monotonic()
         _thinking_rounds = 0
         _tool_calls_count = 0
+        # 2026-10-23 过程追踪 collector（kind=agent；无会话时不落库，与 chat_message 一致）
+        from api.services.chat_trace import TraceCollector, save_trace
+
+        trace_col: TraceCollector | None = None
         agent = db.execute(select(KbAgent).where(KbAgent.id == agent_id)).scalars().first()
         if not agent:
             yield _sse({"type": "error", "message": f"agent not found: {agent_id}"})
@@ -272,6 +276,18 @@ def agent_qa_stream(
 
         # Retrieval overrides from the agent config.
         overrides = resolve_agent_qa_overrides(agent)
+        # 2026-10-23 过程追踪 collector 实例化（会话模式才落库；kb 取首个绑定库）
+        if user_id:
+            trace_col = TraceCollector(
+                session_id=req.session_id or "",
+                user_id=user_id,
+                team_name=ctx_team_name or "",
+                kb_id=(kbs[0].id if kbs else ""),
+                agent_id=agent_id,
+                kind="agent",
+                question=req.question,
+                model="",
+            )
         query_embedding = None
         if overrides.get("vector_enabled", True):
             try:
@@ -369,6 +385,8 @@ def agent_qa_stream(
             ]
 
         answer_parts: list[str] = []
+        # 2026-10-23 思考过程全文收集（此前 agent 链路不落 thinking，随 trace 补齐）
+        thinking_parts: list[str] = []
         refs: list[dict] = []
         last_kb_id = ""
         image_description = ""
@@ -397,14 +415,17 @@ def agent_qa_stream(
                 # 不再出现 content='' 的「幽灵回复」。正常有正文时不受影响。
                 if not content and refs:
                     content = "模型未返回有效内容，请稍后重试；若持续为空请检查模型服务配置"
+                # 2026-10-23 思考过程随消息一并落库（此前 agent 链路不存 thinking）
+                thinking = "".join(thinking_parts) if thinking_parts else None
                 if assistant_message_id:
                     update_message(
                         db, user_id, req.session_id, assistant_message_id,
-                        content=content, refs=refs,
+                        content=content, refs=refs, thinking=thinking,
                     )
                 else:
                     saved = append_message(
-                        db, user_id, req.session_id, "assistant", content, refs=refs
+                        db, user_id, req.session_id, "assistant", content, refs=refs,
+                        thinking=thinking,
                     )
                     assistant_message_id = saved.get("id") or ""
                 _last_persist_ts = now
@@ -565,6 +586,9 @@ def agent_qa_stream(
                         _tool_calls_count += len(event.get("tool_calls") or [])
                     elif event.get("type") == "stage" and event.get("stage") == "generation" and event.get("status") == "running":
                         _thinking_rounds += 1
+                    elif event.get("type") == "thinking":
+                        # 2026-10-23 思考过程收集（此前丢弃，随 trace/chat_message 落库）
+                        thinking_parts.append(event.get("text", ""))
                     if event.get("type") == "delta":
                         answer_parts.append(event.get("text", ""))
                         _persist_partial()  # 2026-10-20 增量落库：生成中定期保存已生成部分
@@ -586,9 +610,13 @@ def agent_qa_stream(
                             }
                             for h in hits
                         ]
+                    if trace_col is not None:
+                        trace_col.on_event(event)
                     yield _sse(event)
         except Exception as e:  # noqa: BLE001
             logger.exception("agent qa failed for kb %s", last_kb_id)
+            if trace_col is not None:
+                trace_col.error = str(e)[:500]
             yield _sse({"type": "error", "message": str(e), "kb_id": last_kb_id})
         else:
             # 2026-10-20 空响应兜底：生成结束但未产出任何正文（LLM 空流、thinking-only、
@@ -623,6 +651,12 @@ def agent_qa_stream(
                         assistant_message_id = saved.get("id") or ""
                 except Exception as e:  # noqa: BLE001
                     logger.warning("failed to persist agent assistant message: %s", e)
+                # 2026-10-23 过程追踪落库（含空响应尝试，失败分析用）
+                try:
+                    if trace_col is not None:
+                        save_trace(db, trace_col, message_id=assistant_message_id)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("failed to persist agent chat trace: %s", e)
             # 2026-10-14 done 事件带回持久化消息 id：前端据此把本地占位 id 换成服务端 id，
             # 否则点赞/反馈按 id 查库会 404「消息不存在」。
             # 2026-10-21 补统计（对齐 WeKnora done 事件的 total_steps/total_duration_ms）：
