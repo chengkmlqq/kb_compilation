@@ -15,8 +15,8 @@ chat_trace 按「assistant 消息」一条记录（无正文/空响应也记录�
 
 迁移幂等：表已存在则跳过（dev 双表由 create_all 按模型补建）。
 
-Revision ID: 0041_chat_trace
-Revises: 0040_quality_doc_eval_garbled_split
+Revision ID: 0042_chat_trace
+Revises: 0041_quality_eval_file_tables
 Create Date: 2026-10-23
 """
 from __future__ import annotations
@@ -27,8 +27,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "0041_chat_trace"
-down_revision: Union[str, None] = "0040_quality_doc_eval_garbled_split"
+revision: str = "0042_chat_trace"
+down_revision: Union[str, None] = "0041_quality_eval_file_tables"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
