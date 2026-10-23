@@ -2,7 +2,39 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-23（切片评估 v3——单文件粒度 LLM 对照完整原文评估 Wiki + 构建时间与耗时展示，重触发进行中）
+最后更新：2026-10-23（文档转换评估改单文件粒度——文件名/状态/乱码/引擎/耗时逐文件展示，全库重触发完成）
+
+## 45. 当前状态（2026-10-23 文档转换评估单文件粒度——文件名/状态/乱码/引擎/耗时逐文件展示）
+
+- **需求**：「改文档转换评估逻辑：评估粒度=单文件；评估文件名、转换后的 MD 内容是否有乱码、状态是否正常；
+  提取转换引擎、转换耗时展示；改造后清空旧评估记录，全部文档重新触发评估」
+- **代码**（commit fe692bd，已推送 dev；`scripts/gen_quality_dim_tapes.py` + `scripts/seed_tape_data/文档转换评估.json`）：
+  - 评估脚本 QD_CODE 重写为**单文件粒度**：逐文档产 per_doc 明细（doc_id/文件名/扩展名/文件大小/
+    parse_state/parse_error/parse_engine/duration_ms/chunk_count/md_length/garbled/garbled_hits/score）
+  - **乱码检测**（纯程序，无 LLM）：U+FFFD 替换符计数 / 非法代理区（0xD800-0xDFFF）/ 编码错位特征词
+    （锟斤拷/烫烫烫/屯屯屯/锘挎/鈥/Ã© 等）/ 非法控制字符（仅备注）；命中落 issue_type=garbled_text，
+    问题详情含命中项与上下文样例；文本源=doc_chunk 按 seq 拼接全量 content（enabled=1 且 chunk_type='text'）
+  - **转换引擎**：doc_chunk.meta.parse_engine（兼容 dict/JSON 字符串，实测 mineru/docreader）
+  - **转换耗时**：modo_job 最近一次解析任务 duration_ms（task_class LIKE '%Document%'，实测 KbDocumentProcessTask）
+  - 得分：FAILED=-100 / 处理中=-50 / READY 空文本=-70（empty_conversion）/ READY 乱码=-40；汇总 health_score=
+    平均单文件分；metrics 增 garbled/avg_score/avg_duration_ms/engines/by_state/per_doc
+  - gen 脚本顺带修复：QCLM_CODE 引用改为读 `scripts/chunk_eval_v3_step_code.py` 文件（此前 import 缺该符号
+    跑不起来），切片评估 label/descr 同步 v3 文案，三个单维度 seed 幂等可重放
+  - 前端展示已在切片评估 v3 提交中就位（QualityAssessPane.tsx docDetailTable：文件名/状态/引擎/耗时/切片/乱码/得分；
+    metricSummary 展示 文档/就绪/失败/处理中/乱码/平均耗时/引擎分布），本次无需再改前端
+- **部署**：`scripts/apply_doc_eval_tape.py` 容器内重建线上「文档转换评估」编排（tape id 1ee30c7d 不变，
+  4 节点，label 已更新为「文档转换质量评估（单文件：状态/引擎/耗时/乱码）」）；不涉及 api/web/worker 代码，
+  无需重建容器
+- **清空+重触发**（`scripts/retrigger_doc_eval.py --include-empty`，api-server 容器内 nohup 后台执行）：
+  清空旧 dim=doc 的 kb_quality_run+kb_quality_report 共 17 条，对全部 8 个有文档的知识库
+  （含从未评估过的 35a8e888）逐个 execute_tape(env=prod) 发起 scope=all 并轮询到终态，全部 success
+- **结果落库验证**：每库 doc_metrics 含 per_doc 明细，字段齐全（如 fdf70549 库「模型元数据.xlsx」READY /
+  docreader / 1862392ms / garbled=false / score=100；eb6ee0ed 库 283 文档 health=99，mineru×119+docreader×162+
+  未知×2，avg_dur≈1300s，2 个 FAILED）
+- **坑位**：① 乱码检测只覆盖文本切片，纯图片/扫描 PDF 无文本 → 命中 empty_conversion 而非乱码；
+  ② 未知引擎=该文档无 text 切片（FAILED/空转换），engines 统计用「未知」兜底；③ 文档转换评估纯程序秒级，
+  与切片评估（LLM 逐文件数小时）串行不冲突；④ 重触发脚本轮询须 rollback 结束旧事务（MySQL REPEATABLE READ
+  快照，同 f5332ef 修复）
 
 ## 44. 当前状态（2026-10-23 切片评估 v3——单文件粒度评估 Wiki：LLM 对照完整原文查内容错误/缺失/是否有意义 + Wiki 构建起始与耗时展示）
 
