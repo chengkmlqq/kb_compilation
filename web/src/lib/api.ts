@@ -4525,6 +4525,32 @@ export interface QualityDocItem {
   content_garbled?: boolean;
   score?: number | null;
   updated_at?: string | null;
+  // 切片评估维度（dim=chunk）
+  chunks?: number;
+  avg_len?: number | null;
+  wiki_pages?: number;
+  wiki_start_time?: string | null;
+  wiki_build_sec?: number | null;
+  doc_process_sec?: number | null;
+  wiki_tape?: string;
+  eval_duration_sec?: number | null;
+  conclusion?: string;
+  error?: string;
+  // 图数据评估维度（dim=graph）
+  nodes?: number;
+  rels?: number;
+  dumb_nodes?: number;
+  untraceable_rels?: number;
+  wiki_missing?: number;
+  // wiki 评估维度（dim=wiki）
+  pages?: number;
+  empty?: number;
+  orphan?: number;
+  broken_links?: number;
+  placeholder?: number;
+  missing_source?: number;
+  no_folder?: number;
+  issues?: string[];
 }
 
 export function apiListQualityDocEval(params: {
@@ -4533,11 +4559,13 @@ export function apiListQualityDocEval(params: {
   keyword?: string;
   page?: number;
   page_size?: number;
+  dim?: string;
 }) {
   const sp = new URLSearchParams({
     page: String(params.page ?? 1),
     page_size: String(params.page_size ?? 20),
   });
+  if (params.dim) sp.set("dim", params.dim);
   if (params.kb_id) sp.set("kb_id", params.kb_id);
   if (params.status) sp.set("status", params.status);
   if (params.keyword) sp.set("keyword", params.keyword);

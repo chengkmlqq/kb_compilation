@@ -349,6 +349,36 @@ try:
                  "ctgb": 1 if _p.get("content_garbled") else 0,
                  "sc": _p.get("score")},
             )
+    # ── 切片评估（dim=chunk）：单文件粒度明细落库，每文件一行，按 kb 整批覆盖 ──
+    if _dim == "chunk":
+        _db.execute(text("DELETE FROM kb_quality_chunk_eval WHERE kb_id=:kb"), {"kb": _kb})
+        for _p in (_m.get("per_doc") or []):
+            _db.execute(
+                text("INSERT INTO kb_quality_chunk_eval (id, kb_id, doc_id, run_id, file_name, chunks, avg_len, wiki_pages, wiki_start_time, wiki_build_sec, doc_process_sec, wiki_tape, eval_duration_sec, score, conclusion, issues, error) VALUES (:id, :kb, :did, :rid, :fn, :ch, :alen, :wp, :wst, :wbs, :dps, :wt, :eds, :sc, :conc, :iss, :err)"),
+                {"id": uuid.uuid4().hex[:32], "kb": _kb, "did": str(_p.get("doc_id") or ""),
+                 "rid": _qid, "fn": str(_p.get("file_name") or "")[:255],
+                 "ch": _p.get("chunks"), "alen": _p.get("avg_len"),
+                 "wp": _p.get("wiki_pages"),
+                 "wst": _p.get("wiki_start_time"), "wbs": _p.get("wiki_build_sec"),
+                 "dps": _p.get("doc_process_sec"), "wt": str(_p.get("wiki_tape") or "")[:128],
+                 "eds": _p.get("eval_duration_sec"), "sc": _p.get("score"),
+                 "conc": str(_p.get("conclusion") or "")[:500],
+                 "iss": json.dumps(_p.get("issues") or [], ensure_ascii=False),
+                 "err": str(_p.get("error") or "")[:500]},
+            )
+    # ── 图数据评估（dim=graph）：单文件粒度明细落库，每文件一行，按 kb 整批覆盖 ──
+    if _dim == "graph":
+        _db.execute(text("DELETE FROM kb_quality_graph_eval WHERE kb_id=:kb"), {"kb": _kb})
+        for _p in (_m.get("per_doc") or []):
+            _db.execute(
+                text("INSERT INTO kb_quality_graph_eval (id, kb_id, doc_id, run_id, file_name, nodes, rels, dumb_nodes, untraceable_rels, wiki_missing, score, issues) VALUES (:id, :kb, :did, :rid, :fn, :nd, :rl, :dumb, :utr, :wkm, :sc, :iss)"),
+                {"id": uuid.uuid4().hex[:32], "kb": _kb, "did": str(_p.get("doc_id") or ""),
+                 "rid": _qid, "fn": str(_p.get("file_name") or "")[:255],
+                 "nd": _p.get("nodes"), "rl": _p.get("rels"),
+                 "dumb": _p.get("dumb_nodes"), "utr": _p.get("untraceable_rels"),
+                 "wkm": _p.get("wiki_missing"), "sc": _p.get("score"),
+                 "iss": json.dumps(_p.get("issues") or [], ensure_ascii=False)},
+            )
     _db.commit()
 except Exception as _e:
     _db.rollback()

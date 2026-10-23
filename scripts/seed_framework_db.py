@@ -1792,7 +1792,7 @@ print(f"[n02] 切片质量: 健康分 {_r['metrics'].get('health_score')} 问题
 
 """
 
-QW_CODE = """
+QW_CODE = """\\
 
 import re
 from api.db import get_sessionmaker
@@ -1805,18 +1805,21 @@ _kb = bindings.get("kb_id") or ""
 _db = get_sessionmaker()()
 try:
     _pages = _db.execute(
-        text("SELECT id, slug, title, page_type, content, folder_id, folder_ids FROM wiki_page WHERE kb_id=:kb AND status='active'"),
+        text("SELECT id, slug, title, page_type, content, folder_id, folder_ids, source_refs FROM wiki_page WHERE kb_id=:kb AND status='active'"),
         {"kb": _kb},
     ).all()
     _links = _db.execute(
         text("SELECT from_page_id, to_page_id FROM wiki_link WHERE kb_id=:kb"),
         {"kb": _kb},
     ).all()
+    _doc_names = dict(
+        _db.execute(text("SELECT id, file_name FROM kb_document WHERE kb_id=:kb"), {"kb": _kb}).all()
+    )
 finally:
     _db.close()
 
 if not _pages:
-    _r = {"metrics": {"pages": 0, "health_score": 0},
+    _r = {"metrics": {"pages": 0, "health_score": 0, "per_doc": []},
           "issues": [{"dim": "wiki", "issue_type": "no_pages", "detail": "无 wiki 页面(未构建或构建失败)"}],
           "attribution": [{"dim": "wiki", "cause": "wiki 构建未执行或全部失败", "suggestion": "检查构建编排 run 状态 / 重跑构建"}]}
 else:
@@ -1824,12 +1827,33 @@ else:
     _slug_by_id = {str(p[0]): str(p[1]) for p in _pages}
     _linked_ids = {str(l[0]) for l in _links} | {str(l[1]) for l in _links}
     _issues = []
+    # 页面 → 归属文档（source_refs 首个元素 "doc_id|file_name"）
+    def _doc_of(_p):
+        _refs = _p[7] or []
+        if not _refs:
+            return ""
+        return str(_refs[0]).split("|")[0].strip()
+    _per_doc = {}
+    for _p in _pages:
+        _did = _doc_of(_p)
+        _d = _per_doc.setdefault(_did, {"doc_id": _did, "file_name": _doc_names.get(_did, ""),
+                                        "pages": 0, "empty": 0, "orphan": 0, "broken_links": 0,
+                                        "placeholder": 0, "missing_source": 0, "no_folder": 0, "issues": []})
+        _d["pages"] += 1
     _empty = [p for p in _pages if not (p[4] or "").strip()]
     for _p in _empty:
         _issues.append({"dim": "wiki", "slug": str(_p[1]), "page_type": str(_p[3]), "issue_type": "empty_content", "detail": "页面内容为空"})
+        _d = _per_doc.get(_doc_of(_p))
+        if _d:
+            _d["empty"] += 1
+            _d["issues"].append("empty_content")
     _orphans = [p for p in _pages if str(p[0]) not in _linked_ids]
     for _p in _orphans:
         _issues.append({"dim": "wiki", "slug": str(_p[1]), "page_type": str(_p[3]), "issue_type": "orphan", "detail": "无任何双向链接"})
+        _d = _per_doc.get(_doc_of(_p))
+        if _d:
+            _d["orphan"] += 1
+            _d["issues"].append("orphan")
     _broken = 0
     _broken_slugs = set()
     for _p in _pages:
@@ -1839,17 +1863,36 @@ else:
             if _t and _t not in _slug_by_id.values():
                 _broken += 1
                 _broken_slugs.add(_t)
+        if _targets:
+            _d = _per_doc.get(_doc_of(_p))
+            if _d:
+                _d_broken = sum(1 for _t in _targets if _t.strip() and _t.strip() not in _slug_by_id.values())
+                _d["broken_links"] += _d_broken
+                if _d_broken:
+                    _d["issues"].append("broken_links")
     if _broken:
         _issues.append({"dim": "wiki", "issue_type": "broken_links", "detail": f"{_broken} 处断链,目标示例: {list(_broken_slugs)[:5]}"})
     _placeholder = [p for p in _pages if PLACEHOLDER in (p[4] or "")]
     for _p in _placeholder:
         _issues.append({"dim": "wiki", "slug": str(_p[1]), "page_type": str(_p[3]), "issue_type": "llm_placeholder", "detail": "LLM 解读占位未填充"})
+        _d = _per_doc.get(_doc_of(_p))
+        if _d:
+            _d["placeholder"] += 1
+            _d["issues"].append("llm_placeholder")
     _no_source = [p for p in _pages if not any(m in (p[4] or "") for m in _SOURCE_MARKS)]
     for _p in _no_source:
         _issues.append({"dim": "wiki", "slug": str(_p[1]), "page_type": str(_p[3]), "issue_type": "missing_source", "detail": "页面无出处/原文引用标记"})
+        _d = _per_doc.get(_doc_of(_p))
+        if _d:
+            _d["missing_source"] += 1
+            _d["issues"].append("missing_source")
     _no_folder = [p for p in _pages if not (p[5] or p[6] or "")]
     for _p in _no_folder:
         _issues.append({"dim": "wiki", "slug": str(_p[1]), "page_type": str(_p[3]), "issue_type": "no_folder", "detail": "页面未挂载任何目录"})
+        _d = _per_doc.get(_doc_of(_p))
+        if _d:
+            _d["no_folder"] += 1
+            _d["issues"].append("no_folder")
     _n = len(_pages)
     _s = 100.0
     _s -= (len(_empty) / _n) * 100 + (len(_orphans) / _n) * 60
@@ -1858,7 +1901,9 @@ else:
     _metrics = {"pages": _n, "empty": len(_empty), "orphan": len(_orphans), "broken_links": _broken,
                 "placeholder": len(_placeholder), "missing_source": len(_no_source), "no_folder": len(_no_folder),
                 "empty_ratio": round(len(_empty) / _n, 4), "orphan_ratio": round(len(_orphans) / _n, 4),
-                "health_score": max(0, int(_s))}
+                "docs": len(_per_doc),
+                "health_score": max(0, int(_s)),
+                "per_doc": [d for _, d in sorted(_per_doc.items(), key=lambda x: x[1]["file_name"] or "")]}
     _attr = []
     if _metrics.get("empty_ratio", 0) > 0.05:
         _attr.append({"dim": "wiki", "cause": "空内容页占比高 → 建页流程在生成内容前中断/LLM 输出为空", "suggestion": "检查构建日志中该页的生成步骤;对空页重跑补写"})
@@ -1873,13 +1918,15 @@ else:
     _r = {"metrics": _metrics, "issues": _issues, "attribution": _attr}
 
 bindings["wiki_r"] = _r
-print(f"[n03] Wiki质量: 健康分 {_r['metrics'].get('health_score')} 问题 {len(_r['issues'])}")
+print(f"[n03] Wiki质量: 健康分 {_r['metrics'].get('health_score')} 问题 {len(_r['issues'])} 文件 {len(_r['metrics'].get('per_doc') or [])}")
 
 """
 
-QG_CODE = """
+QG_CODE = """\\
 
 import os
+import json
+from collections import Counter
 from api.db import get_sessionmaker
 from sqlalchemy import text
 from neo4j import GraphDatabase
@@ -1901,6 +1948,9 @@ try:
         _rel_types = {_r["t"]: _r["c"] for _r in _rel_rows}
         _untraceable = _sess.run(f"MATCH (a:`{_label}`)-[r]-(b:`{_label}`) WHERE (r.rule_slug IS NULL OR r.rule_slug='') AND (r.note IS NULL OR r.note='') RETURN count(r) AS c").single()["c"]
         _node_slugs = _sess.run(f"MATCH (n:`{_label}`) WHERE n.page_slug IS NOT NULL AND n.page_slug<>'' RETURN collect(DISTINCT n.page_slug) AS slugs").single()["slugs"] or []
+        # ── 文件粒度：节点按 page_slug → wiki 页 → source_refs 映射到文档 ──
+        _per_node = _sess.run(f"MATCH (n:`{_label}`) RETURN n.page_slug AS ps, (n.attributes IS NULL OR size(n.attributes)=0) AS dumb").data()
+        _per_rel = _sess.run(f"MATCH (a:`{_label}`)-[r]-(b:`{_label}`) RETURN a.page_slug AS aps, b.page_slug AS bps, type(r) AS t, (r.rule_slug IS NULL OR r.rule_slug='') AND (r.note IS NULL OR r.note='') AS utr").data()
 finally:
     _driver.close()
 
@@ -1915,12 +1965,70 @@ if _untraceable > 0:
 
 _db = get_sessionmaker()()
 try:
+    # wiki 页 slug → 首个 source_ref 文档 id（格式 "doc_id|file_name"）
+    _wiki_rows = _db.execute(
+        text("SELECT slug, source_refs FROM wiki_page WHERE kb_id=:kb AND status='active'"),
+        {"kb": _kb},
+    ).all()
+    _doc_by_slug = {}
+    for _slug, _refs in _wiki_rows:
+        _refs = _refs or []
+        if _refs:
+            _first = str(_refs[0]).split("|")[0].strip()
+            if _first:
+                _doc_by_slug[str(_slug)] = _first
+    _doc_names = dict(
+        _db.execute(text("SELECT id, file_name FROM kb_document WHERE kb_id=:kb"), {"kb": _kb}).all()
+    )
     if _node_slugs:
         _existing = _db.execute(text("SELECT slug FROM wiki_page WHERE kb_id=:kb AND slug IN :slugs AND status='active'"), {"kb": _kb, "slugs": tuple(_node_slugs)}).scalars().all()
         _missing_slugs = [s for s in _node_slugs if s not in set(_existing)]
         if _missing_slugs:
             _issues.append({"dim": "graph", "issue_type": "wiki_missing_nodes", "detail": f"{len(_missing_slugs)} 个图节点对应 wiki 页不存在,示例: {_missing_slugs[:5]}"})
     _wiki_pages = _db.execute(text("SELECT count(*) FROM wiki_page WHERE kb_id=:kb AND status='active'"), {"kb": _kb}).scalar() or 0
+
+    # ── 文件粒度聚合：每文档的节点/边/哑节点/不可回溯/wiki缺失 ──
+    _per_doc = {}
+    _active_slugs = {str(s) for s, _ in _wiki_rows}
+    for _nd in _per_node:
+        _sl = str(_nd.get("ps") or "")
+        _doc = _doc_by_slug.get(_sl)
+        if not _doc:
+            continue
+        _d = _per_doc.setdefault(_doc, {"doc_id": _doc, "file_name": _doc_names.get(_doc, ""),
+                                        "nodes": 0, "dumb_nodes": 0, "rels": 0,
+                                        "untraceable_rels": 0, "wiki_missing": 0, "issues": []})
+        _d["nodes"] += 1
+        if _nd.get("dumb"):
+            _d["dumb_nodes"] += 1
+        if _sl and _sl not in _active_slugs:
+            _d["wiki_missing"] += 1
+    for _re in _per_rel:
+        _docs = {_doc_by_slug.get(str(_re.get("aps") or "")), _doc_by_slug.get(str(_re.get("bps") or ""))}
+        _docs.discard(None)
+        for _doc in _docs:
+            _d = _per_doc.setdefault(_doc, {"doc_id": _doc, "file_name": _doc_names.get(_doc, ""),
+                                            "nodes": 0, "dumb_nodes": 0, "rels": 0,
+                                            "untraceable_rels": 0, "wiki_missing": 0, "issues": []})
+            _d["rels"] += 1
+            if _re.get("utr"):
+                _d["untraceable_rels"] += 1
+    # 每文件得分：哑节点/不可追溯边各扣，wiki 缺失扣
+    for _d in _per_doc.values():
+        _s = 100.0
+        if _d["nodes"]:
+            _s -= (_d["dumb_nodes"] / _d["nodes"]) * 60
+        if _d["rels"]:
+            _s -= (_d["untraceable_rels"] / _d["rels"]) * 40
+        _s -= _d["wiki_missing"] * 10
+        _d["score"] = max(0, int(_s))
+        if _d["dumb_nodes"]:
+            _d["issues"].append("dumb_nodes")
+        if _d["untraceable_rels"]:
+            _d["issues"].append("untraceable_rels")
+        if _d["wiki_missing"]:
+            _d["issues"].append("wiki_missing")
+    _per_doc_list = sorted(_per_doc.values(), key=lambda x: x["file_name"] or "")
 finally:
     _db.close()
 
@@ -1935,7 +2043,9 @@ if _issues:
 _metrics = {"nodes": _nodes, "rels": _rels, "dumb_nodes": _dumb, "rel_types": _rel_types,
             "untraceable_rels": _untraceable, "wiki_pages": _wiki_pages,
             "dumb_ratio": round(_dumb / max(_nodes, 1), 4) if _nodes else 0,
-            "health_score": max(0, int(_health))}
+            "docs": len(_per_doc_list),
+            "health_score": max(0, int(_health)),
+            "per_doc": _per_doc_list}
 _attr = []
 if _metrics.get("dumb_nodes", 0) > 0:
     _attr.append({"dim": "graph", "cause": "哑节点 = 写入方未补 attributes(仅 name+kg)", "suggestion": "图谱写入脚本收尾兜底补 attributes(定义/来源)"})
@@ -1946,7 +2056,7 @@ if _metrics.get("untraceable_rels", 0) > 0:
 _r = {"metrics": _metrics, "issues": _issues, "attribution": _attr}
 
 bindings["graph_r"] = _r
-print(f"[n04] 图数据质量: 健康分 {_r['metrics'].get('health_score')} 问题 {len(_r['issues'])}")
+print(f"[n04] 图数据质量: 健康分 {_r['metrics'].get('health_score')} 问题 {len(_r['issues'])} 文件 {len(_per_doc_list)}")
 
 """
 

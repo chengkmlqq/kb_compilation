@@ -21,7 +21,7 @@ from sqlalchemy.pool import StaticPool
 
 from api.db import Base, get_db
 from api.main import app
-from api.models.knowledge import QualityDocEval, QualityRun
+from api.models.knowledge import QualityChunkEval, QualityDocEval, QualityGraphEval, QualityRun, QualityWikiEval
 from api.services.identity import Identity, encode_identity_cookie
 
 
@@ -173,3 +173,72 @@ def test_docs_route_conflict_with_runs(env) -> None:
 
     r2 = client.get("/api/v1/quality/runs/NOT_EXIST")
     assert r2.status_code == 404
+
+
+def test_docs_dim_chunk_fields(env) -> None:
+    """dim=chunk：返回切片评估文件粒度字段。"""
+    db, client = env
+    db.add(QualityChunkEval(id="c1", kb_id="kb1", doc_id="d1", run_id="R1",
+                            file_name="a.pdf", chunks=5, avg_len=120, wiki_pages=3,
+                            wiki_build_sec=12.5, doc_process_sec=30.1,
+                            eval_duration_sec=2.0, score=88, conclusion="质量良好",
+                            issues=["wiki_content_error"]))
+    db.commit()
+
+    r = client.get("/api/v1/quality/docs", params={"dim": "chunk", "kb_id": "kb1"})
+    body = r.json()
+    assert body["data"]["dim"] == "chunk"
+    assert body["data"]["total"] == 1
+    item = body["data"]["items"][0]
+    assert item["chunks"] == 5
+    assert item["avg_len"] == 120
+    assert item["wiki_build_sec"] == 12.5
+    assert item["score"] == 88
+    assert item["issues"] == ["wiki_content_error"]
+
+
+def test_docs_dim_graph_fields(env) -> None:
+    """dim=graph：返回图数据评估文件粒度字段。"""
+    db, client = env
+    db.add(QualityGraphEval(id="g1", kb_id="kb1", doc_id="d1", run_id="R1",
+                            file_name="a.pdf", nodes=10, rels=6, dumb_nodes=1,
+                            untraceable_rels=2, wiki_missing=0, score=75,
+                            issues=["dumb_nodes"]))
+    db.commit()
+
+    r = client.get("/api/v1/quality/docs", params={"dim": "graph", "kb_id": "kb1"})
+    body = r.json()
+    item = body["data"]["items"][0]
+    assert item["nodes"] == 10
+    assert item["rels"] == 6
+    assert item["dumb_nodes"] == 1
+    assert item["untraceable_rels"] == 2
+    assert item["wiki_missing"] == 0
+    assert item["score"] == 75
+
+
+def test_docs_dim_wiki_fields(env) -> None:
+    """dim=wiki：返回 wiki 评估文件粒度字段。"""
+    db, client = env
+    db.add(QualityWikiEval(id="w1", kb_id="kb1", doc_id="d1", run_id="R1",
+                           file_name="a.pdf", pages=4, empty=1, orphan=2,
+                           broken_links=3, placeholder=0, missing_source=1,
+                           no_folder=0, score=60, issues=["empty_content", "orphan"]))
+    db.commit()
+
+    r = client.get("/api/v1/quality/docs", params={"dim": "wiki", "kb_id": "kb1"})
+    body = r.json()
+    item = body["data"]["items"][0]
+    assert item["pages"] == 4
+    assert item["empty"] == 1
+    assert item["orphan"] == 2
+    assert item["broken_links"] == 3
+    assert item["score"] == 60
+    assert item["issues"] == ["empty_content", "orphan"]
+
+
+def test_docs_dim_invalid(env) -> None:
+    """非法 dim 返回 400。"""
+    client = env[1]
+    r = client.get("/api/v1/quality/docs", params={"dim": "bogus"})
+    assert r.status_code == 400

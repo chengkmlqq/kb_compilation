@@ -221,7 +221,11 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
     async (filters: { kb_id?: string; status?: string; keyword?: string }, pageNum = 1) => {
       setDocEvalLoading(true);
       try {
+        // all 页（wiki评估）查 wiki 维度的文件粒度明细；doc/chunk/graph 查各自表
+        const apiDim =
+          dim === "all" ? "wiki" : dim === "doc" ? "doc" : dim === "chunk" ? "chunk" : "graph";
         const res = await apiListQualityDocEval({
+          dim: apiDim,
           kb_id: filters.kb_id || undefined,
           status: filters.status || undefined,
           keyword: filters.keyword || undefined,
@@ -237,33 +241,14 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
         setDocEvalLoading(false);
       }
     },
-    [message],
+    [dim, message],
   );
 
   const load = useCallback(async () => {
-    // dim=doc 页面主页平铺文件评估结果（kb_quality_doc_eval），不走 run 列表
-    if (dim === "doc") {
-      await loadDocEval(docApplied, docEvalPage);
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await apiListQualityRuns({
-        kb_id: applied.kb_id || undefined,
-        status: applied.status || undefined,
-        dim: dim === "all" ? undefined : dim,
-        page,
-        page_size: pageSize,
-      });
-      const r = res.data;
-      setItems(r?.items ?? []);
-      setTotal(r?.total ?? 0);
-    } catch (e) {
-      message.error(`加载失败: ${String(e)}`);
-    } finally {
-      setLoading(false);
-    }
-  }, [applied, page, pageSize, dim, message, loadDocEval, docApplied, docEvalPage]);
+    // 主页直接平铺文件评估结果（kb_quality_*_eval），不走 run 列表
+    await loadDocEval(docApplied, docEvalPage);
+    return;
+  }, [loadDocEval, docApplied, docEvalPage]);
 
   useEffect(() => {
     load();
@@ -516,7 +501,7 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
     );
   };
 
-  /** 文档转换评估-文件评估结果表列（kb_quality_doc_eval，每文件一行，最新状态） */
+    /** 文档转换评估-文件评估结果表列（kb_quality_doc_eval，每文件一行，最新状态） */
   const docColumns: ColumnsType<QualityDocItem> = [
     {
       title: "知识库",
@@ -566,6 +551,129 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
       render: formatTime,
     },
   ];
+
+  /** 切片评估-文件评估结果表列（kb_quality_chunk_eval） */
+  const chunkColumns: ColumnsType<QualityDocItem> = [
+    {
+      title: "知识库",
+      dataIndex: "kb_name",
+      width: 160,
+      ellipsis: true,
+      render: (v: string, r) => v || (r.kb_id ? r.kb_id.slice(0, 8) + "…" : "-"),
+    },
+    { title: "文件名", dataIndex: "file_name", ellipsis: true },
+    { title: "切片", dataIndex: "chunks", width: 64 },
+    { title: "均长", dataIndex: "avg_len", width: 80, render: (v: number | null) => v ?? "-" },
+    { title: "Wiki页", dataIndex: "wiki_pages", width: 84, render: (v: number | null) => v ?? 0 },
+    {
+      title: "Wiki构建耗时",
+      dataIndex: "wiki_build_sec",
+      width: 110,
+      render: (v: number | null) => fmtDuration(v != null ? v * 1000 : null),
+    },
+    {
+      title: "评估耗时",
+      dataIndex: "eval_duration_sec",
+      width: 90,
+      render: (v: number | null) => fmtDuration(v != null ? v * 1000 : null),
+    },
+    {
+      title: "评分",
+      dataIndex: "score",
+      width: 70,
+      render: (v: number | null) => (
+        <Tag color={scoreColor(v ?? null)}>{v ?? "-"}</Tag>
+      ),
+    },
+    {
+      title: "结论",
+      dataIndex: "conclusion",
+      ellipsis: true,
+      render: (v: string, r) =>
+        r.error ? (
+          <Text type="danger" style={{ fontSize: 12 }}>评估失败</Text>
+        ) : (
+          <Text style={{ fontSize: 12 }}>{v || "-"}</Text>
+        ),
+    },
+    {
+      title: "评估时间",
+      dataIndex: "updated_at",
+      width: 150,
+      render: formatTime,
+    },
+  ];
+
+  /** 图数据评估-文件评估结果表列（kb_quality_graph_eval） */
+  const graphColumns: ColumnsType<QualityDocItem> = [
+    {
+      title: "知识库",
+      dataIndex: "kb_name",
+      width: 160,
+      ellipsis: true,
+      render: (v: string, r) => v || (r.kb_id ? r.kb_id.slice(0, 8) + "…" : "-"),
+    },
+    { title: "文件名", dataIndex: "file_name", ellipsis: true },
+    { title: "节点", dataIndex: "nodes", width: 70 },
+    { title: "边", dataIndex: "rels", width: 70 },
+    { title: "哑节点", dataIndex: "dumb_nodes", width: 80 },
+    { title: "不可回溯边", dataIndex: "untraceable_rels", width: 100 },
+    { title: "Wiki缺失", dataIndex: "wiki_missing", width: 96 },
+    {
+      title: "评分",
+      dataIndex: "score",
+      width: 70,
+      render: (v: number | null) => (
+        <Tag color={scoreColor(v ?? null)}>{v ?? "-"}</Tag>
+      ),
+    },
+    {
+      title: "评估时间",
+      dataIndex: "updated_at",
+      width: 150,
+      render: formatTime,
+    },
+  ];
+
+  /** Wiki 评估-文件评估结果表列（kb_quality_wiki_eval） */
+  const wikiColumns: ColumnsType<QualityDocItem> = [
+    {
+      title: "知识库",
+      dataIndex: "kb_name",
+      width: 160,
+      ellipsis: true,
+      render: (v: string, r) => v || (r.kb_id ? r.kb_id.slice(0, 8) + "…" : "-"),
+    },
+    { title: "文件名", dataIndex: "file_name", ellipsis: true },
+    { title: "页面", dataIndex: "pages", width: 64 },
+    { title: "空页", dataIndex: "empty", width: 64 },
+    { title: "孤立", dataIndex: "orphan", width: 64 },
+    { title: "断链", dataIndex: "broken_links", width: 70 },
+    { title: "占位", dataIndex: "placeholder", width: 64 },
+    { title: "缺出处", dataIndex: "missing_source", width: 80 },
+    { title: "未挂目录", dataIndex: "no_folder", width: 90 },
+    {
+      title: "评分",
+      dataIndex: "score",
+      width: 70,
+      render: (v: number | null) => (
+        <Tag color={scoreColor(v ?? null)}>{v ?? "-"}</Tag>
+      ),
+    },
+    {
+      title: "评估时间",
+      dataIndex: "updated_at",
+      width: 150,
+      render: formatTime,
+    },
+  ];
+
+  /** 当前维度的文件评估结果表列 */
+  const fileColumns: ColumnsType<QualityDocItem> =
+    dim === "doc" ? docColumns
+      : dim === "chunk" ? chunkColumns
+        : dim === "graph" ? graphColumns
+          : wikiColumns;
 
   /** 切片评估-单文件明细表（metrics.per_doc，LLM 版：对照原文评估 Wiki） */
   const chunkDetailTable = (items?: ChunkDocEval[]) => {
@@ -662,25 +770,25 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
           },
         }}
       >
-        {/* dim=doc：主页直接平铺文件评估结果（不展示库级统计/run 列表） */}
-        {dim === "doc" ? (
-          <>
-            <Form
-              form={docSearchForm}
-              layout="inline"
-              onFinish={doDocSearch}
-              style={{ margin: "0 16px 12px", flexShrink: 0 }}
-            >
-              <Form.Item name="kb_id" label="知识库">
-                <Select
-                  allowClear
-                  showSearch
-                  placeholder="全部知识库"
-                  style={{ width: 200 }}
-                  optionFilterProp="label"
-                  options={kbs.map((k) => ({ label: k.name, value: k.id }))}
-                />
-              </Form.Item>
+        {/* 主页直接平铺文件评估结果（不展示库级统计/run 列表） */}
+        <>
+          <Form
+            form={docSearchForm}
+            layout="inline"
+            onFinish={doDocSearch}
+            style={{ margin: "0 16px 12px", flexShrink: 0 }}
+          >
+            <Form.Item name="kb_id" label="知识库">
+              <Select
+                allowClear
+                showSearch
+                placeholder="全部知识库"
+                style={{ width: 200 }}
+                optionFilterProp="label"
+                options={kbs.map((k) => ({ label: k.name, value: k.id }))}
+              />
+            </Form.Item>
+            {dim === "doc" && (
               <Form.Item name="status" label="转换状态">
                 <Select
                   allowClear
@@ -695,93 +803,35 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
                   ]}
                 />
               </Form.Item>
-              <Form.Item name="keyword" label="文件名">
-                <Input allowClear placeholder="输入文件名搜索" style={{ width: 200 }} />
-              </Form.Item>
-              <Form.Item>
-                <Space>
-                  <Button type="primary" htmlType="submit">
-                    查询
-                  </Button>
-                  <Button onClick={doDocReset}>重置</Button>
-                </Space>
-              </Form.Item>
-            </Form>
-            <ModoTable<QualityDocItem>
-              rowKey="doc_id"
-              size="small"
-              loading={docEvalLoading}
-              columns={docColumns}
-              dataSource={docEvalItems}
-              locale={{ emptyText: <Empty description="暂无文件评估结果（先发起评估）" /> }}
-            />
-            <ModoPagination
-              current={docEvalPage}
-              pageSize={20}
-              total={docEvalTotal}
-              showTotal={(t) => `共 ${t} 个文件`}
-              onChange={(p) => setDocEvalPage(p)}
-            />
-          </>
-        ) : (
-          <>
-            <Form
-              form={searchForm}
-              layout="inline"
-              onFinish={doSearch}
-              style={{ margin: "0 16px 12px", flexShrink: 0 }}
-            >
-              <Form.Item name="kb_id" label="知识库">
-                <Select
-                  allowClear
-                  showSearch
-                  placeholder="全部知识库"
-                  style={{ width: 200 }}
-                  optionFilterProp="label"
-                  options={kbs.map((k) => ({ label: k.name, value: k.id }))}
-                />
-              </Form.Item>
-              <Form.Item name="status" label="状态">
-                <Select
-                  allowClear
-                  placeholder="全部"
-                  style={{ width: 130 }}
-                  options={Object.entries(STATUS_MAP).map(([k, v]) => ({
-                    label: v.label,
-                    value: k,
-                  }))}
-                />
-              </Form.Item>
-              <Form.Item>
-                <Space>
-                  <Button type="primary" htmlType="submit">
-                    查询
-                  </Button>
-                  <Button onClick={doReset}>重置</Button>
-                </Space>
-              </Form.Item>
-            </Form>
-
-            <ModoTable<QualityRunItem>
-              rowKey="id"
-              size="small"
-              columns={columns}
-              dataSource={items}
-              loading={loading}
-              locale={{ emptyText: <Empty description="暂无评估记录" /> }}
-            />
-            <ModoPagination
-              current={page}
-              pageSize={pageSize}
-              total={total}
-              showTotal={(t) => `共 ${t} 条`}
-              onChange={(p, ps) => {
-                setPage(p);
-                setPageSize(ps);
-              }}
-            />
-          </>
-        )}
+            )}
+            <Form.Item name="keyword" label="文件名">
+              <Input allowClear placeholder="输入文件名搜索" style={{ width: 200 }} />
+            </Form.Item>
+            <Form.Item>
+              <Space>
+                <Button type="primary" htmlType="submit">
+                  查询
+                </Button>
+                <Button onClick={doDocReset}>重置</Button>
+              </Space>
+            </Form.Item>
+          </Form>
+          <ModoTable<QualityDocItem>
+            rowKey="doc_id"
+            size="small"
+            loading={docEvalLoading}
+            columns={fileColumns}
+            dataSource={docEvalItems}
+            locale={{ emptyText: <Empty description="暂无文件评估结果（先发起评估）" /> }}
+          />
+          <ModoPagination
+            current={docEvalPage}
+            pageSize={20}
+            total={docEvalTotal}
+            showTotal={(t) => `共 ${t} 个文件`}
+            onChange={(p) => setDocEvalPage(p)}
+          />
+        </>
       </Card>
     </div>
   );
