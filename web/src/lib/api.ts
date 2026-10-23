@@ -4388,6 +4388,11 @@ export interface QualityMetrics {
   chunks?: number;
   short_ratio?: number;
   dup?: number;
+  // 切片评估程序版（dim=chunk，2026-10-23 恢复 QC_CODE：过碎/过长/截断/重复）
+  short?: number;
+  long?: number;
+  truncated?: number;
+  long_ratio?: number;
   pages?: number;
   orphan?: number;
   broken_links?: number;
@@ -4525,9 +4530,13 @@ export interface QualityDocItem {
   content_garbled?: boolean;
   score?: number | null;
   updated_at?: string | null;
-  // 切片评估维度（dim=chunk）
+  // 切片评估维度（dim=chunk，程序版计数 + 历史 v3 字段保留）
   chunks?: number;
   avg_len?: number | null;
+  short?: number;
+  long?: number;
+  truncated?: number;
+  dup?: number;
   wiki_pages?: number;
   wiki_start_time?: string | null;
   wiki_build_sec?: number | null;

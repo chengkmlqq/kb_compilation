@@ -28,9 +28,6 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.seed_framework_db import QG_CODE, QC_CODE  # noqa: E402
 
-# 切片评估 v3 step 代码真源：chunk_eval_v3_step_code.py（完整脚本文件，非常量）
-QCLM_CODE = (ROOT / "scripts" / "chunk_eval_v3_step_code.py").read_text(encoding="utf-8")
-
 OUT_DIR = Path(__file__).resolve().parent / "seed_tape_data"
 
 # ── 文档转换质量检查（dim=doc）──────────────────────────────
@@ -350,14 +347,28 @@ try:
                  "sc": _p.get("score")},
             )
     # ── 切片评估（dim=chunk）：单文件粒度明细落库，每文件一行，按 kb 整批覆盖 ──
+    # 兼容两种 per_doc 形态：v3 LLM 版为 list[dict]；程序版（QC_CODE）为 doc_id → 明细 映射
     if _dim == "chunk":
         _db.execute(text("DELETE FROM kb_quality_chunk_eval WHERE kb_id=:kb"), {"kb": _kb})
-        for _p in (_m.get("per_doc") or []):
+        _per = _m.get("per_doc") or []
+        if isinstance(_per, dict):
+            _db2 = get_sessionmaker()()
+            try:
+                _fnames = dict(_db2.execute(
+                    text("SELECT id, file_name FROM kb_document WHERE kb_id=:kb"), {"kb": _kb}
+                ).all())
+            finally:
+                _db2.close()
+            _per = [dict(v, file_name=_fnames.get(str(v.get("doc_id") or ""), ""))
+                    for v in _per.values()]
+        for _p in _per:
             _db.execute(
-                text("INSERT INTO kb_quality_chunk_eval (id, kb_id, doc_id, run_id, file_name, chunks, avg_len, wiki_pages, wiki_start_time, wiki_build_sec, doc_process_sec, wiki_tape, eval_duration_sec, score, conclusion, issues, error) VALUES (:id, :kb, :did, :rid, :fn, :ch, :alen, :wp, :wst, :wbs, :dps, :wt, :eds, :sc, :conc, :iss, :err)"),
+                text("INSERT INTO kb_quality_chunk_eval (id, kb_id, doc_id, run_id, file_name, chunks, avg_len, short, long, truncated, dup, wiki_pages, wiki_start_time, wiki_build_sec, doc_process_sec, wiki_tape, eval_duration_sec, score, conclusion, issues, error) VALUES (:id, :kb, :did, :rid, :fn, :ch, :alen, :sh, :lg, :tr, :dp, :wp, :wst, :wbs, :dps, :wt, :eds, :sc, :conc, :iss, :err)"),
                 {"id": uuid.uuid4().hex[:32], "kb": _kb, "did": str(_p.get("doc_id") or ""),
                  "rid": _qid, "fn": str(_p.get("file_name") or "")[:255],
                  "ch": _p.get("chunks"), "alen": _p.get("avg_len"),
+                 "sh": _p.get("short"), "lg": _p.get("long"),
+                 "tr": _p.get("truncated"), "dp": _p.get("dup"),
                  "wp": _p.get("wiki_pages"),
                  "wst": _p.get("wiki_start_time"), "wbs": _p.get("wiki_build_sec"),
                  "dps": _p.get("doc_process_sec"), "wt": str(_p.get("wiki_tape") or "")[:128],
@@ -493,14 +504,13 @@ def main() -> None:
         ),
         build_tape(
             "切片评估",
-            "切片评估（LLM 单文件评估：对照完整原文检查 Wiki 内容错误/缺失/是否有意义）",
-            "单维度评估：按文件粒度调用 LLM 对照文档完整原文（切片全文）评估其构建出的 Wiki "
-            "页面——① 内容错误 ② 内容缺失 ③ Wiki 是否有意义；同时提取每文件的 Wiki "
-            "构建起始时间（编排 run 创建时间，回落最早 wiki 页创建时间）、Wiki 构建耗时、"
-            "文档处理时长与评估耗时用于展示。输入 bindings：kb_id / doc_ids(逗号分隔,空=整库) / "
+            "切片质量评估（过碎/过长/截断/重复）",
+            "单维度评估：检查文档切片自身质量——过短切片占比（<50 字）、过长切片占比（>2000 "
+            "字）、截断标记（…/（节选）/[截断]）、近似重复切片（前 200 字 MD5 去重计数）；"
+            "按文件粒度输出 per_doc 明细与健康分。输入 bindings：kb_id / doc_ids(逗号分隔,空=整库) / "
             "scope / quality_id / dim=chunk。结果落 kb_quality_run.chunk_metrics + "
-            "kb_quality_report(dim=chunk)，供切片评估页面查询。",
-            QCLM_CODE,
+            "kb_quality_report(dim=chunk) + kb_quality_chunk_eval（每文件一行），供切片评估页面查询。",
+            QC_CODE,
             "chunk",
         ),
         build_tape(

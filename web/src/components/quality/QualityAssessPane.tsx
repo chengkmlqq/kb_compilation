@@ -52,6 +52,9 @@ const { Text } = Typography;
 
 export type QualityDim = "all" | "doc" | "chunk" | "graph";
 
+/** wiki 评估-对照原文评估单文件明细（结构同 v3 ChunkDocEval，2026-10-23 迁移） */
+type WikiDocEval = ChunkDocEval;
+
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
   queued: { label: "排队中", color: "default" },
   running: { label: "评估中", color: "processing" },
@@ -98,7 +101,7 @@ const ISSUE_TYPE_LABEL: Record<string, string> = {
   chunk_split_error: "切分错误",
   chunk_semantic_loss: "语义丢失",
   chunk_coverage_incomplete: "覆盖不完整",
-  // 切片评估 v3（2026-10-23：对照原文评估 Wiki）
+  // wiki 评估（2026-10-23 迁移：LLM 对照完整原文评估 Wiki，单文件粒度）
   wiki_no_pages: "无 Wiki 页面",
   wiki_content_error: "Wiki 内容错误",
   wiki_missing_content: "Wiki 内容缺失",
@@ -441,15 +444,30 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
         );
       }
     } else if (d === "chunk") {
-      parts.push(`文件 ${mm.files_eval ?? mm.docs ?? "-"}`);
+      parts.push(`文档 ${mm.docs ?? "-"}`);
       parts.push(`切片 ${mm.chunks ?? "-"}`);
-      if (mm.wiki_pages != null) parts.push(`Wiki页 ${mm.wiki_pages}`);
       if (mm.avg_len != null) parts.push(`均长 ${mm.avg_len} 字`);
-      if (mm.eval_errors) parts.push(`评估失败 ${mm.eval_errors}`);
+      if (mm.short != null && mm.short > 0) parts.push(`过短 ${mm.short}`);
+      if (mm.long != null && mm.long > 0) parts.push(`过长 ${mm.long}`);
+      if (mm.truncated != null && mm.truncated > 0) parts.push(`截断 ${mm.truncated}`);
+      if (mm.dup != null && mm.dup > 0) parts.push(`重复 ${mm.dup}`);
+      if (mm.short_ratio != null || mm.long_ratio != null) {
+        parts.push(
+          `比率 ${mm.short_ratio != null ? `短${(mm.short_ratio * 100).toFixed(0)}%` : ""}${
+            mm.long_ratio != null ? ` 长${(mm.long_ratio * 100).toFixed(0)}%` : ""
+          }`,
+        );
+      }
     } else if (d === "wiki") {
       parts.push(`页面 ${mm.pages ?? "-"}`);
       parts.push(`孤立 ${mm.orphan ?? 0}`);
       parts.push(`断链 ${mm.broken_links ?? 0}`);
+      // LLM 对照原文评估（2026-10-23 wiki 评估迁移）
+      parts.push(`文件 ${mm.files_eval ?? mm.docs ?? "-"}`);
+      if (mm.chunks != null) parts.push(`切片 ${mm.chunks}`);
+      if (mm.wiki_pages != null) parts.push(`Wiki页 ${mm.wiki_pages}`);
+      if (mm.avg_len != null) parts.push(`均长 ${mm.avg_len} 字`);
+      if (mm.eval_errors) parts.push(`评估失败 ${mm.eval_errors}`);
     } else {
       parts.push(`节点 ${mm.nodes ?? "-"}`);
       parts.push(`边 ${mm.rels ?? 0}`);
@@ -552,7 +570,7 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
     },
   ];
 
-  /** 切片评估-文件评估结果表列（kb_quality_chunk_eval） */
+  /** 切片评估-文件评估结果表列（kb_quality_chunk_eval，程序版：过碎/过长/截断/重复） */
   const chunkColumns: ColumnsType<QualityDocItem> = [
     {
       title: "知识库",
@@ -564,38 +582,10 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
     { title: "文件名", dataIndex: "file_name", ellipsis: true },
     { title: "切片", dataIndex: "chunks", width: 64 },
     { title: "均长", dataIndex: "avg_len", width: 80, render: (v: number | null) => v ?? "-" },
-    { title: "Wiki页", dataIndex: "wiki_pages", width: 84, render: (v: number | null) => v ?? 0 },
-    {
-      title: "Wiki构建耗时",
-      dataIndex: "wiki_build_sec",
-      width: 110,
-      render: (v: number | null) => fmtDuration(v != null ? v * 1000 : null),
-    },
-    {
-      title: "评估耗时",
-      dataIndex: "eval_duration_sec",
-      width: 90,
-      render: (v: number | null) => fmtDuration(v != null ? v * 1000 : null),
-    },
-    {
-      title: "评分",
-      dataIndex: "score",
-      width: 70,
-      render: (v: number | null) => (
-        <Tag color={scoreColor(v ?? null)}>{v ?? "-"}</Tag>
-      ),
-    },
-    {
-      title: "结论",
-      dataIndex: "conclusion",
-      ellipsis: true,
-      render: (v: string, r) =>
-        r.error ? (
-          <Text type="danger" style={{ fontSize: 12 }}>评估失败</Text>
-        ) : (
-          <Text style={{ fontSize: 12 }}>{v || "-"}</Text>
-        ),
-    },
+    { title: "过短", dataIndex: "short", width: 72, render: (v: number | null) => v ?? "-" },
+    { title: "过长", dataIndex: "long", width: 72, render: (v: number | null) => v ?? "-" },
+    { title: "截断", dataIndex: "truncated", width: 72, render: (v: number | null) => v ?? "-" },
+    { title: "重复", dataIndex: "dup", width: 72, render: (v: number | null) => v ?? "-" },
     {
       title: "评估时间",
       dataIndex: "updated_at",
@@ -635,7 +625,7 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
     },
   ];
 
-  /** Wiki 评估-文件评估结果表列（kb_quality_wiki_eval） */
+  /** Wiki 评估-文件评估结果表列（kb_quality_wiki_eval；程序检查 + LLM 对照原文评估明细） */
   const wikiColumns: ColumnsType<QualityDocItem> = [
     {
       title: "知识库",
@@ -652,6 +642,26 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
     { title: "占位", dataIndex: "placeholder", width: 64 },
     { title: "缺出处", dataIndex: "missing_source", width: 80 },
     { title: "未挂目录", dataIndex: "no_folder", width: 90 },
+    { title: "切片", dataIndex: "chunks", width: 64 },
+    { title: "均长", dataIndex: "avg_len", width: 80, render: (v: number | null) => v ?? "-" },
+    {
+      title: "Wiki构建起始",
+      dataIndex: "wiki_start_time",
+      width: 132,
+      render: (v?: string | null) => formatTime(v),
+    },
+    {
+      title: "Wiki构建耗时",
+      dataIndex: "wiki_build_sec",
+      width: 110,
+      render: (v?: number | null) => fmtDuration(v != null ? v * 1000 : null),
+    },
+    {
+      title: "评估耗时",
+      dataIndex: "eval_duration_sec",
+      width: 90,
+      render: (v?: number | null) => fmtDuration(v != null ? v * 1000 : null),
+    },
     {
       title: "评分",
       dataIndex: "score",
@@ -659,6 +669,19 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
       render: (v: number | null) => (
         <Tag color={scoreColor(v ?? null)}>{v ?? "-"}</Tag>
       ),
+    },
+    {
+      title: "结论",
+      dataIndex: "conclusion",
+      ellipsis: true,
+      render: (v: string, r) =>
+        r.error ? (
+          <Text type="danger" style={{ fontSize: 12 }}>LLM 评估失败</Text>
+        ) : (
+          <Tooltip title={`${v ?? ""}${r.issues?.length ? `\n问题: ${r.issues.join("、")}` : ""}`}>
+            <Text style={{ fontSize: 12 }}>{v || "-"}</Text>
+          </Tooltip>
+        ),
     },
     {
       title: "评估时间",
@@ -675,7 +698,7 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
         : dim === "graph" ? graphColumns
           : wikiColumns;
 
-  /** 切片评估-单文件明细表（metrics.per_doc，LLM 版：对照原文评估 Wiki） */
+  /** wiki 评估-单文件明细表（metrics.per_doc：LLM 对照原文评估 Wiki，2026-10-23 迁至 wiki 维度） */
   const chunkDetailTable = (items?: ChunkDocEval[]) => {
     if (!items || items.length === 0) return null;
     const columns: ColumnsType<ChunkDocEval> = [
@@ -1008,15 +1031,15 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
               {attributionRows(detail.attribution)}
             </div>
 
-            {dim === "chunk" &&
-              detail.reports?.chunk?.metrics?.per_doc &&
-              detail.reports.chunk.metrics.per_doc.length > 0 && (
+            {dim === "all" &&
+              detail.reports?.wiki?.metrics?.per_doc &&
+              (detail.reports.wiki.metrics.per_doc as WikiDocEval[]).length > 0 && (
                 <div style={{ marginBottom: 16 }}>
                   <Typography.Title level={5}>
-                    单文件评估明细（{detail.reports.chunk.metrics.per_doc.length}）
+                    对照原文评估明细（{detail.reports.wiki.metrics.per_doc.length}）
                   </Typography.Title>
                   {chunkDetailTable(
-                    detail.reports.chunk.metrics.per_doc as ChunkDocEval[],
+                    detail.reports.wiki.metrics.per_doc as WikiDocEval[],
                   )}
                 </div>
               )}

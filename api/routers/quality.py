@@ -307,6 +307,11 @@ def list_quality_file_details(
                     item.update({
                         "chunks": r.chunks,
                         "avg_len": r.avg_len,
+                        # 程序版切片质量计数（2026-10-23 恢复 QC_CODE）
+                        "short": r.short,
+                        "long": r.long,
+                        "truncated": r.truncated,
+                        "dup": r.dup,
                         "wiki_pages": r.wiki_pages,
                         "wiki_start_time": r.wiki_start_time.isoformat() if r.wiki_start_time else None,
                         "wiki_build_sec": r.wiki_build_sec,
@@ -333,6 +338,17 @@ def list_quality_file_details(
                         "placeholder": r.placeholder,
                         "missing_source": r.missing_source,
                         "no_folder": r.no_folder,
+                        # LLM 对照原文评估明细（2026-10-23 wiki 评估迁移）
+                        "chunks": r.chunks,
+                        "avg_len": r.avg_len,
+                        "wiki_pages": r.wiki_pages,
+                        "wiki_start_time": r.wiki_start_time.isoformat() if r.wiki_start_time else None,
+                        "wiki_build_sec": r.wiki_build_sec,
+                        "doc_process_sec": r.doc_process_sec,
+                        "wiki_tape": r.wiki_tape,
+                        "eval_duration_sec": r.eval_duration_sec,
+                        "conclusion": r.conclusion,
+                        "error": r.error,
                     })
             items.append(item)
     return {"success": True, "data": {"total": total, "page": page, "page_size": page_size,

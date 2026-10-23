@@ -1,6 +1,8 @@
 # 切片评估 v3（2026-10-23）：单文件粒度，LLM 对照完整原文评估该文档构建出的
 # Wiki 页面——① 内容错误 ② 内容缺失 ③ wiki 是否有意义；同时提取 wiki 构建
 # 起始时间与耗时（优先编排 run 记录，回落 wiki 页创建时间）用于展示。
+# 2026-10-23 wiki 评估迁移：本脚本为「质量评估-QA」编排 n06「Wiki-原文对比评估」
+# 节点代码（原挂靠「切片评估」单维度编排，现迁至 wiki 维度执行与展示）。
 import json
 import time as _t
 from datetime import datetime
@@ -168,8 +170,8 @@ for _rid, _tname, _rstatus, _rct, _rut, _inputs in _run_rows:
 if not _doc_rows:
     _r = {"metrics": {"docs": 0, "files_eval": 0, "chunks": 0, "wiki_pages": 0,
                       "avg_len": 0, "eval_errors": 0, "health_score": 0, "per_doc": []},
-          "issues": [{"dim": "chunk", "issue_type": "no_chunks", "detail": "无切片数据(文档未解析或无切片)"}],
-          "attribution": [{"dim": "chunk", "cause": "知识库无文档或文档未进入切片阶段",
+          "issues": [{"dim": "wiki", "issue_type": "no_chunks", "detail": "无切片数据(文档未解析或无切片)"}],
+          "attribution": [{"dim": "wiki", "cause": "知识库无文档或文档未进入切片阶段",
                            "suggestion": "检查文档解析状态 / 重跑解析"}]}
     _metrics = _r["metrics"]
     _issues = _r["issues"]
@@ -220,7 +222,7 @@ else:
                 _proc_sec = _psec
         _doc_issues = []
         if _n == 0:
-            _doc_issues.append({"dim": "chunk", "doc_id": _doc_id, "issue_type": "no_chunks",
+            _doc_issues.append({"dim": "wiki", "doc_id": _doc_id, "issue_type": "no_chunks",
                                 "detail": "文档无切片（未解析或未进入切片阶段），无法对照评估 wiki"})
             _per_doc.append({"doc_id": _doc_id, "file_name": _dinfo.get("file_name", ""),
                              "chunks": 0, "avg_len": 0, "wiki_pages": 0,
@@ -231,10 +233,10 @@ else:
                              "issues": [i["issue_type"] for i in _doc_issues]})
             _scores.append(0)
             _issues.extend(_doc_issues)
-            print(f"[切片评估] {_idx}/{_docs_n} 文档 {_doc_id[:8]} 无切片")
+            print(f"[wiki评估] {_idx}/{_docs_n} 文档 {_doc_id[:8]} 无切片")
             continue
         if not _pages_meta:
-            _doc_issues.append({"dim": "chunk", "doc_id": _doc_id, "issue_type": "wiki_no_pages",
+            _doc_issues.append({"dim": "wiki", "doc_id": _doc_id, "issue_type": "wiki_no_pages",
                                 "detail": "该文档未构建出 wiki 页面（或页面非 active 状态）"})
             _per_doc.append({"doc_id": _doc_id, "file_name": _dinfo.get("file_name", ""),
                              "chunks": _n, "avg_len": _d_avg, "wiki_pages": 0,
@@ -245,7 +247,7 @@ else:
                              "issues": [i["issue_type"] for i in _doc_issues]})
             _scores.append(0)
             _issues.extend(_doc_issues)
-            print(f"[切片评估] {_idx}/{_docs_n} 文档 {_doc_id[:8]} 无 wiki 页（chunks={_n}）")
+            print(f"[wiki评估] {_idx}/{_docs_n} 文档 {_doc_id[:8]} 无 wiki 页（chunks={_n}）")
             continue
         # 原文切片抽样
         _md_parts = []
@@ -312,9 +314,9 @@ else:
                              "wiki_tape": _wtape, "eval_duration_sec": round(_t.time() - _t0, 1),
                              "score": None, "conclusion": "LLM 评估失败",
                              "error": str(_e)[:200], "issues": []})
-            _issues.append({"dim": "chunk", "doc_id": _doc_id, "issue_type": "sem_eval_error",
+            _issues.append({"dim": "wiki", "doc_id": _doc_id, "issue_type": "sem_eval_error",
                             "detail": f"LLM wiki 评估失败: {str(_e)[:200]}"})
-            print(f"[切片评估] {_idx}/{_docs_n} 文档 {_doc_id[:8]} LLM 失败: {str(_e)[:100]}")
+            print(f"[wiki评估] {_idx}/{_docs_n} 文档 {_doc_id[:8]} LLM 失败: {str(_e)[:100]}")
             continue
         _dur = round(_t.time() - _t0, 1)
         if not isinstance(_out, dict):
@@ -328,16 +330,16 @@ else:
             _errs = _out.get("content_errors") or []
             if isinstance(_errs, str):
                 _errs = [_errs]
-            _doc_issues.append({"dim": "chunk", "doc_id": _doc_id, "issue_type": "wiki_content_error",
+            _doc_issues.append({"dim": "wiki", "doc_id": _doc_id, "issue_type": "wiki_content_error",
                                 "detail": "Wiki 内容错误: " + "; ".join(str(x) for x in _errs[:3])[:200]})
         if _out.get("has_missing") is True or str(_out.get("has_missing")).lower() == "true":
             _miss = _out.get("missing_items") or []
             if isinstance(_miss, str):
                 _miss = [_miss]
-            _doc_issues.append({"dim": "chunk", "doc_id": _doc_id, "issue_type": "wiki_missing_content",
+            _doc_issues.append({"dim": "wiki", "doc_id": _doc_id, "issue_type": "wiki_missing_content",
                                 "detail": "Wiki 内容缺失: " + "; ".join(str(x) for x in _miss[:3])[:200]})
         if _out.get("meaningful") is False or str(_out.get("meaningful")).lower() == "false":
-            _doc_issues.append({"dim": "chunk", "doc_id": _doc_id, "issue_type": "wiki_not_meaningful",
+            _doc_issues.append({"dim": "wiki", "doc_id": _doc_id, "issue_type": "wiki_not_meaningful",
                                 "detail": "Wiki 无意义: " + str(_out.get("meaningful_note") or "")[:200]})
         _issues.extend(_doc_issues)
         _per_doc.append({"doc_id": _doc_id, "file_name": _dinfo.get("file_name", ""),
@@ -348,7 +350,7 @@ else:
                          "score": _score,
                          "conclusion": str(_out.get("conclusion") or "")[:200],
                          "issues": [i["issue_type"] for i in _doc_issues]})
-        print(f"[切片评估] {_idx}/{_docs_n} 文档 {_doc_id[:8]} wiki页 {len(_pages_meta)} 分 {_score} 耗时 {_dur}s 问题 {len(_doc_issues)}")
+        print(f"[wiki评估] {_idx}/{_docs_n} 文档 {_doc_id[:8]} wiki页 {len(_pages_meta)} 分 {_score} 耗时 {_dur}s 问题 {len(_doc_issues)}")
     _valid = [s for s in _scores if s is not None]
     _health = round(sum(_valid) / len(_valid), 1) if _valid else None
     _metrics = {"docs": _docs_n, "files_eval": _docs_n, "chunks": _chunks_n,
@@ -360,25 +362,25 @@ else:
     for _i in _issues:
         _cnt[_i["issue_type"]] = _cnt.get(_i["issue_type"], 0) + 1
     if _cnt.get("wiki_content_error", 0) > 0:
-        _attr.append({"dim": "chunk", "cause": f"{_cnt['wiki_content_error']} 个文件 wiki 存在内容错误（与原文不符/编造）",
+        _attr.append({"dim": "wiki", "cause": f"{_cnt['wiki_content_error']} 个文件 wiki 存在内容错误（与原文不符/编造）",
                       "suggestion": "检查构建编排 LLM 抽取的原文切片输入与提示词，核对数字/日期/条款/定义准确性，对错误页重新构建"})
     if _cnt.get("wiki_missing_content", 0) > 0:
-        _attr.append({"dim": "chunk", "cause": f"{_cnt['wiki_missing_content']} 个文件 wiki 缺失原文重要内容",
+        _attr.append({"dim": "wiki", "cause": f"{_cnt['wiki_missing_content']} 个文件 wiki 缺失原文重要内容",
                       "suggestion": "增大实体/规则抽取范围或按章节/长句拆分抽取，检查切片是否完整进入构建流程"})
     if _cnt.get("wiki_not_meaningful", 0) > 0:
-        _attr.append({"dim": "chunk", "cause": f"{_cnt['wiki_not_meaningful']} 个文件 wiki 空泛/占位/价值低",
+        _attr.append({"dim": "wiki", "cause": f"{_cnt['wiki_not_meaningful']} 个文件 wiki 空泛/占位/价值低",
                       "suggestion": "检查构建编排的抽取粒度与摘要提示词，考虑重新构建该文档 wiki"})
     if _cnt.get("wiki_no_pages", 0) > 0:
-        _attr.append({"dim": "chunk", "cause": f"{_cnt['wiki_no_pages']} 个文件未构建出 wiki 页面",
+        _attr.append({"dim": "wiki", "cause": f"{_cnt['wiki_no_pages']} 个文件未构建出 wiki 页面",
                       "suggestion": "检查该文档 wiki 构建编排是否触发/成功（任务监控查看 wiki 构建 run 状态），失败则重跑构建"})
     if _cnt.get("no_chunks", 0) > 0:
-        _attr.append({"dim": "chunk", "cause": f"{_cnt['no_chunks']} 个文件无切片",
+        _attr.append({"dim": "wiki", "cause": f"{_cnt['no_chunks']} 个文件无切片",
                       "suggestion": "检查文档解析状态，重跑解析后再评估"})
     if _cnt.get("sem_eval_error", 0) > 0:
-        _attr.append({"dim": "chunk", "cause": f"{_cnt['sem_eval_error']} 个文件 LLM 评估失败（模型服务异常/超时）",
+        _attr.append({"dim": "wiki", "cause": f"{_cnt['sem_eval_error']} 个文件 LLM 评估失败（模型服务异常/超时）",
                       "suggestion": "稍后重跑评估，或检查模型服务可用性"})
     _r = {"metrics": _metrics, "issues": _issues, "attribution": _attr}
 
-bindings["chunk_r"] = _r
-print(f"[切片评估] LLM 评估完成: 文档 {_metrics.get('docs')} 切片 {_metrics.get('chunks')} "
+bindings["wiki_cmp_r"] = _r
+print(f"[wiki评估] LLM 评估完成: 文档 {_metrics.get('docs')} 切片 {_metrics.get('chunks')} "
       f"wiki页 {_metrics.get('wiki_pages')} 健康分 {_metrics.get('health_score')} 问题 {len(_issues)}")

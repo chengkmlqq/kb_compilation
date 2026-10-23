@@ -547,6 +547,11 @@ class QualityChunkEval(Base):
     file_name: Mapped[str | None] = mapped_column(String(255))
     chunks: Mapped[int | None] = mapped_column(Integer)
     avg_len: Mapped[float | None] = mapped_column(Float)
+    # 程序版切片质量计数（2026-10-23 恢复 QC_CODE 后落库）
+    short: Mapped[int | None] = mapped_column(Integer)
+    long: Mapped[int | None] = mapped_column(Integer)
+    truncated: Mapped[int | None] = mapped_column(Integer)
+    dup: Mapped[int | None] = mapped_column(Integer)
     wiki_pages: Mapped[int | None] = mapped_column(Integer)
     wiki_start_time: Mapped[datetime | None] = mapped_column(DateTime)
     wiki_build_sec: Mapped[float | None] = mapped_column(Float)
@@ -602,8 +607,11 @@ class QualityWikiEval(Base):
     """Wiki 评估-单文件粒度明细（kb_quality_wiki_eval，2026-10-23）。
 
     每文件一行（kb_id+doc_id 唯一）：wiki 评估每次落库时按 kb 整批
-    DELETE+INSERT 覆盖（文件删除后旧行不残留）。按文件聚合其构建出的
-    wiki 页质量问题（空页/孤立/断链/占位/缺出处/未挂目录）。
+    DELETE+INSERT 覆盖（文件删除后旧行不残留）。程序检查按文件聚合其构建出的
+    wiki 页质量问题（空页/孤立/断链/占位/缺出处/未挂目录）；
+    2026-10-23 迁移后行数据以 LLM 对照原文评估明细（n06 v3 per_doc）为主，
+    chunks/avg_len/wiki_pages/wiki 构建时间/耗时/评估耗时/结论/错误字段对齐
+    kb_quality_chunk_eval（v3 原挂靠表）。
     """
 
     __tablename__ = "kb_quality_wiki_eval"
@@ -623,6 +631,17 @@ class QualityWikiEval(Base):
     placeholder: Mapped[int | None] = mapped_column(Integer)
     missing_source: Mapped[int | None] = mapped_column(Integer)
     no_folder: Mapped[int | None] = mapped_column(Integer)
+    # LLM 对照原文评估明细（2026-10-23 wiki 评估迁移，对齐 kb_quality_chunk_eval）
+    chunks: Mapped[int | None] = mapped_column(Integer)
+    avg_len: Mapped[float | None] = mapped_column(Float)
+    wiki_pages: Mapped[int | None] = mapped_column(Integer)
+    wiki_start_time: Mapped[datetime | None] = mapped_column(DateTime)
+    wiki_build_sec: Mapped[float | None] = mapped_column(Float)
+    doc_process_sec: Mapped[float | None] = mapped_column(Float)
+    wiki_tape: Mapped[str | None] = mapped_column(String(128))
+    eval_duration_sec: Mapped[float | None] = mapped_column(Float)
+    conclusion: Mapped[str | None] = mapped_column(String(500))
+    error: Mapped[str | None] = mapped_column(String(500))
     score: Mapped[int | None] = mapped_column(Integer)
     issues: Mapped[list | None] = mapped_column(JSON)
     created_at: Mapped[datetime | None] = mapped_column(
