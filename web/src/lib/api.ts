@@ -4505,6 +4505,40 @@ export function apiDeleteQualityRun(qualityId: string) {
   );
 }
 
+export interface QualityDocItem {
+  doc_id?: string;
+  kb_id?: string;
+  run_id?: string;
+  file_name?: string;
+  file_ext?: string;
+  file_size?: number | null;
+  parse_state?: string;
+  parse_error?: string;
+  parse_engine?: string;
+  duration_ms?: number | null;
+  chunk_count?: number;
+  md_length?: number;
+  garbled?: boolean;
+  garbled_hits?: string[];
+  score?: number | null;
+  updated_at?: string | null;
+}
+
+export function apiListQualityDocEval(params: {
+  kb_id?: string;
+  keyword?: string;
+  page?: number;
+  page_size?: number;
+}) {
+  const sp = new URLSearchParams({
+    page: String(params.page ?? 1),
+    page_size: String(params.page_size ?? 20),
+  });
+  if (params.kb_id) sp.set("kb_id", params.kb_id);
+  if (params.keyword) sp.set("keyword", params.keyword);
+  return request<PageList<QualityDocItem>>(`/api/v1/quality/docs?${sp.toString()}`);
+}
+
 /* ── 构建任务完成检查（2026-10-22，质量评估目录子菜单）────────────────── */
 
 export interface BuildCheckItem {

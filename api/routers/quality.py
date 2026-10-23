@@ -167,6 +167,69 @@ def list_quality_runs(
                                       "items": items}}
 
 
+@router.get("/docs")
+def list_doc_eval_details(
+    kb_id: str = Query("", max_length=64),
+    keyword: str = Query("", max_length=128),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    db: Session = Depends(get_db),
+    caller: dict = Depends(_require_caller),
+) -> dict:
+    """文档转换评估-单文件明细（kb_quality_doc_eval，每文件一行，最新状态）。
+
+    dim=doc 评估每次落库按 kb 整批覆盖写入，本接口返回该知识库当前各文件的
+    转换评估结果（文件粒度）。支持按文件名关键字过滤；分页返回。
+    """
+    from api.models.knowledge import QualityDocEval
+    from sqlalchemy import func
+
+    conds = []
+    if kb_id:
+        conds.append(QualityDocEval.kb_id == kb_id)
+    if keyword:
+        conds.append(QualityDocEval.file_name.like(f"%{keyword}%"))
+
+    total_stmt = select(func.count()).select_from(QualityDocEval)
+    id_stmt = select(QualityDocEval.id)
+    if conds:
+        total_stmt = total_stmt.where(*conds)
+        id_stmt = id_stmt.where(*conds)
+    total = db.execute(total_stmt).scalar() or 0
+    ids: list[str] = list(
+        db.execute(
+            id_stmt.order_by(QualityDocEval.file_name.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).scalars().all()
+    )
+    items: list[dict] = []
+    if ids:
+        pos = {rid: i for i, rid in enumerate(ids)}
+        rows = db.execute(select(QualityDocEval).where(QualityDocEval.id.in_(ids))).scalars().all()
+        for r in sorted(rows, key=lambda r: pos.get(r.id, len(ids))):
+            items.append({
+                "doc_id": r.doc_id,
+                "kb_id": r.kb_id,
+                "run_id": r.run_id,
+                "file_name": r.file_name,
+                "file_ext": r.file_ext,
+                "file_size": r.file_size,
+                "parse_state": r.parse_state,
+                "parse_error": r.parse_error,
+                "parse_engine": r.parse_engine,
+                "duration_ms": r.duration_ms,
+                "chunk_count": r.chunk_count,
+                "md_length": r.md_length,
+                "garbled": bool(r.garbled),
+                "garbled_hits": r.garbled_hits or [],
+                "score": r.score,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            })
+    return {"success": True, "data": {"total": total, "page": page, "page_size": page_size,
+                                      "items": items}}
+
+
 @router.get("/runs/{quality_id}")
 def quality_run_detail(quality_id: str, db: Session = Depends(get_db),
                        caller: dict = Depends(_require_caller)) -> dict:

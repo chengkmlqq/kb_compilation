@@ -29,6 +29,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.mysql import MEDIUMTEXT
@@ -479,6 +480,43 @@ class QualityRun(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
+    )
+
+
+class QualityDocEval(Base):
+    """文档转换评估-单文件粒度明细（kb_quality_doc_eval，2026-10-23）。
+
+    每文件一行（kb_id+doc_id 唯一）：文档转换评估每次落库时按 kb 整批
+    DELETE+INSERT 覆盖（文件删除后旧行不残留），run_id 记录最后一次评估来源
+    run（仅信息性，run 删除不级联）。供页面按文件粒度查看当前各文件转换质量。
+    """
+
+    __tablename__ = "kb_quality_doc_eval"
+    __table_args__ = (
+        UniqueConstraint("kb_id", "doc_id", name="uq_quality_doc_eval_kb_doc"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kb_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    doc_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    file_ext: Mapped[str | None] = mapped_column(String(32))
+    file_size: Mapped[int | None] = mapped_column(BigInteger)
+    parse_state: Mapped[str | None] = mapped_column(String(32))
+    parse_error: Mapped[str | None] = mapped_column(Text)
+    parse_engine: Mapped[str | None] = mapped_column(String(64))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    chunk_count: Mapped[int | None] = mapped_column(Integer)
+    md_length: Mapped[int | None] = mapped_column(Integer)
+    garbled: Mapped[bool] = mapped_column(Boolean, default=False)
+    garbled_hits: Mapped[list | None] = mapped_column(JSON)
+    score: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=text("CURRENT_TIMESTAMP")
     )

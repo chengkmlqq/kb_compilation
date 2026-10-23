@@ -74,6 +74,8 @@ KNOWLEDGE_BUSINESS_TABLES = {
     # 质量评估（迁移 0018）随 5f52ff0 引入，2026-10-14 补白名单。
     "kb_quality_run",
     "kb_quality_report",
+    # 质量评估-文件粒度明细（迁移 0038）随文档转换评估单文件化引入，2026-10-23 补白名单。
+    "kb_quality_doc_eval",
     # 文档类型构建模式表（本体 Schema 补丁 8373e36 引入），2026-10-15 补白名单。
     "kb_doc_type_config",
     # 知识库分类（左侧分类树实体，迁移 0027）随分类 CRUD 引入，2026-10-19 补白名单。

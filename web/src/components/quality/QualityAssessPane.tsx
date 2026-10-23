@@ -33,13 +33,14 @@ import {
   apiGetQualityRun,
   apiLaunchQualityRun,
   apiListDocuments,
+  apiListQualityDocEval,
   apiListQualityRuns,
   apiListKbs,
   ChunkDocEval,
   DocItem,
-  DocQualityItem,
   KbItem,
   QualityAttribution,
+  QualityDocItem,
   QualityIssue,
   QualityMetrics,
   QualityRunDetail,
@@ -166,6 +167,11 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
   const [detail, setDetail] = useState<QualityRunDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  // 文档转换评估-文件粒度明细（kb_quality_doc_eval，按 kb 服务端分页）
+  const [docEvalItems, setDocEvalItems] = useState<QualityDocItem[]>([]);
+  const [docEvalTotal, setDocEvalTotal] = useState(0);
+  const [docEvalPage, setDocEvalPage] = useState(1);
+  const [docEvalLoading, setDocEvalLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launching, setLaunching] = useState(false);
@@ -249,12 +255,32 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
     setApplied({});
   };
 
+  const loadDocEval = useCallback(
+    async (kbId: string, pageNum = 1) => {
+      setDocEvalLoading(true);
+      try {
+        const res = await apiListQualityDocEval({ kb_id: kbId, page: pageNum, page_size: 20 });
+        setDocEvalItems(res.data?.items ?? []);
+        setDocEvalTotal(res.data?.total ?? 0);
+        setDocEvalPage(pageNum);
+      } catch (e) {
+        message.error(`文件明细加载失败: ${String(e)}`);
+      } finally {
+        setDocEvalLoading(false);
+      }
+    },
+    [message],
+  );
+
   const openDetail = async (id: string) => {
     setDetailOpen(true);
     setDetailLoading(true);
     try {
       const res = await apiGetQualityRun(id);
       setDetail(res.data ?? null);
+      if (dim === "doc" && res.data?.kb_id) {
+        void loadDocEval(res.data.kb_id, 1);
+      }
     } catch (e) {
       message.error(`详情加载失败: ${String(e)}`);
     } finally {
@@ -479,10 +505,10 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
     );
   };
 
-  /** 文档转换评估-单文件明细表（metrics.per_doc） */
-  const docDetailTable = (items?: DocQualityItem[]) => {
+  /** 文档转换评估-文件粒度明细表（kb_quality_doc_eval，每文件一行，最新状态） */
+  const docDetailTable = (items?: QualityDocItem[]) => {
     if (!items || items.length === 0) return null;
-    const columns: ColumnsType<DocQualityItem> = [
+    const columns: ColumnsType<QualityDocItem> = [
       { title: "文件名", dataIndex: "file_name", ellipsis: true },
       {
         title: "状态",
@@ -514,18 +540,25 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
         title: "得分",
         dataIndex: "score",
         width: 70,
-        render: (v: number) => (
-          <Tag color={scoreColor(v)}>{v ?? "-"}</Tag>
+        render: (v: number | null) => (
+          <Tag color={scoreColor(v ?? null)}>{v ?? "-"}</Tag>
         ),
+      },
+      {
+        title: "评估时间",
+        dataIndex: "updated_at",
+        width: 150,
+        render: formatTime,
       },
     ];
     return (
-      <Table<DocQualityItem>
+      <Table<QualityDocItem>
         rowKey="doc_id"
         size="small"
+        loading={docEvalLoading}
         columns={columns}
         dataSource={items}
-        pagination={{ pageSize: 10, showSizeChanger: false, size: "small" }}
+        pagination={false}
       />
     );
   };
@@ -845,18 +878,25 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
               {attributionRows(detail.attribution)}
             </div>
 
-            {dim === "doc" &&
-              detail.reports?.doc?.metrics?.per_doc &&
-              detail.reports.doc.metrics.per_doc.length > 0 && (
-                <div style={{ marginBottom: 16 }}>
-                  <Typography.Title level={5}>
-                    文件明细（{detail.reports.doc.metrics.per_doc.length}）
-                  </Typography.Title>
-                  {docDetailTable(
-                    detail.reports.doc.metrics.per_doc as DocQualityItem[],
-                  )}
-                </div>
-              )}
+            {dim === "doc" && (
+              <div style={{ marginBottom: 16 }}>
+                <Typography.Title level={5}>
+                  文件明细（{docEvalTotal}）
+                </Typography.Title>
+                {docDetailTable(docEvalItems)}
+                {docEvalTotal > 0 && (
+                  <ModoPagination
+                    current={docEvalPage}
+                    pageSize={20}
+                    total={docEvalTotal}
+                    showTotal={(t) => `共 ${t} 个文件`}
+                    onChange={(p) => {
+                      if (detail?.kb_id) void loadDocEval(detail.kb_id, p);
+                    }}
+                  />
+                )}
+              </div>
+            )}
 
             {dim === "chunk" &&
               detail.reports?.chunk?.metrics?.per_doc &&

@@ -277,6 +277,24 @@ try:
          "dim": _dim, "m": json.dumps(_m, ensure_ascii=False),
          "i": json.dumps(_issues, ensure_ascii=False)},
     )
+    # ── 文档转换评估（dim=doc）：单文件粒度明细落库，每文件一行，按 kb 整批覆盖 ──
+    if _dim == "doc":
+        _db.execute(text("DELETE FROM kb_quality_doc_eval WHERE kb_id=:kb"), {"kb": _kb})
+        _per = _m.get("per_doc") or []
+        for _p in _per:
+            _db.execute(
+                text("INSERT INTO kb_quality_doc_eval (id, kb_id, doc_id, run_id, file_name, file_ext, file_size, parse_state, parse_error, parse_engine, duration_ms, chunk_count, md_length, garbled, garbled_hits, score) VALUES (:id, :kb, :did, :rid, :fn, :ext, :fs, :ps, :perr, :eng, :dur, :cc, :mdl, :gb, :gh, :sc)"),
+                {"id": uuid.uuid4().hex[:32], "kb": _kb, "did": str(_p.get("doc_id") or ""),
+                 "rid": _qid, "fn": str(_p.get("file_name") or ""),
+                 "ext": str(_p.get("file_ext") or "")[:32],
+                 "fs": _p.get("file_size"), "ps": str(_p.get("parse_state") or ""),
+                 "perr": str(_p.get("parse_error") or "")[:500],
+                 "eng": str(_p.get("parse_engine") or ""),
+                 "dur": _p.get("duration_ms"), "cc": _p.get("chunk_count"),
+                 "mdl": _p.get("md_length"), "gb": 1 if _p.get("garbled") else 0,
+                 "gh": json.dumps(_p.get("garbled_hits") or [], ensure_ascii=False),
+                 "sc": _p.get("score")},
+            )
     _db.commit()
 except Exception as _e:
     _db.rollback()
