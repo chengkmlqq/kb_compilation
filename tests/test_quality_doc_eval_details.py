@@ -59,11 +59,14 @@ def env(monkeypatch):
 def _mk_doc_eval(db, kb_id: str, doc_id: str, file_name: str, run_id: str = "R1",
                  parse_state: str = "READY", parse_engine: str = "mineru",
                  duration_ms: int | None = 1000, garbled: bool = False,
+                 file_name_garbled: bool = False, content_garbled: bool = False,
                  score: int | None = 100) -> None:
     db.add(QualityDocEval(id=f"{doc_id}-eval", kb_id=kb_id, doc_id=doc_id,
                           run_id=run_id, file_name=file_name, file_ext="pdf",
                           parse_state=parse_state, parse_engine=parse_engine,
-                          duration_ms=duration_ms, garbled=garbled, score=score))
+                          duration_ms=duration_ms, garbled=garbled,
+                          file_name_garbled=file_name_garbled,
+                          content_garbled=content_garbled, score=score))
     db.commit()
 
 
@@ -89,6 +92,9 @@ def test_docs_list_by_kb(env) -> None:
     assert first["doc_id"] == "d1"
     # kb_name 由后端回填（无 kb_datasource 行时为空串，前端兜底显示 id 前 8 位）
     assert "kb_name" in first
+    # 乱码拆两列：标题乱码/内容乱码独立布尔
+    assert first["file_name_garbled"] is False
+    assert first["content_garbled"] is False
 
     # 不带 kb_id = 全量
     r2 = client.get("/api/v1/quality/docs")
@@ -118,6 +124,23 @@ def test_docs_pagination(env) -> None:
 
     r2 = client.get("/api/v1/quality/docs", params={"kb_id": "kb1", "page": 3, "page_size": 2})
     assert len(r2.json()["data"]["items"]) == 1
+
+
+def test_docs_garbled_split_fields(env) -> None:
+    """乱码拆两列：file_name_garbled / content_garbled 独立返回。"""
+    db, client = env
+    _mk_doc_eval(db, "kb1", "d1", "a.pdf", garbled=True, file_name_garbled=True,
+                 content_garbled=False)
+    _mk_doc_eval(db, "kb1", "d2", "b.pdf", garbled=True, file_name_garbled=False,
+                 content_garbled=True)
+
+    r = client.get("/api/v1/quality/docs", params={"kb_id": "kb1"})
+    body = r.json()
+    by_name = {i["file_name"]: i for i in body["data"]["items"]}
+    assert by_name["a.pdf"]["file_name_garbled"] is True
+    assert by_name["a.pdf"]["content_garbled"] is False
+    assert by_name["b.pdf"]["file_name_garbled"] is False
+    assert by_name["b.pdf"]["content_garbled"] is True
 
 
 def test_docs_cover_semantics(env) -> None:

@@ -237,6 +237,8 @@ def list_doc_eval_details(
                 "md_length": r.md_length,
                 "garbled": bool(r.garbled),
                 "garbled_hits": r.garbled_hits or [],
+                "file_name_garbled": bool(r.file_name_garbled),
+                "content_garbled": bool(r.content_garbled),
                 "score": r.score,
                 "updated_at": r.updated_at.isoformat() if r.updated_at else None,
             })

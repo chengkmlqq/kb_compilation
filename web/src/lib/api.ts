@@ -4521,6 +4521,8 @@ export interface QualityDocItem {
   md_length?: number;
   garbled?: boolean;
   garbled_hits?: string[];
+  file_name_garbled?: boolean;
+  content_garbled?: boolean;
   score?: number | null;
   updated_at?: string | null;
 }

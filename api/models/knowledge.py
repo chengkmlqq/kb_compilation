@@ -516,6 +516,8 @@ class QualityDocEval(Base):
     md_length: Mapped[int | None] = mapped_column(Integer)
     garbled: Mapped[bool] = mapped_column(Boolean, default=False)
     garbled_hits: Mapped[list | None] = mapped_column(JSON)
+    file_name_garbled: Mapped[bool] = mapped_column(Boolean, default=False)
+    content_garbled: Mapped[bool] = mapped_column(Boolean, default=False)
     score: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=text("CURRENT_TIMESTAMP")

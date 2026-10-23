@@ -189,6 +189,7 @@ else:
         _dur = _durations.get(_id)
         _score = 100
         _garbled, _garbled_hits, _item_issues = False, [], []
+        _fn_garbled, _txt_garbled = False, False
         # 文件名乱码检测（独立于转换状态：编码错位文件名在任何状态下都应标出）
         _fn_hits, _fn_garbled = _fn_garbled_check(str(_fn or ""))
         if _fn_garbled:
@@ -233,6 +234,7 @@ else:
             "parse_engine": _eng, "duration_ms": _dur,
             "chunk_count": int(_cc or 0), "md_length": len(_txt),
             "garbled": _garbled, "garbled_hits": _garbled_hits[:6],
+            "file_name_garbled": _fn_garbled, "content_garbled": _txt_garbled,
             "score": max(0, _score),
         })
     _garbled_n = sum(1 for p in _per_doc if p["garbled"])
@@ -333,7 +335,7 @@ try:
         _per = _m.get("per_doc") or []
         for _p in _per:
             _db.execute(
-                text("INSERT INTO kb_quality_doc_eval (id, kb_id, doc_id, run_id, file_name, file_ext, file_size, parse_state, parse_error, parse_engine, duration_ms, chunk_count, md_length, garbled, garbled_hits, score) VALUES (:id, :kb, :did, :rid, :fn, :ext, :fs, :ps, :perr, :eng, :dur, :cc, :mdl, :gb, :gh, :sc)"),
+                text("INSERT INTO kb_quality_doc_eval (id, kb_id, doc_id, run_id, file_name, file_ext, file_size, parse_state, parse_error, parse_engine, duration_ms, chunk_count, md_length, garbled, garbled_hits, file_name_garbled, content_garbled, score) VALUES (:id, :kb, :did, :rid, :fn, :ext, :fs, :ps, :perr, :eng, :dur, :cc, :mdl, :gb, :gh, :fngb, :ctgb, :sc)"),
                 {"id": uuid.uuid4().hex[:32], "kb": _kb, "did": str(_p.get("doc_id") or ""),
                  "rid": _qid, "fn": str(_p.get("file_name") or ""),
                  "ext": str(_p.get("file_ext") or "")[:32],
@@ -343,6 +345,8 @@ try:
                  "dur": _p.get("duration_ms"), "cc": _p.get("chunk_count"),
                  "mdl": _p.get("md_length"), "gb": 1 if _p.get("garbled") else 0,
                  "gh": json.dumps(_p.get("garbled_hits") or [], ensure_ascii=False),
+                 "fngb": 1 if _p.get("file_name_garbled") else 0,
+                 "ctgb": 1 if _p.get("content_garbled") else 0,
                  "sc": _p.get("score")},
             )
     _db.commit()

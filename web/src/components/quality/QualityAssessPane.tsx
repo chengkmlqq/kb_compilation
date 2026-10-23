@@ -546,9 +546,16 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
     },
     { title: "切片", dataIndex: "chunk_count", width: 64 },
     {
-      title: "乱码",
-      dataIndex: "garbled",
-      width: 64,
+      title: "标题乱码",
+      dataIndex: "file_name_garbled",
+      width: 84,
+      render: (v: boolean) =>
+        v ? <Tag color="error">是</Tag> : <Tag>否</Tag>,
+    },
+    {
+      title: "内容乱码",
+      dataIndex: "content_garbled",
+      width: 84,
       render: (v: boolean) =>
         v ? <Tag color="error">是</Tag> : <Tag>否</Tag>,
     },
