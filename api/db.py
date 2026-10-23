@@ -121,11 +121,19 @@ def _resolve_kb_url(env: str) -> tuple[str, str]:
 def _framework_engine_for(url: str) -> Engine:
     """框架库引擎（按 URL 缓存——dev/prod 双表改造后同一 URL，单连接池）。"""
     settings = get_settings()
+    connect_args: dict = {}
+    if not settings.is_pg:
+        # MySQL 会话时区固定为 UTC：server_default=CURRENT_TIMESTAMP / func.now()
+        # 才能落 UTC 字面。此前吃服务器全局 +08:00（CURRENT_TIMESTAMP 出北京字面，
+        # 而 worker 显式写 aware UTC 字面），同一列两种语义混存，前端按 UTC 解析
+        # 时北京字面行显示成「未来时间」（任务监控页时间错乱的根因）。
+        connect_args["init_command"] = "SET time_zone = '+00:00'"
     engine = create_engine(
         url,
         pool_pre_ping=settings.DB_POOL_PRE_PING,
         pool_size=settings.DB_MAX_CONNECTIONS,
         max_overflow=0,
+        connect_args=connect_args,
         future=True,
     )
     # 2026-10-20 双表改造：dev 环境（编排测试执行）自动把隔离表路由到
