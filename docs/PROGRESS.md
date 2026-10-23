@@ -25,7 +25,43 @@
 - **坑位**：① 同一条聚合 SQL「单库快、多库 IN 慢」= 统计失真警报，先 EXPLAIN 看 type/key/rows
   再下结论；② ANALYZE 是应急，持续写入表必须靠覆盖索引根治；③ 合并/重构 SQL 后要检查
   旧查询是否仍被执行（本次死查询即 2026-10-21 合并时遗留，靠 SQL 事件钩子拆解暴露）。
-- **遗留**：kb_visible_clauses 的 OR 三条件里 owner_user_id 仍无单列索引（§39 P2 未变）。
+
+## 47. 当前状态（2026-10-23 智能问答过程追踪——思考过程/工具调用链/检索命中落库，供分析定位）
+
+- **需求**：「智能问答的思考过程、工具调用等记录下来，后面好做分析，定位知识库知识质量
+  和模型能力的影响」
+- **现状盘点**：chat_message 已存 content/refs/thinking（但 thinking 仅 quick 问答存，
+  agent 链路不存）；kb_llm_usage 已记每次 LLM 调用的模型/tokens/耗时/重试。缺失 = agent
+  思考全文 + 工具调用链明细 + 检索命中明细 + 回合时序——全在 SSE 事件流里用完即弃
+  （agents.py 只把 thinking_rounds/tool_calls_count 两个计数放 done 事件，未落库）
+- **实现**（commit 82a66fd，已推送 dev）：
+  1. 新表 chat_trace（迁移 0042_chat_trace，按 assistant 消息一条）：thinking（reasoning
+     全文）+ events（时序事件数组：stage/context/thinking/tool_call/tool_result/done，
+     含相对耗时 ms + 截断的 arguments/result + success/error）+ hits（检索命中明细，
+     content 截断）+ summary（rounds/tool_calls/retrieval_hits/dur_ms/error）
+  2. `api/services/chat_trace.py` TraceCollector：事件循环里随手喂 on_event，finally
+     save_trace（best-effort 不阻断问答）；无会话/无 user 不落；空响应尝试也落（失败分析）
+  3. qa.py / agents.py 接入：事件循环喂 collector，会话模式 finally 落库；agent 链路
+     补存 thinking 到 chat_message（_persist_partial 带 thinking，update_message/
+     append_message 均透传）——刷新历史也能看到 agent 思考
+  4. 只读 API：`api/routers/chat_traces.py` → GET /api/v1/chat/traces（列表，筛
+     session/message/kind/kb/agent，管理员可见全部、普通用户仅本人）+ GET
+     /api/v1/chat/traces/{trace_id}（详情含 thinking/events/hits）
+- **验证**：tests/test_chat_trace.py 6 用例（事件收敛/工具失败/落库回查/无会话守卫/
+  best-effort/字段白名单）；chat/qa/agent 相关 63 passed；实机链路：POST
+  /api/v1/qa/stream（quick）→ chat_trace 落库，detail 返回完整 thinking 全文 +
+  stage/context/thinking 时间线 + 消息关联 + summary
+- **部署**：api 层改动 → 重建 kb-api-server（本次已 :local 部署，迁移自动 0040→0042，
+  chat_trace 表已建）；无前端改动
+- **⚠️ 部署踩坑（同批修复，commit e2b0736）**：0034_chat_message_attachment_ids.py /
+  0035_job_ref_columns.py 一直 **untracked 未提交**——干净 checkout/CI/我的 worktree 构建
+  缺它们 → alembic 修订树 KeyError('0035_job_ref_columns') → api-server 启动即崩
+  （此前容器没事是因为并行会话从工作树构建侥幸带上）。已补齐入仓 + 并行会话在途的
+  0041_quality_eval_file_tables 一并入仓，chat_trace 改链 0042 排其后单头线性（00fab20）。
+  **教训：新建迁移文件当日必须 git add**，否则任何「干净 checkout 构建」必崩
+- **后续分析用法**：按 session/kb/agent 拉 chat_traces 列表 → 详情看工具链命中与思考
+  质量；配合 kb_llm_usage（tokens/耗时）与 chat_message.feedback 做质量归因。前端
+  分析页暂无（需求未提，先接口供给）
 
 ## 45. 当前状态（2026-10-23 文档转换评估单文件粒度——文件名/状态/乱码/引擎/耗时逐文件展示）
 
