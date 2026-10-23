@@ -91,6 +91,45 @@ def _garbled_check(_text):
     return _hits, _garbled, _sample
 
 
+def _fn_garbled_check(_fn):
+    # 返回 (hits, garbled)。检测文件名本身乱码（编码错位/解码错误产物）：
+    # ① GBK→CP437/拉丁错位：框线/数学/希腊/西里尔符号堆砌（╓╞╢╚┴≈│╠╣▄└φ╞¿）
+    # ② UTF-8→GBK 错位：高频乱码字（鎴戜滑鐨勬柊浜у搧 等）+ 拉丁扩展混排
+    _hits = []
+    _n = _fn.count("\ufffd")
+    if _n:
+        _hits.append(f"替换字符 U+FFFD ×{_n}")
+    # UTF-8 字节流被按 GBK/GB2312 解码出的高频错位字（正常文件名几乎不出现）
+    _FN_BAD_WORDS = ("鎴", "戜", "鐨", "勬", "柊", "浜", "搧", "鏄", "鍒", "娑",
+                     "鎵", "鏈", "寰", "寮", "涓", "杩", "涔", "绠", "楄", "瀵",
+                     "缂", "璁", "储", "锻", "忓", "鍙", "鍥", "鎺", "鐢", "鏂")
+    _nw = sum(_fn.count(_w) for _w in _FN_BAD_WORDS)
+    if _nw >= 2:
+        _hits.append(f"编码错位特征字 ×{_nw}")
+    # 错位特征符号区间：拉丁补充-1/扩展、希腊、西里尔、数学运算符、盒绘线、块状
+    _bad = 0
+    _bad_chars: list[str] = []
+    for _c in _fn:
+        _o = ord(_c)
+        if (
+            (0x00C0 <= _o <= 0x024F)  # 拉丁补充-1/扩展A/B Ã¤Ã©ŽÅÈ…
+            or (0x0370 <= _o <= 0x03FF)  # 希腊字母 φψα…
+            or (0x0400 <= _o <= 0x04FF)  # 西里尔字母 ущф…
+            or (0x2200 <= _o <= 0x22FF)  # 数学运算符 ≈≤≥≠…
+            or (0x2500 <= _o <= 0x257F)  # 盒绘线 ╓╞╢╚┴│╠╣└┼…
+            or (0x2580 <= _o <= 0x259F)  # 块状 ▄▀█…
+        ):
+            _bad += 1
+            if len(_bad_chars) < 8:
+                _bad_chars.append(_c)
+    _nz = sum(1 for _c in _fn if ord(_c) > 127)
+    # 阈值：错位符号 ≥3 个，或占非 ASCII 字符 >50%（排除如「3×4」单符号情形）
+    if _bad >= 3 or (_nz and _bad / _nz > 0.5):
+        _hits.append(f"编码错位符号 ×{_bad}（{' '.join(_bad_chars)}）")
+    _garbled = bool(re.search(r"替换字符|编码错位特征字|编码错位符号", " ".join(_hits)))
+    return _hits, _garbled
+
+
 _kb = bindings.get("kb_id") or ""
 _docs = [d.strip() for d in str(bindings.get("doc_ids") or "").split(",") if d.strip()] or None
 _db = get_sessionmaker()()
@@ -150,6 +189,15 @@ else:
         _dur = _durations.get(_id)
         _score = 100
         _garbled, _garbled_hits, _item_issues = False, [], []
+        # 文件名乱码检测（独立于转换状态：编码错位文件名在任何状态下都应标出）
+        _fn_hits, _fn_garbled = _fn_garbled_check(str(_fn or ""))
+        if _fn_garbled:
+            _score -= 20
+            _garbled = True
+            _garbled_hits.extend(f"[文件名] {h}" for h in _fn_hits)
+            _item_issues.append({"dim": "doc", "doc_id": _id, "file_name": _fn,
+                                 "issue_type": "garbled_filename",
+                                 "detail": f"文件名乱码: {str(_fn or '')[:120]}（{'；'.join(_fn_hits[:3])}）"})
         if _ps == "FAILED":
             _score -= 100
             _item_issues.append({"dim": "doc", "doc_id": _id, "file_name": _fn,
@@ -167,10 +215,12 @@ else:
                                      "issue_type": "empty_conversion",
                                      "detail": "解析成功但无文本切片（空文档/纯图片/扫描件未走 OCR）"})
             else:
-                _garbled_hits, _garbled, _sample = _garbled_check(_txt)
-                if _garbled:
+                _txt_hits, _txt_garbled, _sample = _garbled_check(_txt)
+                if _txt_garbled:
                     _score -= 40
-                    _detail = "转换文本乱码: " + "; ".join(_garbled_hits[:4])
+                    _garbled = True
+                    _garbled_hits.extend(h for h in _txt_hits if "非法控制字符" not in h)
+                    _detail = "转换文本乱码: " + "; ".join(_txt_hits[:4])
                     if _sample:
                         _detail += f"（样例: {_sample[:120]!r}）"
                     _item_issues.append({"dim": "doc", "doc_id": _id, "file_name": _fn,

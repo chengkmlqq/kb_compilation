@@ -86,6 +86,7 @@ const ISSUE_TYPE_LABEL: Record<string, string> = {
   empty_conversion: "空转换产物",
   conversion_pending: "转换处理中",
   garbled_text: "内容乱码",
+  garbled_filename: "文件名乱码",
   // 切片（dim=chunk）
   too_many_short_chunks: "切片过碎",
   too_many_long_chunks: "切片过长",
