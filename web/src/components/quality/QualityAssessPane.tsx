@@ -555,14 +555,6 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
         v ? <Tag color="error">是</Tag> : <Tag>否</Tag>,
     },
     {
-      title: "得分",
-      dataIndex: "score",
-      width: 70,
-      render: (v: number | null) => (
-        <Tag color={scoreColor(v ?? null)}>{v ?? "-"}</Tag>
-      ),
-    },
-    {
       title: "评估时间",
       dataIndex: "updated_at",
       width: 150,
