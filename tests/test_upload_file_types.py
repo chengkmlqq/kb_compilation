@@ -274,10 +274,42 @@ def test_zip_upload_rejects_broken_zip(ft_client, ft_db) -> None:
 
     bad = ft_client.post(
         f"/api/v1/kbs/{kb.id}/documents/upload-archive",
-        files={"file": ("broken.zip", io.BytesIO(b"PK\x03\x04 truncated"), "application/zip")},
+        files=({"file": ("broken.zip", io.BytesIO(b"PK\x03\x04 truncated"), "application/zip")}),
     )
     assert bad.status_code == 400
     assert "无法解压" in bad.text
+
+
+def test_zip_upload_restores_mojibake_filename(ft_client, ft_db) -> None:
+    """Windows GBK 文件名（无 UTF-8 标志）的 zip：入库文件名应还原为中文。
+
+    模拟 Python zipfile 的标准行为：无 flag bit 11 的条目名按 CP437 解码，
+    服务器侧 _restore_mojibake_filename 应把「╓╨╣·」还原为「中国」。
+    """
+    from api.routers.kbs import _restore_mojibake_filename
+
+    kb = _mk_kb(ft_db)
+    # 构造 Windows GBK 编码文件名 + 无 UTF-8 标志位
+    gbk_name = "中国移动大数据产品技术规范-20201208-评审.doc"
+    raw_bytes = gbk_name.encode("gbk")
+    info = zipfile.ZipInfo("x.doc")
+    info.flag_bits = 0  # 不设 UTF-8 标志（Windows 老工具行为）
+    info.filename = raw_bytes.decode("cp437")  # zipfile 无标志时按 CP437 解码
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(info, b"content")
+    r = ft_client.post(
+        f"/api/v1/kbs/{kb.id}/documents/upload-archive?keep_structure=true",
+        files={"file": ("docs.zip", io.BytesIO(buf.getvalue()), "application/zip")},
+    )
+    assert r.status_code == 200, r.text
+    docs = _docs(ft_db, kb.id)
+    assert len(docs) == 1
+    assert docs[0].file_name == gbk_name, f"文件名未还原: {docs[0].file_name!r}"
+    # 还原函数单测：正常中文名/ASCII 名不应被误改
+    assert _restore_mojibake_filename("制品采购实施管理办法.pdf") == "制品采购实施管理办法.pdf"
+    assert _restore_mojibake_filename("report.pdf") == "report.pdf"
+    assert _restore_mojibake_filename("") == ""
 
 
 def test_zip_upload_rejects_unknown_folder(ft_client, ft_db) -> None:

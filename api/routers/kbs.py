@@ -1474,7 +1474,7 @@ def _read_archive_entries(
                 status_code=400, detail="压缩包无法解压（不是有效的 rar 或文件已损坏）"
             )
         names = [
-            ln
+            _restore_mojibake_filename(ln)
             for ln in listing.stdout.decode("utf-8", "replace").splitlines()
             if ln and not ln.endswith("/")
         ]
@@ -1515,11 +1515,43 @@ def _read_archive_entries(
         zf.close()
 
     entries = [
-        _ArchiveEntry(i.filename, i.file_size, lambda i=i: zf.read(i))
+        _ArchiveEntry(_restore_mojibake_filename(i.filename), i.file_size, lambda i=i: zf.read(i))
         for i in zf.infolist()
         if not (i.filename or "").endswith("/")
     ]
     return entries, _close
+
+
+def _restore_mojibake_filename(name: str) -> str:
+    """还原压缩包内文件名乱码（Windows GBK 编码 + 无 UTF-8 标志的 zip/rar）。
+
+    背景（2026-10-23）：Windows 中文环境打的压缩包，条目名以 GBK 字节写入且
+    未设 zip UTF-8 标志位，Python zipfile 按规范默认 CP437 解码 → 中文变
+    「╓╨╣·」类 box-drawing 乱码；rar 走 bsdtar 输出按 utf-8 解码时 GBK 变
+    「\ufffd」占位。这里做可逆探测：命中 mojibake 特征且 cp437→gbk 可逆
+    还原成功才替换，否则原样返回（避免误伤正常名称）。
+    """
+    if not name:
+        return name
+    # 特征一：CP437 误读 GBK —— 含 box-drawing 区（U+2500–U+257F）等 CP437 图形字符
+    if any("\u2500" <= ch <= "\u257f" for ch in name):
+        try:
+            raw = name.encode("cp437")
+            restored = raw.decode("gbk")
+            # 还原后必须无 \ufffd（gbk 硬解码不会产占位，防御性检查）+ 非空
+            if restored and "\ufffd" not in restored:
+                return restored
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    # 特征二：GBK 被按 utf-8 解码成 \ufffd 占位（rar bsdtar 链路）
+    if "\ufffd" in name:
+        try:
+            restored = name.encode("latin-1", errors="replace").decode("gbk", errors="ignore")
+            if restored and "\ufffd" not in restored and any("\u4e00" <= ch <= "\u9fff" for ch in restored):
+                return restored
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    return name
 
 
 class _ArchiveEntry:
