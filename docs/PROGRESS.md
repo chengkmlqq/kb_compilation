@@ -2,7 +2,43 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-23（知识库列表接口 wiki 聚合覆盖索引 + 死查询清理——28-80s 降至 0.3s；并行：文档转换评估单文件粒度）
+最后更新：2026-10-23（页面请求 <200ms 专项完成——全端点热态达标：覆盖索引×2 + 聚合短 TTL 缓存 + 列表窄列）
+
+## 47. 当前状态（2026-10-23 页面请求 <200ms 专项——全端点扫描与修复）
+
+- **需求**：「每个页面的请求都应该在 200ms 内响应，大于 200ms 的都应该修复」
+- **测量方法**：app.openapi 取权威 GET 路由清单（跳过需 path 参数的路由），admin
+  身份 cookie（encode_identity_cookie 直构）逐端点冷/热各压一次，SQL 层事件钩子
+  拆解 + EXPLAIN（MySQL8 列序含 partitions）、SHOW INDEX 卡度、冷热三连耗时。
+- **根因（环境层）**：远端共享 MySQL（10.1.206.135，uptime 58 天，130+ 连接）缓冲池
+  仅 128MB；doc_chunk 21 万行/wiki_page 10 万行 含 MEDIUMTEXT content，冷索引页
+  读取秒级、热时 100-300ms——执行计划已最优（Using index）仍波动，属缓冲池冷热
+  效应，代码侧无法根治只能缓存/覆盖索引兜底。首轮 overview 三件套 9-22s、/kbs 9s
+  即此（2026-10-21 §39 同源复发）。
+- **修复（commits 98448e4/03a8662/f1346d5，均已推送且容器热更生效）**：
+  1. 覆盖索引：0039 wiki_page(kb_id,status,page_type) + 0043 kb_tape_run(status)
+     （模型 __table_args__ 同步声明，dev 表 create_all 补建）；迁移幂等。
+  2. 删除 list_kbs 合并计数遗留的死查询（结果被覆盖丢弃）。
+  3. `api/services/agg_cache.py` 进程内短 TTL 聚合缓存（threading.Lock）：
+     overview summary/kb-stats/trend 30s（key 含可见范围）、list_kbs 四组计数 15s、
+     usage summary/trend 30s（preset 非 custom 时 start/end 随 now() 变化不可进 key）、
+     metadata/datasources 15s。
+  4. quality/runs 列表窄列：不拉 issues/attribution 大 JSON（单行 ~600KB），
+     issues_count 走 MySQL JSON_LENGTH（其他方言回落）；新增 _run_item_row。
+- **复扫结果（27 个页面端点，热态全 <200ms）**：kbs 24-28ms / overview 7-27ms /
+  jobs 47ms / jobs/statistics 82-87ms（原 12-26s）/ workers 22ms / quality/runs 79ms /
+  quality/docs 18ms / usage 全部 19-33ms / metadata/datasources 4ms / ontology 74ms /
+  websearch 8ms / 其余均 <120ms。
+- **验证**：test_jobs_monitor/test_quality_dim_runs/test_kb_admin/test_wiki_keywords/
+  test_llm_usage_stats 63 passed；EXPLAIN 确认两处覆盖索引 Using index。
+- **坑位**：① 同一查询冷热耗时 100 倍差（2.5s→138ms）= 缓冲池冷热，先 EXPLAIN 确认
+  plan 再判刑；② GROUP BY/COUNT 走二级索引时 MySQL 可能仍回表读大 JSON → 覆盖索引
+  必须含查询全部列；③ 缓存 key 若含 str(now 派生时间) 会永不命中；④ 并行会话 CI
+  会重建容器冲掉 docker cp 热更（本会话两次被冲），最终以 push→CI→deploy 为准；
+  ⑤ agg_cache 是进程内缓存，多副本部署时各副本独立（TTL 窗口内短暂不一致，可接受）。
+- **遗留（环境建议，非代码）**：远端库缓冲池 128MB 偏小 + 共享库连接 130+——
+  建议 DB 侧调大 buffer_pool（如 2-4GB）或入库定期 ANALYZE；kb_visible_clauses
+  owner_user_id 单列索引（§39 P2 未变）。缓存 TTL 30s 内页面统计有短暂陈旧属预期。
 
 ## 46. 当前状态（2026-10-23 知识库列表接口效率修复——wiki 聚合覆盖索引 + 死查询清理）
 
