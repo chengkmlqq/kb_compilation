@@ -80,7 +80,9 @@ def main() -> None:
 
     dim = args.dim
     tape_name = DIM_TAPES[dim]
-    run_dim = "doc" if dim == "wiki" else dim  # wiki 走 dim=all 编排，run 记 dim=all
+    # wiki 走 dim=all 编排「质量评估-QA」，run 记 dim=all（2026-10-23 修复：
+    # 原误写 "doc" 导致 wiki 重触发误删 doc 记录、qrun 记错维度页面不可见）
+    run_dim = "all" if dim == "wiki" else dim
     db = get_sessionmaker()()
     try:
         # 1) 确定目标知识库 + 清空其旧评估记录

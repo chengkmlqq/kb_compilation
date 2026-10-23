@@ -91,6 +91,57 @@
   再下结论；② ANALYZE 是应急，持续写入表必须靠覆盖索引根治；③ 合并/重构 SQL 后要检查
   旧查询是否仍被执行（本次死查询即 2026-10-21 合并时遗留，靠 SQL 事件钩子拆解暴露）。
 
+## 48. 当前状态（2026-10-23 wiki评估迁移——「切片评估」页承载的 LLM 对照原文评估 Wiki 迁至 wiki评估页执行与展示）
+
+- **需求**：「把切片评估页面的 wiki 评估迁移到 wiki评估页面去做和展示」——§44 改造
+  （v3：单文件粒度 LLM 对照完整原文评估 Wiki）实现时挂靠在了「切片评估」编排
+  （dim=chunk），评估对象是 wiki 页却落在切片评估页做与展示，本次迁移归位
+- **执行迁移**（commit f2dbf0b，已推送 dev）：
+  - `scripts/chunk_eval_v3_step_code.py` 改造为 wiki 版：issue/attribution 的 dim
+    chunk→wiki、binding chunk_r→wiki_cmp_r、打印前缀 [切片评估]→[wiki评估]；
+    作为「质量评估-QA」n06「Wiki-原文对比评估」节点代码（seed JSON nodes+steps
+    双写同源）——页级抽样升级为逐文件对照完整原文评估（内容错误/缺失/是否有意义 +
+    score + wiki 构建起始/耗时/评估耗时/结论）
+  - n08 汇总+落库：wiki 维度 metrics 合并 v3 字段（`_wiki_cmp_m` 非 per_doc 字段为底 +
+    程序检查 `_wiki_m` 覆盖，per_doc 以 v3 明细为主、空库回落程序 per_doc）；
+    kb_quality_wiki_eval 落库改为 v3 per_doc 为主行 + 按 doc_id merge n03 程序计数
+    （pages/empty/orphan/broken_links/placeholder/missing_source/no_folder）
+  - wiki 语义分维持 n05 单文档 + n06 对照原文两路平均（v3 health=单文件均分，结构兼容）
+- **展示迁移**：wiki评估页（/quality, dim=all）主页平铺表（kb_quality_wiki_eval）加
+  切片/均长/Wiki构建起始/Wiki构建耗时/评估耗时/结论 列（结论含错误/问题 tooltip）；
+  详情抽屉 wiki 维度卡片下展示「对照原文评估明细」单文件表（原 chunkDetailTable
+  迁用，读 report.metrics.per_doc）；metricSummary wiki 分支补 v3 指标、chunk 分支
+  恢复程序版指标
+- **切片评估恢复程序版**（QC_CODE：过碎/过长/截断/重复）：gen_quality_dim_tapes.py
+  QCLM_CODE→QC_CODE + label/descr 恢复；QSUM_DIM_CODE 的 chunk 落库兼容 dict per_doc
+  （补查 file_name，写 short/long/truncated/dup 计数列）；kb_quality_chunk_eval 加
+  short/long/truncated/dup 列（0044 迁移，与 wiki_eval 扩展同批）
+- **DB 迁移**：0044_quality_wiki_eval_ext——kb_quality_wiki_eval 加 chunks/avg_len/
+  wiki_pages/wiki_start_time/wiki_build_sec/doc_process_sec/wiki_tape/eval_duration_sec/
+  conclusion/error；kb_quality_chunk_eval 加 short/long/truncated/dup（幂等，列存在跳过）
+- **API**：list_quality_file_details 的 wiki 分支返回 v3 明细字段、chunk 分支返回
+  程序版计数（对齐 kb_quality_chunk_eval 扩展列）
+- **验证**：44 passed（quality 相关 4 个测试文件）；前端 tsc --noEmit 通过；seed JSON
+  nodes/steps 同源一致性校验通过
+- **坑位**：①「质量评估-QA」seed JSON 无生成器（库导出产物），改 n06/n08 须 nodes 与
+  steps 双写，改后用 apply_quality_tape.py 应用；② gen_quality_dim_tapes.py 三个单维度
+  编排共用 QSUM_DIM_CODE——改落库逻辑会同步进 文档转换/图数据 两个 JSON（属预期，
+  提交时三文件一起）；③ 程序版 QC_CODE per_doc 是 dict（doc_id→明细）非 list，
+  QSUM 落库前须转换 + 补 file_name；④ 容器内代码经 COPY 入镜像，git pull 后必须重建
+  容器才生效（本次部署用 deploy/kb-update.sh 本地构建 + up）；⑤ MySQL 保留字列名
+  （`long`/`empty`）在裸 SQL（text()）里必须反引号，否则 1064（已修：
+  gen QSUM `long`、质量评估-QA n08 `empty`）；⑥ retrigger_quality_eval.py 原
+  `run_dim = "doc" if dim == "wiki"` 笔误——wiki 重触发会误删 doc 记录、qrun 记错
+  维度页面不可见（已修为 "all"）；⑦ docker exec 外层进程被 kill 时容器内 python
+  变孤儿继续跑——重触发类长跑脚本须容器内 ps 确认无残留再重发，孤儿 run 的 celery
+  任务在 worker 容器重建后可能残留 active 僵尸记录（CPU 时间不涨即僵尸，可无视，
+  revoke + 清 tape guard 后重发）
+- **落地**（2026-10-23 晚，f2dbf0b 部署 + 本轮修复）：容器重建 + 0044 迁移自动应用；
+  apply_quality_tape.py 应用 质量评估-QA/切片评估 编排（n06=v3 wiki 版、n08 合并落库、
+  切片 n2 程序版）；切片评估 9 库重发 success（指标如济南库 docs=944 short=38163
+  health=70）；doc 评估 9 库重发 success（恢复误删）；wiki 评估（dim=all）9 库逐库
+  串行重发中（v3 逐文件 LLM，数小时量级，后台 retrigger 轮询到终态）
+
 ## 47. 当前状态（2026-10-23 智能问答过程追踪——思考过程/工具调用链/检索命中落库，供分析定位）
 
 - **需求**：「智能问答的思考过程、工具调用等记录下来，后面好做分析，定位知识库知识质量

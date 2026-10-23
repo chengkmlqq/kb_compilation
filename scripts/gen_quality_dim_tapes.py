@@ -363,7 +363,7 @@ try:
                     for v in _per.values()]
         for _p in _per:
             _db.execute(
-                text("INSERT INTO kb_quality_chunk_eval (id, kb_id, doc_id, run_id, file_name, chunks, avg_len, short, long, truncated, dup, wiki_pages, wiki_start_time, wiki_build_sec, doc_process_sec, wiki_tape, eval_duration_sec, score, conclusion, issues, error) VALUES (:id, :kb, :did, :rid, :fn, :ch, :alen, :sh, :lg, :tr, :dp, :wp, :wst, :wbs, :dps, :wt, :eds, :sc, :conc, :iss, :err)"),
+                text("INSERT INTO kb_quality_chunk_eval (id, kb_id, doc_id, run_id, file_name, chunks, avg_len, short, `long`, truncated, dup, wiki_pages, wiki_start_time, wiki_build_sec, doc_process_sec, wiki_tape, eval_duration_sec, score, conclusion, issues, error) VALUES (:id, :kb, :did, :rid, :fn, :ch, :alen, :sh, :lg, :tr, :dp, :wp, :wst, :wbs, :dps, :wt, :eds, :sc, :conc, :iss, :err)"),
                 {"id": uuid.uuid4().hex[:32], "kb": _kb, "did": str(_p.get("doc_id") or ""),
                  "rid": _qid, "fn": str(_p.get("file_name") or "")[:255],
                  "ch": _p.get("chunks"), "alen": _p.get("avg_len"),
