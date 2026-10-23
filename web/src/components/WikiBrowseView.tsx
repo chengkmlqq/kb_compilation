@@ -56,6 +56,7 @@ import {
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import FixedHeightVirtualList from "@/components/FixedHeightVirtualList";
 import { WIKI_PAGE_TYPE_LABELS as TYPE_LABEL } from "@/lib/wikiTypes";
 import {
   apiWikiBranch,
@@ -125,6 +126,9 @@ const WIKI_TABS: { key: WikiTab; label: string; types: string[] }[] = [
   { key: "original_doc", label: "原始文档 Wiki", types: ORIGINAL_DOC_TYPES },
   { key: "clustered_knowledge", label: "聚类知识 Wiki", types: CLUSTERED_KNOWLEDGE_TYPES },
 ];
+
+/** 每个分支一次拉取的页面数（后端上限 200；50 与 WeKnora 侧栏批量相当） */
+const WIKI_BRANCH_PAGE_SIZE = 50;
 
 /** page_type → 图标（对齐 WeKnora getPageIcon：entity=tag / concept=lightbulb / synthesis=relativity …） */
 function pageIconOf(pageType: string) {
@@ -236,7 +240,9 @@ const WikiDirectoryRow = memo(function WikiDirectoryRow({
   );
 });
 
-/** 左树页面行（memo 化：仅 active 变化影响本行重渲染） */
+/** 左树页面行（memo 化：仅 active 变化影响本行重渲染）。
+    Tooltip 仅标题超长时挂载（对齐 WeKnora `:disabled="label.length <= 20"`，
+    页面行很多时避免数百个 Tooltip 组件常驻开销） */
 const WikiPageRow = memo(function WikiPageRow({
   slug,
   title,
@@ -252,21 +258,25 @@ const WikiPageRow = memo(function WikiPageRow({
   active: boolean;
   onSelect: (slug: string) => void;
 }) {
+  const body = (
+    <div
+      className={`kb-wiki-page-item kb-wiki-page-item--tree${active ? " active" : ""}`}
+      style={{ "--kb-wiki-depth": depth } as React.CSSProperties}
+      onClick={() => onSelect(slug)}
+    >
+      <span
+        className="kb-wiki-page-file-icon"
+        style={{ color: PAGE_ICON_COLOR[pageType] || undefined }}
+      >
+        {pageIconOf(pageType)}
+      </span>
+      <span className="kb-wiki-page-item-title">{title}</span>
+    </div>
+  );
+  if (title.length <= 20) return body;
   return (
     <Tooltip title={title} placement="top" mouseEnterDelay={0.6}>
-      <div
-        className={`kb-wiki-page-item kb-wiki-page-item--tree${active ? " active" : ""}`}
-        style={{ "--kb-wiki-depth": depth } as React.CSSProperties}
-        onClick={() => onSelect(slug)}
-      >
-        <span
-          className="kb-wiki-page-file-icon"
-          style={{ color: PAGE_ICON_COLOR[pageType] || undefined }}
-        >
-          {pageIconOf(pageType)}
-        </span>
-        <span className="kb-wiki-page-item-title">{title}</span>
-      </div>
+      {body}
     </Tooltip>
   );
 });
@@ -290,14 +300,47 @@ const WikiMarkdownBody = memo(function WikiMarkdownBody({
   );
 });
 
-/** 扁平化的树行（目录 / 页面），带深度用于缩进 */
+/** 分支「加载更多」行（memo 化；对齐 WeKnora .wiki-directory-load-more） */
+const WikiLoadMoreRow = memo(function WikiLoadMoreRow({
+  depth,
+  remaining,
+  loading,
+  onLoadMore,
+}: {
+  depth: number;
+  remaining: number;
+  loading: boolean;
+  onLoadMore: () => void;
+}) {
+  return (
+    <div
+      className="kb-wiki-load-more"
+      style={{ "--kb-wiki-depth": depth } as React.CSSProperties}
+      onClick={() => {
+        if (!loading) onLoadMore();
+      }}
+    >
+      {loading ? <Spin size="small" /> : <DownOutlined />}
+      <span className="kb-wiki-load-more-text">
+        {loading ? "加载中…" : `加载更多${remaining > 0 ? `（剩余 ${remaining}）` : ""}`}
+      </span>
+    </div>
+  );
+});
+
+/** 扁平化的树行（目录 / 页面 / 加载更多），带深度用于缩进 */
 type TreeRow =
   | { kind: "directory"; key: string; folderId: string; label: string; count: number; pageCount: number; pageTotal: number; depth: number; hasChildren: boolean }
-  | { kind: "page"; key: string; page: WikiPageItem; depth: number };
+  | { kind: "page"; key: string; page: WikiPageItem; depth: number }
+  | { kind: "load-more"; key: string; folderId: string; depth: number; remaining: number; loading: boolean };
 
 interface BranchData {
   folders: WikiFolderNode[];
   pages: WikiPageItem[];
+  /** 当前已加载到的页码（1 起）；hasMore 时继续 fetch 下一页追加 */
+  page: number;
+  hasMore: boolean;
+  totalPages: number;
 }
 
 interface Props {
@@ -338,6 +381,8 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
   // memo 树行收到同一回调引用，点击时才不会整树重建
   const branchesRef = useRef(branches);
   branchesRef.current = branches;
+  // 分支「加载更多」进行中的 folderId（避免重复触发 + 渲染 load-more 行 loading 态）
+  const [loadingMoreFolder, setLoadingMoreFolder] = useState<string | null>(null);
 
   // 编辑
   const [editOpen, setEditOpen] = useState(false);
@@ -370,15 +415,18 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
     [kbId],
   );
 
+  /** 拉取一个分支（folderId='' 为根）。page>1 时为目录下页面翻页追加。
+      页面按 title 排序（与 WeKnora 一致），目录按 name 排序。 */
   const fetchBranch = useCallback(
-    async (folderId: string): Promise<BranchData> => {
+    async (folderId: string, page = 1): Promise<BranchData> => {
       const tabTypes = WIKI_TABS.find((t) => t.key === wikiTab)?.types;
-      const res = await apiWikiBranch(kbId, folderId, 1, 50, tabTypes);
-      if (!res.success || !res.data) return { folders: [], pages: [] };
+      const res = await apiWikiBranch(kbId, folderId, page, 50, tabTypes);
+      if (!res.success || !res.data) return { folders: [], pages: [], page: 1, hasMore: false, totalPages: 1 };
       const d = res.data;
       const folders = [...(d.folders || [])].sort((a, b) => a.name.localeCompare(b.name));
       const pages = [...(d.pages || [])].sort((a, b) => a.title.localeCompare(b.title));
-      return { folders, pages };
+      const totalPages = d.total_pages && d.total_pages > 0 ? d.total_pages : 1;
+      return { folders, pages, page: d.page || page, hasMore: !!d.has_more, totalPages };
     },
     [kbId, wikiTab],
   );
@@ -447,11 +495,14 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
               cur = f?.parent_id || "";
               guard += 1;
             }
-            for (const fid of chain) {
-              if (cancelled) return;
-              next[fid] = await fetchBranch(fid);
+            // 2026-10-23 性能：父链各级并行拉取（此前串行 await；
+            // 深链定位展开整条链时逐级等待明显变慢）
+            const branchesArr = await Promise.all(chain.map((fid) => fetchBranch(fid)));
+            if (cancelled) return;
+            chain.forEach((fid, i) => {
+              next[fid] = branchesArr[i];
               nextExpanded.push(fid);
-            }
+            });
           }
           setSelectedSlug(focusSlug);
           selectedRef.current = focusSlug;
@@ -478,7 +529,8 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kbId, focusSlug]);
 
-  /** 扁平化渲染行：目录（及其递归子项）在前，页面在后（对齐 antd Tree 与 WeKnora 目录优先） */
+  /** 扁平化渲染行：目录（及其递归子项）在前，页面在后（对齐 antd Tree 与 WeKnora 目录优先）；
+      分支 hasMore 时在页面末尾追加「加载更多」行（与 WeKnora load-more 一致） */
   const treeRows = useMemo<TreeRow[]>(() => {
     const expanded = new Set(expandedKeys);
     const rows: TreeRow[] = [];
@@ -502,10 +554,22 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
       for (const p of branch.pages) {
         rows.push({ kind: "page", key: `page:${p.slug}`, page: p, depth });
       }
+      if (branch.hasMore && branch.pages.length > 0) {
+        const remaining = Math.max(0, (branch.totalPages - branch.page) * WIKI_BRANCH_PAGE_SIZE);
+        rows.push({
+          kind: "load-more",
+          key: `load-more:${parentId || "__root__"}`,
+          folderId: parentId,
+          depth,
+          remaining,
+          loading: loadingMoreFolder === parentId,
+        });
+      }
     };
     walk("", 0);
     return rows;
-  }, [branches, expandedKeys]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branches, expandedKeys, loadingMoreFolder]);
 
   const onToggleDirectory = useCallback((folderId: string) => {
     setExpandedKeys((prev) => {
@@ -532,12 +596,42 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
     [fetchBranch, onToggleDirectory],
   );
 
-  // 编辑/删除等树外变更后：按当前展开状态刷新已加载分支
+  /** 「加载更多」：分支已加载且 hasMore 时取下一页追加（对齐 WeKnora load-more 行） */
+  const loadMoreBranch = useCallback(
+    async (folderId: string) => {
+      const cur = branchesRef.current[folderId];
+      if (!cur || !cur.hasMore || loadingMoreFolder === folderId) return;
+      setLoadingMoreFolder(folderId);
+      try {
+        const nextPage = cur.page + 1;
+        const next = await fetchBranch(folderId, nextPage);
+        setBranches((prev) => {
+          const existed = prev[folderId];
+          if (!existed) return prev;
+          const seen = new Set(existed.pages.map((p) => p.slug));
+          const mergedPages = [
+            ...existed.pages,
+            ...next.pages.filter((p) => !seen.has(p.slug)),
+          ];
+          return { ...prev, [folderId]: { ...next, folders: existed.folders, pages: mergedPages } };
+        });
+      } finally {
+        setLoadingMoreFolder(null);
+      }
+    },
+    [fetchBranch, loadingMoreFolder],
+  );
+
+  // 编辑/删除等树外变更后：按当前展开状态刷新已加载分支。
+  // 2026-10-23 性能：根级 + 全部已展开分支并行拉取（此前串行 await，
+  // 展开目录多时保存一次页面要等 N 个串行请求）。
   const reloadTree = useCallback(async () => {
-    const next: Record<string, BranchData> = { "": await fetchBranch("") };
-    for (const fid of expandedRef.current) {
-      next[fid] = await fetchBranch(fid);
-    }
+    const fids = expandedRef.current;
+    const entries = await Promise.all([fetchBranch(""), ...fids.map((fid) => fetchBranch(fid))]);
+    const next: Record<string, BranchData> = { "": entries[0] };
+    fids.forEach((fid, i) => {
+      next[fid] = entries[i + 1];
+    });
     setBranches(next);
     const cur = selectedRef.current;
     if (cur) void loadPage(cur);
@@ -723,43 +817,64 @@ export default function WikiBrowseView({ kbId, focusSlug, onTreeChanged, onOpenG
             </>
           ) : (
             // 2026-10-15：仅保留树视图（列表视图切换已移除）
+            // 2026-10-23 性能：接入 FixedHeightVirtualList 虚拟滚动——
+            // 目录/页面总量可达数千行，全量渲染时首屏 + 点击行都卡顿。
+            // 行高固定 36px（CSS 34px + 上下 margin 1px×2），无需动态测量。
             <div className="kb-wiki-tree-panel">
-              <div className="kb-wiki-tree-list">
-                {treeRows.map((row) =>
-                  row.kind === "directory" ? (
-                    <WikiDirectoryRow
-                      key={row.key}
-                      folderId={row.folderId}
-                      label={row.label}
-                      pageTotal={row.pageTotal}
-                      depth={row.depth}
-                      expanded={expandedSet.has(row.folderId)}
-                      onToggle={onExpandDirectory}
-                    />
-                  ) : (
-                    <WikiPageRow
-                      key={row.key}
-                      slug={row.page.slug}
-                      title={row.page.title}
-                      pageType={row.page.page_type}
-                      depth={row.depth}
-                      active={row.page.slug === selectedSlug}
-                      onSelect={handleSelectPage}
-                    />
-                  ),
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* 空状态 */}
-          {!searchMode && !loading && !hasContentPages && (
-            <div className="kb-wiki-empty-state">
-              <div className="kb-wiki-empty-icon">
-                <FileUnknownOutlined style={{ fontSize: 36 }} />
-              </div>
-              <p className="kb-wiki-empty-title">暂无 wiki 页面</p>
-              <p className="kb-wiki-empty-desc">构建完成后，wiki 页面会显示在这里</p>
+              {hasContentPages ? (
+                <FixedHeightVirtualList
+                  className="kb-wiki-tree-list kb-wiki-tree-list--virtual"
+                  items={treeRows}
+                  itemHeight={36}
+                  overscan={12}
+                  renderRow={(row) => {
+                    if (row.kind === "directory") {
+                      return (
+                        <WikiDirectoryRow
+                          key={row.key}
+                          folderId={row.folderId}
+                          label={row.label}
+                          pageTotal={row.pageTotal}
+                          depth={row.depth}
+                          expanded={expandedSet.has(row.folderId)}
+                          onToggle={onExpandDirectory}
+                        />
+                      );
+                    }
+                    if (row.kind === "load-more") {
+                      return (
+                        <WikiLoadMoreRow
+                          key={row.key}
+                          depth={row.depth}
+                          remaining={row.remaining}
+                          loading={row.loading}
+                          onLoadMore={() => void loadMoreBranch(row.folderId)}
+                        />
+                      );
+                    }
+                    return (
+                      <WikiPageRow
+                        key={row.key}
+                        slug={row.page.slug}
+                        title={row.page.title}
+                        pageType={row.page.page_type}
+                        depth={row.depth}
+                        active={row.page.slug === selectedSlug}
+                        onSelect={handleSelectPage}
+                      />
+                    );
+                  }}
+                />
+              ) : (
+                // 空状态（无内容时 tree-panel 撑满整列，空状态居中显示）
+                <div className="kb-wiki-empty-state">
+                  <div className="kb-wiki-empty-icon">
+                    <FileUnknownOutlined style={{ fontSize: 36 }} />
+                  </div>
+                  <p className="kb-wiki-empty-title">暂无 wiki 页面</p>
+                  <p className="kb-wiki-empty-desc">构建完成后，wiki 页面会显示在这里</p>
+                </div>
+              )}
             </div>
           )}
         </div>

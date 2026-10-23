@@ -678,10 +678,52 @@ html[data-theme="dark"] body {
 .kb-wiki-tree-panel {
   --kb-wiki-depth-indent: 14px;
   padding: 0 8px;
+  /* 2026-10-23 虚拟滚动：列表容器撑满可视高度，内部自行滚动 */
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .kb-wiki-tree-list {
   padding: 0 0 4px;
+}
+
+/* 2026-10-23 虚拟滚动容器：父级高度 100%，overflow 交给列表自身 */
+.kb-wiki-tree-list--virtual {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── 分支「加载更多」行（34px / 缩进同目录行 / 对齐 WeKnora .wiki-directory-load-more） ── */
+.kb-wiki-load-more {
+  height: 34px;
+  box-sizing: border-box;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: calc(var(--kb-wiki-depth, 0) * var(--kb-wiki-depth-indent, 14px));
+  border-radius: 6px;
+  cursor: pointer;
+  margin: 1px 0;
+  color: rgba(0, 0, 0, 0.45);
+  background: transparent;
+  user-select: none;
+  font-size: 12px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.kb-wiki-load-more:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.kb-wiki-load-more-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kb-wiki-group-loading {
@@ -827,6 +869,13 @@ html[data-theme="dark"] body {
   -webkit-box-orient: vertical;
   overflow: hidden;
   margin-bottom: 6px;
+}
+
+/* 空状态：树面板（flex column）内时撑满剩余空间并居中 */
+.kb-wiki-tree-panel > .kb-wiki-empty-state {
+  flex: 1;
+  min-height: 0;
+  padding: 40px 12px;
 }
 
 /* ── 空状态 ── */
