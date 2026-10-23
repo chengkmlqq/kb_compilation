@@ -40,9 +40,14 @@ def tape_id_by_name(db, name: str) -> str:
 
 
 def wait_run_terminal(db, run_id: str, env: str) -> str:
-    """轮询 kb_tape_run 到成功/失败（超时返回 timeout）。"""
+    """轮询 kb_tape_run 到成功/失败（超时返回 timeout）。
+
+    注意：同一会话连续 SELECT 在 MySQL REPEATABLE READ 下共享同一快照，
+    轮询前必须 rollback 结束旧事务，否则永远读不到更新后的状态。
+    """
     deadline = time.monotonic() + RUN_TIMEOUT_S
     while time.monotonic() < deadline:
+        db.rollback()  # 结束旧快照，读到最新状态
         row = db.execute(
             text("SELECT status, COALESCE(error,'') FROM kb_tape_run WHERE id=:rid"),
             {"rid": run_id},
@@ -54,22 +59,35 @@ def wait_run_terminal(db, run_id: str, env: str) -> str:
 
 
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--kbs", default="", help="显式指定知识库 id 列表（逗号分隔），缺省扫描现有 dim=chunk 评估记录")
+    args = parser.parse_args()
+
     db = get_sessionmaker()()
     try:
-        # 1) 旧的 dim=chunk 评估记录
-        old_runs = db.execute(
-            select(QualityRun).where(QualityRun.dim == "chunk")
-        ).scalars().all()
-        if not old_runs:
-            print("[retrigger] 无 dim=chunk 评估记录，无需清空")
+        # 1) 确定目标知识库 + 清空其旧的 dim=chunk 评估记录
+        if args.kbs:
+            kbs = sorted({k.strip() for k in args.kbs.split(",") if k.strip()})
+            old_runs = db.execute(
+                select(QualityRun).where(QualityRun.dim == "chunk", QualityRun.kb_id.in_(kbs))
+            ).scalars().all()
+        else:
+            old_runs = db.execute(
+                select(QualityRun).where(QualityRun.dim == "chunk")
+            ).scalars().all()
+            kbs = sorted({r.kb_id for r in old_runs})
+        if not kbs:
+            print("[retrigger] 目标知识库为空，无需触发")
             return
-        kbs = sorted({r.kb_id for r in old_runs})
-        print(f"[retrigger] 待清空 chunk 评估任务 {len(old_runs)} 条（涉及知识库 {len(kbs)} 个: {kbs}）")
-        old_ids = [r.id for r in old_runs]
-        db.execute(delete(QualityReport).where(QualityReport.run_id.in_(old_ids)))
-        db.execute(delete(QualityRun).where(QualityRun.dim == "chunk"))
-        db.commit()
-        print(f"[retrigger] 已删除 kb_quality_run(dim=chunk) {len(old_ids)} 条 + 对应 kb_quality_report")
+        print(f"[retrigger] 目标知识库 {len(kbs)} 个: {kbs}；待清空 chunk 评估任务 {len(old_runs)} 条")
+        if old_runs:
+            old_ids = [r.id for r in old_runs]
+            db.execute(delete(QualityReport).where(QualityReport.run_id.in_(old_ids)))
+            db.execute(delete(QualityRun).where(QualityRun.dim == "chunk", QualityRun.kb_id.in_(kbs)))
+            db.commit()
+            print(f"[retrigger] 已删除 kb_quality_run(dim=chunk) {len(old_ids)} 条 + 对应 kb_quality_report")
 
         # 2) 逐库重触发整库评估（串行，等终态）
         tape_id = tape_id_by_name(db, TAPE_NAME)

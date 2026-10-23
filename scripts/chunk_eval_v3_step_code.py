@@ -213,7 +213,11 @@ else:
         _proc_sec = None
         _dc, _du = _to_dt(_dinfo.get("created_at")), _to_dt(_dinfo.get("updated_at"))
         if _dc and _du:
-            _proc_sec = round((_du - _dc).total_seconds(), 1)
+            # kb_document 时间戳混用时区（created_at=服务器本地 / updated_at=UTC），
+            # 可能算出负数 → 负值视为无效置空
+            _psec = round((_du - _dc).total_seconds(), 1)
+            if _psec >= 0:
+                _proc_sec = _psec
         _doc_issues = []
         if _n == 0:
             _doc_issues.append({"dim": "chunk", "doc_id": _doc_id, "issue_type": "no_chunks",
