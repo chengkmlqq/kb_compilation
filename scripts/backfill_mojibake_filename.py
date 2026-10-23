@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""存量回填：还原压缩包上传导致的文件名乱码（kb_document.file_name + doc_chunk.meta.source_file）。
+"""存量回填：还原压缩包上传导致的文件名乱码（2026-10-23，全表覆盖版）。
 
-背景（2026-10-23）：Windows 打的 zip（GBK 文件名、无 UTF-8 标志）经
-upload-archive 自动解包后，文件名被 zipfile 按 CP437 解码成「╓╨╣·」乱码。
+背景：Windows 打的 zip（GBK 文件名、无 UTF-8 标志）经 upload-archive 自动
+解包后，文件名被 zipfile 按 CP437 解码成「╓╨╣·」类 box-drawing 乱码。
 本脚本用与 api.routers.kbs._restore_mojibake_filename 相同的还原逻辑
-（cp437→gbk 可逆探测）扫描存量数据并回填：
+（cp437→gbk 可逆探测，U+2500–U+257F 特征）扫描并回填全部受影响数据：
 
-- kb_document.file_name：乱码 → 还原（56 条，2026-10-21 批量导入）
-- doc_chunk.meta.source_file：乱码 → 还原（9524 条，解析产物元数据）
+- kb_document.file_name：乱码 → 还原
+- doc_chunk.meta（source_file 字段）：乱码 → 还原
+- wiki_page.title / slug：乱码 → 还原
+- wiki_page.source_refs（JSON，doc_id|file_name 列表）：file_name 段乱码 → 还原
+- kb_quality_doc_eval.file_name：乱码 → 还原
 
-幂等：只更新命中特征且可还原的行；还原后与现名相同则跳过。
 storage_path 按 doc_id 命名不受影响，无需迁移物理文件。
+幂等：只更新命中特征且可还原的行；还原后与现名相同则跳过。
+
 用法（api-server 容器内）：
   docker cp scripts/backfill_mojibake_filename.py kb-api-server:/tmp/
   docker exec kb-api-server /srv/kb/.venv/bin/python /tmp/backfill_mojibake_filename.py
@@ -25,6 +29,10 @@ sys.path.insert(0, "/srv/kb")
 from sqlalchemy import text  # noqa: E402
 
 from api.db import get_sessionmaker  # noqa: E402
+
+# U+2500-U+257F box-drawing 区 REGEXP（utf8mb4 按字符区间匹配）
+_BOX_RE = "[╀-╿]"
+_BATCH = 500
 
 
 def _restore(name: str) -> str:
@@ -46,61 +54,119 @@ def _is_mojibake(name: str) -> bool:
     return any("\u2500" <= ch <= "\u257f" for ch in name)
 
 
+def _restore_doc_name_field(db, table: str, column: str, where_sql: str) -> int:
+    """通用列回填：SELECT 乱码行 → 单值还原 → UPDATE。"""
+    fixed = 0
+    rows = db.execute(
+        text(f"SELECT id, {column} FROM {table} WHERE {column} REGEXP :pat"),
+        {"pat": _BOX_RE},
+    ).all()
+    for rid, val in rows:
+        if not val or not _is_mojibake(val):
+            continue
+        restored = _restore(val)
+        if restored == val or not restored:
+            continue
+        db.execute(
+            text(f"UPDATE {table} SET {column}=:v WHERE id=:id"),
+            {"v": restored, "id": rid},
+        )
+        fixed += 1
+    db.commit()
+    return fixed
+
+
+def _backfill_source_refs(db) -> int:
+    """wiki_page.source_refs（JSON ["doc_id|file_name", ...]）：还原 file_name 段。"""
+    fixed = 0
+    while True:
+        rows = db.execute(
+            text("SELECT id, source_refs FROM wiki_page WHERE source_refs REGEXP :pat LIMIT :lim"),
+            {"pat": _BOX_RE, "lim": _BATCH},
+        ).all()
+        if not rows:
+            break
+        for pid, refs in rows:
+            try:
+                arr = json.loads(refs) if isinstance(refs, str) else (refs or [])
+            except (TypeError, ValueError):
+                continue
+            changed = False
+            out = []
+            for item in arr or []:
+                s = str(item)
+                if "|" in s and _is_mojibake(s.split("|", 1)[1]):
+                    doc_id, fname = s.split("|", 1)
+                    rname = _restore(fname)
+                    if rname and rname != fname:
+                        out.append(f"{doc_id}|{rname}")
+                        changed = True
+                        continue
+                out.append(s)
+            if changed:
+                db.execute(
+                    text("UPDATE wiki_page SET source_refs=:v WHERE id=:id"),
+                    {"v": json.dumps(out, ensure_ascii=False), "id": pid},
+                )
+                fixed += 1
+        db.commit()
+        print(f"[backfill] source_refs 游标轮次，累计 {fixed} 条")
+    return fixed
+
+
+def _backfill_chunk_meta(db) -> int:
+    """doc_chunk.meta（JSON）：还原 source_file 字段（游标模式，无 OFFSET）。"""
+    fixed = 0
+    while True:
+        rows = db.execute(
+            text("SELECT id, meta FROM doc_chunk WHERE meta REGEXP :pat LIMIT :lim"),
+            {"pat": _BOX_RE, "lim": _BATCH},
+        ).all()
+        if not rows:
+            break
+        for cid, meta in rows:
+            try:
+                m = json.loads(meta) if isinstance(meta, str) else (meta or {})
+            except (TypeError, ValueError):
+                continue
+            sf = m.get("source_file")
+            if not sf or not _is_mojibake(sf):
+                continue
+            restored = _restore(sf)
+            if restored == sf or not restored:
+                continue
+            m["source_file"] = restored
+            db.execute(
+                text("UPDATE doc_chunk SET meta=:meta WHERE id=:id"),
+                {"meta": json.dumps(m, ensure_ascii=False), "id": cid},
+            )
+            fixed += 1
+        db.commit()
+        print(f"[backfill] doc_chunk 游标轮次，累计 {fixed} 条")
+    return fixed
+
+
 def main() -> None:
     db = get_sessionmaker()()
     try:
-        # 1) kb_document.file_name 回填
-        doc_fixed = 0
-        rows = db.execute(
-            text("SELECT id, file_name FROM kb_document WHERE file_name LIKE '%╓%' OR file_name LIKE '%╥%' OR file_name LIKE '%╞%'")
-        ).all()
-        for doc_id, fn in rows:
-            if not _is_mojibake(fn):
-                continue
-            restored = _restore(fn)
-            if restored == fn or not restored:
-                continue
-            db.execute(
-                text("UPDATE kb_document SET file_name=:fn, updated_at=CURRENT_TIMESTAMP WHERE id=:id"),
-                {"fn": restored, "id": doc_id},
-            )
-            doc_fixed += 1
-        db.commit()
+        doc_fixed = _restore_doc_name_field(db, "kb_document", "file_name", "")
         print(f"[backfill] kb_document.file_name 回填 {doc_fixed} 条")
 
-        # 2) doc_chunk.meta.source_file 回填（JSON 字段，text() 下是字符串需手动解析）
-        #    用无 OFFSET 的游标模式：已更新的行不再匹配 LIKE，每轮 LIMIT 从头取，
-        #    避免 OFFSET 分页在 UPDATE 后匹配行减少导致尾部行永远取不到。
-        chunk_fixed = 0
-        batch = 500
-        while True:
-            chunk_rows = db.execute(
-                text("SELECT id, meta FROM doc_chunk WHERE meta LIKE '%╓%' LIMIT :lim"),
-                {"lim": batch},
-            ).all()
-            if not chunk_rows:
-                break
-            for cid, meta in chunk_rows:
-                try:
-                    m = json.loads(meta) if isinstance(meta, str) else (meta or {})
-                except (TypeError, ValueError):
-                    continue
-                sf = m.get("source_file")
-                if not sf or not _is_mojibake(sf):
-                    continue
-                restored = _restore(sf)
-                if restored == sf or not restored:
-                    continue
-                m["source_file"] = restored
-                db.execute(
-                    text("UPDATE doc_chunk SET meta=:meta WHERE id=:id"),
-                    {"meta": json.dumps(m, ensure_ascii=False), "id": cid},
-                )
-                chunk_fixed += 1
-            db.commit()
-            print(f"[backfill] doc_chunk 游标轮次，累计回填 {chunk_fixed} 条")
-        db.commit()
-        print(f"[backfill] 完成：文档 {doc_fixed} 条 + 切片元数据 {chunk_fixed} 条")
+        chunk_fixed = _backfill_chunk_meta(db)
+        print(f"[backfill] doc_chunk.meta.source_file 回填 {chunk_fixed} 条")
+
+        wiki_title_fixed = _restore_doc_name_field(db, "wiki_page", "title", "")
+        wiki_slug_fixed = _restore_doc_name_field(db, "wiki_page", "slug", "")
+        print(f"[backfill] wiki_page.title 回填 {wiki_title_fixed} 条 / slug {wiki_slug_fixed} 条")
+
+        refs_fixed = _backfill_source_refs(db)
+        print(f"[backfill] wiki_page.source_refs 回填 {refs_fixed} 条")
+
+        quality_fixed = _restore_doc_name_field(db, "kb_quality_doc_eval", "file_name", "")
+        print(f"[backfill] kb_quality_doc_eval.file_name 回填 {quality_fixed} 条")
+
+        print(f"[backfill] 完成：文档 {doc_fixed} + 切片 {chunk_fixed} + wiki标题 {wiki_title_fixed}"
+              f" + wiki slug {wiki_slug_fixed} + refs {refs_fixed} + 评估明细 {quality_fixed}")
     finally:
         db.close()
 
