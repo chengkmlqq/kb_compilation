@@ -28,91 +28,198 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.seed_framework_db import QG_CODE, QC_CODE  # noqa: E402
 
+# 切片评估 v3 step 代码真源：chunk_eval_v3_step_code.py（完整脚本文件，非常量）
+QCLM_CODE = (ROOT / "scripts" / "chunk_eval_v3_step_code.py").read_text(encoding="utf-8")
+
 OUT_DIR = Path(__file__).resolve().parent / "seed_tape_data"
 
 # ── 文档转换质量检查（dim=doc）──────────────────────────────
 QD_CODE = """\
-
 import json
+import re
+from collections import Counter
 from api.db import get_sessionmaker
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+
+# ── 乱码检测（纯程序，无 LLM）────────────────────────────────────
+_GARBLED_WORDS = ("锟斤拷", "烫烫烫", "屯屯屯", "锘挎", "鈥", "Ã©", "Ã¤", "Ã¥", "Ã¼")
+
+
+def _meta_engine(_m):
+    # doc_chunk.meta 取 parse_engine（兼容 dict / JSON 字符串两种形态）
+    if _m is None:
+        return ""
+    if isinstance(_m, dict):
+        return str(_m.get("parse_engine") or "")
+    if isinstance(_m, str):
+        try:
+            _d = json.loads(_m)
+            return str(_d.get("parse_engine") or "") if isinstance(_d, dict) else ""
+        except Exception:
+            return ""
+    return ""
+
+
+def _garbled_check(_text):
+    # 返回 (hits, garbled, sample)。garbled=命中替换符/代理区/乱码特征词；控制字符仅备注
+    _hits = []
+    _n = _text.count("\ufffd")
+    if _n:
+        _hits.append(f"替换字符 U+FFFD ×{_n}")
+    _n = sum(1 for _c in _text if 0xD800 <= ord(_c) <= 0xDFFF)
+    if _n:
+        _hits.append(f"非法代理区字符 ×{_n}")
+    for _w in _GARBLED_WORDS:
+        _n = _text.count(_w)
+        if _n:
+            _hits.append(f"乱码特征「{_w}」×{_n}")
+    _n = sum(1 for _c in _text if (ord(_c) < 9) or (14 <= ord(_c) < 32))
+    if _n:
+        _hits.append(f"非法控制字符 ×{_n}（不计乱码）")
+    _garbled = bool(re.search(r"替换字符|非法代理区|乱码特征", " ".join(_hits)))
+    _sample = ""
+    for _i, _c in enumerate(_text):
+        if _c == "\ufffd" or 0xD800 <= ord(_c) <= 0xDFFF:
+            _sample = _text[max(0, _i - 30):_i + 30]
+            break
+    if not _sample:
+        for _w in _GARBLED_WORDS:
+            _j = _text.find(_w)
+            if _j >= 0:
+                _sample = _text[max(0, _j - 30):_j + 40]
+                break
+    return _hits, _garbled, _sample
+
 
 _kb = bindings.get("kb_id") or ""
 _docs = [d.strip() for d in str(bindings.get("doc_ids") or "").split(",") if d.strip()] or None
 _db = get_sessionmaker()()
 try:
     if _docs:
-        _cond = "kb_id=:kb AND id IN :ids"
+        _stmt = text("SELECT id, file_name, file_ext, parse_state, parse_error, file_size, chunk_count FROM kb_document WHERE kb_id=:kb AND id IN :ids").bindparams(bindparam("ids", expanding=True))
         _params = {"kb": _kb, "ids": tuple(_docs)}
     else:
-        _cond = "kb_id=:kb"
+        _stmt = text("SELECT id, file_name, file_ext, parse_state, parse_error, file_size, chunk_count FROM kb_document WHERE kb_id=:kb")
         _params = {"kb": _kb}
-    _rows = _db.execute(
-        text(f"SELECT id, file_name, file_ext, parse_state, parse_error, file_size FROM kb_document WHERE {_cond}"),
-        _params,
-    ).all()
+    _rows = _db.execute(_stmt, _params).all()
+
+    # ── 批量取切片（转换引擎 + 文本聚合，供乱码检测）──
+    _texts: dict[str, list[str]] = {}
+    _engines: dict[str, str] = {}
+    if _rows:
+        try:
+            _chunk_rows = _db.execute(
+                text("SELECT document_id, content, meta FROM doc_chunk WHERE kb_id=:kb AND document_id IN :ids AND enabled=1 AND chunk_type='text' ORDER BY document_id, seq").bindparams(bindparam("ids", expanding=True)),
+                {"kb": _kb, "ids": tuple(r[0] for r in _rows)},
+            ).all()
+            for _cid, _content, _meta in _chunk_rows:
+                _texts.setdefault(_cid, []).append(_content)
+                if _cid not in _engines:
+                    _engines[_cid] = _meta_engine(_meta)
+        except Exception:
+            _texts, _engines = {}, {}
+
+    # ── 批量取转换任务耗时（modo_job 最近一次解析任务）──
+    _durations: dict[str, int] = {}
+    if _rows:
+        try:
+            _job_rows = _db.execute(
+                text("SELECT doc_id, duration_ms, create_time FROM modo_job WHERE doc_id IN :ids AND task_class LIKE '%Document%' ORDER BY create_time DESC").bindparams(bindparam("ids", expanding=True)),
+                {"ids": tuple(r[0] for r in _rows)},
+            ).all()
+            for _jid, _dur, _ct in _job_rows:
+                if _jid not in _durations and _dur:
+                    _durations[_jid] = int(_dur)
+        except Exception:
+            _durations = {}
 finally:
     _db.close()
 
 if not _rows:
-    _r = {"metrics": {"docs": 0, "ready": 0, "failed": 0, "pending": 0, "health_score": 0},
+    _r = {"metrics": {"docs": 0, "ready": 0, "failed": 0, "pending": 0, "garbled": 0,
+                      "empty_conversion": 0, "health_score": 0, "per_doc": []},
           "issues": [{"dim": "doc", "issue_type": "no_docs", "detail": "无文档数据(未上传或知识库为空)"}],
           "attribution": [{"dim": "doc", "cause": "知识库内无文档记录", "suggestion": "先上传/导入文档再评估"}]}
 else:
-    _states = {}
-    _failed = []
-    _ready_ids = []
-    for _id, _fn, _ext, _ps, _perr, _fsize in _rows:
-        _states[str(_ps or "")] = _states.get(str(_ps or ""), 0) + 1
-        if str(_ps) == "FAILED":
-            _failed.append({"doc_id": _id, "file_name": _fn, "error": str(_perr or "")[:200]})
-        elif str(_ps) == "READY":
-            _ready_ids.append(_id)
-    # 已就绪但无切片的文档 = 空转换产物（解析成功但没产出文本切片）
-    _empty_conv = 0
-    if _ready_ids:
-        try:
-            _chunks = dict(
-                _db.execute(
-                    text("SELECT document_id, count(*) FROM doc_chunk WHERE kb_id=:kb AND document_id IN :ids AND enabled=1 GROUP BY document_id"),
-                    {"kb": _kb, "ids": tuple(_ready_ids)},
-                ).all()
-            )
-            _empty_conv = sum(1 for _rid in _ready_ids if _chunks.get(_rid, 0) == 0)
-        except Exception:
-            pass
-    _n = len(_rows)
-    _ready = _states.get("READY", 0)
-    _failed_n = _states.get("FAILED", 0)
-    _pending = _states.get("PENDING", 0) + _states.get("PARSING", 0) + _states.get("EMBEDDING", 0)
-    _issues = []
-    _issues.append({"dim": "doc", "issue_type": "parse_failed",
-                    "detail": f"{_failed_n} 个文档转换失败" + (f"，示例: {json.dumps(_failed[:3], ensure_ascii=False)}" if _failed else "")}
-                   ) if _failed_n else None
-    if _empty_conv:
-        _issues.append({"dim": "doc", "issue_type": "empty_conversion",
-                        "detail": f"{_empty_conv} 个文档解析成功但无切片(空转换产物)"})
-    if _pending:
-        _issues.append({"dim": "doc", "issue_type": "conversion_pending",
-                        "detail": f"{_pending} 个文档仍在解析/向量化处理中"})
-    _issues = [i for i in _issues if i]
-    _fail_r = _failed_n / max(_n, 1)
-    _empty_r = _empty_conv / max(_n, 1)
-    _score = max(0, int(100.0 - _fail_r * 90 - _empty_r * 50))
-    _metrics = {"docs": _n, "ready": _ready, "failed": _failed_n, "pending": _pending,
-                "empty_conversion": _empty_conv, "by_state": _states,
-                "fail_ratio": round(_fail_r, 4), "health_score": _score}
+    _issues: list[dict] = []
+    _per_doc: list[dict] = []
+    for _id, _fn, _ext, _ps, _perr, _fsize, _cc in _rows:
+        _ps = str(_ps or "")
+        _txt = "".join(_texts.get(_id) or [])
+        _eng = _engines.get(_id) or ""
+        _dur = _durations.get(_id)
+        _score = 100
+        _garbled, _garbled_hits, _item_issues = False, [], []
+        if _ps == "FAILED":
+            _score -= 100
+            _item_issues.append({"dim": "doc", "doc_id": _id, "file_name": _fn,
+                                 "issue_type": "parse_failed",
+                                 "detail": f"转换失败: {str(_perr or '')[:200]}"})
+        elif _ps in ("PENDING", "PARSING", "EMBEDDING"):
+            _score -= 50
+            _item_issues.append({"dim": "doc", "doc_id": _id, "file_name": _fn,
+                                 "issue_type": "conversion_pending",
+                                 "detail": f"文档仍在处理中（{_ps}）"})
+        elif _ps == "READY":
+            if not _txt:
+                _score -= 70
+                _item_issues.append({"dim": "doc", "doc_id": _id, "file_name": _fn,
+                                     "issue_type": "empty_conversion",
+                                     "detail": "解析成功但无文本切片（空文档/纯图片/扫描件未走 OCR）"})
+            else:
+                _garbled_hits, _garbled, _sample = _garbled_check(_txt)
+                if _garbled:
+                    _score -= 40
+                    _detail = "转换文本乱码: " + "; ".join(_garbled_hits[:4])
+                    if _sample:
+                        _detail += f"（样例: {_sample[:120]!r}）"
+                    _item_issues.append({"dim": "doc", "doc_id": _id, "file_name": _fn,
+                                         "issue_type": "garbled_text", "detail": _detail})
+        _issues.extend(_item_issues)
+        _per_doc.append({
+            "doc_id": _id, "file_name": _fn, "file_ext": _ext or "",
+            "file_size": _fsize, "parse_state": _ps,
+            "parse_error": str(_perr or "")[:500],
+            "parse_engine": _eng, "duration_ms": _dur,
+            "chunk_count": int(_cc or 0), "md_length": len(_txt),
+            "garbled": _garbled, "garbled_hits": _garbled_hits[:6],
+            "score": max(0, _score),
+        })
+    _garbled_n = sum(1 for p in _per_doc if p["garbled"])
+    _scores = [p["score"] for p in _per_doc]
+    _durs = [p["duration_ms"] for p in _per_doc if p["duration_ms"]]
+    _metrics = {
+        "docs": len(_per_doc),
+        "ready": sum(1 for p in _per_doc if p["parse_state"] == "READY"),
+        "failed": sum(1 for p in _per_doc if p["parse_state"] == "FAILED"),
+        "pending": sum(1 for p in _per_doc if p["parse_state"] in ("PENDING", "PARSING", "EMBEDDING")),
+        "garbled": _garbled_n,
+        "empty_conversion": sum(1 for i in _issues if i["issue_type"] == "empty_conversion"),
+        "avg_score": round(sum(_scores) / len(_scores)) if _scores else 0,
+        "health_score": round(sum(_scores) / len(_scores)) if _scores else 0,  # 汇总分=平均单文件分（页面兼容）
+        "avg_duration_ms": round(sum(_durs) / len(_durs)) if _durs else None,
+        "engines": dict(Counter(p["parse_engine"] or "未知" for p in _per_doc)),
+        "by_state": dict(Counter(p["parse_state"] for p in _per_doc)),
+        "fail_ratio": round(sum(1 for p in _per_doc if p["parse_state"] == "FAILED") / max(len(_per_doc), 1), 4),
+        "per_doc": _per_doc,
+    }
     _attr = []
-    if _fail_r > 0:
-        _attr.append({"dim": "doc", "cause": f"{_failed_n} 个文档转换失败 → 格式不支持/文件损坏/解析器异常",
+    if _metrics["failed"]:
+        _attr.append({"dim": "doc", "cause": f"{_metrics['failed']} 个文档转换失败 → 格式不支持/文件损坏/解析器异常",
                       "suggestion": "查看失败详情(parse_error)，换支持格式或修复文件后重传"})
-    if _empty_r > 0:
-        _attr.append({"dim": "doc", "cause": "解析成功但无切片 → 空文档/纯图片/扫描件未走 OCR",
+    if _metrics["empty_conversion"]:
+        _attr.append({"dim": "doc", "cause": f"{_metrics['empty_conversion']} 个文档解析成功但无文本 → 空文档/纯图片/扫描件未走 OCR",
                       "suggestion": "确认文档含可提取文本；图片型 PDF 需 OCR 支持"})
+    if _garbled_n:
+        _attr.append({"dim": "doc", "cause": f"{_garbled_n} 个文档转换文本乱码（替换符/编码错位）",
+                      "suggestion": "检查源文件编码与转换引擎输出；必要时更换解析引擎后重传"})
+    if _metrics["pending"]:
+        _attr.append({"dim": "doc", "cause": f"{_metrics['pending']} 个文档仍在解析/向量化处理中",
+                      "suggestion": "稍后重新评估"})
     _r = {"metrics": _metrics, "issues": _issues, "attribution": _attr}
 
 bindings["doc_r"] = _r
-print(f"[doc] 文档转换质量: 健康分 {_r['metrics'].get('health_score')} 问题 {len(_r['issues'])}")
+print(f"[doc] 文档转换质量: 健康分 {_r['metrics'].get('health_score')} 文档 {_r['metrics'].get('docs')} 问题 {len(_r['issues'])}")
 
 """
 
@@ -139,7 +246,7 @@ _m = _r.get("metrics") or {}
 _issues = _r.get("issues") or []
 _attr = _r.get("attribution") or []
 _score = _m.get("health_score")
-_summary = f"评估完成: {_label}质量 {_score} 分 | 问题 {len(_issues)} 条, 归因建议 {len(_attr)} 条"
+_summary = f"评估完成: {_label}质量 {_score if isinstance(_score, (int, float)) else '-'} 分 | 问题 {len(_issues)} 条, 归因建议 {len(_attr)} 条"
 
 _db = get_sessionmaker()()
 try:
@@ -271,22 +378,27 @@ def main() -> None:
     tapes = [
         build_tape(
             "文档转换评估",
-            "文档转换质量评估（解析/转换成功率、失败原因、空转换产物）",
-            "单维度评估：检查知识库文档的解析/转换质量——parse_state 分布（READY/FAILED/"
-            "处理中）、失败原因、解析成功但无切片的空转换产物。输入 bindings：kb_id / "
-            "doc_ids(逗号分隔,空=整库) / scope / quality_id / dim=doc。结果落 kb_quality_run.doc_metrics"
-            " + kb_quality_report(dim=doc)，供文档转换评估页面查询。",
+            "文档转换质量评估（单文件：状态/引擎/耗时/乱码）",
+            "单维度评估：按单文件粒度检查知识库文档的转换质量——文件名/转换状态\n"
+            "（parse_state READY/FAILED/处理中）、转换后 MD 文本乱码检测（U+FFFD 替换符/"
+            "代理区/编码错位特征词/控制字符）、转换引擎（doc_chunk.meta.parse_engine）、\n"
+            "转换耗时（modo_job 最近一次解析任务 duration_ms）。输入 bindings：kb_id /\n"
+            "doc_ids(逗号分隔,空=整库) / scope / quality_id / dim=doc。结果落 kb_quality_run."
+            "doc_metrics（含 per_doc 单文件明细）+ kb_quality_report(dim=doc)，供文档转换\n"
+            "评估页面展示每文件状态/引擎/耗时/乱码/得分。",
             QD_CODE,
             "doc",
         ),
         build_tape(
             "切片评估",
-            "切片质量评估（长度分布/截断/重复）",
-            "单维度评估：检查文档切片质量——切片长度分布（过短<50字/过长>2000字）、"
-            "截断标记、近似重复。输入 bindings：kb_id / doc_ids(逗号分隔,空=整库) / "
+            "切片评估（LLM 单文件评估：对照完整原文检查 Wiki 内容错误/缺失/是否有意义）",
+            "单维度评估：按文件粒度调用 LLM 对照文档完整原文（切片全文）评估其构建出的 Wiki "
+            "页面——① 内容错误 ② 内容缺失 ③ Wiki 是否有意义；同时提取每文件的 Wiki "
+            "构建起始时间（编排 run 创建时间，回落最早 wiki 页创建时间）、Wiki 构建耗时、"
+            "文档处理时长与评估耗时用于展示。输入 bindings：kb_id / doc_ids(逗号分隔,空=整库) / "
             "scope / quality_id / dim=chunk。结果落 kb_quality_run.chunk_metrics + "
             "kb_quality_report(dim=chunk)，供切片评估页面查询。",
-            QC_CODE,
+            QCLM_CODE,
             "chunk",
         ),
         build_tape(
