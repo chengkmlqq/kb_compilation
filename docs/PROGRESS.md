@@ -84,13 +84,24 @@
 - **清空+重触发**（`scripts/retrigger_chunk_eval.py`，api-server 容器内 running，PID 289，串行执行）：
   删除旧 dim=chunk 的 kb_quality_run + kb_quality_report（共清 1 条，可发现仅 1 库有独立 chunk 记录），
   对 7 个知识库逐个 execute_tape(env=prod) 重发起 scope=all 并轮询到终态（库里间串行，编排防重限制）
-- **当前进度**（截至 2026-10-23 09:35 北京）：2 库完成 + 1 库进行中 + 4 库排队
-  - 030e4f0d72（3 文档）：health 51，3 条 per_doc 均含 wiki_start_time（如 2026-10-21T19:29:35）/
-    wiki_build_sec（1983.0/1252.0s）/ wiki_tape（wiki构建-采购与供应链），问题 wiki_no_pages×1 +
-    wiki_missing_content×2
-  - 4d81657d4a（9 文档）：health 0，全部 wiki_no_pages（该库文档未构建出 wiki 页面）
-  - 610ece764f（944 文档，大库 LLM 逐文件 ~7s/文件）：707/944 进行中（worker 日志每文件分数/耗时/问题）
-  - 7bab0d08 / 9c4f58df / eb6ee0ed / fdf70549 排队等待
+- **最终结果**（2026-10-23 12:30 全量重评估完成，7 库全部 success，report 落库 per_doc 含
+  wiki_start_time/wiki_build_sec/score 等字段）：
+  - 030e4f0d72 test（3 文档）：health 51.0，wiki_pages 29
+  - 4d81657d4a 木业（9 文档）：health 0.0，wiki_pages 0（该库文档未构建出 wiki 页面，全 wiki_no_pages）
+  - 610ece764f 济南市监局（944 文档）：health 65.9，wiki_pages 73767，985 问题
+  - 7bab0d08 供管制度（28 文档）：health 60.7，wiki_pages 2049
+  - 9c4f58df 茶叶（32 文档）：health 75.7，wiki_pages 2812
+  - eb6ee0ed NG集团规范（281 文档）：health 33.4，wiki_pages 14804
+  - fdf70549 电信语义层（1 文档）：health 0.0，wiki_pages 0（无 wiki 页）
+- **中断与自愈**（同日）：并行会话反复部署重建 api/worker 容器（10:47/11:13/11:24），celery
+  评估任务随 worker 死亡丢失、run 变孤儿（status 恒 running 无人执行），NG 库两次被斩。
+  处理：① 孤儿 run 置 failed 释放 tape 防重 guard（execute_tape 的 guard 是 tape 级，不看 KB）；
+  ② 清中断尝试的孤儿占位行（否则该库评估在质量页不可见/卡 queued）；③ 自愈驱动
+  `scripts/retrigger_recover.py`（宿主机侧，一次性 docker exec 执行，容器重建不受影响）——
+  检测 worker 容器创建时间晚于 run 创建即判死 → kill 活跃 run + 清占位行 → 重发，直到跑完。
+  坑：execute_tape 内 import celery 会打 "Tasks registered:" 横幅到 stdout，解析 run_id 须用
+  标记行（RUNID=）取末行，整段 stdout 会污染 SQL；docker inspect {{.Created}} 是 RFC3339
+  nano 格式，需 python3.11+（系统 python3 解析 'Z' 失败）。
 - **坑位**：① v3 逐文件调 LLM，大库整库评估要数小时（944 文档约 2h），重触发脚本单库等待上限 6h；
   ② 轮询 kb_tape_run 时同一 DB 会话连续 SELECT 在 MySQL REPEATABLE READ 下共享快照永远读不到新状态
   → 每轮轮询前 rollback（f5332ef 修）；③ 首轮清空后脚本重启只能扫到已生成记录的库 → 新增 --kbs 显式
