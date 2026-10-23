@@ -4487,6 +4487,22 @@ export function apiListQualityRuns(params: {
   return request<PageList<QualityRunItem>>(`/api/v1/quality/runs?${sp.toString()}`);
 }
 
+/** 评估任务状态统计（评估页顶部统计卡片）。dim/kb_id 过滤语义与列表一致。 */
+export interface QualityRunStats {
+  total: number;
+  queued: number;
+  running: number;
+  success: number;
+  failed: number;
+}
+
+export function apiGetQualityRunStats(params: { dim?: string; kb_id?: string } = {}) {
+  const sp = new URLSearchParams();
+  if (params.dim) sp.set("dim", params.dim);
+  if (params.kb_id) sp.set("kb_id", params.kb_id);
+  return request<QualityRunStats>(`/api/v1/quality/runs/statistics?${sp.toString()}`);
+}
+
 export function apiGetQualityRun(qualityId: string) {
   return request<QualityRunDetail>(`/api/v1/quality/runs/${encodeURIComponent(qualityId)}`);
 }

@@ -199,6 +199,41 @@ def list_quality_runs(
                                       "items": items}}
 
 
+@router.get("/runs/statistics")
+def quality_run_statistics(
+    kb_id: str = Query("", max_length=64),
+    dim: str = Query("", max_length=20),
+    db: Session = Depends(get_db),
+    caller: dict = Depends(_require_caller),
+) -> dict:
+    """质量评估任务状态统计（评估页顶部统计卡片，2026-10-23）。
+
+    与 /runs 同过滤语义（dim/kb_id 精确）；仅按 status 分组计数，
+    不触碰 issues/attribution 大 JSON 列（保持列表窄列防护语义）。
+    """
+    from sqlalchemy import func
+
+    conds = []
+    if kb_id:
+        conds.append(QualityRun.kb_id == kb_id)
+    if dim:
+        conds.append(QualityRun.dim == dim)
+    rows = db.execute(
+        select(QualityRun.status, func.count()).where(*conds).group_by(QualityRun.status)
+    ).all()
+    counts: dict[str, int] = {str(s or ""): int(c) for s, c in rows}
+    return {
+        "success": True,
+        "data": {
+            "total": sum(counts.values()),
+            "queued": counts.get("queued", 0),
+            "running": counts.get("running", 0),
+            "success": counts.get("success", 0),
+            "failed": counts.get("failed", 0),
+        },
+    }
+
+
 @router.get("/docs")
 def list_quality_file_details(
     kb_id: str = Query("", max_length=64),

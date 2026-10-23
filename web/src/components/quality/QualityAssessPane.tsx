@@ -15,11 +15,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { App, Button, Card, Empty, Form, Input, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import {
   ApiOutlined,
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  CloseCircleOutlined,
   DatabaseOutlined,
+  FileDoneOutlined,
   FileTextOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
   SwapOutlined,
+  SyncOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { ModoActionGroup } from "@/components/biz/modo-action-group";
@@ -31,6 +36,7 @@ import { ModoTable } from "@/components/biz/modo-table";
 import {
   apiDeleteQualityRun,
   apiGetQualityRun,
+  apiGetQualityRunStats,
   apiLaunchQualityRun,
   apiListDocuments,
   apiListQualityDocEval,
@@ -45,6 +51,7 @@ import {
   QualityMetrics,
   QualityRunDetail,
   QualityRunItem,
+  QualityRunStats,
   QualityScores,
 } from "@/lib/api";
 
@@ -74,6 +81,51 @@ const DIM_MAP: Record<string, { label: string; icon: React.ReactNode }> = {
   wiki: { label: "Wiki质量", icon: <DatabaseOutlined /> },
   graph: { label: "图数据质量", icon: <ApiOutlined /> },
 };
+
+/** 顶部统计卡片定义（参考任务监控 job-stats 布局） */
+const STAT_CARDS: Array<{
+  key: keyof QualityRunStats;
+  label: string;
+  icon: React.ReactNode;
+  color: string;
+  bg: string;
+}> = [
+  {
+    key: "total",
+    label: "总评估",
+    icon: <FileDoneOutlined style={{ fontSize: 22 }} />,
+    color: "#242E43",
+    bg: "#F0F2F5",
+  },
+  {
+    key: "queued",
+    label: "排队中",
+    icon: <ClockCircleOutlined style={{ fontSize: 22 }} />,
+    color: "#722ed1",
+    bg: "#F9F0FF",
+  },
+  {
+    key: "running",
+    label: "评估中",
+    icon: <SyncOutlined style={{ fontSize: 22 }} />,
+    color: "#1677ff",
+    bg: "#E6F4FF",
+  },
+  {
+    key: "success",
+    label: "完成",
+    icon: <CheckCircleOutlined style={{ fontSize: 22 }} />,
+    color: "#389e0d",
+    bg: "#F6FFED",
+  },
+  {
+    key: "failed",
+    label: "失败",
+    icon: <CloseCircleOutlined style={{ fontSize: 22 }} />,
+    color: "#cf1322",
+    bg: "#FFF1F0",
+  },
+];
 
 /** 单维度页的维度键（all 页在渲染处硬编码三维度） */
 const DIM_KEYS: Record<Exclude<QualityDim, "all">, Exclude<QualityDim, "all">[]> = {
@@ -165,6 +217,9 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
+  // 顶部统计卡片（评估任务状态分布，参考任务监控 job-stats 布局）
+  const [stats, setStats] = useState<QualityRunStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
   const [applied, setApplied] = useState<{ kb_id?: string; status?: string }>({});
   const [searchForm] = Form.useForm<{ kb_id?: string; status?: string }>();
   const [kbs, setKbs] = useState<KbItem[]>([]);
@@ -253,9 +308,27 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
     return;
   }, [loadDocEval, docApplied, docEvalPage]);
 
+  // 顶部统计卡片：评估任务状态分布（dim 与页面一致；不随 kb 筛选联动，展示全局概况）
+  const loadStats = useCallback(async () => {
+    setStatsLoading(true);
+    try {
+      const res = await apiGetQualityRunStats({ dim: dim === "all" ? "all" : dim });
+      setStats(res.data ?? null);
+    } catch (e) {
+      setStats(null);
+      console.error("加载评估统计失败", e);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [dim]);
+
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    loadStats();
+  }, [loadStats]);
 
   useEffect(() => {
     apiListKbs(1, 100)
@@ -304,6 +377,7 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
       setLaunchOpen(false);
       launchForm.resetFields();
       load();
+      void loadStats();
     } catch (e) {
       message.error(`提交失败: ${String(e)}`);
     } finally {
@@ -871,13 +945,85 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
         minHeight: 0,
       }}
     >
+      {/* 顶部统计卡片（参考任务监控 job-stats 布局） */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(5, 1fr)",
+          gap: 16,
+          marginBottom: 16,
+          flexShrink: 0,
+        }}
+      >
+        {STAT_CARDS.map((stat) => (
+          <div
+            key={stat.key}
+            className="modo-stat-card"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: 18,
+              background: "#fff",
+              borderRadius: 8,
+              border: "1px solid #E3E9EF",
+              transition: "box-shadow 0.25s",
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+              <span
+                style={{
+                  color: "#79879C",
+                  fontSize: 13,
+                  marginBottom: 8,
+                  fontWeight: 500,
+                }}
+              >
+                {stat.label}
+              </span>
+              <span
+                style={{
+                  fontSize: 26,
+                  fontWeight: 700,
+                  lineHeight: "26px",
+                  color: stat.color,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {stats ? stats[stat.key] ?? 0 : statsLoading ? "-" : 0}
+              </span>
+            </div>
+            <div
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 8,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: stat.color,
+                background: stat.bg,
+                fontSize: 20,
+              }}
+            >
+              {stat.icon}
+            </div>
+          </div>
+        ))}
+      </div>
       <ModoTabs
         type="editable-card"
         hideAdd
         activeKey="home"
         tabBarExtraContent={
           <Space>
-            <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => {
+                void load();
+                void loadStats();
+              }}
+            >
               刷新
             </Button>
             <Button

@@ -201,3 +201,57 @@ def test_delete_single_dim_run(env) -> None:
     assert client.delete("/api/v1/quality/runs/RD").status_code == 200
     assert db.get(QualityRun, "RD") is None
     assert db.get(QualityReport, "RD-doc") is None
+
+
+def test_run_statistics_counts_by_status(env) -> None:
+    """/runs/statistics：状态分布 + total（评估页顶部统计卡片）。"""
+    db, client = env
+    _add_run(db, rid="S1", status="success", dim="doc")
+    _add_run(db, rid="S2", status="success", dim="doc")
+    _add_run(db, rid="S3", status="failed", dim="doc")
+    _add_run(db, rid="S4", status="running", dim="chunk")
+    _add_run(db, rid="S5", status="queued", dim="all")
+
+    # 无过滤：state 跨 dim 汇总
+    r = client.get("/api/v1/quality/runs/statistics")
+    assert r.status_code == 200
+    d = r.json()["data"]
+    assert d["total"] == 5
+    assert d["success"] == 2
+    assert d["failed"] == 1
+    assert d["running"] == 1
+    assert d["queued"] == 1
+
+    # dim 过滤（与列表同口径）
+    d = client.get("/api/v1/quality/runs/statistics?dim=doc").json()["data"]
+    assert d["total"] == 3
+    assert d["success"] == 2
+    assert d["failed"] == 1
+    assert d["running"] == 0
+
+    d = client.get("/api/v1/quality/runs/statistics?dim=chunk").json()["data"]
+    assert d["total"] == 1
+    assert d["running"] == 1
+
+    # kb_id 过滤
+    _add_run(db, rid="S6", status="success", kb_id="kb9", dim="doc")
+    d = client.get("/api/v1/quality/runs/statistics?kb_id=kb9").json()["data"]
+    assert d["total"] == 1
+    assert d["success"] == 1
+
+    # dim + kb_id 联合
+    d = client.get("/api/v1/quality/runs/statistics?dim=doc&kb_id=kb9").json()["data"]
+    assert d["total"] == 1
+    d = client.get("/api/v1/quality/runs/statistics?dim=chunk&kb_id=kb9").json()["data"]
+    assert d["total"] == 0
+
+
+def test_statistics_empty_when_no_runs(env) -> None:
+    """空库：total=0 且各状态为 0（统计接口不应因无数据 500）。"""
+    db, client = env
+    d = client.get("/api/v1/quality/runs/statistics").json()["data"]
+    assert d["total"] == 0
+    assert d["success"] == 0
+    assert d["running"] == 0
+    assert d["failed"] == 0
+    assert d["queued"] == 0
