@@ -2,7 +2,30 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-23（文档转换评估改单文件粒度——文件名/状态/乱码/引擎/耗时逐文件展示，全库重触发完成）
+最后更新：2026-10-23（知识库列表接口 wiki 聚合覆盖索引 + 死查询清理——28-80s 降至 0.3s；并行：文档转换评估单文件粒度）
+
+## 46. 当前状态（2026-10-23 知识库列表接口效率修复——wiki 聚合覆盖索引 + 死查询清理）
+
+- **需求**：「查一下 /kbs 接口效率」→ 实测定位 + 用户确认修复（commit 98448e4，已推送）
+- **实测（admin 身份直打 api-server，SQL 层事件钩子拆解）**：list_kbs(page=30) 合计 34.6s，
+  瓶颈 = wiki_page 条件聚合（page_count+keyword_count 一条 SQL）28.5s（冷态实测 79.6s），
+  EXPLAIN rows=90080 全扫 key=NONE；另有合并计数时遗留的独立 wiki COUNT 死查询 0.2-4s
+  （结果随后被覆盖丢弃）。其余全毫秒级：total 0.09s / doc 计数 1.4s(冷) / feedback 0.00s /
+  主查询 0.00s / 中间件角色查询 0.03-0.22s / 连接握手 0.4-0.8ms。HTTP 端到端 20-80s 波动。
+- **根因**：聚合需 page_type 判断高频词页，但索引只有 (kb_id,status)（idx_wiki_page_kb_status），
+  每行回表；wiki_page 持续写入致优化器统计失真，多库 IN 选 9 万行全扫——2026-10-21 §39
+  曾 ANALYZE 应急（28s→0.4s），统计再次失真复发，属同一问题根治落地。
+- **修复**：① 0039 迁移（migrations/versions/0039_wiki_page_cover_index.py，幂等守卫）新增
+  覆盖索引 ix_wiki_page_kb_status_type(kb_id, status, page_type)——条件聚合纯索引扫描零回表；
+  ② api/services/kb_admin.py 删除 list_kbs 合并计数时遗留的独立 wiki COUNT 死查询（3+/13-）。
+- **验证**：tests/test_kb_admin.py + test_wiki_keywords.py 25 passed；复测 wiki 聚合 0.3s，
+  HTTP /kbs 端到端 306-635ms 稳定（page_size 10/20/30 一致）。
+- **部署**：迁移已直接应用到线上库（alembic head=0039，索引已建）；kb-api-server 已热更
+  （docker cp 新 kb_admin.py + restart）立即生效；CI 重建后固化。
+- **坑位**：① 同一条聚合 SQL「单库快、多库 IN 慢」= 统计失真警报，先 EXPLAIN 看 type/key/rows
+  再下结论；② ANALYZE 是应急，持续写入表必须靠覆盖索引根治；③ 合并/重构 SQL 后要检查
+  旧查询是否仍被执行（本次死查询即 2026-10-21 合并时遗留，靠 SQL 事件钩子拆解暴露）。
+- **遗留**：kb_visible_clauses 的 OR 三条件里 owner_user_id 仍无单列索引（§39 P2 未变）。
 
 ## 45. 当前状态（2026-10-23 文档转换评估单文件粒度——文件名/状态/乱码/引擎/耗时逐文件展示）
 
