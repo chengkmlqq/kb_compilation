@@ -12,7 +12,7 @@
  * 单维度页只显示本维度得分/指标/问题；发起评估时携带 dim 走对应单维度编排。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { App, Button, Card, Empty, Form, Select, Space, Tag, Typography } from "antd";
+import { App, Button, Card, Empty, Form, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import {
   ApiOutlined,
   DatabaseOutlined,
@@ -35,7 +35,9 @@ import {
   apiListDocuments,
   apiListQualityRuns,
   apiListKbs,
+  ChunkDocEval,
   DocItem,
+  DocQualityItem,
   KbItem,
   QualityAttribution,
   QualityIssue,
@@ -82,12 +84,23 @@ const ISSUE_TYPE_LABEL: Record<string, string> = {
   parse_failed: "转换失败",
   empty_conversion: "空转换产物",
   conversion_pending: "转换处理中",
+  garbled_text: "内容乱码",
   // 切片（dim=chunk）
   too_many_short_chunks: "切片过碎",
   too_many_long_chunks: "切片过长",
   truncated_chunks: "切片截断",
   duplicate_chunks: "切片重复",
   no_chunks: "无切片",
+  // 切片评估 LLM 版（2026-10-22）
+  chunk_size_unreasonable: "切片大小不合理",
+  chunk_split_error: "切分错误",
+  chunk_semantic_loss: "语义丢失",
+  chunk_coverage_incomplete: "覆盖不完整",
+  // 切片评估 v3（2026-10-23：对照原文评估 Wiki）
+  wiki_no_pages: "无 Wiki 页面",
+  wiki_content_error: "Wiki 内容错误",
+  wiki_missing_content: "Wiki 内容缺失",
+  wiki_not_meaningful: "Wiki 无意义",
   // wiki
   empty_content: "空页面",
   orphan: "孤立页",
@@ -120,6 +133,24 @@ function formatTime(value?: string | null) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
   return d.toLocaleString("zh-CN", { hour12: false });
+}
+
+/** 毫秒 → 可读耗时（"350ms" / "1.2s" / "3分05秒"） */
+function fmtDuration(ms?: number | null) {
+  if (ms == null) return "-";
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60000);
+  const s = Math.round((ms % 60000) / 1000);
+  return `${m}分${String(s).padStart(2, "0")}秒`;
+}
+
+/** 单文件明细表的状态 Tag */
+function docStateTag(state?: string) {
+  if (state === "READY") return <Tag color="success">就绪</Tag>;
+  if (state === "FAILED") return <Tag color="error">失败</Tag>;
+  if (state) return <Tag color="warning">{state}</Tag>;
+  return <Tag>未知</Tag>;
 }
 
 export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
@@ -378,10 +409,21 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
       parts.push(`失败 ${mm.failed ?? 0}`);
       parts.push(`处理中 ${mm.pending ?? 0}`);
       if (mm.empty_conversion) parts.push(`空转换 ${mm.empty_conversion}`);
+      if (mm.garbled) parts.push(`乱码 ${mm.garbled}`);
+      if (mm.avg_duration_ms != null) parts.push(`平均耗时 ${fmtDuration(mm.avg_duration_ms)}`);
+      if (mm.engines && Object.keys(mm.engines).length) {
+        parts.push(
+          `引擎 ${Object.entries(mm.engines)
+            .map(([k, v]) => `${k}×${v}`)
+            .join(" ")}`,
+        );
+      }
     } else if (d === "chunk") {
+      parts.push(`文件 ${mm.files_eval ?? mm.docs ?? "-"}`);
       parts.push(`切片 ${mm.chunks ?? "-"}`);
-      parts.push(`过短 ${Math.round((mm.short_ratio as number ?? 0) * 100)}%`);
-      parts.push(`重复 ${mm.dup ?? 0}`);
+      if (mm.wiki_pages != null) parts.push(`Wiki页 ${mm.wiki_pages}`);
+      if (mm.avg_len != null) parts.push(`均长 ${mm.avg_len} 字`);
+      if (mm.eval_errors) parts.push(`评估失败 ${mm.eval_errors}`);
     } else if (d === "wiki") {
       parts.push(`页面 ${mm.pages ?? "-"}`);
       parts.push(`孤立 ${mm.orphan ?? 0}`);
@@ -434,6 +476,124 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
           </li>
         ))}
       </ul>
+    );
+  };
+
+  /** 文档转换评估-单文件明细表（metrics.per_doc） */
+  const docDetailTable = (items?: DocQualityItem[]) => {
+    if (!items || items.length === 0) return null;
+    const columns: ColumnsType<DocQualityItem> = [
+      { title: "文件名", dataIndex: "file_name", ellipsis: true },
+      {
+        title: "状态",
+        dataIndex: "parse_state",
+        width: 90,
+        render: (v: string) => docStateTag(v),
+      },
+      {
+        title: "引擎",
+        dataIndex: "parse_engine",
+        width: 110,
+        render: (v: string) => v || "-",
+      },
+      {
+        title: "耗时",
+        dataIndex: "duration_ms",
+        width: 90,
+        render: (v: number | null) => fmtDuration(v),
+      },
+      { title: "切片", dataIndex: "chunk_count", width: 60 },
+      {
+        title: "乱码",
+        dataIndex: "garbled",
+        width: 70,
+        render: (v: boolean) =>
+          v ? <Tag color="error">是</Tag> : <Tag>否</Tag>,
+      },
+      {
+        title: "得分",
+        dataIndex: "score",
+        width: 70,
+        render: (v: number) => (
+          <Tag color={scoreColor(v)}>{v ?? "-"}</Tag>
+        ),
+      },
+    ];
+    return (
+      <Table<DocQualityItem>
+        rowKey="doc_id"
+        size="small"
+        columns={columns}
+        dataSource={items}
+        pagination={{ pageSize: 10, showSizeChanger: false, size: "small" }}
+      />
+    );
+  };
+
+  /** 切片评估-单文件明细表（metrics.per_doc，LLM 版：对照原文评估 Wiki） */
+  const chunkDetailTable = (items?: ChunkDocEval[]) => {
+    if (!items || items.length === 0) return null;
+    const columns: ColumnsType<ChunkDocEval> = [
+      { title: "文件名", dataIndex: "file_name", ellipsis: true },
+      { title: "切片", dataIndex: "chunks", width: 60 },
+      { title: "均长", dataIndex: "avg_len", width: 70, render: (v: number) => v ?? "-" },
+      { title: "Wiki页", dataIndex: "wiki_pages", width: 70, render: (v?: number) => v ?? 0 },
+      {
+        title: "Wiki构建起始",
+        dataIndex: "wiki_start_time",
+        width: 132,
+        render: (v?: string | null) => formatTime(v),
+      },
+      {
+        title: "Wiki构建耗时",
+        dataIndex: "wiki_build_sec",
+        width: 96,
+        render: (v?: number | null) => fmtDuration(v != null ? v * 1000 : null),
+      },
+      {
+        title: "处理时长",
+        dataIndex: "doc_process_sec",
+        width: 80,
+        render: (v?: number | null) => fmtDuration(v != null ? v * 1000 : null),
+      },
+      {
+        title: "评估耗时",
+        dataIndex: "eval_duration_sec",
+        width: 80,
+        render: (v?: number | null) => fmtDuration(v != null ? v * 1000 : null),
+      },
+      {
+        title: "评分",
+        dataIndex: "score",
+        width: 70,
+        render: (v?: number | null) => (
+          <Tag color={scoreColor(v)}>{v ?? "-"}</Tag>
+        ),
+      },
+      {
+        title: "结论",
+        dataIndex: "conclusion",
+        ellipsis: true,
+        render: (v: string, r) =>
+          r.error ? (
+            <Text type="danger" style={{ fontSize: 12 }}>
+              LLM 评估失败
+            </Text>
+          ) : (
+            <Tooltip title={`${v ?? ""}${r.issues?.length ? `\n问题: ${r.issues.join("、")}` : ""}`}>
+              <Text style={{ fontSize: 12 }}>{v || "-"}</Text>
+            </Tooltip>
+          ),
+      },
+    ];
+    return (
+      <Table<ChunkDocEval>
+        rowKey="doc_id"
+        size="small"
+        columns={columns}
+        dataSource={items}
+        pagination={{ pageSize: 10, showSizeChanger: false, size: "small" }}
+      />
     );
   };
 
@@ -656,7 +816,7 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
                   )}
                   <div style={{ marginBottom: 8 }}>
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      程序分{" "}
+                      {d === "chunk" ? "评估分" : "程序分"}{" "}
                       <Tag color={scoreColor(detail.reports?.[d]?.metrics?.health_score)}>
                         {detail.reports?.[d]?.metrics?.health_score ?? "-"}
                       </Tag>
@@ -684,6 +844,32 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
               <Typography.Title level={5}>原因分析</Typography.Title>
               {attributionRows(detail.attribution)}
             </div>
+
+            {dim === "doc" &&
+              detail.reports?.doc?.metrics?.per_doc &&
+              detail.reports.doc.metrics.per_doc.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <Typography.Title level={5}>
+                    文件明细（{detail.reports.doc.metrics.per_doc.length}）
+                  </Typography.Title>
+                  {docDetailTable(
+                    detail.reports.doc.metrics.per_doc as DocQualityItem[],
+                  )}
+                </div>
+              )}
+
+            {dim === "chunk" &&
+              detail.reports?.chunk?.metrics?.per_doc &&
+              detail.reports.chunk.metrics.per_doc.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <Typography.Title level={5}>
+                    单文件评估明细（{detail.reports.chunk.metrics.per_doc.length}）
+                  </Typography.Title>
+                  {chunkDetailTable(
+                    detail.reports.chunk.metrics.per_doc as ChunkDocEval[],
+                  )}
+                </div>
+              )}
 
             {dimKeys.map((d) => (
               <div key={d} style={{ marginBottom: 12 }}>

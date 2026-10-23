@@ -4408,6 +4408,57 @@ export interface QualityMetrics {
   empty_conversion?: number;
   fail_ratio?: number;
   by_state?: Record<string, number>;
+  // 切片评估 LLM 版（dim=chunk，2026-10-22；2026-10-23 对照原文评估 Wiki）
+  files_eval?: number;
+  eval_errors?: number;
+  avg_len?: number;
+  /** 该次评估覆盖的 wiki 页面总数（2026-10-23） */
+  wiki_pages?: number;
+  // 文档转换评估-单文件明细（dim=doc，2026-10-22 改造）
+  garbled?: number;
+  avg_score?: number;
+  avg_duration_ms?: number | null;
+  engines?: Record<string, number>;
+  per_doc?: (ChunkDocEval | DocQualityItem)[];
+}
+
+/** 切片评估单文件明细（LLM 版，2026-10-23：对照原文评估 Wiki） */
+export interface ChunkDocEval {
+  doc_id?: string;
+  file_name?: string;
+  chunks?: number;
+  avg_len?: number;
+  /** Wiki 页面数（该文档构建出的 active wiki 页） */
+  wiki_pages?: number;
+  /** Wiki 构建起始时间：该文档 wiki 构建编排 run 创建时间（回落最早 wiki 页创建时间） */
+  wiki_start_time?: string | null;
+  /** Wiki 构建耗时（秒）：run 结束-起始（回落最早-最晚 wiki 页创建跨度） */
+  wiki_build_sec?: number | null;
+  /** 文档处理时长（秒）：kb_document updated_at - created_at */
+  doc_process_sec?: number | null;
+  /** LLM 评估本文件耗时（秒） */
+  eval_duration_sec?: number | null;
+  score?: number | null;
+  conclusion?: string;
+  issues?: string[];
+  error?: string;
+}
+
+/** 文档转换评估-单文件明细（metrics.per_doc 元素） */
+export interface DocQualityItem {
+  doc_id?: string;
+  file_name?: string;
+  file_ext?: string;
+  file_size?: number | null;
+  parse_state?: string;
+  parse_error?: string;
+  parse_engine?: string;
+  duration_ms?: number | null;
+  chunk_count?: number;
+  md_length?: number;
+  garbled?: boolean;
+  garbled_hits?: string[];
+  score?: number;
 }
 
 export interface QualityRunDetail extends QualityRunItem {
