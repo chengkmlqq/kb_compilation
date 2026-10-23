@@ -520,13 +520,10 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
   const docColumns: ColumnsType<QualityDocItem> = [
     {
       title: "知识库",
-      dataIndex: "kb_id",
+      dataIndex: "kb_name",
       width: 160,
       ellipsis: true,
-      render: (v: string) => {
-        const kb = kbs.find((k) => k.id === v);
-        return kb?.name ?? v.slice(0, 8) + "…";
-      },
+      render: (v: string, r) => v || (r.kb_id ? r.kb_id.slice(0, 8) + "…" : "-"),
     },
     { title: "文件名", dataIndex: "file_name", ellipsis: true },
     {

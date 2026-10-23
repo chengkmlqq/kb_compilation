@@ -87,6 +87,8 @@ def test_docs_list_by_kb(env) -> None:
     assert first["duration_ms"] == 1000
     assert first["garbled"] is False
     assert first["doc_id"] == "d1"
+    # kb_name 由后端回填（无 kb_datasource 行时为空串，前端兜底显示 id 前 8 位）
+    assert "kb_name" in first
 
     # 不带 kb_id = 全量
     r2 = client.get("/api/v1/quality/docs")

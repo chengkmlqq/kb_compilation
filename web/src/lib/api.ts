@@ -4508,6 +4508,7 @@ export function apiDeleteQualityRun(qualityId: string) {
 export interface QualityDocItem {
   doc_id?: string;
   kb_id?: string;
+  kb_name?: string;
   run_id?: string;
   file_name?: string;
   file_ext?: string;

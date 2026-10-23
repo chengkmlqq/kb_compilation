@@ -210,10 +210,21 @@ def list_doc_eval_details(
     if ids:
         pos = {rid: i for i, rid in enumerate(ids)}
         rows = db.execute(select(QualityDocEval).where(QualityDocEval.id.in_(ids))).scalars().all()
+        # 知识库 id → 中文名（kb_datasource.name），一次批量查回填
+        kb_ids = {r.kb_id for r in rows if r.kb_id}
+        kb_names: dict[str, str] = {}
+        if kb_ids:
+            from api.models.knowledge import KbDatasource
+
+            kb_rows = db.execute(
+                select(KbDatasource.id, KbDatasource.name).where(KbDatasource.id.in_(kb_ids))
+            ).all()
+            kb_names = {kid: name or "" for kid, name in kb_rows}
         for r in sorted(rows, key=lambda r: pos.get(r.id, len(ids))):
             items.append({
                 "doc_id": r.doc_id,
                 "kb_id": r.kb_id,
+                "kb_name": kb_names.get(r.kb_id, "") if r.kb_id else "",
                 "run_id": r.run_id,
                 "file_name": r.file_name,
                 "file_ext": r.file_ext,
