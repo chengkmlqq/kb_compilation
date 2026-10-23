@@ -675,6 +675,9 @@ def job_statistics(
         counts[str(state or "")] = int(count)
 
     # ── 编排 run：双表统计 + 排除被链头承接的（与 list_parent_jobs 同款）──
+    # 2026-10-23 性能修复：select(id, status) 全表扫聚簇索引时 step_results/
+    # bindings 大 JSON 数据页秒级——0043 迁移加 ix_kb_tape_run_status 覆盖索引
+    # （索引条目含 PK=id），此查询变纯索引扫描零回表（EXPLAIN 验证 Using index）。
     # 双表循环防重复：测试环境 db 被 override 为同一 session 时两轮查到同一批
     # run，按 (id, status) 去重再计数（与 list_parent_jobs 按 id 回表覆盖同语义）。
     run_pairs: set[tuple[str, str]] = set()

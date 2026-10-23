@@ -95,16 +95,26 @@ def list_metadata_datasources(
     db: Session = Depends(get_db),
 ) -> dict:
     """可采集数据源列表（表数量 + 最近采集时间 + 状态）。"""
+    from api.services.agg_cache import agg_cached
     from api.services.metadata_collector import DS_TYPE_GROUPS
 
-    types = _collectable_types()
-    dss = db.execute(
-        select(Datasource).where(
-            Datasource.ds_type.in_(types),
-            or_(Datasource.state.is_(None), Datasource.state == "1"),
-        )
-    ).scalars().all()
+    def _load() -> list[dict]:
+        types = _collectable_types()
+        dss = db.execute(
+            select(Datasource).where(
+                Datasource.ds_type.in_(types),
+                or_(Datasource.state.is_(None), Datasource.state == "1"),
+            )
+        ).scalars().all()
+        return _datasource_items(db, dss, DS_TYPE_GROUPS)
 
+    # 2026-10-23 性能审计：逐源最近任务查询冷缓冲池秒级，列表页走 15s 缓存
+    out = agg_cached("metadata_datasources", 15.0, _load)
+    return {"success": True, "data": {"items": out, "total": len(out)}}
+
+
+def _datasource_items(db, dss, DS_TYPE_GROUPS) -> list[dict]:
+    """可采集数据源逐源装配（表数/最近采集时间批量聚合 + 最近 5 条任务判状态）。"""
     # 2026-10-21 性能修复：表数/最近采集时间批量聚合（原每数据源 2 次查询 N+1），
     # 只保留「最近 5 条任务」逐源查询（有 datasource_id 索引，且语义上需每源 LIMIT）。
     ds_ids = [ds.id for ds in dss]
@@ -156,7 +166,7 @@ def list_metadata_datasources(
                 "lastError": next((j["error_message"] for j in jobs if j["state"] == "FAILED"), None),
             }
         )
-    return {"success": True, "data": {"items": out, "total": len(out)}}
+    return out
 
 
 @router.post("/collection")

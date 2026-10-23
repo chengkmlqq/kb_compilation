@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Integer, String, Text, func
+from sqlalchemy import JSON, DateTime, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from api.db import Base
@@ -115,6 +115,11 @@ class TapeRun(Base):
     """
 
     __tablename__ = "kb_tape_run"
+    __table_args__ = (
+        # 2026-10-23 性能：status 覆盖索引——任务统计/列表按状态分组计数时
+        # 避免全扫聚簇索引（step_results/bindings 大 JSON 数据页），纯索引扫描。
+        Index("ix_kb_tape_run_status", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)  # run_id
     tape_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
