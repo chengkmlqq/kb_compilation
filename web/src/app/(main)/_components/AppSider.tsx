@@ -12,8 +12,6 @@ import {
   DatabaseOutlined,
   FileOutlined,
   FolderOutlined,
-  LeftOutlined,
-  RightOutlined,
   RobotOutlined,
   ToolOutlined,
   TableOutlined,
@@ -52,6 +50,8 @@ import {
   ModoIconSemanticSearch,
   ModoIconSystemMgr,
   ModoIconTaskMonitor,
+  // 2026-10-23 侧边栏收缩按钮图标（对齐 shandong 壳 narrow 菜单）
+  ModoIconSidebarCollapse,
 } from "@/components/ModoMenuIcons";
 
 const { Sider } = Layout;
@@ -272,33 +272,36 @@ export const AppSider: React.FC = () => {
         )}
       </div>
 
-      {/* 右下角悬浮折叠按钮（对齐 data-synth SideMenu） */}
-      <div
-        onClick={() => setCollapsed(!collapsed)}
-        style={{
-          position: "absolute",
-          bottom: 12,
-          right: 12,
-          width: 28,
-          height: 28,
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: "#EFF4F9",
-          borderRadius: "50%",
-          transition: "box-shadow 0.2s",
-          zIndex: 10,
-        }}
-        onMouseEnter={(e: any) => {
-          e.currentTarget.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.15)";
-        }}
-        onMouseLeave={(e: any) => {
-          e.currentTarget.style.boxShadow = "none";
-        }}
-      >
-        {collapsed ? <RightOutlined /> : <LeftOutlined />}
-      </div>
+      {/* 右下角悬浮折叠按钮（对齐 shandong MODO 壳 narrow 菜单：仅当前一级分组有二级菜单时渲染，
+          图标为壳同款「侧边栏收起」svg，收起/展开共用同一图标） */}
+      {hasSub && (
+        <div
+          onClick={() => setCollapsed(!collapsed)}
+          style={{
+            position: "absolute",
+            bottom: 12,
+            right: 12,
+            width: 28,
+            height: 28,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "#EFF4F9",
+            borderRadius: "50%",
+            transition: "box-shadow 0.2s",
+            zIndex: 10,
+          }}
+          onMouseEnter={(e: any) => {
+            e.currentTarget.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.15)";
+          }}
+          onMouseLeave={(e: any) => {
+            e.currentTarget.style.boxShadow = "none";
+          }}
+        >
+          <ModoIconSidebarCollapse size={16} />
+        </div>
+      )}
     </Sider>
   );
 };
