@@ -77,7 +77,24 @@ def overview_summary(
     db: Session = Depends(get_db),
     caller: dict = Depends(_require_caller),
 ) -> dict:
-    """核心指标聚合（一次请求返回全部统计卡所需数据）。"""
+    """核心指标聚合（一次请求返回全部统计卡所需数据）。
+
+    2026-10-23 性能审计：整段聚合结果走 30s 进程内缓存——内部多条计数会全扫
+    含 MEDIUMTEXT content 的大表（doc_chunk/wiki_page/wiki_link），远端库
+    缓冲池小、冷索引页读取秒级；看板统计容忍短时陈旧，缓存后响应毫秒级。
+    """
+    from api.services.agg_cache import agg_cached
+
+    key = "ov_summary:%s:%s:%s" % (
+        caller.get("user_id") or "",
+        caller.get("team_name") or "",
+        bool(caller.get("is_admin")),
+    )
+    data = agg_cached(key, 30.0, lambda: _summary_data(db, caller))
+    return {"success": True, "data": data}
+
+
+def _summary_data(db: Session, caller: dict) -> dict:
     kb_ids = _visible_kb_ids(db, caller)
 
     # ── 知识库：总数 + 按 scope 分组 ─────────────────────────────
@@ -165,9 +182,7 @@ def overview_summary(
     fb_data = fb.get("data") or {}
 
     return {
-        "success": True,
-        "data": {
-            "kbs": {"total": len(kb_ids), "by_scope": kb_scope_counts},
+        "kbs": {"total": len(kb_ids), "by_scope": kb_scope_counts},
             "docs": {
                 "total": doc_total,
                 "by_state": doc_state_counts,
@@ -195,7 +210,6 @@ def overview_summary(
                 "like_rate": fb_data.get("like_rate", 0),
                 "week_count": fb_data.get("week_count", 0),
             },
-        },
     }
 
 
@@ -208,19 +222,32 @@ def overview_kb_stats(
     Wiki 页数 / 待处理问题数 / 最近更新时间。总览页「知识库维度」区块数据源。
 
     聚合方式：全部按 kb_id 一次 GROUP BY 分批取，避免每库 N+1 查询。
+    2026-10-23 性能审计：整段结果走 30s 进程内缓存（大表计数，缓冲池冷热波动）。
     """
+    from api.services.agg_cache import agg_cached
+
+    key = "ov_kb_stats:%s:%s:%s" % (
+        caller.get("user_id") or "",
+        caller.get("team_name") or "",
+        bool(caller.get("is_admin")),
+    )
+    items = agg_cached(key, 30.0, lambda: _kb_stats_data(db, caller))
+    return {"success": True, "data": {"items": items}}
+
+
+def _kb_stats_data(db: Session, caller: dict) -> list:
     kb_ids = _visible_kb_ids(db, caller)
     if not kb_ids:
-        return {"success": True, "data": {"items": []}}
+        return []
 
-    # 库基础信息（库名）
+    # 库基础信息（名称 + 最近文档更新时间）
     kb_rows = db.execute(
         select(KbDatasource.id, KbDatasource.name)
         .where(KbDatasource.id.in_(kb_ids))
     ).all()
     kb_map: dict[str, str] = {str(i): n for i, n in kb_rows}
 
-    # 文档：总数 + 解析状态分布 + 最近一次新增时间
+    # 文档：总数 + 解析状态分布 + 最近更新时间
     doc_rows = db.execute(
         select(
             KbDocument.kb_id,
@@ -283,7 +310,7 @@ def overview_kb_stats(
         )
     # 按文档总数降序，便于总览一眼看到负载最高的库
     items.sort(key=lambda i: i["docs"]["total"], reverse=True)
-    return {"success": True, "data": {"items": items}}
+    return items
 
 
 def _days_back(days: int) -> list[str]:
@@ -292,23 +319,49 @@ def _days_back(days: int) -> list[str]:
     return [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days - 1, -1, -1)]
 
 
+def _since_dt(date_str: str) -> datetime:
+    """''YYYY-MM-DD'' → 当天零点 naive datetime（trend 裸列范围比较用）。"""
+    return datetime.strptime(date_str, "%Y-%m-%d")
+
+
 @router.get("/trend")
 def overview_trend(
     days: int = Query(7, ge=1, le=90),
     db: Session = Depends(get_db),
     caller: dict = Depends(_require_caller),
 ) -> dict:
-    """构建趋势：最近 N 天按天新增 文档数 / 分块数 / Wiki 页数（按可见范围）。"""
+    """构建趋势：最近 N 天按天新增 文档数 / 分块数 / Wiki 页数（按可见范围）。
+
+    2026-10-21 性能修复：WHERE 不再用 func.date(created_at) >= since 包裹列
+    （函数包裹列 → 索引失效 → kb_document/doc_chunk/wiki_page 全表扫），
+    改为裸列 created_at >= 当天零点，配合 0029 迁移的 (kb_id, created_at)
+    复合索引命中范围扫描；GROUP BY 仍按 DATE() 分桶（行数已被范围过滤收窄）。
+    2026-10-23 性能审计：分组聚合会扫大表（doc_chunk/wiki_page），远端库
+    缓冲池冷热波动秒级——看板趋势容忍短时陈旧，整段结果走 30s 进程内缓存。
+    """
+    from api.services.agg_cache import agg_cached
+
+    key = "ov_trend:%s:%s:%s:%d" % (
+        caller.get("user_id") or "",
+        caller.get("team_name") or "",
+        bool(caller.get("is_admin")),
+        days,
+    )
+    days_out = agg_cached(key, 30.0, lambda: _trend_days(db, caller, days))
+    return {"success": True, "data": {"days": days_out}}
+
+
+def _trend_days(db: Session, caller: dict, days: int) -> list:
     kb_ids = _visible_kb_ids(db, caller)
     date_list = _days_back(days)
     buckets = {d: {"docs": 0, "chunks": 0, "wiki_pages": 0} for d in date_list}
 
     if kb_ids:
-        since = date_list[0]
+        since_dt = _since_dt(date_list[0])
         # 文档：按 created_at 的日期分桶
         rows = db.execute(
             select(func.date(KbDocument.created_at), func.count())
-            .where(KbDocument.kb_id.in_(kb_ids), func.date(KbDocument.created_at) >= since)
+            .where(KbDocument.kb_id.in_(kb_ids), KbDocument.created_at >= since_dt)
             .group_by(func.date(KbDocument.created_at))
         ).all()
         for day, count in rows:
@@ -319,7 +372,7 @@ def overview_trend(
         # 分块：doc_chunk.created_at
         rows = db.execute(
             select(func.date(DocChunk.created_at), func.count())
-            .where(DocChunk.kb_id.in_(kb_ids), func.date(DocChunk.created_at) >= since)
+            .where(DocChunk.kb_id.in_(kb_ids), DocChunk.created_at >= since_dt)
             .group_by(func.date(DocChunk.created_at))
         ).all()
         for day, count in rows:
@@ -333,7 +386,7 @@ def overview_trend(
             .where(
                 WikiPage.kb_id.in_(kb_ids),
                 WikiPage.status == "active",
-                func.date(WikiPage.created_at) >= since,
+                WikiPage.created_at >= since_dt,
             )
             .group_by(func.date(WikiPage.created_at))
         ).all()
@@ -342,10 +395,7 @@ def overview_trend(
             if key in buckets:
                 buckets[key]["wiki_pages"] = int(count)
 
-    return {
-        "success": True,
-        "data": {"days": [{"date": d, **buckets[d]} for d in date_list]},
-    }
+    return [{"date": d, **buckets[d]} for d in date_list]
 
 
 __all__ = ["router"]

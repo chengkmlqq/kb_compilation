@@ -14,7 +14,7 @@ import logging
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from api.db import get_db
@@ -160,48 +160,104 @@ def list_quality_runs(
     items: list[dict] = []
     if run_ids:
         pos = {rid: i for i, rid in enumerate(run_ids)}
-        rows = db.execute(select(QualityRun).where(QualityRun.id.in_(run_ids))).scalars().all()
-        for r in sorted(rows, key=lambda r: pos.get(r.id, len(run_ids))):
-            items.append(_run_item(r))
+        # 2026-10-23 性能审计：列表只取窄列——issues/attribution 是聚合后的大
+        # JSON（整库评估单行可达 ~600KB），列表仅展示 issues_count；metrics 四列
+        # 保留（列表需各维度得分）。issues_count 在 MySQL 用 JSON_LENGTH 库内数，
+        # 其余方言（sqlite 测试）回落加载 issues 列计数。
+        cols = [
+            QualityRun.id,
+            QualityRun.kb_id,
+            QualityRun.scope,
+            QualityRun.doc_ids,
+            QualityRun.status,
+            QualityRun.dim,
+            QualityRun.doc_metrics,
+            QualityRun.chunk_metrics,
+            QualityRun.wiki_metrics,
+            QualityRun.graph_metrics,
+            QualityRun.summary,
+            QualityRun.error,
+            QualityRun.created_by,
+            QualityRun.created_at,
+        ]
+        rows = db.execute(select(*cols).where(QualityRun.id.in_(run_ids))).all()
+        issue_counts: dict[str, int] = {}
+        if db.get_bind().dialect.name == "mysql":
+            cnt = db.execute(
+                text("SELECT id, JSON_LENGTH(issues) FROM kb_quality_run WHERE id IN :ids"),
+                {"ids": tuple(run_ids)},
+            ).all()
+            issue_counts = {str(i): int(c or 0) for i, c in cnt}
+        else:
+            for r in db.execute(
+                select(QualityRun.id, QualityRun.issues).where(QualityRun.id.in_(run_ids))
+            ).all():
+                issue_counts[str(r[0])] = len(r[1] or [])
+        for row in sorted(rows, key=lambda x: pos.get(x.id, len(run_ids))):
+            items.append(_run_item_row(row, issue_counts.get(row.id, 0)))
     return {"success": True, "data": {"total": total, "page": page, "page_size": page_size,
                                       "items": items}}
 
 
 @router.get("/docs")
-def list_doc_eval_details(
+def list_quality_file_details(
     kb_id: str = Query("", max_length=64),
     status: str = Query("", max_length=20),
     keyword: str = Query("", max_length=128),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
+    dim: str = Query("doc", max_length=20),
     db: Session = Depends(get_db),
     caller: dict = Depends(_require_caller),
 ) -> dict:
-    """文档转换评估-单文件明细（kb_quality_doc_eval，每文件一行，最新状态）。
+    """质量评估-单文件粒度明细（每文件一行，最新状态）。
 
-    dim=doc 评估每次落库按 kb 整批覆盖写入，本接口返回该知识库当前各文件的
-    转换评估结果（文件粒度）。支持按文件名关键字与 parse_state 过滤；分页返回。
+    dim=doc|chunk|graph|wiki 对应 kb_quality_doc_eval / kb_quality_chunk_eval /
+    kb_quality_graph_eval / kb_quality_wiki_eval。各维度评估每次落库按 kb 整批
+    覆盖写入，本接口返回该知识库当前各文件的评估结果（文件粒度）。
+    支持按文件名关键字过滤；分页返回。
     """
-    from api.models.knowledge import QualityDocEval
     from sqlalchemy import func
+    from typing import cast
+
+    dim = (dim or "doc").strip().lower()
+    if dim not in ("doc", "chunk", "graph", "wiki"):
+        raise HTTPException(status_code=400, detail=f"不支持的评估维度: {dim}（可选 doc/chunk/graph/wiki）")
+
+    if dim == "doc":
+        from api.models.knowledge import QualityDocEval
+
+        model = QualityDocEval
+    elif dim == "chunk":
+        from api.models.knowledge import QualityChunkEval
+
+        model = QualityChunkEval
+    elif dim == "graph":
+        from api.models.knowledge import QualityGraphEval
+
+        model = QualityGraphEval
+    else:
+        from api.models.knowledge import QualityWikiEval
+
+        model = QualityWikiEval
+
+    any_model = cast(object, model)
 
     conds = []
     if kb_id:
-        conds.append(QualityDocEval.kb_id == kb_id)
-    if status:
-        conds.append(QualityDocEval.parse_state == status)
+        conds.append(model.kb_id == kb_id)
     if keyword:
-        conds.append(QualityDocEval.file_name.like(f"%{keyword}%"))
+        conds.append(model.file_name.like(f"%{keyword}%"))
 
-    total_stmt = select(func.count()).select_from(QualityDocEval)
-    id_stmt = select(QualityDocEval.id)
+    total_stmt = select(func.count()).select_from(model)
+    id_stmt = select(model.id)
     if conds:
         total_stmt = total_stmt.where(*conds)
         id_stmt = id_stmt.where(*conds)
     total = db.execute(total_stmt).scalar() or 0
     ids: list[str] = list(
         db.execute(
-            id_stmt.order_by(QualityDocEval.file_name.asc())
+            id_stmt.order_by(model.file_name.asc())
             .offset((page - 1) * page_size)
             .limit(page_size)
         ).scalars().all()
@@ -209,7 +265,7 @@ def list_doc_eval_details(
     items: list[dict] = []
     if ids:
         pos = {rid: i for i, rid in enumerate(ids)}
-        rows = db.execute(select(QualityDocEval).where(QualityDocEval.id.in_(ids))).scalars().all()
+        rows = db.execute(select(model).where(model.id.in_(ids))).scalars().all()
         # 知识库 id → 中文名（kb_datasource.name），一次批量查回填
         kb_ids = {r.kb_id for r in rows if r.kb_id}
         kb_names: dict[str, str] = {}
@@ -221,29 +277,66 @@ def list_doc_eval_details(
             ).all()
             kb_names = {kid: name or "" for kid, name in kb_rows}
         for r in sorted(rows, key=lambda r: pos.get(r.id, len(ids))):
-            items.append({
+            item: dict = {
                 "doc_id": r.doc_id,
                 "kb_id": r.kb_id,
                 "kb_name": kb_names.get(r.kb_id, "") if r.kb_id else "",
                 "run_id": r.run_id,
                 "file_name": r.file_name,
-                "file_ext": r.file_ext,
-                "file_size": r.file_size,
-                "parse_state": r.parse_state,
-                "parse_error": r.parse_error,
-                "parse_engine": r.parse_engine,
-                "duration_ms": r.duration_ms,
-                "chunk_count": r.chunk_count,
-                "md_length": r.md_length,
-                "garbled": bool(r.garbled),
-                "garbled_hits": r.garbled_hits or [],
-                "file_name_garbled": bool(r.file_name_garbled),
-                "content_garbled": bool(r.content_garbled),
                 "score": r.score,
                 "updated_at": r.updated_at.isoformat() if r.updated_at else None,
-            })
+            }
+            if dim == "doc":
+                item.update({
+                    "file_ext": r.file_ext,
+                    "file_size": r.file_size,
+                    "parse_state": r.parse_state,
+                    "parse_error": r.parse_error,
+                    "parse_engine": r.parse_engine,
+                    "duration_ms": r.duration_ms,
+                    "chunk_count": r.chunk_count,
+                    "md_length": r.md_length,
+                    "garbled": bool(r.garbled),
+                    "garbled_hits": r.garbled_hits or [],
+                    "file_name_garbled": bool(r.file_name_garbled),
+                    "content_garbled": bool(r.content_garbled),
+                })
+            else:
+                item["issues"] = r.issues or []
+                if dim == "chunk":
+                    item.update({
+                        "chunks": r.chunks,
+                        "avg_len": r.avg_len,
+                        "wiki_pages": r.wiki_pages,
+                        "wiki_start_time": r.wiki_start_time.isoformat() if r.wiki_start_time else None,
+                        "wiki_build_sec": r.wiki_build_sec,
+                        "doc_process_sec": r.doc_process_sec,
+                        "wiki_tape": r.wiki_tape,
+                        "eval_duration_sec": r.eval_duration_sec,
+                        "conclusion": r.conclusion,
+                        "error": r.error,
+                    })
+                elif dim == "graph":
+                    item.update({
+                        "nodes": r.nodes,
+                        "rels": r.rels,
+                        "dumb_nodes": r.dumb_nodes,
+                        "untraceable_rels": r.untraceable_rels,
+                        "wiki_missing": r.wiki_missing,
+                    })
+                else:  # wiki
+                    item.update({
+                        "pages": r.pages,
+                        "empty": r.empty,
+                        "orphan": r.orphan,
+                        "broken_links": r.broken_links,
+                        "placeholder": r.placeholder,
+                        "missing_source": r.missing_source,
+                        "no_folder": r.no_folder,
+                    })
+            items.append(item)
     return {"success": True, "data": {"total": total, "page": page, "page_size": page_size,
-                                      "items": items}}
+                                      "dim": dim, "items": items}}
 
 
 @router.get("/runs/{quality_id}")
@@ -289,6 +382,32 @@ def delete_quality_run(
     db.delete(run)
     db.commit()
     return {"success": True, "data": {"id": run.id, "deleted": True}}
+
+
+def _run_item_row(row, issues_count: int) -> dict:
+    """列表用窄列版 run item（2026-10-23）：attribution 不在列表展示，置空。"""
+    scores = {}
+    for dim, key in (("doc", "doc_metrics"), ("chunk", "chunk_metrics"),
+                     ("wiki", "wiki_metrics"), ("graph", "graph_metrics")):
+        m = getattr(row, key) or {}
+        if not isinstance(m, dict):
+            m = {}
+        scores[dim] = m.get("final_score") if m.get("final_score") is not None else m.get("health_score")
+    return {
+        "id": row.id,
+        "kb_id": row.kb_id,
+        "scope": row.scope,
+        "doc_ids": row.doc_ids or [],
+        "status": row.status,
+        "dim": row.dim or "all",
+        "scores": scores,
+        "issues_count": issues_count,
+        "attribution": [],
+        "summary": row.summary or "",
+        "error": row.error or "",
+        "created_by": row.created_by or "",
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
 
 
 def _run_item(r: QualityRun) -> dict:

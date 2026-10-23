@@ -128,40 +128,51 @@ def list_kbs(
     keyword_counts: dict[str, int] = {}
     feedback_counts: dict[str, int] = {}
     if kb_ids:
-        doc_counts = dict(
-            db.execute(
-                select(KbDocument.kb_id, func.count())
-                .where(KbDocument.kb_id.in_(kb_ids))
-                .group_by(KbDocument.kb_id)
-            ).all()
-        )
-        # 高频词页计数（page_type=frequent_keyword）+ 总页数：一次条件聚合产出
-        # （2026-10-21 合并，原两次 group-by 各自全扫 wiki_page 命中集）。
-        # 2026-10-23 收尾：删除合并前遗留的独立 wiki COUNT 死查询（结果随后被覆盖）。
-        keyword_rows = db.execute(
-            select(
-                WikiPage.kb_id,
-                func.count(),
-                func.coalesce(
-                    func.sum(case((WikiPage.page_type == "frequent_keyword", 1), else_=0)),
-                    0,
-                ),
+        # 2026-10-23 性能审计：四组计数整块走 15s 进程内缓存。计数 SQL 会全扫含
+        # MEDIUMTEXT content 的大表（doc_chunk/wiki_page），远端库缓冲池小、冷
+        # 索引页读取秒级（热时 100-300ms）；卡片计数（文件/Wiki/反馈数）容忍
+        # 短时陈旧，缓存后页面响应确定性地降到毫秒级。
+        from api.services.agg_cache import agg_cached
+
+        def _load_counts() -> tuple[dict, dict, dict, dict]:
+            c_doc = dict(
+                db.execute(
+                    select(KbDocument.kb_id, func.count())
+                    .where(KbDocument.kb_id.in_(kb_ids))
+                    .group_by(KbDocument.kb_id)
+                ).all()
             )
-            .where(
-                WikiPage.kb_id.in_(kb_ids),
-                WikiPage.status == "active",
-            )
-            .group_by(WikiPage.kb_id)
-        ).all()
-        page_counts = {kb_id: total for kb_id, total, _kw in keyword_rows}
-        keyword_counts = {kb_id: int(kw) for kb_id, _total, kw in keyword_rows}
-        # 反馈计数（未软删）：知识库卡片「反馈 N」统计 → 维护中心
-        feedback_counts = dict(
-            db.execute(
-                select(WikiFeedback.kb_id, func.count())
-                .where(WikiFeedback.kb_id.in_(kb_ids), WikiFeedback.deleted_at.is_(None))
-                .group_by(WikiFeedback.kb_id)
+            # 高频词页计数（page_type=frequent_keyword）+ 总页数：一次条件聚合产出
+            # （2026-10-21 合并，原两次 group-by 各自全扫 wiki_page 命中集）。
+            keyword_rows = db.execute(
+                select(
+                    WikiPage.kb_id,
+                    func.count(),
+                    func.coalesce(
+                        func.sum(case((WikiPage.page_type == "frequent_keyword", 1), else_=0)),
+                        0,
+                    ),
+                )
+                .where(
+                    WikiPage.kb_id.in_(kb_ids),
+                    WikiPage.status == "active",
+                )
+                .group_by(WikiPage.kb_id)
             ).all()
+            c_page = {kb_id: total for kb_id, total, _kw in keyword_rows}
+            c_kw = {kb_id: int(kw) for kb_id, _total, kw in keyword_rows}
+            # 反馈计数（未软删）：知识库卡片「反馈 N」统计 → 维护中心
+            c_fb = dict(
+                db.execute(
+                    select(WikiFeedback.kb_id, func.count())
+                    .where(WikiFeedback.kb_id.in_(kb_ids), WikiFeedback.deleted_at.is_(None))
+                    .group_by(WikiFeedback.kb_id)
+                ).all()
+            )
+            return c_doc, c_page, c_kw, c_fb
+
+        doc_counts, page_counts, keyword_counts, feedback_counts = agg_cached(
+            "kbs_counts:" + ",".join(sorted(kb_ids)), 15.0, _load_counts
         )
 
     items = [
