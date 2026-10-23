@@ -1829,7 +1829,15 @@ else:
     _issues = []
     # 页面 → 归属文档（source_refs 首个元素 "doc_id|file_name"）
     def _doc_of(_p):
-        _refs = _p[7] or []
+        _refs = _p[7]
+        # text() 原生查询下 MySQL JSON 列是字符串，需手动反序列化
+        if isinstance(_refs, str):
+            try:
+                import json as _json
+                _refs = _json.loads(_refs)
+            except Exception:
+                _refs = []
+        _refs = _refs or []
         if not _refs:
             return ""
         return str(_refs[0]).split("|")[0].strip()
@@ -1948,9 +1956,9 @@ try:
         _rel_types = {_r["t"]: _r["c"] for _r in _rel_rows}
         _untraceable = _sess.run(f"MATCH (a:`{_label}`)-[r]-(b:`{_label}`) WHERE (r.rule_slug IS NULL OR r.rule_slug='') AND (r.note IS NULL OR r.note='') RETURN count(r) AS c").single()["c"]
         _node_slugs = _sess.run(f"MATCH (n:`{_label}`) WHERE n.page_slug IS NOT NULL AND n.page_slug<>'' RETURN collect(DISTINCT n.page_slug) AS slugs").single()["slugs"] or []
-        # ── 文件粒度：节点按 page_slug → wiki 页 → source_refs 映射到文档 ──
-        _per_node = _sess.run(f"MATCH (n:`{_label}`) RETURN n.page_slug AS ps, (n.attributes IS NULL OR size(n.attributes)=0) AS dumb").data()
-        _per_rel = _sess.run(f"MATCH (a:`{_label}`)-[r]-(b:`{_label}`) RETURN a.page_slug AS aps, b.page_slug AS bps, type(r) AS t, (r.rule_slug IS NULL OR r.rule_slug='') AND (r.note IS NULL OR r.note='') AS utr").data()
+        # ── 文件粒度：节点按 name → wiki 页（title/slug）→ source_refs 映射到文档 ──
+        _per_node = _sess.run(f"MATCH (n:`{_label}`) RETURN n.name AS nm, (n.attributes IS NULL OR size(n.attributes)=0) AS dumb").data()
+        _per_rel = _sess.run(f"MATCH (a:`{_label}`)-[r]-(b:`{_label}`) RETURN a.name AS anm, b.name AS bnm, type(r) AS t, (r.rule_slug IS NULL OR r.rule_slug='') AND (r.note IS NULL OR r.note='') AS utr").data()
 finally:
     _driver.close()
 
@@ -1965,18 +1973,38 @@ if _untraceable > 0:
 
 _db = get_sessionmaker()()
 try:
-    # wiki 页 slug → 首个 source_ref 文档 id（格式 "doc_id|file_name"）
+    # wiki 页 title/slug → 首个 source_ref 文档 id（格式 "doc_id|file_name"）
     _wiki_rows = _db.execute(
-        text("SELECT slug, source_refs FROM wiki_page WHERE kb_id=:kb AND status='active'"),
+        text("SELECT slug, title, source_refs FROM wiki_page WHERE kb_id=:kb AND status='active'"),
         {"kb": _kb},
     ).all()
-    _doc_by_slug = {}
-    for _slug, _refs in _wiki_rows:
+    _doc_by_title: dict = {}
+    _doc_by_slug_from_wiki: dict = {}
+    for _slug, _title, _refs in _wiki_rows:
+        # text() 原生查询下 MySQL JSON 列是字符串，需手动反序列化
+        if isinstance(_refs, str):
+            try:
+                _refs = json.loads(_refs)
+            except Exception:
+                _refs = []
         _refs = _refs or []
-        if _refs:
-            _first = str(_refs[0]).split("|")[0].strip()
-            if _first:
-                _doc_by_slug[str(_slug)] = _first
+        if not _refs:
+            continue
+        _first = str(_refs[0]).split("|")[0].strip()
+        if not _first:
+            continue
+        if _title:
+            _doc_by_title[str(_title).strip()] = _first
+        if _slug:
+            _doc_by_slug_from_wiki[str(_slug)] = _first
+
+    def _doc_of_node(_nm: str) -> str:
+        # 图节点 → 文档：name 命中 wiki 页 title 或 slug
+        _nm = str(_nm or "").strip()
+        if not _nm:
+            return ""
+        return _doc_by_title.get(_nm) or _doc_by_slug_from_wiki.get(_nm) or ""
+
     _doc_names = dict(
         _db.execute(text("SELECT id, file_name FROM kb_document WHERE kb_id=:kb"), {"kb": _kb}).all()
     )
@@ -1989,10 +2017,10 @@ try:
 
     # ── 文件粒度聚合：每文档的节点/边/哑节点/不可回溯/wiki缺失 ──
     _per_doc = {}
-    _active_slugs = {str(s) for s, _ in _wiki_rows}
+    _active_titles = {str(t).strip() for t, _ in [(r[1], r) for r in _wiki_rows] if t} | {str(s) for s in _doc_by_slug_from_wiki.keys()}
     for _nd in _per_node:
-        _sl = str(_nd.get("ps") or "")
-        _doc = _doc_by_slug.get(_sl)
+        _nm = str(_nd.get("nm") or "").strip()
+        _doc = _doc_of_node(_nm)
         if not _doc:
             continue
         _d = _per_doc.setdefault(_doc, {"doc_id": _doc, "file_name": _doc_names.get(_doc, ""),
@@ -2001,11 +2029,11 @@ try:
         _d["nodes"] += 1
         if _nd.get("dumb"):
             _d["dumb_nodes"] += 1
-        if _sl and _sl not in _active_slugs:
+        if _nm and _nm not in _active_titles:
             _d["wiki_missing"] += 1
     for _re in _per_rel:
-        _docs = {_doc_by_slug.get(str(_re.get("aps") or "")), _doc_by_slug.get(str(_re.get("bps") or ""))}
-        _docs.discard(None)
+        _docs = {_doc_of_node(str(_re.get("anm") or "")), _doc_of_node(str(_re.get("bnm") or ""))}
+        _docs.discard("")
         for _doc in _docs:
             _d = _per_doc.setdefault(_doc, {"doc_id": _doc, "file_name": _doc_names.get(_doc, ""),
                                             "nodes": 0, "dumb_nodes": 0, "rels": 0,
