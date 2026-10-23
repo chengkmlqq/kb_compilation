@@ -135,19 +135,9 @@ def list_kbs(
                 .group_by(KbDocument.kb_id)
             ).all()
         )
-        page_counts = dict(
-            db.execute(
-                select(WikiPage.kb_id, func.count())
-                .where(
-                    WikiPage.kb_id.in_(kb_ids),
-                    WikiPage.status == "active",
-                )
-                .group_by(WikiPage.kb_id)
-            ).all()
-        )
-        # 高频词页计数（page_type=frequent_keyword）：高频词管理页知识库卡片统计。
-        # 2026-10-21 性能：与 page_counts 合并为一次条件聚合（case 求和），
-        # 原两次 group-by 各自全扫 wiki_page 该 kb_id 命中集（远程库 RTT 叠加）。
+        # 高频词页计数（page_type=frequent_keyword）+ 总页数：一次条件聚合产出
+        # （2026-10-21 合并，原两次 group-by 各自全扫 wiki_page 命中集）。
+        # 2026-10-23 收尾：删除合并前遗留的独立 wiki COUNT 死查询（结果随后被覆盖）。
         keyword_rows = db.execute(
             select(
                 WikiPage.kb_id,
