@@ -170,6 +170,7 @@ def list_quality_runs(
 @router.get("/docs")
 def list_doc_eval_details(
     kb_id: str = Query("", max_length=64),
+    status: str = Query("", max_length=20),
     keyword: str = Query("", max_length=128),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
@@ -179,7 +180,7 @@ def list_doc_eval_details(
     """文档转换评估-单文件明细（kb_quality_doc_eval，每文件一行，最新状态）。
 
     dim=doc 评估每次落库按 kb 整批覆盖写入，本接口返回该知识库当前各文件的
-    转换评估结果（文件粒度）。支持按文件名关键字过滤；分页返回。
+    转换评估结果（文件粒度）。支持按文件名关键字与 parse_state 过滤；分页返回。
     """
     from api.models.knowledge import QualityDocEval
     from sqlalchemy import func
@@ -187,6 +188,8 @@ def list_doc_eval_details(
     conds = []
     if kb_id:
         conds.append(QualityDocEval.kb_id == kb_id)
+    if status:
+        conds.append(QualityDocEval.parse_state == status)
     if keyword:
         conds.append(QualityDocEval.file_name.like(f"%{keyword}%"))
 

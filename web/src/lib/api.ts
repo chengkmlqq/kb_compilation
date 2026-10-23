@@ -4526,6 +4526,7 @@ export interface QualityDocItem {
 
 export function apiListQualityDocEval(params: {
   kb_id?: string;
+  status?: string;
   keyword?: string;
   page?: number;
   page_size?: number;
@@ -4535,6 +4536,7 @@ export function apiListQualityDocEval(params: {
     page_size: String(params.page_size ?? 20),
   });
   if (params.kb_id) sp.set("kb_id", params.kb_id);
+  if (params.status) sp.set("status", params.status);
   if (params.keyword) sp.set("keyword", params.keyword);
   return request<PageList<QualityDocItem>>(`/api/v1/quality/docs?${sp.toString()}`);
 }
