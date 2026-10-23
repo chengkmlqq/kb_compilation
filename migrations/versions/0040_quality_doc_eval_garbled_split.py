@@ -8,8 +8,8 @@ garbled 保留为「任一乱码」的兼容列（页面/接口仍可用）。
 
 迁移幂等：列已存在则跳过（跨环境兼容，dev 双表由 create_all 补建）。
 
-Revision ID: 0039_quality_doc_eval_garbled_split
-Revises: 0038_quality_doc_eval
+Revision ID: 0040_quality_doc_eval_garbled_split
+Revises: 0039_wiki_page_cover_index
 Create Date: 2026-10-23
 """
 from __future__ import annotations
@@ -20,8 +20,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "0039_quality_doc_eval_garbled_split"
-down_revision: Union[str, None] = "0038_quality_doc_eval"
+revision: str = "0040_quality_doc_eval_garbled_split"
+down_revision: Union[str, None] = "0039_wiki_page_cover_index"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
