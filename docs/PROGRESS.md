@@ -2,7 +2,48 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-22（质量评估目录新增「构建任务检查」子菜单——构建任务真实性校验）
+最后更新：2026-10-23（切片评估 v3——单文件粒度 LLM 对照完整原文评估 Wiki + 构建时间与耗时展示，重触发进行中）
+
+## 44. 当前状态（2026-10-23 切片评估 v3——单文件粒度评估 Wiki：LLM 对照完整原文查内容错误/缺失/是否有意义 + Wiki 构建起始与耗时展示）
+
+- **需求**：「改 wiki 评估逻辑：评估粒度=单文件；评估时调 LLM 看 wiki 是否有明显内容错误/缺失，
+  对照完整 md 判断 wiki 是否有意义；提取 wiki 构建起始时间与耗时展示；改造后清空旧评估记录重新触发」
+- **代码**（commits 7020238 + 7d9d577 + f5332ef，已推送 dev 且容器已生效；本会话接手时核对完成）：
+  - `scripts/chunk_eval_v3_step_code.py` = 线上「切片评估」编排 n2 质量检查节点代码（已用
+    `scripts/apply_chunk_eval_tape_v3.py` 应用到库内 kb_tape，tape id 92427d69 不变，4 节点：
+    def 输入定义 → script 质量检查 → script 汇总落库 → print 完成汇总）
+  - **评估逻辑**：每个文档单独评估——doc_chunk 按 seq 拼接当完整原文，按 source_refs 命中该文档的
+    wiki 页（摘要页优先，content 二次回表避免整库拉正文），超量均匀抽样（原文 ≤20 块×1000 字、
+    wiki ≤12 页×2000 字）；LLM 输出 JSON：score(0-100)/has_content_error+content_errors/
+    has_missing+missing_items/meaningful+meaningful_note/conclusion；三类布尔问题落 issue：
+    wiki_content_error / wiki_missing_content / wiki_not_meaningful；无切片/无 wiki 页确定性判定
+    （no_chunks / wiki_no_pages）不调 LLM；LLM 失败记 sem_eval_error + 单文件 score=None 不阻断
+  - **构建时间提取**：优先该文档的 wiki 构建编排 run（kb_tape_run inputs 含 document_id/doc_id/kid，
+    取最近 success，回落最近一条）created_at/updated_at → per_doc.wiki_start_time / wiki_build_sec；
+    回落 wiki 页创建时间窗；doc_process_sec 因 kb_document created_at/updated_at 混用时区会算负
+    → 负值置空
+  - 前端（`web/src/components/quality/QualityAssessPane.tsx` chunkDetailTable）：单文件明细表列 =
+    文件名/切片/均长/Wiki页/Wiki构建起始/Wiki构建耗时/处理时长/评估耗时/评分/结论；问题类型文案补
+    wiki_no_pages/wiki_content_error/wiki_missing_content/wiki_not_meaningful（已部署，容器构建产物
+    已含「Wiki构建耗时」列）
+- **清空+重触发**（`scripts/retrigger_chunk_eval.py`，api-server 容器内 running，PID 289，串行执行）：
+  删除旧 dim=chunk 的 kb_quality_run + kb_quality_report（共清 1 条，可发现仅 1 库有独立 chunk 记录），
+  对 7 个知识库逐个 execute_tape(env=prod) 重发起 scope=all 并轮询到终态（库里间串行，编排防重限制）
+- **当前进度**（截至 2026-10-23 09:35 北京）：2 库完成 + 1 库进行中 + 4 库排队
+  - 030e4f0d72（3 文档）：health 51，3 条 per_doc 均含 wiki_start_time（如 2026-10-21T19:29:35）/
+    wiki_build_sec（1983.0/1252.0s）/ wiki_tape（wiki构建-采购与供应链），问题 wiki_no_pages×1 +
+    wiki_missing_content×2
+  - 4d81657d4a（9 文档）：health 0，全部 wiki_no_pages（该库文档未构建出 wiki 页面）
+  - 610ece764f（944 文档，大库 LLM 逐文件 ~7s/文件）：707/944 进行中（worker 日志每文件分数/耗时/问题）
+  - 7bab0d08 / 9c4f58df / eb6ee0ed / fdf70549 排队等待
+- **坑位**：① v3 逐文件调 LLM，大库整库评估要数小时（944 文档约 2h），重触发脚本单库等待上限 6h；
+  ② 轮询 kb_tape_run 时同一 DB 会话连续 SELECT 在 MySQL REPEATABLE READ 下共享快照永远读不到新状态
+  → 每轮轮询前 rollback（f5332ef 修）；③ 首轮清空后脚本重启只能扫到已生成记录的库 → 新增 --kbs 显式
+  指定；④ 质量 run 行（kb_quality_run）在编排结束前恒为 queued，真实进度看 kb_tape_run.status 与
+  build worker 日志；⑤ 结果落库双写：kb_quality_run.chunk_metrics（汇总+per_doc）+ kb_quality_report
+  （整库一行，metrics 同构）；⑥ 与并行会话（质量评估 doc 维度单文件化）无重叠文件
+- **部署注意**：代码/脚本已推送 dev；应用层（apply 脚本 → tape）与容器（api/worker/web 重建）均已生效，
+  无需再部署；重触发跑完后质量评估「切片评估」页自动可见新记录（旧记录已清空）
 
 ## 43. 当前状态（2026-10-22 构建任务完成检查——质量评估目录新子菜单）
 
