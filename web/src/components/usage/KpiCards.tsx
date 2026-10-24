@@ -40,41 +40,41 @@ function Sub({ children }: { children: React.ReactNode }) {
 
 const PIE_COLORS = ["#1677ff", "#722ed1", "#13c2c2", "#fa8c16", "#52c41a", "#eb2f96", "#fadb14", "#2f54eb"];
 
-export default function KpiCards({ summary }: { summary: UsageSummary | null }) {
+export default function KpiCards({ summary, loading = false }: { summary: UsageSummary | null; loading?: boolean }) {
   const s = summary;
   const errorRate = s && s.totalRequests ? (s.errorRate * 100).toFixed(1) : "0.0";
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
       <Card size="small" styles={{ body: { padding: "14px 16px" } }}>
-        <Statistic title="总请求数" value={s?.totalRequests ?? 0} />
+        <Statistic title="总请求数" value={loading ? "-" : (s?.totalRequests ?? 0)} />
         <Sub>
-          成功 <b style={{ color: "#52c41a" }}>{s?.successCount ?? 0}</b> · 失败{" "}
-          <b style={{ color: "#ff4d4f" }}>{s?.failedCount ?? 0}</b>（错误率 {errorRate}%）
+          成功 <b style={{ color: "#52c41a" }}>{loading ? "-" : (s?.successCount ?? 0)}</b> · 失败{" "}
+          <b style={{ color: "#ff4d4f" }}>{loading ? "-" : (s?.failedCount ?? 0)}</b>（错误率 {loading ? "-" : errorRate}%）
         </Sub>
       </Card>
       <Card size="small" styles={{ body: { padding: "14px 16px" } }}>
-        <Statistic title="总 Token 消耗" value={formatTokens(s?.totalTokens)} />
+        <Statistic title="总 Token 消耗" value={loading ? "-" : formatTokens(s?.totalTokens)} />
         <Sub>
-          输入 {formatTokens(s?.inputTokens)} · 输出 {formatTokens(s?.outputTokens)} · 缓存命中{" "}
-          {formatTokens(s?.cacheReadTokens)}（命中率 {s ? Math.round(s.cacheHitRate * 100) : 0}%）
+          输入 {loading ? "-" : formatTokens(s?.inputTokens)} · 输出 {loading ? "-" : formatTokens(s?.outputTokens)} · 缓存命中{" "}
+          {loading ? "-" : formatTokens(s?.cacheReadTokens)}（命中率 {loading ? "-" : s ? Math.round(s.cacheHitRate * 100) : 0}%）
         </Sub>
       </Card>
       <Card size="small" styles={{ body: { padding: "14px 16px" } }}>
-        <Statistic title="业务产出" value={s?.generatedKnowledge ?? 0} />
+        <Statistic title="业务产出" value={loading ? "-" : (s?.generatedKnowledge ?? 0)} />
         <Sub>
-          已处理文档 <b>{s?.processedDocs ?? 0}</b> 份 · 生成知识条目{" "}
-          <b>{s?.generatedKnowledge ?? 0}</b> 条
+          已处理文档 <b>{loading ? "-" : (s?.processedDocs ?? 0)}</b> 份 · 生成知识条目{" "}
+          <b>{loading ? "-" : (s?.generatedKnowledge ?? 0)}</b> 条
         </Sub>
       </Card>
       <Card size="small" styles={{ body: { padding: "14px 16px" } }}>
         <Statistic
           title="平均耗时"
-          value={s?.avgLatency?.total != null ? `${(s.avgLatency.total / 1000).toFixed(2)}s` : "-"}
+          value={loading ? "-" : (s?.avgLatency?.total != null ? `${(s.avgLatency.total / 1000).toFixed(2)}s` : "-")}
         />
         <Sub>
           首字耗时（TTFT）{" "}
-          {s?.avgLatency?.ttft != null ? `${s.avgLatency.ttft.toFixed(2)}s` : "-"} · 端到端{" "}
-          {s?.avgLatency?.total != null ? `${(s.avgLatency.total / 1000).toFixed(2)}s` : "-"}
+          {loading ? "-" : (s?.avgLatency?.ttft != null ? `${s.avgLatency.ttft.toFixed(2)}s` : "-")} · 端到端{" "}
+          {loading ? "-" : (s?.avgLatency?.total != null ? `${(s.avgLatency.total / 1000).toFixed(2)}s` : "-")}
         </Sub>
       </Card>
     </div>

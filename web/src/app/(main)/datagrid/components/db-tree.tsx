@@ -195,6 +195,8 @@ export default function DbTree({ data }: DbTreeProps) {
   };
 
   const openTableTab = async (dsName: string, schema: string, table: string) => {
+    const toastKey = `datagrid-table-${table}`;
+    message.loading({ content: `正在加载表结构「${table}」...`, key: toastKey });
     try {
       const [c, ddl] = await Promise.all([
         apiDatagridColumns(dsName, table, schema),
@@ -214,8 +216,9 @@ export default function DbTree({ data }: DbTreeProps) {
         columns: (c.rows || []),
         DDL: ddl.ddl || "",
       });
+      message.success({ content: `已打开表结构「${table}」`, key: toastKey });
     } catch (e) {
-      message.error(e instanceof Error ? e.message : "加载表结构失败");
+      message.error({ content: e instanceof Error ? e.message : "加载表结构失败", key: toastKey });
     }
   };
 

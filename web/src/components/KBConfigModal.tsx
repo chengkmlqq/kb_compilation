@@ -135,6 +135,8 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
   // 分类下拉（2026-10-20 配置弹窗补入口）：数据源 = 分类树（kb_category 行 ∪ 可见 KB label）
   const [categories, setCategories] = useState<KbCategoryItem[]>([]);
   const [chunkLoading, setChunkLoading] = useState(false);
+  // 选项数据源（技能/模型/构建引擎/分类）加载中
+  const [optionsLoading, setOptionsLoading] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [section, setSection] = useState("basic");
@@ -144,25 +146,30 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
   // 技能/模型下拉数据源
   useEffect(() => {
     if (!open) return;
+    setOptionsLoading(true);
     void (async () => {
       try {
-        const s = await apiListSkillsRegistry();
-        if (s.success && s.data) setSkills(s.data.items);
-      } catch { /* 不阻断 */ }
-      try {
-        const m = await apiListModels();
-        if (m.success && m.data) setModels(m.data.items);
-      } catch { /* 不阻断 */ }
-      try {
-        // 构建引擎下拉（2026-10-16 配置弹窗补入口）：服务编排中已发布的编排
-        const be = await apiListBuildEngines();
-        if (be.success && Array.isArray(be.data?.items)) setBuildEngines(be.data.items);
-      } catch { /* 不阻断 */ }
-      try {
-        // 分类下拉（2026-10-20）：左侧分类树数据（kb_category 行 ∪ 可见 KB label）
-        const c = await apiListKbCategories();
-        if (c.success) setCategories(c.data?.items ?? []);
-      } catch { /* 不阻断 */ }
+        try {
+          const s = await apiListSkillsRegistry();
+          if (s.success && s.data) setSkills(s.data.items);
+        } catch { /* 不阻断 */ }
+        try {
+          const m = await apiListModels();
+          if (m.success && m.data) setModels(m.data.items);
+        } catch { /* 不阻断 */ }
+        try {
+          // 构建引擎下拉（2026-10-16 配置弹窗补入口）：服务编排中已发布的编排
+          const be = await apiListBuildEngines();
+          if (be.success && Array.isArray(be.data?.items)) setBuildEngines(be.data.items);
+        } catch { /* 不阻断 */ }
+        try {
+          // 分类下拉（2026-10-20）：左侧分类树数据（kb_category 行 ∪ 可见 KB label）
+          const c = await apiListKbCategories();
+          if (c.success) setCategories(c.data?.items ?? []);
+        } catch { /* 不阻断 */ }
+      } finally {
+        setOptionsLoading(false);
+      }
     })();
   }, [open]);
 
@@ -360,6 +367,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
         onOk={() => void onSave()}
         destroyOnClose
       >
+        <Spin spinning={optionsLoading}>
         <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
           <div style={{ display: "flex", gap: 16, minHeight: 440 }}>
             {/* 左侧分区导航（对齐智能体编辑器 AgentEditorModal） */}
@@ -671,6 +679,7 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
             </div>
           </div>
         </Form>
+        </Spin>
       </Modal>
 
       <ChunkDebugDrawer

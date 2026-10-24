@@ -220,6 +220,8 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
   // 顶部统计卡片（评估任务状态分布，参考任务监控 job-stats 布局）
   const [stats, setStats] = useState<QualityRunStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  // 知识库下拉远程选项（搜索表单 + 发起评估弹窗共用）
+  const [kbsLoading, setKbsLoading] = useState(false);
   const [applied, setApplied] = useState<{ kb_id?: string; status?: string }>({});
   const [searchForm] = Form.useForm<{ kb_id?: string; status?: string }>();
   const [kbs, setKbs] = useState<KbItem[]>([]);
@@ -331,9 +333,11 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
   }, [loadStats]);
 
   useEffect(() => {
+    setKbsLoading(true);
     apiListKbs(1, 100)
       .then((res) => setKbs(res.data?.items ?? []))
-      .catch(() => setKbs([]));
+      .catch(() => setKbs([]))
+      .finally(() => setKbsLoading(false));
   }, []);
 
   const doSearch = (v: { kb_id?: string; status?: string }) => {
@@ -882,6 +886,7 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
                 placeholder="全部知识库"
                 style={{ width: 200 }}
                 optionFilterProp="label"
+                loading={kbsLoading}
                 options={kbs.map((k) => ({ label: k.name, value: k.id }))}
               />
             </Form.Item>
@@ -1057,6 +1062,7 @@ export default function QualityAssessPane({ dim }: { dim: QualityDim }) {
               showSearch
               placeholder="选择知识库"
               optionFilterProp="label"
+              loading={kbsLoading}
               onChange={handleKbChange}
               options={kbs.map((k) => ({ label: k.name, value: k.id }))}
             />

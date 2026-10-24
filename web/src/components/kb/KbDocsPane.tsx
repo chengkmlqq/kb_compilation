@@ -137,6 +137,7 @@ export default function KbDocsPane({
   // 文档多级目录（doc_folder）：选中目录 id（"" = 全部/根），递归子树浏览。
   // 2026-10-21 锁定模式（lockedFolderId 非空）：初始即选中锁定目录，且列表固定按它过滤
   const [docFolders, setDocFolders] = useState<DocFolderItem[]>([]);
+  const [folderLoading, setFolderLoading] = useState(false);
   const [docFolderId, setDocFolderId] = useState(lockedFolderId || "");
   // 移至目录（批量）
   const [moveOpen, setMoveOpen] = useState(false);
@@ -195,6 +196,7 @@ export default function KbDocsPane({
 
   // 文档目录树（多级）：全量轻量元数据，前端按 parent_id 构建缩进树
   const loadDocFolders = useCallback(async () => {
+    setFolderLoading(true);
     try {
       const res = await apiListDocFolders(kbId);
       if (res.success) {
@@ -206,6 +208,8 @@ export default function KbDocsPane({
       }
     } catch (e) {
       console.error("load doc folders failed", e);
+    } finally {
+      setFolderLoading(false);
     }
   }, [kbId]);
 
@@ -952,6 +956,7 @@ export default function KbDocsPane({
           </Space>
         </div>
         <div className="kb-doc-folder-tree">
+          <Spin spinning={folderLoading}>
           {/* 锁定模式（语义层页）：不显示「全部文档」根节点与兄弟根目录，
               只渲染锁定目录及其子树；点目录仍可切换锁内子目录 */}
           {lockedFolderId ? (
@@ -982,6 +987,7 @@ export default function KbDocsPane({
               )}
             </>
           )}
+          </Spin>
         </div>
       </div>
 
@@ -1160,16 +1166,24 @@ export default function KbDocsPane({
         )}
         {docView === "card" ? (
           <>
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-              <DocCardView
-                items={docs}
-                onOpen={onOpenDoc}
-                onDownload={onDownloadDoc}
-                onReparse={onReparseDoc}
-                onDelete={onDeleteDoc}
-                onTrace={onViewTrace}
-              />
-            </div>
+            {docsLoading && docs.length === 0 ? (
+              <div style={{ display: "flex", justifyContent: "center", paddingTop: 96 }}>
+                <Spin size="large" tip="正在加载文档..." />
+              </div>
+            ) : (
+              <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+                <Spin spinning={docsLoading}>
+                  <DocCardView
+                    items={docs}
+                    onOpen={onOpenDoc}
+                    onDownload={onDownloadDoc}
+                    onReparse={onReparseDoc}
+                    onDelete={onDeleteDoc}
+                    onTrace={onViewTrace}
+                  />
+                </Spin>
+              </div>
+            )}
             {/* 卡片视图分页：统一由内容列底部的 DSB simple 分页条承担（见 kb-doc-pagination-bar） */}
           </>
         ) : (

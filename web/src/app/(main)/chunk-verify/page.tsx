@@ -36,6 +36,8 @@ export default function ChunkVerifyPage() {
   const [items, setItems] = useState<ChunkVerifyReport[]>([]);
   const [loading, setLoading] = useState(false); // 全部核对/加载中
   const [fixingIds, setFixingIds] = useState<Set<string>>(new Set()); // 修复中(防连点)
+  const [verifyingIds, setVerifyingIds] = useState<Set<string>>(new Set()); // 单库核对中(防连点)
+  const [fixAllLoading, setFixAllLoading] = useState(false); // 修复所有异常中(防连点)
   const [lastCheckedAt, setLastCheckedAt] = useState<string>("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -93,6 +95,7 @@ export default function ChunkVerifyPage() {
 
   // 单库核对（点击行内按钮，只刷新该行）
   const handleVerifyOne = async (kbId: string) => {
+    setVerifyingIds((prev) => new Set(prev).add(kbId));
     try {
       const res = await apiVerifyChunks(kbId);
       if (res.success && res.data) {
@@ -103,6 +106,12 @@ export default function ChunkVerifyPage() {
       }
     } catch (e) {
       message.error(`核对失败: ${String(e).slice(0, 80)}`);
+    } finally {
+      setVerifyingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(kbId);
+        return next;
+      });
     }
   };
 
@@ -134,16 +143,22 @@ export default function ChunkVerifyPage() {
       message.info("没有需要修复的知识库");
       return;
     }
-    let okCount = 0;
-    for (const it of unhealthy) {
-      try {
-        const res = await apiFixChunks(it.kb_id);
-        if (res.success) okCount += 1;
-      } catch {
-        // 单库投递失败不阻断
+    if (fixAllLoading) return; // 防连点
+    setFixAllLoading(true);
+    try {
+      let okCount = 0;
+      for (const it of unhealthy) {
+        try {
+          const res = await apiFixChunks(it.kb_id);
+          if (res.success) okCount += 1;
+        } catch {
+          // 单库投递失败不阻断
+        }
       }
+      message.success(`已投递 ${okCount}/${unhealthy.length} 个知识库的修复任务`);
+    } finally {
+      setFixAllLoading(false);
     }
-    message.success(`已投递 ${okCount}/${unhealthy.length} 个知识库的修复任务`);
   };
 
   const healthyCount = items.filter((it) => it.ok).length;
@@ -222,7 +237,13 @@ export default function ChunkVerifyPage() {
       align: "center",
       render: (_, row) => (
         <Space size={4}>
-          <Button type="link" size="small" onClick={() => void handleVerifyOne(row.kb_id)}>
+          <Button
+            type="link"
+            size="small"
+            loading={verifyingIds.has(row.kb_id)}
+            disabled={verifyingIds.has(row.kb_id) || fixingIds.has(row.kb_id)}
+            onClick={() => void handleVerifyOne(row.kb_id)}
+          >
             核对
           </Button>
           <Button
@@ -341,7 +362,7 @@ export default function ChunkVerifyPage() {
             <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void loadAll()}>
               全部核对
             </Button>
-            <Button type="primary" danger loading={loading} onClick={() => void handleFixAll()}>
+            <Button type="primary" danger loading={fixAllLoading} disabled={fixAllLoading} onClick={() => void handleFixAll()}>
               修复所有异常
             </Button>
           </Space>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { App, Button, Col, Dropdown, Input, Row } from "antd";
+import { App, Button, Col, Dropdown, Input, Row, Spin } from "antd";
 import {
   CopyOutlined,
   DeleteOutlined,
@@ -126,7 +126,7 @@ type AgentTab = { key: string; title: string; children: ReactNode };
 export default function AgentsPage() {
   const { message, modal } = App.useApp();
   const [agents, setAgents] = useState<AgentItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<AgentItem | null>(null);
@@ -241,7 +241,11 @@ export default function AgentsPage() {
   const listPane = (
     <div className="agents-list-page">
       <div className="agents-content">
-        {visible.length === 0 ? (
+        {loading && visible.length === 0 ? (
+          <div style={{ display: "flex", justifyContent: "center", paddingTop: 96 }}>
+            <Spin size="large" tip="正在加载..." />
+          </div>
+        ) : !loading && visible.length === 0 ? (
           /* 空态（对齐 arco Empty 原生规格：48px 插画 + 「暂无数据」） */
           <div className="agents-empty">
             <div className="agents-empty-wrapper">
@@ -252,6 +256,7 @@ export default function AgentsPage() {
             </div>
           </div>
         ) : (
+          <Spin spinning={loading}>
           <Row gutter={[16, 16]}>
             {visible.map((agent) => {
               const disabled = Boolean(agent.config?.disabled);
@@ -317,6 +322,7 @@ export default function AgentsPage() {
               );
             })}
           </Row>
+          </Spin>
         )}
 
         <AgentEditorModal

@@ -131,11 +131,17 @@ export default function WikiPageDetailPage() {
   const [feedbackContent, setFeedbackContent] = useState("");
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [pageFeedback, setPageFeedback] = useState<WikiFeedbackItem[]>([]);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
 
   const loadFeedback = useCallback(async () => {
     if (!page) return;
-    const res = await apiWikiListFeedback(id, page.slug);
-    if (res.success && res.data) setPageFeedback(res.data.items);
+    setFeedbackLoading(true);
+    try {
+      const res = await apiWikiListFeedback(id, page.slug);
+      if (res.success && res.data) setPageFeedback(res.data.items);
+    } finally {
+      setFeedbackLoading(false);
+    }
   }, [id, page]);
 
   useEffect(() => {
@@ -343,6 +349,7 @@ export default function WikiPageDetailPage() {
             onChange={(e) => setFeedbackContent(e.target.value)}
             maxLength={2000}
           />
+          <Spin spinning={feedbackLoading}>
           {pageFeedback.length > 0 && (
             <div style={{ maxHeight: 160, overflow: "auto" }}>
               <Typography.Text type="secondary">已有反馈：</Typography.Text>
@@ -358,6 +365,7 @@ export default function WikiPageDetailPage() {
               ))}
             </div>
           )}
+          </Spin>
         </Space>
       </Modal>
     </Space>

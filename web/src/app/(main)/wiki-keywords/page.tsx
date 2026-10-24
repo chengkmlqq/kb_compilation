@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Input, Row, Col, Select } from "antd";
+import { Input, Row, Col, Select, Spin } from "antd";
 import { apiListKbs, type KbItem } from "@/lib/api";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 import WikiKeywordsPane from "@/components/kb/WikiKeywordsPane";
@@ -137,7 +137,13 @@ export default function WikiKeywordsPage() {
     () => (
       <div className="kb-kbs-list-panel">
         <div className="kb-kbs-content">
-          {!loading && visibleKbs.length === 0 ? (
+          {loading && visibleKbs.length === 0 ? (
+            /* 首载/查询加载中（对齐知识库管理页 kbs/page.tsx 惯例：
+               loading 期间不显示空态，居中 Spin 反馈） */
+            <div style={{ display: "flex", justifyContent: "center", paddingTop: 96 }}>
+              <Spin size="large" tip="正在加载知识库..." />
+            </div>
+          ) : visibleKbs.length === 0 ? (
             /* 空态（对齐知识库管理页 arco Empty 原生规格：48px 插画 + 「暂无数据」） */
             <div className="kb-kbs-empty">
               <div className="kb-kbs-empty-wrapper">
@@ -150,6 +156,7 @@ export default function WikiKeywordsPage() {
               </div>
             </div>
           ) : (
+            <Spin spinning={loading}>
             <Row
               className={`kb-kbs-rows${total > 30 ? " kb-kbs-rows--paged" : ""}`}
               gutter={[16, 16]}
@@ -184,6 +191,7 @@ export default function WikiKeywordsPage() {
                 </Col>
               ))}
             </Row>
+            </Spin>
           )}
         </div>
 

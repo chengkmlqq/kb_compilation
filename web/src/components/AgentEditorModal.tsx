@@ -18,6 +18,7 @@ import {
   Select,
   Slider,
   Space,
+  Spin,
   Switch,
   Typography,
 } from "antd";
@@ -100,6 +101,8 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
   const [toolCatalog, setToolCatalog] = useState<AgentToolCatalogItem[]>([]);
   // 2026-10-20 平台默认提示词（对齐 WeKnora 模板预填：system_prompt 为空时展示默认正文）
   const [defaultSystemPrompt, setDefaultSystemPrompt] = useState<string>("");
+  // 选项数据源（模型/知识库/MCP/技能/工具目录/默认提示词）加载中
+  const [optionsLoading, setOptionsLoading] = useState(false);
   // 编辑模式回填后是否已预填默认提示词（避免用户清空后被再次预填覆盖）
   const defaultPromptPrefilledRef = useRef(false);
 
@@ -115,6 +118,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
   // 数据源：模型 / 知识库 / MCP / 技能 + 默认提示词
   useEffect(() => {
     if (!open) return;
+    setOptionsLoading(true);
     void (async () => {
       try {
         const [m, k, mc, sk, tc, pd] = await Promise.all([
@@ -137,7 +141,9 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
         }
         if (tc?.success && tc.data?.tools) setToolCatalog(tc.data.tools);
         if (pd?.success && pd.data?.system_prompt) setDefaultSystemPrompt(pd.data.system_prompt);
-      } catch { /* 不阻断 */ }
+      } catch { /* 不阻断 */ } finally {
+        setOptionsLoading(false);
+      }
     })();
   }, [open]);
 
@@ -324,6 +330,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
       width={860}
       destroyOnClose
     >
+      <Spin spinning={optionsLoading}>
       <Form form={form} layout="vertical">
         <div style={{ display: "flex", gap: 16, minHeight: 420 }}>
           {/* 左侧分区导航（对齐 WeKnora navGroups） */}
@@ -735,6 +742,7 @@ export default function AgentEditorModal({ mode, open, initial, onClose, onSubmi
           </div>
         </div>
       </Form>
+      </Spin>
     </Modal>
   );
 }

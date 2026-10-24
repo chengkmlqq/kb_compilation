@@ -6,7 +6,7 @@
  * 轮询由父级负责（execute 返回 run_id 后轮询 runs/{run_id} 拿逐步日志），
  * 本组件只负责展示：状态 / run_id / 逐步日志 / 错误 / 最终变量。
  */
-import { Button, Drawer, Space, Tag, Typography } from "antd";
+import { Button, Drawer, Space, Spin, Tag, Typography } from "antd";
 import type { TapeRunDetail } from "@/lib/api";
 
 const { Text } = Typography;
@@ -50,7 +50,7 @@ export function TapeRunLogDrawer({ open, run, polling, onClose }: TapeRunLogDraw
       }
       destroyOnClose
     >
-      {run && (
+      {run ? (
         <div>
           <Space style={{ marginBottom: 10 }}>
             <Tag color={runMeta.color}>{runMeta.label}</Tag>
@@ -107,6 +107,10 @@ export function TapeRunLogDrawer({ open, run, polling, onClose }: TapeRunLogDraw
               </pre>
             </div>
           )}
+        </div>
+      ) : (
+        <div style={{ display: "flex", justifyContent: "center", paddingTop: 96 }}>
+          <Spin size="large" tip="正在加载..." />
         </div>
       )}
     </Drawer>

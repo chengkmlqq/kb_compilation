@@ -76,8 +76,8 @@ function formatTime(value?: string | null) {
   return d.toLocaleString("zh-CN", { hour12: false });
 }
 
-/** 顶部统计卡（仿任务监控 job-stats 形态） */
-function StatCards({ overview }: { overview: BuildCheckOverview | null }) {
+/** 顶部统计卡（仿任务监控 job-stats 形态；loading 时数值占位“-”） */
+function StatCards({ overview, loading }: { overview: BuildCheckOverview | null; loading?: boolean }) {
   const cards: Array<{ key: string; label: string; icon: React.ReactNode; color: string; bg: string; value: number }> = [
     { key: "total", label: "构建任务", icon: <FileDoneOutlined style={{ fontSize: 22 }} />, color: "#242E43", bg: "#F0F2F5", value: overview?.total ?? 0 },
     { key: "ok", label: "真实完成", icon: <CheckCircleOutlined style={{ fontSize: 22 }} />, color: "#389e0d", bg: "#F6FFED", value: overview?.by_result?.ok ?? 0 },
@@ -125,7 +125,7 @@ function StatCards({ overview }: { overview: BuildCheckOverview | null }) {
           </div>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 22, fontWeight: 600, lineHeight: 1.2, color: "#242E43" }}>
-              {c.value}
+              {loading ? "-" : c.value}
             </div>
             <div style={{ fontSize: 12, color: "#8C95A5" }}>{c.label}</div>
           </div>
@@ -143,9 +143,11 @@ export default function QualityBuildCheckPage() {
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
   const [overview, setOverview] = useState<BuildCheckOverview | null>(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
   const [applied, setApplied] = useState<{ kb_id?: string; kind?: string; result?: string }>({});
   const [searchForm] = Form.useForm<{ kb_id?: string; kind?: string; result?: string }>();
   const [kbs, setKbs] = useState<KbItem[]>([]);
+  const [kbsLoading, setKbsLoading] = useState(false);
   const [detail, setDetail] = useState<BuildCheckDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -170,11 +172,14 @@ export default function QualityBuildCheckPage() {
   }, [applied, page, pageSize, message]);
 
   const loadOverview = useCallback(async () => {
+    setOverviewLoading(true);
     try {
       const res = await apiBuildCheckOverview();
       setOverview(res.data ?? null);
     } catch {
       setOverview(null);
+    } finally {
+      setOverviewLoading(false);
     }
   }, []);
 
@@ -187,9 +192,11 @@ export default function QualityBuildCheckPage() {
   }, [loadOverview, applied]);
 
   useEffect(() => {
+    setKbsLoading(true);
     apiListKbs(1, 100)
       .then((res) => setKbs(res.data?.items ?? []))
-      .catch(() => setKbs([]));
+      .catch(() => setKbs([]))
+      .finally(() => setKbsLoading(false));
   }, []);
 
   const doSearch = (v: { kb_id?: string; kind?: string; result?: string }) => {
@@ -362,6 +369,7 @@ export default function QualityBuildCheckPage() {
               placeholder="全部知识库"
               style={{ width: 190 }}
               optionFilterProp="label"
+              loading={kbsLoading}
               options={kbs.map((k) => ({ label: k.name, value: k.id }))}
             />
           </Form.Item>
@@ -422,7 +430,7 @@ export default function QualityBuildCheckPage() {
         minHeight: 0,
       }}
     >
-      <StatCards overview={overview} />
+      <StatCards overview={overview} loading={overviewLoading} />
       <ModoTabs
         type="editable-card"
         hideAdd

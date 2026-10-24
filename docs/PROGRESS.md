@@ -2,7 +2,22 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-25（「wiki反馈修正」编排 + 每日定时任务交付）
+最后更新：2026-10-25（全站页面查询区 loading 补齐专项 + 「wiki反馈修正」编排交付）
+
+## 49. 当前状态（2026-10-25 全站页面查询区 loading 补齐专项）
+
+- **需求**：「检查系统中所有页面，凡是涉及查询的地方，数据区域都应该有 loading 效果，逐个检查并补充直到全部补齐」。
+- **范围**：web/src 全部业务页面 + 公共组件（3 个子代理并行逐文件审计 + 主代理独立抽查交叉核对）。
+- **统一惯例**（与 kbs/models 页既有惯例对齐）：
+  1. antd Table/ModoTable → `loading={xxxLoading}`（antd 自带表格遮罩，不另包 Spin）；
+  2. 列表/卡片/网格 → `loading && items.length===0` 居中 `<Spin size="large" tip>`，已有数据再查询（搜索/翻页/刷新）时用 `<Spin spinning={loading}>` 包数据区；空态分支带 `!loading` 守卫防「加载中闪暂无数据」；
+  3. 树 → `<Spin spinning>` 包树容器；远程 Select → `loading` prop；
+  4. 抽屉/弹窗内容 → 内容区包 `<Spin spinning>`；统计卡 → 加载中显示 `-`；
+  5. 按钮型异步操作（单库核对/修复全部等）→ 按钮 loading + 防连点。
+- **新增/修复 loading 的文件（约 25 个）**：kbs/page（查询期间遮罩）、KbDocsPane（文档卡片视图 + 目录树 folderLoading）、wiki/[slug]（反馈列表 feedbackLoading）、CodeRepoPane（载入置位 + 内容区遮罩）、WikiManagePanel（indexLoading 消费）、wiki-keywords（首载 Spin + 翻页遮罩）、chunk-verify（单库核对 verifyingIds + 修复全部 fixAllLoading）、feedback-stats（statsLoading + 统计区遮罩）、jobs/page + job-stats（统计卡 loading prop）、usage/page + TokenTrendChart + KpiCards（optionsLoading + 图表 loading prop）、overview（trendLoading/kbStatsLoading）、cron（metaLoading 下拉）、orchestrations/page（分类树 Spin）、AgentEditorModal/KBConfigModal（optionsLoading 整窗 Spin）、system 页（users 下拉 dropdownLoading / teams 树+成员选项 / dims 分组下拉 / workers 任务抽屉 taskLoading / datasources 类型下拉 metaLoading）、models/agents/mcps（空态守卫 + spinning 包裹）、datagrid（client.tsx 数据源树 loading 消费 + db-tree 打开表结构 loading 提示）。
+- **验证**：`web ./node_modules/.bin/tsc --noEmit` **0 错误**；`next build` 通过；每个改动文件 read_file 读回核对 JSX 闭合（子代理曾留 2 处 `</Spin>` 未闭合 + 5 处计划未执行，均已由主代理收尾）。
+- **坑位**：① 子代理并行改同一仓库，两个文件（CodeRepoPane/feedback-stats）曾处于 Spin 标签未闭合的中间态——合并前必须全局搜 `<Spin` 与 `</Spin>` 配对或依赖 tsc 兜底；② patch 模糊匹配可能「移位命中」到相邻 Drawer/抽屉结尾（WikiManagePanel 闭合锚点）——多抽屉文件改闭合标签时锚点必须带块首唯一标识；③ search_files 交替 pattern 与含括号路径的单文件搜索 0 命中不可信，验证用 read_file 目标区；④ patch 返回的 lsp_diagnostics 多为中间态误报（同一文件连续 patch 时），以 read_file 结构核对为准；⑤ JobStats 由纯展示组件新增 loading prop（显示 "-"），jobs/page 需同步传 statsLoading——组件接口变更要跑调用点。
+- **遗留（可接受盲区，未改）**：ChunkDebugDrawer「从文档载入」下拉、UploadConfirmDialog/ReparseConfigDialog 解析引擎下拉为静默加载（失败不阻断，无独立 loading state 可消费）；antd Tree loadData 懒加载节点自带节点级 loading（db-tree 文件夹展开无需额外遮罩）；useUserNames 有意非阻塞回退原始 ID。
 
 ## 48. 当前状态（2026-10-25 「wiki反馈修正」编排 + 每日定时任务）
 

@@ -72,6 +72,7 @@ export default function UsagePage() {
   const [operDist, setOperDist] = useState<UsageDistItem[]>([]);
   const [rows, setRows] = useState<UsageDetailItem[]>([]);
   const [options, setOptions] = useState<UsageOptions | null>(null);
+  const [optionsLoading, setOptionsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [tableLoading, setTableLoading] = useState(false);
   const [total, setTotal] = useState(0);
@@ -89,9 +90,12 @@ export default function UsagePage() {
 
   // 筛选下拉选项（知识库/模型/操作）
   useEffect(() => {
-    void apiUsageOptions(30).then((res) => {
-      if (res.success) setOptions(res.data || null);
-    });
+    setOptionsLoading(true);
+    void apiUsageOptions(30)
+      .then((res) => {
+        if (res.success) setOptions(res.data || null);
+      })
+      .finally(() => setOptionsLoading(false));
   }, []);
 
   const loadData = useCallback(async () => {
@@ -269,7 +273,7 @@ export default function UsagePage() {
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  {stat.value}
+                  {loading && !summary ? "-" : stat.value}
                 </span>
               </div>
               <div
@@ -339,6 +343,7 @@ export default function UsagePage() {
                 style={{ width: 160 }}
                 showSearch
                 optionFilterProp="label"
+                loading={optionsLoading}
                 value={kbId}
                 onChange={setKbId}
                 options={(options?.knowledgeBases || []).map((kb) => ({ label: kb.name, value: kb.id }))}
@@ -351,6 +356,7 @@ export default function UsagePage() {
                 style={{ width: 170 }}
                 showSearch
                 optionFilterProp="label"
+                loading={optionsLoading}
                 value={model}
                 onChange={setModel}
                 options={(options?.models || []).map((m) => ({ label: m, value: m }))}
@@ -363,6 +369,7 @@ export default function UsagePage() {
                 style={{ width: 170 }}
                 showSearch
                 optionFilterProp="label"
+                loading={optionsLoading}
                 value={operation}
                 onChange={setOperation}
                 options={(options?.operations || []).map((o) => ({ label: o.label, value: o.value }))}
@@ -400,7 +407,7 @@ export default function UsagePage() {
             <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #E3E9EF", padding: 16, display: "flex", flexDirection: "column", minHeight: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: "#242E43" }}>Token 使用趋势</div>
               <div style={{ flex: 1, minHeight: 0 }}>
-                <TokenTrendChart trend={trend} title="" height="100%" />
+                <TokenTrendChart trend={trend} title="" height="100%" loading={loading} />
               </div>
             </div>
             <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #E3E9EF", padding: 16 }}>

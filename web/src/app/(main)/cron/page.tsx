@@ -78,6 +78,7 @@ export default function CronPage() {
 
   const [queues, setQueues] = useState<Array<{ queueName: string; queueLabel: string | null }>>([]);
   const [registeredTasks, setRegisteredTasks] = useState<Array<{ taskClass: string; name: string }>>([]);
+  const [metaLoading, setMetaLoading] = useState(false);
 
   const selectedTaskClass = Form.useWatch("taskClass", drawerForm) as string | undefined;
 
@@ -115,9 +116,14 @@ export default function CronPage() {
   );
 
   const loadMeta = useCallback(async () => {
-    const [q, t] = await Promise.all([apiCronQueues(), apiCronRegisteredTasks()]);
-    if (q.success && q.data) setQueues(q.data);
-    if (t.success && t.data) setRegisteredTasks(t.data);
+    setMetaLoading(true);
+    try {
+      const [q, t] = await Promise.all([apiCronQueues(), apiCronRegisteredTasks()]);
+      if (q.success && q.data) setQueues(q.data);
+      if (t.success && t.data) setRegisteredTasks(t.data);
+    } finally {
+      setMetaLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -424,6 +430,7 @@ export default function CronPage() {
               placeholder="选择任务类型"
               showSearch
               optionFilterProp="label"
+              loading={metaLoading}
               options={registeredTasks.map((t) => ({
                 value: t.taskClass,
                 label: taskClassLabel(t.taskClass),
@@ -434,6 +441,7 @@ export default function CronPage() {
             <Select
               placeholder="选择队列（可选）"
               allowClear
+              loading={metaLoading}
               options={queues.map((q) => ({
                 value: q.queueName,
                 label: q.queueLabel || q.queueName,

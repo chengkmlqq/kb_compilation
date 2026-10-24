@@ -52,6 +52,8 @@ export default function DatasourcesPage() {
   // ---- 元数据（类型选择共用只读） ----
   const [categories, setCategories] = useState<DsCategoryItem[]>([]);
   const [allTypes, setAllTypes] = useState<DsTypeItem[]>([]);
+  // 类型/分类元数据加载中
+  const [metaLoading, setMetaLoading] = useState(false);
 
   // ---- Tab ----
   const [tabs, setTabs] = useState<EditTab[]>([]);
@@ -78,10 +80,15 @@ export default function DatasourcesPage() {
   }, [loadList]);
 
   useEffect(() => {
+    setMetaLoading(true);
     void (async () => {
-      const [c, t] = await Promise.all([apiListDsCategories(), apiListDsTypes()]);
-      if (c.success && c.data) setCategories(c.data);
-      if (t.success && t.data) setAllTypes(t.data);
+      try {
+        const [c, t] = await Promise.all([apiListDsCategories(), apiListDsTypes()]);
+        if (c.success && c.data) setCategories(c.data);
+        if (t.success && t.data) setAllTypes(t.data);
+      } finally {
+        setMetaLoading(false);
+      }
     })();
   }, []);
 
@@ -218,6 +225,7 @@ export default function DatasourcesPage() {
               placeholder="请选择类型"
               style={{ width: 200 }}
               optionFilterProp="label"
+              loading={metaLoading}
               options={allTypes.map((t) => ({ label: t.dsTypeLabel || t.dsType, value: t.dsType }))}
             />
           </Form.Item>

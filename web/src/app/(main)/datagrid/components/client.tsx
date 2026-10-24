@@ -14,7 +14,7 @@
  * .datagrid-resize-handle 类。
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { App } from "antd";
+import { App, Spin } from "antd";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import DbTree from "./db-tree";
 import DbTool from "./db-tool";
@@ -121,7 +121,10 @@ export default function DataGridClient() {
                           Database
                         </div>
                         <div style={{ minHeight: 0, flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                          {/* 数据源列表异步加载：loading 期间树区显示居中 Spin（2026-10-25 补） */}
+                          <Spin spinning={loading}>
                           <DbTree data={dsList} />
+                          </Spin>
                         </div>
                       </div>
                     </div>

@@ -387,12 +387,14 @@ export default function OverviewPage() {
               ) : trend.length === 0 ? (
                 <Empty description="暂无趋势数据" />
               ) : (
-                <ChartLazy
-                  chart="line"
-                  data={trendLineData}
-                  height={260}
-                  config={{ xField: "date", yField: "value", seriesField: "series" }}
-                />
+                <Spin spinning={trendLoading}>
+                  <ChartLazy
+                    chart="line"
+                    data={trendLineData}
+                    height={260}
+                    config={{ xField: "date", yField: "value", seriesField: "series" }}
+                  />
+                </Spin>
               )}
             </div>
 
@@ -539,17 +541,19 @@ export default function OverviewPage() {
               ) : kbStats.length === 0 ? (
                 <Empty description="暂无知识库" />
               ) : (
-                <ChartLazy
-                  chart="column"
-                  data={kbStatChartData}
-                  height={300}
-                  config={{
-                    xField: "kb",
-                    yField: "value",
-                    seriesField: "series",
-                    group: true,
-                  }}
-                />
+                <Spin spinning={kbStatsLoading}>
+                  <ChartLazy
+                    chart="column"
+                    data={kbStatChartData}
+                    height={300}
+                    config={{
+                      xField: "kb",
+                      yField: "value",
+                      seriesField: "series",
+                      group: true,
+                    }}
+                  />
+                </Spin>
               )}
             </div>
           </>

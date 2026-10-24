@@ -16,6 +16,7 @@ import {
   Radio,
   Select,
   Space,
+  Spin,
   Tabs,
   Tree,
 } from "antd";
@@ -89,7 +90,7 @@ function highlightTitle(label: string, kw: string): React.ReactNode {
 export default function SystemTeamsPage() {
   const { message, modal } = App.useApp();
   const [teams, setTeams] = useState<SysTeamItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
@@ -106,6 +107,8 @@ export default function SystemTeamsPage() {
   // 成员
   const [members, setMembers] = useState<SysTeamMemberItem[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
+  // 成员弹窗「全部用户」选项加载中
+  const [memberUsersLoading, setMemberUsersLoading] = useState(false);
   const [memberModalOpen, setMemberModalOpen] = useState(false);
   const [allUsers, setAllUsers] = useState<SysUserItem[]>([]);
   const [targetUsers, setTargetUsers] = useState<string[]>([]);
@@ -305,8 +308,13 @@ export default function SystemTeamsPage() {
   const openMemberModal = async () => {
     setTargetUsers(members.map((m) => m.user_id as string));
     setMemberModalOpen(true);
-    const res = await apiListUsers(1, 500);
-    if (res.success) setAllUsers(res.data?.items || []);
+    setMemberUsersLoading(true);
+    try {
+      const res = await apiListUsers(1, 500);
+      if (res.success) setAllUsers(res.data?.items || []);
+    } finally {
+      setMemberUsersLoading(false);
+    }
   };
 
   const doSaveMembers = async () => {
@@ -394,7 +402,11 @@ export default function SystemTeamsPage() {
             onChange={(e) => setKeyword(e.target.value)}
             style={{ marginBottom: 8, flexShrink: 0 }}
           />
-          {teams.length === 0 && !loading ? (
+          {loading && teams.length === 0 ? (
+            <div style={{ display: "flex", justifyContent: "center", paddingTop: 96 }}>
+              <Spin size="large" tip="正在加载..." />
+            </div>
+          ) : teams.length === 0 ? (
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
               description={
@@ -409,22 +421,24 @@ export default function SystemTeamsPage() {
           ) : (
             // antd Tree 的 style 会落到内层 NodeList（rc-tree 行为），root .ant-tree 不接收，
             // 故把 flex/overflow 放到包裹层，树才能真正占满列高、并在列内滚动。
-            <div className="teams-tree-scroll" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-              <Tree
-                treeData={treeData}
-                showLine
-                blockNode
-                defaultExpandAll
-                expandedKeys={expandedKeys}
-                onExpand={(keys) => setExpandedKeys(keys)}
-                selectedKeys={selectedKey ? [selectedKey] : []}
-                onSelect={(keys) => setSelectedKey((keys[0] as string) || null)}
-                onRightClick={({ event, node }) => {
-                  const team = teams.find((t) => t.team_name === node.key);
-                  if (team) setCtx({ x: event.clientX, y: event.clientY, team });
-                }}
-              />
-            </div>
+            <Spin spinning={loading} style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+              <div className="teams-tree-scroll" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+                <Tree
+                  treeData={treeData}
+                  showLine
+                  blockNode
+                  defaultExpandAll
+                  expandedKeys={expandedKeys}
+                  onExpand={(keys) => setExpandedKeys(keys)}
+                  selectedKeys={selectedKey ? [selectedKey] : []}
+                  onSelect={(keys) => setSelectedKey((keys[0] as string) || null)}
+                  onRightClick={({ event, node }) => {
+                    const team = teams.find((t) => t.team_name === node.key);
+                    if (team) setCtx({ x: event.clientX, y: event.clientY, team });
+                  }}
+                />
+              </div>
+            </Spin>
           )}
                         <Dropdown
             open={!!ctx}
@@ -624,6 +638,7 @@ export default function SystemTeamsPage() {
           allowClear
           showSearch
           style={{ width: "100%" }}
+          loading={memberUsersLoading}
           placeholder="请选择成员（保存后覆盖当前成员列表）"
           value={targetUsers}
           onChange={(v) => setTargetUsers(v as string[])}

@@ -955,6 +955,7 @@ export default function KbsPage() {
               </div>
             </div>
           ) : (
+            <Spin spinning={loading}>
             <Row
               className="kb-kbs-rows"
               gutter={[16, 16]}
@@ -1048,6 +1049,7 @@ export default function KbsPage() {
                 </Col>
               ))}
             </Row>
+            </Spin>
           )}
           </div>
 
