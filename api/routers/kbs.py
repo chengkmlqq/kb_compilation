@@ -412,6 +412,95 @@ def post_kb(
     return {"success": True, "data": {"id": kb.id, "name": kb.name, "scope": kb.scope}}
 
 
+@router.post("/sync-agent")
+def post_kb_sync_agent(
+    req: KBCreateRequest,
+    db: Session = Depends(get_db),
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+) -> dict:
+    """建库 + 同步创建智能推理模式智能体（data_supply_shandong 知识集同步专用）。
+
+    与 POST /kbs 相同的鉴权/建库逻辑，建库成功后按知识库名幂等创建（或复用同名
+    智能体并补绑定本库）一个 agent_mode=smart-reasoning、kb_selection_mode=selected
+    的智能体。仅本端点自动建智能体——普通 POST /kbs 建库不建，避免所有建库入口
+    无差别生成（2026-10-24 产品决策）。
+    """
+    identity = decode_identity_cookie(x_next_identity or "")
+    if not identity:
+        raise HTTPException(status_code=401, detail="未登录")
+    caller_user_id = identity.user_id if identity else ""
+    caller_team_name = identity.team_name or "" if identity else ""
+    is_sys_admin = False
+    if caller_user_id:
+        from api.services.scope import is_admin
+
+        is_sys_admin = is_admin(db, caller_user_id)
+    from api.services.scope import validate_scope_request
+
+    try:
+        scope, owner_user_id, owner_team_name = validate_scope_request(
+            req.scope,
+            caller_user_id=caller_user_id,
+            caller_team_name=caller_team_name,
+            is_sys_admin=is_sys_admin,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        kb = create_kb(
+            db,
+            name=req.name,
+            label=req.label,
+            description=req.description,
+            indexing_strategy=req.indexing_strategy,
+            scope=scope,
+            team_name=owner_team_name or None,
+            owner_user_id=owner_user_id or None,
+            created_by=caller_user_id or None,
+            type=req.type,
+            custom_wiki_generation=req.custom_wiki_generation,
+            embedding_model_id=req.embedding_model_id,
+            summary_model_id=req.summary_model_id,
+            storage_backend_id=req.storage_backend_id,
+            vector_store_id=req.vector_store_id,
+            configs=req.configs,
+            ontology_schema_name=req.ontology_schema_name,
+            build_tape_id=req.build_tape_id,
+            summary_strategy=req.summary_strategy,
+            caller_user_id=caller_user_id or None,
+            caller_team_name=caller_team_name or None,
+            is_sys_admin=is_sys_admin,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    from api.services.agents import sync_agent_for_kb
+
+    try:
+        agent = sync_agent_for_kb(
+            db,
+            kb_id=kb.id,
+            kb_name=kb.name,
+            created_by=caller_user_id or None,
+            team_name=caller_team_name or None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("知识库创建成功但智能体同步失败: kb=%s", kb.id)
+        raise HTTPException(
+            status_code=500, detail=f"知识库创建成功但智能体同步失败：{exc}"
+        ) from exc
+    return {
+        "success": True,
+        "data": {
+            "id": kb.id,
+            "name": kb.name,
+            "scope": kb.scope,
+            "agent_id": agent.id,
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # 知识库级权限 helper（对齐 scope.py 三级模型：personal/team/system）
 # ---------------------------------------------------------------------------

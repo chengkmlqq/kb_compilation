@@ -237,3 +237,42 @@ def test_agent_qa_request_accepts_model_id() -> None:
     assert req.model_id == "m-abc"
     # 不传时默认 None（用默认模型），保持旧行为
     assert AgentQARequest(question="你好").model_id is None
+
+
+# ── 2026-10-24 建库同步智能体（shandong 知识集建库专用端点 /kbs/sync-agent）──
+
+
+def test_sync_agent_for_kb_creates_smart_reasoning_agent(agent_db) -> None:
+    from api.services.agents import sync_agent_for_kb
+
+    agent = sync_agent_for_kb(agent_db, kb_id="kb1", kb_name="制度库", created_by="u1", team_name="T1")
+    assert agent.name == "制度库"
+    assert agent.created_by == "u1"
+    assert agent.team_name == "T1"
+    cfg = config_from_dict(agent.config)
+    assert cfg.agent_mode == "smart-reasoning"  # 智能推理模式
+    assert cfg.kb_selection_mode == "selected"
+    assert cfg.knowledge_bases == ["kb1"]
+    assert resolve_kb_scope(agent_db, agent_db.get(KbAgent, agent.id))  # 绑定库可直接检索
+
+
+def test_sync_agent_for_kb_reuses_same_name_and_binds_new_kb(agent_db) -> None:
+    from api.services.agents import sync_agent_for_kb
+
+    first = sync_agent_for_kb(agent_db, kb_id="kb1", kb_name="制度库")
+    # 知识集重试/重复建库：同名智能体已存在（绑其他库）→ 复用并把新库补进绑定
+    second = sync_agent_for_kb(agent_db, kb_id="kb2", kb_name="制度库")
+    assert second.id == first.id
+    cfg = config_from_dict(agent_db.get(KbAgent, first.id).config)
+    assert sorted(cfg.knowledge_bases) == ["kb1", "kb2"]
+    assert cfg.kb_selection_mode == "selected"
+
+
+def test_sync_agent_for_kb_idempotent_when_already_bound(agent_db) -> None:
+    from api.services.agents import sync_agent_for_kb
+
+    first = sync_agent_for_kb(agent_db, kb_id="kb1", kb_name="制度库")
+    second = sync_agent_for_kb(agent_db, kb_id="kb1", kb_name="制度库")
+    assert second.id == first.id
+    cfg = config_from_dict(agent_db.get(KbAgent, first.id).config)
+    assert cfg.knowledge_bases == ["kb1"]  # 不重复追加

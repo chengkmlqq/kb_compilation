@@ -261,9 +261,51 @@ def create_agent(
     return agent
 
 
+def sync_agent_for_kb(
+    db: Session,
+    kb_id: str,
+    kb_name: str,
+    created_by: str | None = None,
+    team_name: str | None = None,
+) -> KbAgent:
+    """知识库创建后同步对应的智能推理模式智能体（data_supply_shandong 建库同步专用）。
+
+    幂等按智能体名称（= 知识库名）复用：同名智能体已存在则把该库补进
+    knowledge_bases 绑定（selected 模式，用于重试/重复建库场景）；不存在则新建
+    agent_mode=smart-reasoning、kb_selection_mode=selected、绑定本库的智能体。
+
+    仅 shandong 建库同步端点调用——普通 POST /kbs 建库不自动建智能体。
+    """
+    existing = (
+        db.execute(select(KbAgent).where(KbAgent.state == "1", KbAgent.name == kb_name))
+        .scalars()
+        .first()
+    )
+    if existing is not None:
+        cfg = dict(existing.config or {})
+        kbs = list(cfg.get("knowledge_bases") or [])
+        if kb_id not in kbs:
+            kbs.append(kb_id)
+            cfg["knowledge_bases"] = kbs
+            cfg["kb_selection_mode"] = KB_SELECTION_SELECTED
+            update_agent(db, existing.id, {"config": cfg})
+        return existing
+    return create_agent(
+        db,
+        name=kb_name,
+        team_name=team_name,
+        created_by=created_by,
+        description=f"由知识库「{kb_name}」自动生成的智能推理模式智能体",
+        config={
+            "agent_mode": AGENT_MODE_SMART_REASONING,
+            "kb_selection_mode": KB_SELECTION_SELECTED,
+            "knowledge_bases": [kb_id],
+        },
+    )
+
+
 def copy_agent(db: Session, agent_id: str) -> KbAgent | None:
     """Duplicate an agent (name gets " - 副本" suffix; builtin flag cleared)."""
-    from sqlalchemy import select
 
     src = db.execute(select(KbAgent).where(KbAgent.id == agent_id)).scalars().first()
     if src is None:
