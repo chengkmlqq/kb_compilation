@@ -2,7 +2,47 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-23（页面请求 <200ms 专项完成——全端点热态达标：覆盖索引×2 + 聚合短 TTL 缓存 + 列表窄列）
+最后更新：2026-10-25（「wiki反馈修正」编排 + 每日定时任务交付）
+
+## 48. 当前状态（2026-10-25 「wiki反馈修正」编排 + 每日定时任务）
+
+- **需求**：编排管理新增编排，根据维护中心（wiki_feedback）反馈自动修正 wiki 页面；
+  执行入口 = 定时任务每天一次；新增 feedback_fix 功能标签。
+- **已交付（commit 81f2f7b，已推送 333f262..81f2f7b）**：
+  1. 种子 `scripts/seed_tape_data/wiki反馈修正.json`（tape_type=feedback_fix、
+     category=知识维护、status=effective，5 节点）：
+     n1 收集待处理反馈（kw_ 标注自动 resolved 不改页、页面缺失反馈置 ignored、
+     max_pages=20 分批）→ n2 loop 逐页 → n3 拼修正 prompt（原文+反馈清单，6000 字截断）
+     → n4 kb_llm_chat（thinking=disabled、model={{summary_model_id}} 回落知识库绑定
+     模型/系统默认）→ n5 应用修正（wiki_update_page + 反馈批量 resolved/ignored +
+     report.jsonl + 末轮汇总 + rebuild_links）；loop 空集合不迭代安全终态。
+  2. `worker/tasks/feedback_fix.py`（KbFeedbackFixTask）：扫描全库 pending 反馈按 kb
+     分组，逐库 `execute_tape(env="prod")` + 轮询 run 终态（每库上限 1800s，超时中止
+     本轮）。execute_modo_job 默认 env=prod → 定时任务天然写正式库；支持 dry_run。
+  3. `scripts/apply_feedback_fix_tape.py`：幂等灌编排 + 建 modo_cron_task
+     （KbFeedbackFixTask，cron `0 2 * * *` 每天 02:00，queue default）。
+  4. feedback_fix 标签：web/src/lib/tape-func.ts（magenta）+ 编排表单 options +
+     apply_tape_func_tags.py 命名规则。
+  5. 测试 `tests/test_feedback_fix_tape.py` 12 用例全绿；提交快照验证 tsc exit 0 +
+     pytest 46 passed（test_feedback_fix_tape + orchestration_engine + cron）。
+- **部署步骤（代码已推送，容器未更）**：
+  1. `docker cp scripts/apply_feedback_fix_tape.py scripts/seed_tape_data/wiki反馈修正.json kb-api-server:/tmp/`
+     → `docker exec kb-api-server /srv/kb/.venv/bin/python /tmp/apply_feedback_fix_tape.py`
+  2. worker 加载新模块：重建 kb-celery-* worker 镜像（Dockerfile COPY worker/）或
+     docker cp worker/tasks/feedback_fix.py → 容器 + 重启对应 worker
+  3. 前端重建 kb-web（tape-func.ts / orchestrations/page.tsx：标签 + 表单选项）
+  4. `docker exec kb-api-server /srv/kb/.venv/bin/python /tmp/apply_tape_func_tags.py`
+     （线上存量编排打 feedback_fix 标；种子自带不打存量）
+  5. cron 生效：scheduler 轮询到次日 02:00 自动触发；可先手动验证
+     （任务管理页手动执行 KbFeedbackFixTask 或直接投 execute_modo_job）
+- **坑位**：
+  ① 编排管理页手工执行默认 dev 环境（wiki_feedback/wiki_page 路由 _dev 表）——正式
+     修正必须走定时任务（prod）或后续加 env 透传；
+  ② LLM 输出非 JSON → n5 容错解析置 ignored 不炸 run（n4 勿开 json_mode）；
+  ③ 中间产物 /tmp/fbfix（pages.json/report.jsonl）容器重建会丢——报告留痕以 wiki 页
+     与反馈状态为准；
+  ④ 定时任务串行逐库（execute_tape 同 tape 防重），单库超时中止本轮剩余库，次日续跑；
+  ⑤ worker/celery_app.py 是并行会话高频并发文件（他人 aggregation 改动留在工作区未提交）。
 
 ## 47. 当前状态（2026-10-23 页面请求 <200ms 专项——全端点扫描与修复）
 
