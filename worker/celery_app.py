@@ -74,6 +74,7 @@ try:
         build_retrigger,
         chunk_verify,
         doc_process,
+        feedback_fix,
         log_cleanup,
         metadata_collect,
         orch_runner,

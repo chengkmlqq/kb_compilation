@@ -11,6 +11,7 @@ wiki构建-基础原子版、表构建Wiki-基础原子版）是两类主要功�
   - tape_name LIKE 'wiki构建-%'        → kb_build（知识构建）
   - tape_name IN ('表构建Wiki-基础原子版','表构建Wiki') → kb_build
   - tape_name IN ('聚类知识-主题聚合','制度版本演进') → kb_aggregate（知识聚合，2026-10-21）
+  - tape_name = 'wiki反馈修正' → feedback_fix（反馈修正，2026-10-25）
 
 用法：docker cp scripts/apply_tape_func_tags.py kb-api-server:/tmp/ &&
       docker exec kb-api-server /srv/kb/.venv/bin/python /tmp/apply_tape_func_tags.py
@@ -37,6 +38,8 @@ def main() -> None:
                 target = "kb_build"
             elif name in KB_AGGREGATE_NAMES:
                 target = "kb_aggregate"
+            elif name == "wiki反馈修正":
+                target = "feedback_fix"
             else:
                 skipped += 1
                 continue

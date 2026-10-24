@@ -1,0 +1,200 @@
+{
+ "type": "kb.orchestration.draft",
+ "schemaVersion": 1,
+ "exportedAt": "2026-10-25T00:00:00.000000",
+ "draft": {
+  "tapeName": "wiki反馈修正",
+  "tapeLabel": "wiki反馈修正（按维护中心反馈修正 wiki 页面）",
+  "tapeDescr": "读取知识库维护中心（wiki_feedback）待处理反馈，按页面分组后由 LLM 依据反馈修正对应 wiki 页面内容（内容错误/过时/链接失效/格式/不完整），修正后自动将反馈置为已解决或已忽略，并输出修正报告；高频词标注（kw_*）自动确认不改页面。由定时任务每天触发，也可在编排管理手动执行。",
+  "tapeType": "feedback_fix",
+  "category": "知识维护",
+  "status": "effective",
+  "nodes": [
+   {
+    "id": "n1",
+    "data": {
+     "label": "收集待处理反馈",
+     "config": {
+      "code": "\nimport json as _json, os as _os\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st, bindparam as _bp\n\nKB = str(bindings.get('kb_id') or '').strip()\nmax_pages = int(bindings.get('max_pages') or 20)\nOUT = '/tmp/fbfix'\n_os.makedirs(OUT, exist_ok=True)\n\ndb = _gsm()()\ntry:\n    sql = (\"select id, kb_id, slug, feedback_type, preset, content, reported_by_name \"\n           \"from wiki_feedback where status='pending' and deleted_at is null \")\n    params = {}\n    if KB:\n        sql += \"and kb_id=:kb \"\n        params['kb'] = KB\n    sql += \"order by created_at\"\n    rows = db.execute(_st(sql), params).all()\n\n    kw_ids = []\n    by_key = {}\n    for fid, fkb, slug, ftype, preset, content, name in rows:\n        slug = slug or ''\n        if (preset or '').startswith('kw_'):\n            # 高频词标注（kw_meaningful/kw_noise/kw_mis_extracted）属确认类，\n            # 不改页面：直接置 resolved 记录已处理\n            kw_ids.append(fid)\n            continue\n        by_key.setdefault((fkb, slug), []).append({\n            'id': fid, 'type': ftype or 'comment', 'preset': preset or '',\n            'content': content or '', 'name': name or '',\n        })\n\n    if kw_ids:\n        db.execute(_st(\"update wiki_feedback set status='resolved', updated_at=CURRENT_TIMESTAMP \"\n                       \"where id in :ids\").bindparams(_bp('ids', expanding=True)), {'ids': kw_ids})\n        db.commit()\n\n    pages = []\n    missing = 0\n    for (fkb, slug), fbs in by_key.items():\n        if len(pages) >= max_pages:\n            continue\n        row = db.execute(_st(\"select title, content from wiki_page \"\n                             \"where kb_id=:k and slug=:s and status='active'\"),\n                         {'k': fkb, 's': slug}).first()\n        if row is None:\n            # 页面不存在：反馈无法修正，置 ignored 并注明\n            missing += 1\n            ids = [f['id'] for f in fbs]\n            db.execute(_st(\"update wiki_feedback set status='ignored', updated_at=CURRENT_TIMESTAMP \"\n                           \"where id in :ids\").bindparams(_bp('ids', expanding=True)), {'ids': ids})\n            db.commit()\n            continue\n        pages.append({'kb_id': fkb, 'slug': slug, 'title': row[0] or '',\n                      'content': row[1] or '', 'feedbacks': fbs})\n\n    with open(_os.path.join(OUT, 'pages.json'), 'w', encoding='utf-8') as f:\n        _json.dump(pages, f, ensure_ascii=False)\n\n    bindings['pages_idx'] = list(range(len(pages)))\n    bindings['_total'] = len(pages)\n    bindings['kw_resolved'] = len(kw_ids)\n    print('[n1] 待处理反馈: 内容类页面 %d 个 / kw 标注自动确认 %d 条 / 页面缺失忽略 %d 条'\n          % (len(pages), len(kw_ids), missing))\nfinally:\n    db.close()\n"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 60,
+     "y": 120
+    }
+   },
+   {
+    "id": "n2",
+    "data": {
+     "label": "逐页修正循环",
+     "config": {
+      "item_var": "page_idx",
+      "collection": "bindings.get('pages_idx') or []"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 380,
+     "y": 120
+    }
+   },
+   {
+    "id": "n3",
+    "data": {
+     "label": "拼修正Prompt",
+     "config": {
+      "code": "\nimport json as _json, os as _os\nOUT = '/tmp/fbfix'\nidx = int(bindings.get('page_idx') or 0)\npages = _json.load(open(_os.path.join(OUT, 'pages.json'), encoding='utf-8'))\np = pages[idx]\ncontent = (p.get('content') or '')\nif len(content) > 6000:\n    content = content[:6000] + '\\n…[内容过长已截断]'\nfb_lines = []\nfor f in (p.get('feedbacks') or []):\n    preset = f.get('preset') or ''\n    tag = {'content_error': '内容有误', 'outdated': '信息过时', 'broken_link': '链接失效',\n           'format_issue': '格式问题', 'incomplete': '信息不完整'}.get(preset, preset or '自由反馈')\n    fb_lines.append('[%s] %s：%s（上报人：%s）' % (\n        f.get('type') or 'comment', tag, f.get('content') or '（未填写）', f.get('name') or '匿名'))\nfb_text = '\\n'.join(fb_lines) if fb_lines else '（无）'\nbindings['fix_prompt'] = (\n    '请根据用户反馈修正下面的 wiki 页面。\\n\\n'\n    '页面标题：%s\\n页面 slug：%s\\n\\n'\n    '当前页面全文：\\n%s\\n\\n'\n    '用户反馈：\\n%s\\n\\n'\n    '修正要求：\\n'\n    '1. 仅修正反馈明确指出且有原文依据的问题（内容错误/信息过时/链接失效/格式问题/信息不完整）；\\n'\n    '2. 保留原文合理的结构与无关内容，不得臆造原文没有的信息；\\n'\n    '3. 若反馈有明确问题，输出 action=fix，并在 revised_content 给出完整修正后全文（保留 markdown 标题）；\\n'\n    '4. 若反馈无明确问题或依据不足，输出 action=skip 并说明 reason；\\n'\n    '5. 仅输出 JSON：{\"slug\": \"%s\", \"action\": \"fix\"或\"skip\", \"reason\": \"...\", \"confidence\": 0~1, \"revised_content\": \"...\"}'\n    % (p.get('title') or p.get('slug'), p.get('slug'), content, fb_text, p.get('slug'))\n)\nbindings['page_kb_id'] = p.get('kb_id') or ''\nbindings['page_slug'] = p.get('slug') or ''\n"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 60,
+     "y": 292
+    }
+   },
+   {
+    "id": "n4",
+    "data": {
+     "label": "LLM修正建议",
+     "config": {
+      "model": "{{summary_model_id}}",
+      "prompt": "{{fix_prompt}}",
+      "system": "你是严谨的 wiki 页面内容审校专家。只输出要求的 JSON 对象，禁止输出思考过程、解释、代码块标记或任何额外文字。",
+      "thinking": "disabled",
+      "max_tokens": "4096",
+      "output_var": "fix_raw",
+      "temperature": "0.2"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 380,
+     "y": 292
+    }
+   },
+   {
+    "id": "n5",
+    "data": {
+     "label": "应用修正并回写",
+     "config": {
+      "code": "\nimport json as _json, os as _os, re as _re\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st, bindparam as _bp\n\nOUT = '/tmp/fbfix'\nidx = int(bindings.get('page_idx') or 0)\npages = _json.load(open(_os.path.join(OUT, 'pages.json'), encoding='utf-8'))\np = pages[idx]\nkb_id, slug = p.get('kb_id') or '', p.get('slug') or ''\nfb_ids = [f['id'] for f in (p.get('feedbacks') or [])]\nmin_conf = float(bindings.get('min_confidence') or 0.7)\n\nraw = str(bindings.get('fix_raw') or '').strip()\naction, reason, confidence, new_content = 'skip', 'LLM 输出无法解析', 0.0, ''\nm = _re.search(r'\\{.*\\}', raw, _re.S)\nif m:\n    try:\n        obj = _json.loads(m.group(0))\n        action = str(obj.get('action') or 'skip').strip() or 'skip'\n        reason = str(obj.get('reason') or '')\n        try:\n            confidence = float(obj.get('confidence') or 0)\n        except (TypeError, ValueError):\n            confidence = 0.0\n        new_content = str(obj.get('revised_content') or '').strip()\n    except Exception as e:\n        reason = 'LLM 输出解析失败: %s' % e\n\ndb = _gsm()()\ntry:\n    if (action == 'fix' and confidence >= min_conf and new_content\n            and (p.get('content') or '') != new_content):\n        from api.services.kb_admin import wiki_update_page\n        wiki_update_page(db, kb_id, slug, {'content': new_content, 'status': 'active'})\n        if fb_ids:\n            db.execute(_st(\"update wiki_feedback set status='resolved', updated_at=CURRENT_TIMESTAMP \"\n                           \"where id in :ids\").bindparams(_bp('ids', expanding=True)), {'ids': fb_ids})\n            db.commit()\n        applied = True\n        result_status = 'resolved'\n    else:\n        if action == 'fix' and confidence < min_conf:\n            skip_reason = reason or ('confidence 不足（%.2f < %.2f）' % (confidence, min_conf))\n        elif action == 'fix' and not new_content:\n            skip_reason = reason or 'LLM 未给出修正内容'\n        else:\n            skip_reason = reason or '依据不足或无需修正'\n        if fb_ids:\n            db.execute(_st(\"update wiki_feedback set status='ignored', updated_at=CURRENT_TIMESTAMP \"\n                           \"where id in :ids\").bindparams(_bp('ids', expanding=True)), {'ids': fb_ids})\n            db.commit()\n        applied = False\n        result_status = 'ignored'\n\n    with open(_os.path.join(OUT, 'report.jsonl'), 'a', encoding='utf-8') as f:\n        f.write(_json.dumps({'kb_id': kb_id, 'slug': slug, 'action': action,\n                             'confidence': confidence, 'reason': reason or skip_reason,\n                             'applied': applied, 'status': result_status,\n                             'old_len': len(p.get('content') or ''), 'new_len': len(new_content),\n                             'feedback_ids': fb_ids}, ensure_ascii=False) + '\\n')\n\n    print('[n5] 页面 %s: action=%s confidence=%.2f -> %s %s' % (slug, action, confidence, result_status, reason or ''))\n\n    total = int(bindings.get('_total') or 1)\n    if idx >= total - 1:\n        fixed = 0\n        fixed_kbs = []\n        try:\n            with open(_os.path.join(OUT, 'report.jsonl'), encoding='utf-8') as f:\n                for line in f:\n                    if not line.strip():\n                        continue\n                    rec = _json.loads(line)\n                    if rec.get('applied'):\n                        fixed += 1\n                        if rec.get('kb_id') not in fixed_kbs:\n                            fixed_kbs.append(rec.get('kb_id'))\n        except Exception:\n            pass\n        for fkb in fixed_kbs:\n            try:\n                from api.services.kb_admin import wiki_rebuild_links\n                wiki_rebuild_links(db, fkb)\n                print('[n5] 知识库 %s 链接重建完成' % fkb)\n            except Exception as e:\n                print('[n5] 知识库 %s 链接重建跳过: %s' % (fkb, e))\n        bindings['fix_summary'] = '反馈修正完成：处理页面 %d 个，修正 %d 页' % (total, fixed)\n        bindings['fix_summary_total'] = total\n        bindings['fix_summary_applied'] = fixed\n        print('[n5] 汇总: %s' % bindings['fix_summary'])\nfinally:\n    db.close()\n"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 700,
+     "y": 120
+    }
+   }
+  ],
+  "edges": [
+   {
+    "source": "n1",
+    "target": "n2"
+   },
+   {
+    "source": "n2",
+    "target": "n3"
+   },
+   {
+    "source": "n3",
+    "target": "n4"
+   },
+   {
+    "source": "n4",
+    "target": "n5"
+   }
+  ],
+  "execParams": {
+   "kb_id": "",
+   "max_pages": "20",
+   "min_confidence": "0.7"
+  },
+  "steps": [
+   {
+    "step_id": "n1",
+    "step_inst": "script",
+    "step_label": "收集待处理反馈",
+    "step_config": {
+     "code": "\nimport json as _json, os as _os\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st, bindparam as _bp\n\nKB = str(bindings.get('kb_id') or '').strip()\nmax_pages = int(bindings.get('max_pages') or 20)\nOUT = '/tmp/fbfix'\n_os.makedirs(OUT, exist_ok=True)\n\ndb = _gsm()()\ntry:\n    sql = (\"select id, kb_id, slug, feedback_type, preset, content, reported_by_name \"\n           \"from wiki_feedback where status='pending' and deleted_at is null \")\n    params = {}\n    if KB:\n        sql += \"and kb_id=:kb \"\n        params['kb'] = KB\n    sql += \"order by created_at\"\n    rows = db.execute(_st(sql), params).all()\n\n    kw_ids = []\n    by_key = {}\n    for fid, fkb, slug, ftype, preset, content, name in rows:\n        slug = slug or ''\n        if (preset or '').startswith('kw_'):\n            # 高频词标注（kw_meaningful/kw_noise/kw_mis_extracted）属确认类，\n            # 不改页面：直接置 resolved 记录已处理\n            kw_ids.append(fid)\n            continue\n        by_key.setdefault((fkb, slug), []).append({\n            'id': fid, 'type': ftype or 'comment', 'preset': preset or '',\n            'content': content or '', 'name': name or '',\n        })\n\n    if kw_ids:\n        db.execute(_st(\"update wiki_feedback set status='resolved', updated_at=CURRENT_TIMESTAMP \"\n                       \"where id in :ids\").bindparams(_bp('ids', expanding=True)), {'ids': kw_ids})\n        db.commit()\n\n    pages = []\n    missing = 0\n    for (fkb, slug), fbs in by_key.items():\n        if len(pages) >= max_pages:\n            continue\n        row = db.execute(_st(\"select title, content from wiki_page \"\n                             \"where kb_id=:k and slug=:s and status='active'\"),\n                         {'k': fkb, 's': slug}).first()\n        if row is None:\n            # 页面不存在：反馈无法修正，置 ignored 并注明\n            missing += 1\n            ids = [f['id'] for f in fbs]\n            db.execute(_st(\"update wiki_feedback set status='ignored', updated_at=CURRENT_TIMESTAMP \"\n                           \"where id in :ids\").bindparams(_bp('ids', expanding=True)), {'ids': ids})\n            db.commit()\n            continue\n        pages.append({'kb_id': fkb, 'slug': slug, 'title': row[0] or '',\n                      'content': row[1] or '', 'feedbacks': fbs})\n\n    with open(_os.path.join(OUT, 'pages.json'), 'w', encoding='utf-8') as f:\n        _json.dump(pages, f, ensure_ascii=False)\n\n    bindings['pages_idx'] = list(range(len(pages)))\n    bindings['_total'] = len(pages)\n    bindings['kw_resolved'] = len(kw_ids)\n    print('[n1] 待处理反馈: 内容类页面 %d 个 / kw 标注自动确认 %d 条 / 页面缺失忽略 %d 条'\n          % (len(pages), len(kw_ids), missing))\nfinally:\n    db.close()\n"
+    },
+    "step_seq": 0,
+    "pre_step_ids": [],
+    "next_step_ids": [
+     "n2"
+    ],
+    "queue_name": "build"
+   },
+   {
+    "step_id": "n2",
+    "step_inst": "loop",
+    "step_label": "逐页修正循环",
+    "step_config": {
+     "item_var": "page_idx",
+     "collection": "bindings.get('pages_idx') or []"
+    },
+    "step_seq": 1,
+    "pre_step_ids": [
+     "n1"
+    ],
+    "next_step_ids": [
+     "n3"
+    ],
+    "queue_name": "build"
+   },
+   {
+    "step_id": "n3",
+    "step_inst": "script",
+    "step_label": "拼修正Prompt",
+    "step_config": {
+     "code": "\nimport json as _json, os as _os\nOUT = '/tmp/fbfix'\nidx = int(bindings.get('page_idx') or 0)\npages = _json.load(open(_os.path.join(OUT, 'pages.json'), encoding='utf-8'))\np = pages[idx]\ncontent = (p.get('content') or '')\nif len(content) > 6000:\n    content = content[:6000] + '\\n…[内容过长已截断]'\nfb_lines = []\nfor f in (p.get('feedbacks') or []):\n    preset = f.get('preset') or ''\n    tag = {'content_error': '内容有误', 'outdated': '信息过时', 'broken_link': '链接失效',\n           'format_issue': '格式问题', 'incomplete': '信息不完整'}.get(preset, preset or '自由反馈')\n    fb_lines.append('[%s] %s：%s（上报人：%s）' % (\n        f.get('type') or 'comment', tag, f.get('content') or '（未填写）', f.get('name') or '匿名'))\nfb_text = '\\n'.join(fb_lines) if fb_lines else '（无）'\nbindings['fix_prompt'] = (\n    '请根据用户反馈修正下面的 wiki 页面。\\n\\n'\n    '页面标题：%s\\n页面 slug：%s\\n\\n'\n    '当前页面全文：\\n%s\\n\\n'\n    '用户反馈：\\n%s\\n\\n'\n    '修正要求：\\n'\n    '1. 仅修正反馈明确指出且有原文依据的问题（内容错误/信息过时/链接失效/格式问题/信息不完整）；\\n'\n    '2. 保留原文合理的结构与无关内容，不得臆造原文没有的信息；\\n'\n    '3. 若反馈有明确问题，输出 action=fix，并在 revised_content 给出完整修正后全文（保留 markdown 标题）；\\n'\n    '4. 若反馈无明确问题或依据不足，输出 action=skip 并说明 reason；\\n'\n    '5. 仅输出 JSON：{\"slug\": \"%s\", \"action\": \"fix\"或\"skip\", \"reason\": \"...\", \"confidence\": 0~1, \"revised_content\": \"...\"}'\n    % (p.get('title') or p.get('slug'), p.get('slug'), content, fb_text, p.get('slug'))\n)\nbindings['page_kb_id'] = p.get('kb_id') or ''\nbindings['page_slug'] = p.get('slug') or ''\n"
+    },
+    "step_seq": 2,
+    "pre_step_ids": [
+     "n2"
+    ],
+    "next_step_ids": [
+     "n4"
+    ],
+    "queue_name": "build"
+   },
+   {
+    "step_id": "n4",
+    "step_inst": "kb_llm_chat",
+    "step_label": "LLM修正建议",
+    "step_config": {
+     "model": "{{summary_model_id}}",
+     "prompt": "{{fix_prompt}}",
+     "system": "你是严谨的 wiki 页面内容审校专家。只输出要求的 JSON 对象，禁止输出思考过程、解释、代码块标记或任何额外文字。",
+     "thinking": "disabled",
+     "max_tokens": "4096",
+     "output_var": "fix_raw",
+     "temperature": "0.2"
+    },
+    "step_seq": 3,
+    "pre_step_ids": [
+     "n2"
+    ],
+    "next_step_ids": [
+     "n5"
+    ],
+    "queue_name": "build"
+   },
+   {
+    "step_id": "n5",
+    "step_inst": "script",
+    "step_label": "应用修正并回写",
+    "step_config": {
+     "code": "\nimport json as _json, os as _os, re as _re\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st, bindparam as _bp\n\nOUT = '/tmp/fbfix'\nidx = int(bindings.get('page_idx') or 0)\npages = _json.load(open(_os.path.join(OUT, 'pages.json'), encoding='utf-8'))\np = pages[idx]\nkb_id, slug = p.get('kb_id') or '', p.get('slug') or ''\nfb_ids = [f['id'] for f in (p.get('feedbacks') or [])]\nmin_conf = float(bindings.get('min_confidence') or 0.7)\n\nraw = str(bindings.get('fix_raw') or '').strip()\naction, reason, confidence, new_content = 'skip', 'LLM 输出无法解析', 0.0, ''\nm = _re.search(r'\\{.*\\}', raw, _re.S)\nif m:\n    try:\n        obj = _json.loads(m.group(0))\n        action = str(obj.get('action') or 'skip').strip() or 'skip'\n        reason = str(obj.get('reason') or '')\n        try:\n            confidence = float(obj.get('confidence') or 0)\n        except (TypeError, ValueError):\n            confidence = 0.0\n        new_content = str(obj.get('revised_content') or '').strip()\n    except Exception as e:\n        reason = 'LLM 输出解析失败: %s' % e\n\ndb = _gsm()()\ntry:\n    if (action == 'fix' and confidence >= min_conf and new_content\n            and (p.get('content') or '') != new_content):\n        from api.services.kb_admin import wiki_update_page\n        wiki_update_page(db, kb_id, slug, {'content': new_content, 'status': 'active'})\n        if fb_ids:\n            db.execute(_st(\"update wiki_feedback set status='resolved', updated_at=CURRENT_TIMESTAMP \"\n                           \"where id in :ids\").bindparams(_bp('ids', expanding=True)), {'ids': fb_ids})\n            db.commit()\n        applied = True\n        result_status = 'resolved'\n    else:\n        if action == 'fix' and confidence < min_conf:\n            skip_reason = reason or ('confidence 不足（%.2f < %.2f）' % (confidence, min_conf))\n        elif action == 'fix' and not new_content:\n            skip_reason = reason or 'LLM 未给出修正内容'\n        else:\n            skip_reason = reason or '依据不足或无需修正'\n        if fb_ids:\n            db.execute(_st(\"update wiki_feedback set status='ignored', updated_at=CURRENT_TIMESTAMP \"\n                           \"where id in :ids\").bindparams(_bp('ids', expanding=True)), {'ids': fb_ids})\n            db.commit()\n        applied = False\n        result_status = 'ignored'\n\n    with open(_os.path.join(OUT, 'report.jsonl'), 'a', encoding='utf-8') as f:\n        f.write(_json.dumps({'kb_id': kb_id, 'slug': slug, 'action': action,\n                             'confidence': confidence, 'reason': reason or skip_reason,\n                             'applied': applied, 'status': result_status,\n                             'old_len': len(p.get('content') or ''), 'new_len': len(new_content),\n                             'feedback_ids': fb_ids}, ensure_ascii=False) + '\\n')\n\n    print('[n5] 页面 %s: action=%s confidence=%.2f -> %s %s' % (slug, action, confidence, result_status, reason or ''))\n\n    total = int(bindings.get('_total') or 1)\n    if idx >= total - 1:\n        fixed = 0\n        fixed_kbs = []\n        try:\n            with open(_os.path.join(OUT, 'report.jsonl'), encoding='utf-8') as f:\n                for line in f:\n                    if not line.strip():\n                        continue\n                    rec = _json.loads(line)\n                    if rec.get('applied'):\n                        fixed += 1\n                        if rec.get('kb_id') not in fixed_kbs:\n                            fixed_kbs.append(rec.get('kb_id'))\n        except Exception:\n            pass\n        for fkb in fixed_kbs:\n            try:\n                from api.services.kb_admin import wiki_rebuild_links\n                wiki_rebuild_links(db, fkb)\n                print('[n5] 知识库 %s 链接重建完成' % fkb)\n            except Exception as e:\n                print('[n5] 知识库 %s 链接重建跳过: %s' % (fkb, e))\n        bindings['fix_summary'] = '反馈修正完成：处理页面 %d 个，修正 %d 页' % (total, fixed)\n        bindings['fix_summary_total'] = total\n        bindings['fix_summary_applied'] = fixed\n        print('[n5] 汇总: %s' % bindings['fix_summary'])\nfinally:\n    db.close()\n"
+    },
+    "step_seq": 4,
+    "pre_step_ids": [
+     "n4"
+    ],
+    "next_step_ids": [],
+    "queue_name": "build"
+   }
+  ]
+ }
+}

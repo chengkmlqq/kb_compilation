@@ -721,6 +721,7 @@ export default function OrchestrationsPage() {
                 { label: "知识聚合", value: "kb_aggregate" },
                 { label: "质量评估", value: "quality" },
                 { label: "领域识别", value: "domain_resolve" },
+                { label: "反馈修正", value: "feedback_fix" },
               ]}
             />
           </Form.Item>
