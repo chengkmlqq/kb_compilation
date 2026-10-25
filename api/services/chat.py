@@ -907,7 +907,13 @@ def answer_question(
             etype = ev.get("type")
             if etype == "tool_call":
                 tool_calls.append(ev)
-            elif etype in ("delta", "thinking"):
+            elif etype == "thinking":
+                # 2026-10-26 思考过程即时透出（对齐 qa.py 链路）：此前 thinking
+                # 混进 buffered，工具循环中间轮次的思考全被吞掉，前端看不到
+                # 思考过程；空内容重试 continue 时更是连最终轮的思考一起丢。
+                # 思考流不缓冲、立即 yield，delta（正文）仍走 buffered 防前言泄漏。
+                yield ev
+            elif etype == "delta":
                 buffered.append(ev)
         if not tool_calls:
             # 2026-10-20 空内容重试（对齐 WeKnora maxEmptyResponseRetries）：
