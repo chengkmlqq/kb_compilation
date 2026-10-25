@@ -106,6 +106,12 @@ class KbDatasource(Base):
     # 结构：{"topic_cluster_enabled": bool, "topic_cluster_topics": [...],
     #        "version_cluster_enabled": bool, "cron_expression": "0 2 * * *"}
     aggregation_config: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    # 切片智能增强配置（2026-10-25，迁移 0047）：开启后文档解析切分完成时触发
+    # 「切片智能增强」编排（LLM 逐片提取关键词/问题 + 文档级摘要/关键词），
+    # 产物随向量同介质存储、检索加权命中。结构（对齐 duowen ChunkExtend 参数）：
+    #   {"enabled": bool, "keywords_dividend": 120, "questions_dividend": 180,
+    #    "max_chunks": 500}
+    enhancement_config: Mapped[dict | None] = mapped_column(JSON, default=dict)
 
 
     # ── 代码仓库知识库（2026-10，迁移 0029）────────────────────────────
@@ -255,6 +261,12 @@ class KbEmbedding(KnowledgeBase):
     chunk_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     embedding = mapped_column(_vector_type(), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 切片增强元数据（2026-10-25 对齐 duowen AddVectorDataSchema）：LLM 预加工
+    # 产物（切片关键词/问题/摘要/文档关键词/标题），检索时参与加权命中。
+    # 结构：{"title", "abstract", "doc_keywords": [...], "chunk_keywords": [...],
+    #        "chunk_questions": [...], "pagerank": float}
+    # None/空 dict = 该切片无增强（存量数据 / 未开启增强的库）。
+    enhance_meta: Mapped[dict | None] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=text("CURRENT_TIMESTAMP")
     )

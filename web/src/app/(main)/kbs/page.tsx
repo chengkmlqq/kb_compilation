@@ -24,6 +24,7 @@ import {
   CodeOutlined,
   CommentOutlined,
   DeleteOutlined,
+  ExperimentOutlined,
   FileZipOutlined,
   ProfileOutlined,
   SearchOutlined,
@@ -233,6 +234,7 @@ const CREATE_SECTIONS = [
   { key: "source", label: "知识来源", icon: <CodeOutlined /> },
   { key: "wiki", label: "Wiki 构建", icon: <BookOutlined /> },
   { key: "retrieval", label: "检索配置", icon: <SearchOutlined /> },
+  { key: "enhance", label: "文档增强", icon: <ExperimentOutlined /> },
   { key: "aggregation", label: "知识聚合", icon: <ClusterOutlined /> },
 ];
 
@@ -755,6 +757,13 @@ export default function KbsPage() {
               .filter(Boolean)
           : [],
         version_cluster_enabled: !!all.version_cluster_enabled,
+      },
+      // 切片智能增强（2026-10-25）：开关 + 密度参数
+      enhancement_config: {
+        enabled: !!all.enhance_enabled,
+        keywords_dividend: (all.enhance_keywords_dividend as number | undefined) ?? 120,
+        questions_dividend: (all.enhance_questions_dividend as number | undefined) ?? 180,
+        max_chunks: (all.enhance_max_chunks as number | undefined) ?? 0,
       },
     };
     const res = await apiCreateKb(payload);
@@ -1345,6 +1354,22 @@ export default function KbsPage() {
                     >
                       <Select allowClear showSearch optionFilterProp="label" options={embeddingOptions} placeholder="选择向量模型" />
                     </Form.Item>
+                  </>
+                )}
+
+                {createSection === "enhance" && (
+                  <>
+                    <Form.Item
+                      name="enhance_enabled"
+                      label="切片智能增强"
+                      valuePropName="checked"
+                      extra="开启后文档解析切分完成时，自动调用 LLM 逐切片提取关键词、生成用户可能提问的问题，并汇总文档级摘要与关键词（随向量同介质存储，检索命中率提升；对标 duowen 智能问答的增强检索）"
+                    >
+                      <Switch />
+                    </Form.Item>
+                    <div style={{ padding: 8, background: "#f5f7fa", borderRadius: 6, color: "#4d5e7d", fontSize: 12 }}>
+                      增强为入库前同步执行：大文档（数百切片）可能增加数分钟解析耗时。
+                    </div>
                   </>
                 )}
 

@@ -77,6 +77,12 @@ def test_vector_search_forwards_chunk_ids() -> None:
             sent.update(kwargs)
             return []
 
+        # 2026-10-25 增强检索：vector_search 改走 search_enhanced（带回增强字段）；
+        # fake 转发 search 语义保证 chunk_ids 透传断言仍成立
+        def search_enhanced(self, kb_id, query_embedding, **kwargs):
+            sent.update(kwargs)
+            return []
+
     cfg = RetrievalConfig(vector_enabled=True, keyword_enabled=False)
     with patch("api.services.vector_store.get_vector_store", return_value=_FakeStore()):
         vector_search("kb1", [0.1] * 8, cfg, chunk_ids=["c-a1", "c-a2"])

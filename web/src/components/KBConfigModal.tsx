@@ -142,6 +142,8 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
   const [debugOpen, setDebugOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [section, setSection] = useState("basic");
+  // 切片智能增强（2026-10-25）：开关联动密度参数显隐
+  const [enhanceEnabled, setEnhanceEnabled] = useState(false);
   const enableParentChild = Form.useWatch("enable_parent_child", form);
   const strategy = Form.useWatch("strategy", form);
 
@@ -203,7 +205,13 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
       topic_cluster_enabled: !!kb.aggregation_config?.topic_cluster_enabled,
       topic_cluster_topics: (kb.aggregation_config?.topic_cluster_topics as string[] | undefined) ?? [],
       version_cluster_enabled: !!kb.aggregation_config?.version_cluster_enabled,
+      // 切片智能增强（2026-10-25）：回填开关 + 密度参数
+      enhance_enabled: !!kb.enhancement_config?.enabled,
+      enhance_keywords_dividend: kb.enhancement_config?.keywords_dividend || undefined,
+      enhance_questions_dividend: kb.enhancement_config?.questions_dividend || undefined,
+      enhance_max_chunks: kb.enhancement_config?.max_chunks || undefined,
     });
+    setEnhanceEnabled(!!kb.enhancement_config?.enabled);
   }, [open, kb, form]);
 
   // 打开时回填切片配置 + 解析引擎列表（接口不可用时优雅降级为默认值）
@@ -315,6 +323,15 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
               .filter(Boolean)
           : [],
         version_cluster_enabled: !!values.version_cluster_enabled,
+      },
+      // 切片智能增强（2026-10-25）：开关 + 密度参数（后端归一，非法值回退默认）
+      enhancement_config: {
+        enabled: !!values.enhance_enabled,
+        keywords_dividend:
+          (values.enhance_keywords_dividend as number | undefined) ?? 120,
+        questions_dividend:
+          (values.enhance_questions_dividend as number | undefined) ?? 180,
+        max_chunks: (values.enhance_max_chunks as number | undefined) ?? 0,
       },
     };
     setSaving(true);
@@ -596,6 +613,45 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                       提示：不可用的引擎已置灰，鼠标悬停查看原因（如 MinerU endpoint 未配置）。
                     </Text>
                   </Spin>
+                </>
+              )}
+
+              {section === "parse" && (
+                <>
+                  <Form.Item
+                    name="enhance_enabled"
+                    label="切片智能增强"
+                    valuePropName="checked"
+                    extra="开启后文档解析切分完成时，自动调用 LLM 逐切片提取关键词、生成用户可能提问的问题，并汇总文档级摘要与关键词（随向量同介质存储，检索命中率提升；对标 duowen 智能问答的增强检索）"
+                  >
+                    <Switch
+                      checkedChildren="开"
+                      unCheckedChildren="关"
+                      onChange={(e) => setEnhanceEnabled(!!e)}
+                    />
+                  </Form.Item>
+                  {enhanceEnabled && (
+                    <Row gutter={16}>
+                      <Col span={8}>
+                        <Form.Item name="enhance_keywords_dividend" label="关键词密度" tooltip="每 N 字提取 1 个关键词（默认 120）">
+                          <InputNumber min={30} max={1000} step={10} style={{ width: "100%" }} placeholder="120" />
+                        </Form.Item>
+                      </Col>
+                      <Col span={8}>
+                        <Form.Item name="enhance_questions_dividend" label="问题密度" tooltip="每 N 字生成 1 个问题（默认 180）">
+                          <InputNumber min={60} max={2000} step={20} style={{ width: "100%" }} placeholder="180" />
+                        </Form.Item>
+                      </Col>
+                      <Col span={8}>
+                        <Form.Item name="enhance_max_chunks" label="最多切片数" tooltip="0 = 不限（大文档增强耗时较长，可按需限制）">
+                          <InputNumber min={0} max={5000} step={50} style={{ width: "100%" }} placeholder="0" />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  )}
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    增强为入库前同步执行：大文档（数百切片）可能增加数分钟解析耗时。
+                  </Text>
                 </>
               )}
 

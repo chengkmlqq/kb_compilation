@@ -192,7 +192,25 @@ def agent_qa_stream(
             yield _sse({"type": "done"})
             return
 
-        kbs = resolve_kb_scope(db, agent)
+        # 身份（2026-10-25 提前解析：resolve_kb_scope 按调用者过滤个人/团队可见库）
+        identity = decode_identity_cookie(x_next_identity or "")
+        ctx_user_id = identity.user_id if identity else ""
+        ctx_team_name = identity.team_name or "" if identity else ""
+        ctx_is_admin = False
+        if ctx_user_id:
+            try:
+                from api.services.models import is_admin
+
+                ctx_is_admin = is_admin(db, ctx_user_id)
+            except Exception:  # noqa: BLE001
+                ctx_is_admin = False
+
+        kbs = resolve_kb_scope(
+            db, agent,
+            caller_user_id=ctx_user_id,
+            caller_team_name=ctx_team_name,
+            is_sys_admin=ctx_is_admin,
+        )
         if not kbs:
             yield _sse({"type": "error", "message": "agent 未绑定可用知识库"})
             yield _sse({"type": "done"})
@@ -208,18 +226,6 @@ def agent_qa_stream(
         # 本轮图片附件 id（对齐 WeKnora attachment_ids）：仅当轮注入；None=旧客户端
         turn_image_ids: list[str] = []
         images_scoped = req.image_attachment_ids is not None
-        # 身份（无 session 也解析：用于个人/团队模型作用域）
-        identity = decode_identity_cookie(x_next_identity or "")
-        ctx_user_id = identity.user_id if identity else ""
-        ctx_team_name = identity.team_name or "" if identity else ""
-        ctx_is_admin = False
-        if ctx_user_id:
-            try:
-                from api.services.models import is_admin
-
-                ctx_is_admin = is_admin(db, ctx_user_id)
-            except Exception:  # noqa: BLE001
-                ctx_is_admin = False
 
         if req.session_id:
             if not identity or not identity.user_id:

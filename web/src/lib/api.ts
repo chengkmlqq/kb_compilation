@@ -219,6 +219,13 @@ export interface KbItem {
     version_cluster_enabled?: boolean;
     cron_expression?: string;
   };
+  /** 切片智能增强配置（2026-10-25）：配置弹窗回填 */
+  enhancement_config?: {
+    enabled?: boolean;
+    keywords_dividend?: number;
+    questions_dividend?: number;
+    max_chunks?: number;
+  };
 }
 
 export interface PageList<T> {
@@ -257,6 +264,13 @@ export interface KbUpdatePayload {
     topic_cluster_topics?: string[];
     version_cluster_enabled?: boolean;
     cron_expression?: string;
+  } | null;
+  /** 切片智能增强配置（2026-10-25：配置在 payload 才更新） */
+  enhancement_config?: {
+    enabled?: boolean;
+    keywords_dividend?: number;
+    questions_dividend?: number;
+    max_chunks?: number;
   } | null;
 }
 
@@ -334,6 +348,13 @@ export interface KbCreatePayload {
     topic_cluster_topics?: string[];
     version_cluster_enabled?: boolean;
     cron_expression?: string;
+  };
+  /** 切片智能增强配置（2026-10-25：开启后解析完成触发增强编排） */
+  enhancement_config?: {
+    enabled?: boolean;
+    keywords_dividend?: number;
+    questions_dividend?: number;
+    max_chunks?: number;
   };
 }
 

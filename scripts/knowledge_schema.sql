@@ -27,9 +27,24 @@ CREATE TABLE IF NOT EXISTS kb_embedding (
     chunk_id   VARCHAR(64) NOT NULL UNIQUE,
     embedding  vector(1024) NOT NULL,
     enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+    -- 切片增强元数据（2026-10-25 对齐 duowen AddVectorDataSchema，JSON 文本）：
+    -- {"title", "abstract", "doc_keywords": [...], "chunk_keywords": [...],
+    --  "chunk_questions": [...], "pagerank": float}
+    -- None/空 = 无增强（存量片/未开启增强的库）。幂等：列已存在则跳过。
+    enhance_meta JSON,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_kb_embedding_kb ON kb_embedding (kb_id);
+-- 幂等加列：表已存在（旧版 schema 无 enhance_meta）时补列
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_name = 'kb_embedding' AND column_name = 'enhance_meta') THEN
+        NULL;
+    ELSE
+        ALTER TABLE kb_embedding ADD COLUMN enhance_meta JSON;
+    END IF;
+END $$;
 -- HNSW index for ANN search; distance = cosine on the L2-normalized vectors.
 CREATE INDEX IF NOT EXISTS idx_kb_embedding_hnsw
     ON kb_embedding USING hnsw (embedding vector_cosine_ops);

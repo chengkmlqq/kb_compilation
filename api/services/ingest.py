@@ -16,6 +16,7 @@ sessions — this module takes explicit db handles (no globals).
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -85,6 +86,29 @@ def embed_chunks(client: EmbeddingClient, texts: list[str]) -> list[list[float]]
     return client.embed_texts(texts)
 
 
+def context_template(content: str, title: str = "", abstract: str = "") -> str:
+    """向量化文本 XML 模板（2026-10-25 对齐 duowen es.py::context_template）。
+
+    结构化包装让向量「感知」标题/摘要语义（duowen 检索质量关键之一）：
+      <document-slice><metadata><title>…</title><abstract>…</abstract>
+      </metadata><chunk>正文</chunk></document-slice>
+    """
+    abstract_tag = f"<abstract>{abstract}</abstract>" if abstract else ""
+    if abstract_tag:
+        return (
+            "<document-slice>\n"
+            f"    <metadata>\n        <title>{title}</title>\n        {abstract_tag}\n    </metadata>\n"
+            f"    <chunk>{content}</chunk>\n"
+            "</document-slice>"
+        )
+    return (
+        "<document-slice>\n"
+        f"    <metadata>\n        <title>{title}</title>\n    </metadata>\n"
+        f"    <chunk>{content}</chunk>\n"
+        "</document-slice>"
+    )
+
+
 def replace_document_chunks(
     db: Session,
     kb_id: str,
@@ -110,27 +134,49 @@ def replace_document_chunks(
     的图片语义子 chunk（chunk_type=image_ocr/image_caption），随文本 chunks
     一并写库 + upsert embedding；`image_vectors` 与其一一对应。
 
+    2026-10-25 增强入库：调用方先经 write_doc_chunk_rows 落切片（供增强编排
+    读 doc_chunk），增强完成后此函数只做向量 upsert（带 enhance 字段）。
+    兼容旧调用（一步到位）：本函数内部自动落切片再写向量，行为不变。
+
     Returns the number of chunks written.
     """
-    # Remove stale chunks first (idempotent re-ingest / retry safety), and
-    # their embeddings from the vector store (new chunks get new ids).
-    from api.services.vector_store import get_vector_store
-    from api.models.knowledge import KbDatasource
-    kb_row = db.get(KbDatasource, kb_id)
-    store = get_vector_store(kb_row.vector_store_id if kb_row else None)
+    rows, image_rows, chunk_ids = build_doc_chunk_rows(
+        db, kb_id, document_id, chunks, meta,
+        parent_seq_by_child=parent_seq_by_child,
+        parent_texts=parent_texts,
+        image_chunks=image_chunks,
+    )
+    # 2026-10-16: 批量 INSERT 替代逐条 db.add——单条语句一次拿齐全部行锁，
+    # 缩短事务持锁窗口，降低并发 ingest 时的 MySQL 1213 死锁概率
+    # （此前逐条 add 的二级索引间隙锁竞争是死锁根因之一）。seq 与向量逐一对应，语义不变。
+    # 旧切片 id（重解析/重摄入时需先删向量介质里的旧向量）
     stale_ids = [
         row[0]
         for row in db.execute(
             select(DocChunk.id).where(DocChunk.document_id == document_id)
         ).all()
     ]
-    db.execute(delete(DocChunk).where(DocChunk.document_id == document_id))
-    db.flush()
-    store.delete_by_chunks(stale_ids)
+    write_doc_chunk_rows(db, document_id, rows)
+    return upsert_chunk_vectors(
+        db, kb_id, rows, vectors, image_rows=image_rows, image_vectors=image_vectors,
+        stale_chunk_ids=stale_ids,
+    )
 
+
+def build_doc_chunk_rows(
+    db: Session,
+    kb_id: str,
+    document_id: str,
+    chunks: list[tuple[int, str]],
+    meta: dict | None = None,
+    parent_seq_by_child: dict[int, int] | None = None,
+    parent_texts: dict[int, str] | None = None,
+    image_chunks: list[dict] | None = None,
+) -> tuple[list[dict], list[dict], list[str]]:
+    """构造切片行（不落库）。返回 (文本 rows, 图片 rows, 全部 chunk_id 列表)。"""
     base_meta = meta or {}
     rows: list[dict] = []
-    for (seq, text), vec in zip(chunks, vectors):
+    for seq, text in chunks:
         chunk_id = _doc_id()
         row_meta = dict(base_meta)
         if parent_seq_by_child and seq in parent_seq_by_child:
@@ -149,16 +195,12 @@ def replace_document_chunks(
                 "enabled": True,
             }
         )
-        store.upsert(kb_id, chunk_id, vec)
-    # 2026-10-19 图片语义子 chunk（image_ocr/image_caption）：与文本 chunks
-    # 同批写库 + 向量化（对齐 WeKnora image:multimodal 产出可检索图片 chunk）。
-    # image_vectors 与 image_chunks 一一对应；embed 降级时向量缺失 → 仅写业务库
-    # （keyword 检索仍可命中），有向量的才 upsert 向量库。
+    image_rows: list[dict] = []
     for idx, ic in enumerate(image_chunks or []):
         cid = ic.get("id") or _doc_id()
         row_meta = dict(ic.get("meta") or {})
         row_meta.update(base_meta)
-        rows.append(
+        image_rows.append(
             {
                 "id": cid,
                 "kb_id": kb_id,
@@ -170,14 +212,65 @@ def replace_document_chunks(
                 "enabled": True,
             }
         )
-        if image_vectors and idx < len(image_vectors):
-            store.upsert(kb_id, cid, image_vectors[idx])
-    # 2026-10-16: 批量 INSERT 替代逐条 db.add——单条语句一次拿齐全部行锁，
-    # 缩短事务持锁窗口，降低并发 ingest 时的 MySQL 1213 死锁概率
-    # （此前逐条 add 的二级索引间隙锁竞争是死锁根因之一）。seq 与向量逐一对应，语义不变。
+    chunk_ids = [r["id"] for r in rows] + [r["id"] for r in image_rows]
+    return rows, image_rows, chunk_ids
+
+
+def write_doc_chunk_rows(db: Session, document_id: str, rows: list[dict]) -> None:
+    """删除旧切片并批量写入新切片行（业务库 doc_chunk）。"""
+    from api.models.knowledge import DocChunk
+
+    stale_ids = [
+        row[0]
+        for row in db.execute(
+            select(DocChunk.id).where(DocChunk.document_id == document_id)
+        ).all()
+    ]
+    db.execute(delete(DocChunk).where(DocChunk.document_id == document_id))
+    db.flush()
     if rows:
         db.execute(insert(DocChunk), rows)
-    return len(rows)
+    return None
+
+
+def upsert_chunk_vectors(
+    db: Session,
+    kb_id: str,
+    rows: list[dict],
+    vectors: list[list[float]],
+    image_rows: list[dict] | None = None,
+    image_vectors: list[list[float]] | None = None,
+    enhance_by_chunk: dict[str, dict] | None = None,
+    stale_chunk_ids: list[str] | None = None,
+) -> int:
+    """向量 upsert（向量介质）：文本行与向量一一对应；图片行有向量才 upsert。
+
+    2026-10-25 增强：enhance_by_chunk {chunk_id: enhance_dict} 非空时走
+    upsert_with_enhance（PG enhance_meta 列 / ES enhance_* 字段同 doc 写入）。
+    stale_chunk_ids：被替换掉的旧切片向量（重解析/重摄取代价——先删再写）。
+    """
+    from api.models.knowledge import KbDatasource
+    from api.services.vector_store import get_vector_store
+
+    kb_row = db.get(KbDatasource, kb_id)
+    store = get_vector_store(kb_row.vector_store_id if kb_row else None)
+    if stale_chunk_ids:
+        store.delete_by_chunks(stale_chunk_ids)
+    for row, vec in zip(rows, vectors):
+        enh = (enhance_by_chunk or {}).get(row["id"])
+        if enh:
+            store.upsert_with_enhance(kb_id, row["id"], vec, enh)
+        else:
+            store.upsert(kb_id, row["id"], vec)
+    # 2026-10-19 图片语义子 chunk（image_ocr/image_caption）：与文本 chunks
+    # 同批写库 + 向量化（对齐 WeKnora image:multimodal 产出可检索图片 chunk）。
+    # image_vectors 与 image_chunks 一一对应；embed 降级时向量缺失 → 仅写业务库
+    # （keyword 检索仍可命中），有向量的才 upsert 向量库。
+    for idx, ic in enumerate(image_rows or []):
+        cid = ic.get("id") or ""
+        if image_vectors and idx < len(image_vectors):
+            store.upsert(kb_id, cid, image_vectors[idx])
+    return len(rows) + len(image_rows or [])
 
 
 def update_document_state(
@@ -456,10 +549,110 @@ def ingest_document(
             logger.warning("image chunks generation failed for doc %s", document.id, exc_info=True)
             image_chunks = []
 
+    # 2.5 切片落库（供增强编排 n1 读 doc_chunk）——2026-10-25 增强链路：
+    # 无增强时按原路径（embed → replace_document_chunks 一步入库）；
+    # 有增强时先落切片，编排 LLM 逐片加工（读 doc_chunk）后再向量化入库。
+    meta = {"source_file": document.file_name, "parse_engine": used_engine}
+    enhance_by_chunk: dict[str, dict] | None = None
+    kb_enhance_cfg: dict = {}
+    doc_process_config: dict = {}
+    try:
+        from api.models.knowledge import KbDatasource
+
+        kb_row = kb_db.get(KbDatasource, document.kb_id)
+        kb_enhance_cfg = dict((kb_row.enhancement_config or {}) if kb_row else {})
+    except Exception:  # noqa: BLE001 — 配置读取失败 = 不增强，不阻断
+        kb_enhance_cfg = {}
+    if document.process_config:
+        try:
+            parsed_pc = json.loads(document.process_config)
+            if isinstance(parsed_pc, dict):
+                doc_process_config = parsed_pc
+        except (TypeError, json.JSONDecodeError):
+            doc_process_config = {}
+    try:
+        from api.services.chunk_enhance import enhancement_enabled
+
+        enhance_on = enhancement_enabled(kb_enhance_cfg, doc_process_config)
+    except Exception:  # noqa: BLE001 — 解析失败 = 不增强
+        enhance_on = False
+
+    chunk_rows: list[dict] = []
+    stale_ids: list[str] = []
+    if enhance_on:
+        # 先落切片（编排 n1 从 doc_chunk 读）→ 同步门增强 → 带增强向量化入库
+        try:
+            from api.services.ingest import build_doc_chunk_rows
+
+            chunk_rows, image_rows_build, _ids = build_doc_chunk_rows(
+                kb_db, document.kb_id, document.id, chunks, meta,
+                parent_seq_by_child=parent_seq_by_child if chunk_cfg.enable_parent_child else None,
+                parent_texts=parent_texts if chunk_cfg.enable_parent_child else None,
+            )
+            stale_ids = [
+                row[0]
+                for row in kb_db.execute(
+                    select(DocChunk.id).where(DocChunk.document_id == document.id)
+                ).all()
+            ]
+            write_doc_chunk_rows(kb_db, document.id, chunk_rows)
+            kb_db.commit()
+        except Exception as e:  # noqa: BLE001 — 落库失败不阻断：退回无增强一步入库
+            logger.exception("pre-write chunks failed for doc %s", document.id)
+            kb_db.rollback()
+            chunk_rows = []
+        if chunk_rows:
+            # 触发增强编排（同步门：run 终态后读 enhancement）
+            enhancement = None
+            try:
+                from api.services.chunk_enhance import run_chunk_enhance_sync
+
+                cookie = str(doc_process_config.get("x_next_identity") or "")
+                enhancement = run_chunk_enhance_sync(
+                    kb_db, document.kb_id, document.id, cookie=cookie
+                )
+            except Exception as exc:  # noqa: BLE001 — 编排失败不阻断入库
+                logger.warning("chunk enhance failed for doc %s: %s", document.id, exc)
+                enhancement = None
+            if enhancement:
+                # 按 seq → chunk_id 映射组装 enhance_by_chunk
+                enhance_by_chunk = {}
+                seq_to_chunk_id = {int(r["seq"]): r["id"] for r in chunk_rows}
+                for c in enhancement.get("chunks") or []:
+                    cid = seq_to_chunk_id.get(int(c.get("seq") or -1))
+                    if not cid:
+                        continue
+                    enhance_by_chunk[cid] = {
+                        "title": str(enhancement.get("title") or ""),
+                        "abstract": str(enhancement.get("abstract") or ""),
+                        "doc_keywords": list(enhancement.get("doc_keywords") or []),
+                        "chunk_keywords": list(c.get("keywords") or []),
+                        "chunk_questions": list(c.get("questions") or []),
+                    }
+                result["enhanced"] = True
+                logger.info(
+                    "doc %s enhanced: %d chunks", document.id, len(enhance_by_chunk)
+                )
+
     # 3. embed（失败必须显式 FAILED，否则文档停在 EMBEDDING 残留——历史坑）
+    # 2026-10-25 向量化文本对齐 duowen：增强开启且有摘要/标题时用
+    # <document-slice> XML 模板包装（标题/摘要进向量语义），否则裸正文
+    # （行为与接入前一致）。
     update_document_state(kb_db, document.id, "EMBEDDING")
     kb_db.commit()
-    texts = [text for _, text in chunks]
+    doc_enh_title = ""
+    doc_enh_abstract = ""
+    if enhance_by_chunk:
+        first_enh = next(iter(enhance_by_chunk.values()), None)
+        if first_enh:
+            doc_enh_title = str(first_enh.get("title") or "")
+            doc_enh_abstract = str(first_enh.get("abstract") or "")
+    texts: list[str] = []
+    if enhance_by_chunk and (doc_enh_title or doc_enh_abstract):
+        for _, text in chunks:
+            texts.append(context_template(text, doc_enh_title, doc_enh_abstract))
+    else:
+        texts = [text for _, text in chunks]
     try:
         vectors = embed_chunks(embedding_client, texts)
     except Exception as e:  # noqa: BLE001
@@ -486,17 +679,25 @@ def ingest_document(
     # 这里重试最多 3 次（含首跑），每次重试前 rollback 已失效事务；非死锁或重试
     # 耗尽则显式回写 parse_state=FAILED（对齐 parse/embed 两段的兜底，防止文档
     # 卡在 EMBEDDING 残留——历史坑：store 段无兜底导致「任务失败仍显示向量化中」）。
-    meta = {"source_file": document.file_name, "parse_engine": used_engine}
     written = 0
     for attempt in range(3):
         try:
-            written = replace_document_chunks(
-                            kb_db, document.kb_id, document.id, chunks, vectors, meta,
-                            parent_seq_by_child=parent_seq_by_child if chunk_cfg.enable_parent_child else None,
-                            parent_texts=parent_texts if chunk_cfg.enable_parent_child else None,
-                            image_chunks=image_chunks or None,
-                            image_vectors=image_vectors or None,
-                        )
+            if chunk_rows:
+                # 增强链路：切片已先落库（2.5 段）——这里只写向量（带 enhance）
+                written = upsert_chunk_vectors(
+                    kb_db, document.kb_id, chunk_rows, vectors,
+                    image_rows=None, image_vectors=image_vectors or None,
+                    enhance_by_chunk=enhance_by_chunk,
+                    stale_chunk_ids=stale_ids if stale_ids else None,
+                )
+            else:
+                written = replace_document_chunks(
+                                kb_db, document.kb_id, document.id, chunks, vectors, meta,
+                                parent_seq_by_child=parent_seq_by_child if chunk_cfg.enable_parent_child else None,
+                                parent_texts=parent_texts if chunk_cfg.enable_parent_child else None,
+                                image_chunks=image_chunks or None,
+                                image_vectors=image_vectors or None,
+                            )
             break
         except Exception as e:  # noqa: BLE001
             orig = getattr(e, "orig", None)

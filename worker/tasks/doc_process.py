@@ -110,7 +110,8 @@ def embed_document(document_id: str) -> dict:
     """Re-embed an existing document's chunks (embedding-model-change path).
 
     Chunks live in the business store; their new vectors go to the vector
-    store (kb_embedding) via VectorStore.
+    store (kb_embedding) via VectorStore. 2026-10-25: 重嵌入保留增强字段
+    （重算向量时不丢切片关键词/问题——先读旧 enhance，新向量同字段写回）。
     """
     from api.services.vector_store import get_vector_store
 
@@ -130,8 +131,18 @@ def embed_document(document_id: str) -> dict:
         texts = [c.content for c in chunks]
         vectors = client.embed_texts(texts)
         store = get_vector_store()
+        # 读旧增强字段（无增强的 chunk 不出现在返回字典 → 走普通 upsert）
+        enhances = {}
+        try:
+            enhances = store.read_enhances([c.id for c in chunks]) or {}
+        except Exception:  # noqa: BLE001 — 增强读取失败不阻断重嵌入
+            enhances = {}
         for chunk, vec in zip(chunks, vectors):
-            store.upsert(chunk.kb_id, chunk.id, l2_normalize(vec))
+            enh = enhances.get(chunk.id)
+            if enh:
+                store.upsert_with_enhance(chunk.kb_id, chunk.id, l2_normalize(vec), enh)
+            else:
+                store.upsert(chunk.kb_id, chunk.id, l2_normalize(vec))
         return {"success": True, "document_id": document_id, "embedded": len(chunks)}
     finally:
         db.close()

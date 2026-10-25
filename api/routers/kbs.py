@@ -149,6 +149,9 @@ class KBCreateRequest(BaseModel):
     # {"topic_cluster_enabled": bool, "topic_cluster_topics": [...],
     #  "version_cluster_enabled": bool, "cron_expression": "0 2 * * *"}
     aggregation_config: dict | None = None
+    # ── 切片智能增强配置（2026-10-25）──
+    # {"enabled": bool, "keywords_dividend": 120, "questions_dividend": 180, "max_chunks": 0}
+    enhancement_config: dict | None = None
 
 
 class KBUpdateRequest(BaseModel):
@@ -173,6 +176,8 @@ class KBUpdateRequest(BaseModel):
     repo_auth_secret: str | None = None
     # ── 知识聚合配置（2026-10-25：配置在 payload 才更新 + 同步定时任务）──
     aggregation_config: dict | None = None
+    # ── 切片智能增强配置（2026-10-25：配置在 payload 才更新）──
+    enhancement_config: dict | None = None
 
 
 class SearchRequest(BaseModel):
@@ -405,6 +410,7 @@ def post_kb(
             repo_auth_type=req.repo_auth_type,
             repo_auth_secret=req.repo_auth_secret,
             aggregation_config=req.aggregation_config,
+            enhancement_config=req.enhancement_config,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

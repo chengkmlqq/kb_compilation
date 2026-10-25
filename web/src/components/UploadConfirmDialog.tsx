@@ -30,6 +30,8 @@ export interface UploadProcessConfig {
   parser_engine_rules?: Array<{ file_types: string[]; engine: string }>;
   /** 摘要生成策略（文件级覆盖 KB 默认 summary_strategy）：off/auto/stuff/mapreduce/refine */
   summary_strategy?: string;
+  /** 切片智能增强（文件级覆盖 KB 默认 enhancement_config.enabled）：on/off（缺省跟随 KB） */
+  enhancement?: string;
 }
 
 export interface UploadConfirmResult {
@@ -39,6 +41,8 @@ export interface UploadConfirmResult {
   buildEngine?: string;
   /** 文档级摘要生成策略（重选覆盖 KB 默认 summary_strategy；空 = 跟随知识库默认） */
   summaryStrategy?: string;
+  /** 切片智能增强（文件级覆盖 KB 默认；空 = 跟随知识库默认） */
+  enhancement?: string;
   /**
    * 目录上传专用：是否按子目录结构在知识库内创建文档目录（默认 true）。
    * 仅当 files 带 webkitRelativePath（来自「上传文件夹」）时有意义。
@@ -124,6 +128,8 @@ export default function UploadConfirmDialog({
   const [showParser, setShowParser] = useState(false);
   const [buildEngine, setBuildEngine] = useState<string>("");
   const [summaryStrategy, setSummaryStrategy] = useState<string>("");
+  // 切片智能增强（文件级覆盖 KB 默认；空 = 跟随知识库默认）
+  const [enhancement, setEnhancement] = useState<string>("");
   // 目录上传：按子目录结构在知识库内创建文档目录（默认开）
   const [mirrorFolders, setMirrorFolders] = useState<boolean>(true);
   // 「继续添加」按钮点击不到隐藏 input（label 包裹 button 时 antd Button 会阻止
@@ -218,11 +224,13 @@ export default function UploadConfirmDialog({
       if (rules.length > 0) pc.parser_engine_rules = rules;
     }
     if (summaryStrategy) pc.summary_strategy = summaryStrategy;
+    if (enhancement) pc.enhancement = enhancement;
     onConfirm({
       files: [...files],
-      processConfig: hasChunkingDiff || !!summaryStrategy ? pc : null,
+      processConfig: hasChunkingDiff || !!summaryStrategy || !!enhancement ? pc : null,
       buildEngine: buildEngine || undefined,
       summaryStrategy: summaryStrategy || undefined,
+      enhancement: enhancement || undefined,
       mirrorFolders: dirUpload ? mirrorFolders : undefined,
     });
   };
@@ -241,8 +249,11 @@ export default function UploadConfirmDialog({
     const summary = summaryStrategy
       ? (SUMMARY_STRATEGY_OPTIONS.find((o) => o.value === summaryStrategy)?.label || summaryStrategy)
       : "跟随知识库默认";
-    return `Wiki 构建：${wiki} · 摘要：${summary}`;
-  }, [buildEngine, summaryStrategy, buildEngines]);
+    const enhance = enhancement
+      ? (enhancement === "on" ? "开启" : "关闭")
+      : "跟随知识库默认";
+    return `Wiki 构建：${wiki} · 摘要：${summary} · 切片增强：${enhance}`;
+  }, [buildEngine, summaryStrategy, enhancement, buildEngines]);
 
   // 右侧配置面板标题（配置项名 + 当前取值摘要），供 Collapse 逐项展开使用
   const panelLabel = (title: string, value: string, highlight = false) => (
@@ -523,6 +534,23 @@ export default function UploadConfirmDialog({
                         value={buildEngine || undefined}
                         onChange={setBuildEngine}
                         options={groupBuildEngineOptions(buildEngines)}
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      label="切片智能增强"
+                      tooltip="文档解析切分完成后自动调用 LLM 逐切片提取关键词/生成问题（随向量存储，检索命中率提升）；开启可能增加解析耗时"
+                      extra={enhancement ? undefined : "当前跟随知识库默认"}
+                    >
+                      <Select
+                        style={{ width: "100%" }}
+                        allowClear
+                        placeholder="跟随知识库默认"
+                        value={enhancement || undefined}
+                        onChange={setEnhancement}
+                        options={[
+                          { value: "on", label: "开启（推荐）" },
+                          { value: "off", label: "关闭" },
+                        ]}
                       />
                     </Form.Item>
                     <Text type="secondary" style={{ fontSize: 12 }}>仅对本次上传的文件生效，不修改知识库默认配置</Text>

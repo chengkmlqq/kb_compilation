@@ -381,18 +381,34 @@ def list_agents(db: Session, team_name: str | None = None, page: int = 1, page_s
 # ---------------------------------------------------------------------------
 
 
-def resolve_kb_scope(db: Session, agent: KbAgent) -> list[KbDatasource]:
-    """Which KBs an agent may retrieve from, per kb_selection_mode."""
+def resolve_kb_scope(
+    db: Session,
+    agent: KbAgent,
+    caller_user_id: str = "",
+    caller_team_name: str = "",
+    is_sys_admin: bool = False,
+) -> list[KbDatasource]:
+    """Which KBs an agent may retrieve from, per kb_selection_mode.
+
+    2026-10-25 个人语义对齐：无论 selected/all，最终可见范围都按调用者
+    过滤（visible_clauses：个人库仅 owner、团队库仅本团队、系统库全员可读，
+    对齐 shandong 知识集 dasup_corpus_perm 的 user/team/role 语义）。
+    """
+    from api.services.scope import visible_clauses
+
     cfg = config_from_dict(agent.config or {})
+    stmt = select(KbDatasource).where(KbDatasource.state == "1")
     if cfg.kb_selection_mode == KB_SELECTION_SELECTED:
         kb_ids = cfg.knowledge_bases
-        return list(db.execute(select(KbDatasource).where(KbDatasource.id.in_(kb_ids))).scalars().all())
-    if cfg.kb_selection_mode == KB_SELECTION_NONE:
+        stmt = stmt.where(KbDatasource.id.in_(kb_ids))
+    elif cfg.kb_selection_mode == KB_SELECTION_NONE:
         return []
-    # all: agent's team KBs (or all if no team scope)
-    stmt = select(KbDatasource).where(KbDatasource.state == "1")
-    if agent.team_name:
-        stmt = stmt.where(KbDatasource.team_name == agent.team_name)
+    else:
+        # all: 不预限团队——由下方可见性联合过滤（个人/团队/系统）
+        pass
+    clauses = visible_clauses(caller_user_id, caller_team_name, is_sys_admin, KbDatasource)
+    if clauses:
+        stmt = stmt.where(*clauses)
     return list(db.execute(stmt).scalars().all())
 
 

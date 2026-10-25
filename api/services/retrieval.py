@@ -58,6 +58,10 @@ class ChunkHit:
     # 2026-10-20 向量臂原始余弦相似度（融合后 score 被 RRF 分覆盖，保留此字段
     # 做统一的相关性门槛；关键词-only 命中为 None）。0-1，越高越相关。
     vector_score: float | None = None
+    # 切片增强元数据（2026-10-25 对齐 duowen）：向量臂命中带回的
+    # {title, abstract, doc_keywords, chunk_keywords, chunk_questions}，
+    # 检索时按增强词加权升位。无增强的命中为 None。
+    enhance: dict | None = None
 
 
 @dataclass
@@ -154,11 +158,15 @@ def vector_search(
     backend (data-source management); None uses the platform default.
     `chunk_ids` 非空时只在该切片集合内检索（agent 多跳深读：锁定文档后
     仅在该文档的切片里做向量召回）。
+
+    2026-10-25 增强检索对齐 duowen：走 search_enhanced 把切片增强元数据
+    （标题/摘要/关键词/问题）带回 ChunkHit.enhance，检索融合后按增强词
+    加权升位（见 enhance_boost）。
     """
     from api.services.vector_store import get_vector_store
 
     try:
-        hits = get_vector_store(vector_store_id).search(
+        hits = get_vector_store(vector_store_id).search_enhanced(
             kb_id,
             query_embedding,
             top_k=cfg.top_k,
@@ -179,6 +187,7 @@ def vector_search(
                 score=hit.score,
                 vector_rank=rank,
                 vector_score=hit.score,  # 2026-10-20 保留原始余弦分供弱命中过滤
+                enhance=hit.enhance,  # 2026-10-25 增强字段参与加权升位
             )
         )
     return out
@@ -410,6 +419,86 @@ def fuse_rrf(
     return fused[: cfg.top_k]
 
 
+# ── 切片增强加权升位（2026-10-25 对齐 duowen 检索权重）────────────
+# duowen ES 字段权重：important_keyword(切片关键词)^30 / question(问题)^20 /
+# title^10 / content^2。kb 无 ES 原生加权（PG/ES 介质通用），在 RRF 融合后
+# 应用侧加分实现同等语义：命中增强词的切片在排序时显著升位，未增强命中不动。
+
+# 增强词命中加分权重（相对融合分 1/(60+rank) 量级，30/20/10 权重折算为
+# 直接加分：融合分通常 ~0.01-0.02，增强命中一次 +0.05 即可拉开一个身位）
+ENHANCE_KEYWORD_BOOST = 0.05   # 切片关键词命中（duowen ^30 语义）
+ENHANCE_QUESTION_BOOST = 0.03  # 切片问题命中（duowen ^20 语义）
+ENHANCE_TITLE_BOOST = 0.02     # 标题命中（duowen ^10 语义）
+
+
+def _enhance_term_hits(enhance: dict | None, terms: list[str]) -> float:
+    """计算一个命中的增强加分（查询词 vs 增强词集合的命中计数加权）。"""
+    if not enhance or not terms:
+        return 0.0
+    bonus = 0.0
+    chunk_keywords = enhance.get("chunk_keywords") or []
+    chunk_questions = enhance.get("chunk_questions") or []
+    title = str(enhance.get("title") or "")
+
+    # 查询词（切词结果）与增强词的匹配：整词包含即命中
+    def _hit_count(candidates: list) -> int:
+        if not candidates:
+            return 0
+        cnt = 0
+        for t in terms:
+            if any(t in str(c) for c in candidates):
+                cnt += 1
+        return cnt
+
+    kw_hits = _hit_count(chunk_keywords)
+    if kw_hits:
+        bonus += ENHANCE_KEYWORD_BOOST * kw_hits
+    q_hits = _hit_count(chunk_questions)
+    if q_hits:
+        bonus += ENHANCE_QUESTION_BOOST * q_hits
+    if title and any(t in title for t in terms):
+        bonus += ENHANCE_TITLE_BOOST
+    return bonus
+
+
+def enhance_boost(hits: list[ChunkHit], query: str) -> list[ChunkHit]:
+    """融合后对带增强字段的命中按增强词加权升位（PG/ES 介质通用）。
+
+    只加分不删减：未增强命中（存量数据/未开增强的库）分数不变，排序行为
+    与接入前一致；增强命中因关键词/问题/标题命中获得升位，逼近 duowen
+    的字段加权检索效果。返回新列表（不改入参）。
+    """
+    if not hits or not query or not query.strip():
+        return hits
+    terms = _split_terms(query)
+    if not terms:
+        return hits
+
+    out: list[ChunkHit] = []
+    for h in hits:
+        bonus = _enhance_term_hits(h.enhance, terms)
+        if bonus > 0:
+            # 浅拷贝命中，加分写副本避免污染上层引用
+            boosted = ChunkHit(
+                chunk_id=h.chunk_id,
+                content=h.content,
+                document_id=h.document_id,
+                kb_id=h.kb_id,
+                score=h.score + bonus,
+                vector_rank=h.vector_rank,
+                keyword_rank=h.keyword_rank,
+                meta=h.meta,
+                document_title=h.document_title,
+                vector_score=h.vector_score,
+                enhance=h.enhance,
+            )
+            out.append(boosted)
+        else:
+            out.append(h)
+    out.sort(key=lambda h: h.score, reverse=True)
+    return out
+
+
 def hydrate_metadata(db: Session, hits: list[ChunkHit]) -> list[ChunkHit]:
     """Fill content/document_id/meta for vector-only hits from the business store.
 
@@ -538,6 +627,9 @@ def hybrid_search(
         keyword_hits = keyword_search(db, kb_id, query, cfg, document_id=document_id)
 
     fused = fuse_rrf(vector_hits, keyword_hits, cfg)
+    # 2026-10-25 增强加权升位：带增强字段的命中按关键词/问题/标题命中加分
+    # （对齐 duowen 字段加权检索；PG/ES 介质通用，未增强命中行为不变）
+    fused = enhance_boost(fused, query)
     hydrated = hydrate_metadata(db, fused)
     # 2026-10-20 相关性过滤：幽灵空引用 + 向量弱命中（寒暄问题不再引用无关片段）
     return _filter_weak_hits(hydrated, cfg)

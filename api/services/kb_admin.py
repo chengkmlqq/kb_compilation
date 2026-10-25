@@ -253,6 +253,8 @@ def create_kb(
     repo_auth_secret: str = "",
     # ── 知识聚合配置（2026-10-25）：主题聚类/版本聚类开关 + 主题列表 + 定时频率
     aggregation_config: dict | None = None,
+    # ── 切片智能增强配置（2026-10-25）：开启后解析完成触发增强编排
+    enhancement_config: dict | None = None,
 ) -> KbDatasource:
     """Create a KB; name is required, id is generated if absent.
 
@@ -345,6 +347,10 @@ def create_kb(
         from api.services.aggregation import normalize_aggregation_config
 
         kb.aggregation_config = normalize_aggregation_config(aggregation_config)
+    if enhancement_config is not None:
+        from api.services.chunk_enhance import normalize_enhancement_config
+
+        kb.enhancement_config = normalize_enhancement_config(enhancement_config)
     db.add(kb)
     db.commit()
     db.refresh(kb)
@@ -467,6 +473,10 @@ def update_kb(
         from api.services.aggregation import normalize_aggregation_config
 
         kb.aggregation_config = normalize_aggregation_config(fields["aggregation_config"])
+    if "enhancement_config" in fields and isinstance(fields["enhancement_config"], dict):
+        from api.services.chunk_enhance import normalize_enhancement_config
+
+        kb.enhancement_config = normalize_enhancement_config(fields["enhancement_config"])
     raw_cfg = fields.get("configs")
     cfg: dict = raw_cfg if isinstance(raw_cfg, dict) else {}
     normalizers = {
@@ -773,6 +783,8 @@ def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0, keyword_
         "repo_file_count": getattr(kb, "repo_file_count", None) or 0,
         # ── 知识聚合配置（2026-10-25，配置弹窗回填）──
         "aggregation_config": getattr(kb, "aggregation_config", None) or {},
+        # ── 切片智能增强配置（2026-10-25，配置弹窗回填）──
+        "enhancement_config": getattr(kb, "enhancement_config", None) or {},
     }
 
 
