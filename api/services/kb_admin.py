@@ -251,6 +251,8 @@ def create_kb(
     repo_branch: str = "",
     repo_auth_type: str = "none",
     repo_auth_secret: str = "",
+    # ── 知识聚合配置（2026-10-25）：主题聚类/版本聚类开关 + 主题列表 + 定时频率
+    aggregation_config: dict | None = None,
 ) -> KbDatasource:
     """Create a KB; name is required, id is generated if absent.
 
@@ -339,6 +341,10 @@ def create_kb(
         repo_auth_secret=encrypted_secret,
         state="1",
     )
+    if aggregation_config is not None:
+        from api.services.aggregation import normalize_aggregation_config
+
+        kb.aggregation_config = normalize_aggregation_config(aggregation_config)
     db.add(kb)
     db.commit()
     db.refresh(kb)
@@ -351,6 +357,9 @@ def create_kb(
         else:
             db.add(KbOntologySchema(kb_id=kb.id, schema_name=ontology_schema_name))
         db.commit()
+    # 知识聚合（2026-10-25）：开启开关 → 建每日定时任务 + 立即触发一次编排
+    if kb.aggregation_config:
+        _sync_and_trigger_aggregation(db, kb, kb.aggregation_config, trigger=True)
     return kb
 
 
@@ -454,6 +463,10 @@ def update_kb(
             kb.vector_store_id = new_store
     if "indexing_strategy" in fields and isinstance(fields["indexing_strategy"], dict):
         kb.indexing_strategy = normalize_indexing_strategy(fields["indexing_strategy"])
+    if "aggregation_config" in fields and isinstance(fields["aggregation_config"], dict):
+        from api.services.aggregation import normalize_aggregation_config
+
+        kb.aggregation_config = normalize_aggregation_config(fields["aggregation_config"])
     raw_cfg = fields.get("configs")
     cfg: dict = raw_cfg if isinstance(raw_cfg, dict) else {}
     normalizers = {
@@ -479,6 +492,9 @@ def update_kb(
         _apply_repo_fields(db, kb, fields)
     db.commit()
     db.refresh(kb)
+    # 知识聚合（2026-10-25）：配置在 payload 才同步 cron + 立即触发
+    if "aggregation_config" in fields and isinstance(fields["aggregation_config"], dict):
+        _sync_and_trigger_aggregation(db, kb, kb.aggregation_config or {}, trigger=True)
     return kb
 
 
@@ -601,6 +617,15 @@ def delete_kb(db: Session, kb_id: str) -> dict:
     #      关联任务行残留 PENDING, celery 仍会消费 -> agent 为已删库建页）
     _cancel_kb_tasks(db, kb_id)
 
+    # 1.6) 级联删除知识聚合定时任务（2026-10-25：否则删除后定时任务仍按
+    #      cron 触发编排 → 对已删知识库建 wiki 页）
+    try:
+        from api.services.aggregation import delete_aggregation_crons
+
+        delete_aggregation_crons(db, kb_id)
+    except Exception as exc:  # noqa: BLE001 — 清理失败不阻塞删除
+        logging.getLogger(__name__).warning("聚合定时任务清理失败(kb=%s): %s", kb_id, exc)
+
     # 2) wiki 层：链接 → 页面 → 文件夹
     db.execute(delete(WikiLink).where(WikiLink.kb_id == kb_id))
     db.execute(delete(WikiPage).where(WikiPage.kb_id == kb_id))
@@ -665,6 +690,45 @@ def delete_kb(db: Session, kb_id: str) -> dict:
     }
 
 
+def _sync_and_trigger_aggregation(
+    db: Session, kb: KbDatasource, cfg: dict, trigger: bool = True
+) -> None:
+    """同步知识聚合定时任务 + 立即触发一次编排（create/update 共用）。
+
+    - sync_aggregation_crons：按开关 upsert/删除 modo_cron_task（每日定时）。
+    - trigger=True 时对开启的聚合项各触发一次编排（幂等：同编排已有
+      queued/running run 会跳过），满足「修改配置立即聚合」。
+    触发失败不抛（best-effort，定时任务兜底每日执行）；cron 同步失败抛
+    异常让保存失败（配置了开关却没有定时任务=功能缺失，应阻止保存）。
+    """
+    from api.services.aggregation import (
+        TAPE_NAME_TOPIC_CLUSTER,
+        TAPE_NAME_VERSION_EVOLUTION,
+        enqueue_aggregation_run,
+        sync_aggregation_crons,
+    )
+
+    _ = sync_aggregation_crons(db, kb.id, kb.name or kb.id, cfg)
+    if not trigger:
+        return
+    if cfg.get("topic_cluster_enabled"):
+        try:
+            enqueue_aggregation_run(
+                db, TAPE_NAME_TOPIC_CLUSTER, kb.id, cfg.get("topic_cluster_topics") or []
+            )
+        except Exception as exc:  # noqa: BLE001 — 触发失败不阻断保存
+            logging.getLogger(__name__).warning(
+                "主题聚合立即执行失败(kb=%s): %s", kb.id, exc
+            )
+    if cfg.get("version_cluster_enabled"):
+        try:
+            enqueue_aggregation_run(db, TAPE_NAME_VERSION_EVOLUTION, kb.id)
+        except Exception as exc:  # noqa: BLE001 — 触发失败不阻断保存
+            logging.getLogger(__name__).warning(
+                "版本聚类立即执行失败(kb=%s): %s", kb.id, exc
+            )
+
+
 def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0, keyword_count: int = 0, feedback_count: int = 0) -> dict:
     return {
         "id": kb.id,
@@ -707,6 +771,8 @@ def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0, keyword_
         "repo_pull_error": getattr(kb, "repo_pull_error", None) or "",
         "repo_last_pull_at": kb.repo_last_pull_at.isoformat() if kb.repo_last_pull_at else None,
         "repo_file_count": getattr(kb, "repo_file_count", None) or 0,
+        # ── 知识聚合配置（2026-10-25，配置弹窗回填）──
+        "aggregation_config": getattr(kb, "aggregation_config", None) or {},
     }
 
 
@@ -834,6 +900,16 @@ SUMMARY_STRATEGIES: tuple[str, ...] = ("off", "auto", "stuff", "mapreduce", "ref
 
 
 def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
+    """异步删除入口（2026-10-23 异步化改造）：标记 DELETING 并入队清理任务后立即返回。
+
+    级联清理（wiki 页/链接/目录、chunks、向量、存储文件、Neo4j 图谱、任务
+    监控残留）由 worker/tasks/doc_delete.purge_document 在后台执行——大文档
+    删除不再占用 HTTP 请求线程（此前同步清理数秒起步，见下方 purge 函数的
+    2026-10-21 性能注释）。broker 不可达时回退同步清理，删除语义不因队列
+    故障丢失；同步清理也失败时保持 DELETING 状态，由 beat 定时扫描重投。
+
+    幂等：文档已处于 DELETING/DELETE_FAILED 时重复调用无害（purge 幂等）。
+    """
     doc = db.execute(
         select(KbDocument).where(
             KbDocument.id == document_id, KbDocument.kb_id == kb_id
@@ -841,6 +917,44 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
     ).scalars().first()
     if not doc:
         return {"success": False, "message": f"文档不存在: {document_id}"}
+    doc.delete_state = "DELETING"
+    doc.delete_error = None
+    db.commit()
+
+    try:
+        from worker.tasks.doc_delete import enqueue_doc_delete
+
+        enqueue_doc_delete(kb_id, document_id)
+    except Exception as exc:  # noqa: BLE001 — broker 不可达：同步兜底，删除语义不丢
+        logger.warning(
+            "failed to enqueue async doc delete (doc=%s), falling back to sync purge: %s",
+            document_id, exc,
+        )
+        try:
+            purge_document_resources(db, kb_id, document_id)
+        except Exception as exc2:  # noqa: BLE001
+            logger.exception("sync purge fallback failed (doc=%s)", document_id)
+            return {
+                "success": False,
+                "message": f"删除任务提交失败，同步清理也失败: {exc2}",
+            }
+    return {"success": True, "data": {"id": document_id, "async": True}}
+
+
+def purge_document_resources(db: Session, kb_id: str, document_id: str) -> dict:
+    """完整级联清理并物理删除文档（worker 异步任务 / 同步兜底共用）。
+
+    幂等：各子步骤对已清理数据均为 no-op——wiki 粗筛找不到已删页、chunks
+    为空、向量按 chunk_id 重复删除无效果、文件删除幂等、Neo4j 子图不存在
+    即跳过、任务行为空。并发双跑（beat 重投）安全。
+    """
+    doc = db.execute(
+        select(KbDocument).where(
+            KbDocument.id == document_id, KbDocument.kb_id == kb_id
+        )
+    ).scalars().first()
+    if not doc:
+        return {"success": True, "data": {"id": document_id, "already_deleted": True}}
     # 2026-10-05 实测: 删文档后其 wiki 构建任务仍执行（假成功/白跑 LLM）——
     # 删除时先级联取消关联的未完成 wiki 任务（PENDING/RUNNING → STOPPED + revoke）。
     _cancel_related_wiki_tasks(db, document_id)

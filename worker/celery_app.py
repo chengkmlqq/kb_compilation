@@ -41,6 +41,7 @@ celery_app.conf.update(
     include=[
         "worker.tasks.scheduler",
         "worker.tasks.doc_process",
+        "worker.tasks.doc_delete",
         "worker.tasks.wiki_graph",
         "worker.tasks.agent_gateway",
         "worker.tasks.agent_worker",
@@ -48,6 +49,7 @@ celery_app.conf.update(
         "worker.tasks.table_ingest",
         "worker.tasks.prechunk_ingest",
         "worker.tasks.code_repo",
+        "worker.tasks.aggregation",
     ],
     # 队列隔离（2026-10 WeKnora 对齐）：wiki 构建的 agent 任务投到独立 agent 队列，
     # 由专用 celery-agent-worker（-Q agent）消费；文档解析留在 default 队列的
@@ -66,13 +68,21 @@ celery_app.conf.beat_schedule = {
         "task": "worker.tasks.scheduler.scan_cron_tasks",
         "schedule": settings.JOB_BEAT_SCAN_INTERVAL_SECONDS,
     },
+    # 文档异步删除兜底扫描（2026-10-23）：DELETE_FAILED / DELETING 超时重投，
+    # 与 worker/tasks/doc_delete.py::SCAN_INTERVAL_SECONDS 保持一致
+    "scan-stale-doc-deletes": {
+        "task": "worker.tasks.doc_delete.scan_stale_deletes",
+        "schedule": 300,
+    },
 }
 # Force import all task modules to register handlers in TASK_CLASS_REGISTRY
 try:
     from worker.tasks import (
         agent_gateway,
+        aggregation,
         build_retrigger,
         chunk_verify,
+        doc_delete,
         doc_process,
         feedback_fix,
         log_cleanup,

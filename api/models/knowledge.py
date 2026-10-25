@@ -101,6 +101,12 @@ class KbDatasource(Base):
     # stuff | mapreduce | refine(指定模式强制用该编排)。路由实现见
     # worker/tasks/doc_process.py::_resolve_summary_tape。
     summary_strategy: Mapped[str] = mapped_column(String(16), default="auto")
+    # 知识聚合配置（2026-10-25，迁移 0046）：开启主题聚类（含用户主题列表）
+    # 与按版本聚类后，平台自动创建调用对应编排的每日定时任务。
+    # 结构：{"topic_cluster_enabled": bool, "topic_cluster_topics": [...],
+    #        "version_cluster_enabled": bool, "cron_expression": "0 2 * * *"}
+    aggregation_config: Mapped[dict | None] = mapped_column(JSON, default=dict)
+
 
     # ── 代码仓库知识库（2026-10，迁移 0029）────────────────────────────
     # repo_type=""=普通文档库；"git"=代码仓库知识库（创建后由
@@ -172,6 +178,12 @@ class KbDocument(Base):
     row_count: Mapped[int | None] = mapped_column(BigInteger)
     # repo 源专属：文件来源 commit（增量同步 diff 判定，2026-10 迁移 0029）
     repo_commit_sha: Mapped[str] = mapped_column(String(64), default="")
+
+    # 异步删除状态（2026-10-23）："" 正常 / DELETING 删除中（级联清理未完成）/
+    # DELETE_FAILED 清理失败（celery 重试耗尽，beat 定时扫描重投）。
+    # 清理任务完成后行物理删除；删除中行保留原数据供前端展示「删除中」。
+    delete_state: Mapped[str] = mapped_column(String(16), default="", index=True)
+    delete_error: Mapped[str | None] = mapped_column(Text)
 
     created_by: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime | None] = mapped_column(

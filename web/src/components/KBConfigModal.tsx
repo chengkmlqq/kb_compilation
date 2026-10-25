@@ -18,6 +18,7 @@ import {
 } from "antd";
 import {
   BookOutlined,
+  ClusterOutlined,
   ExperimentOutlined,
   FileTextOutlined,
   PictureOutlined,
@@ -54,6 +55,7 @@ const KB_SECTIONS = [
   { key: "image", label: "图片处理", icon: <PictureOutlined /> },
   { key: "wiki", label: "Wiki 构建", icon: <BookOutlined /> },
   { key: "retrieval", label: "检索配置", icon: <SearchOutlined /> },
+  { key: "aggregation", label: "知识聚合", icon: <ClusterOutlined /> },
 ];
 
 // 切片策略下拉（中文 label + 说明）
@@ -197,6 +199,10 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
       vlm_model_id: (kb.vlm_config?.model_id as string) || undefined,
       vlm_description_language:
         (kb.vlm_config?.description_language as string) || "",
+      // 知识聚合（2026-10-25）：配置弹窗回填开关 + 主题列表
+      topic_cluster_enabled: !!kb.aggregation_config?.topic_cluster_enabled,
+      topic_cluster_topics: (kb.aggregation_config?.topic_cluster_topics as string[] | undefined) ?? [],
+      version_cluster_enabled: !!kb.aggregation_config?.version_cluster_enabled,
     });
   }, [open, kb, form]);
 
@@ -299,6 +305,16 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
           description_language:
             (values.vlm_description_language as string | undefined) || "",
         },
+      },
+      // 知识聚合（2026-10-25）：开关 + 主题列表（后端校验主题必填 + 同步定时任务 + 立即聚合）
+      aggregation_config: {
+        topic_cluster_enabled: !!values.topic_cluster_enabled,
+        topic_cluster_topics: Array.isArray(values.topic_cluster_topics)
+          ? (values.topic_cluster_topics as string[])
+              .map((t: string) => t.trim())
+              .filter(Boolean)
+          : [],
+        version_cluster_enabled: !!values.version_cluster_enabled,
       },
     };
     setSaving(true);
@@ -674,6 +690,57 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                   <Form.Item name="embedding_model_id" label="Embedding 模型（向量化）">
                     <Select allowClear showSearch optionFilterProp="label" placeholder="留空 = 系统默认" options={modelOptions("embedding")} />
                   </Form.Item>
+                </>
+              )}
+
+              {section === "aggregation" && (
+                <>
+                  <Form.Item
+                    name="topic_cluster_enabled"
+                    label="主题聚合"
+                    valuePropName="checked"
+                    extra="开启后自动为知识库创建「主题聚类」每日定时任务（每日 02:00 执行），按主题归纳跨文档综述页"
+                  >
+                    <Switch checkedChildren="开" unCheckedChildren="关" />
+                  </Form.Item>
+                  <Form.Item
+                    name="topic_cluster_topics"
+                    label="主题列表"
+                    rules={[
+                      ({ getFieldValue }) => ({
+                        validator: (_, value) => {
+                          if (getFieldValue("topic_cluster_enabled") && !(value ?? []).length) {
+                            return Promise.reject(new Error("开启主题聚合后请至少填写一个主题"));
+                          }
+                          return Promise.resolve();
+                        },
+                      }),
+                    ]}
+                    extra="按业务关注主题填写，如：采购管理、合同管理；每个主题生成一篇综述页（可新增自定义主题）"
+                  >
+                    <Select
+                      mode="tags"
+                      open={false}
+                      suffixIcon={null}
+                      placeholder="输入主题后回车添加"
+                      tokenSeparators={[","]}
+                      maxTagCount={20}
+                    />
+                  </Form.Item>
+                  <div style={{ padding: 8, background: "#f5f7fa", borderRadius: 6, color: "#4d5e7d", fontSize: 12, marginBottom: 16 }}>
+                    保存后平台自动创建「每日 02:00」定时任务调用主题聚类编排，并立即执行一次聚合。
+                  </div>
+                  <Form.Item
+                    name="version_cluster_enabled"
+                    label="按版本聚类"
+                    valuePropName="checked"
+                    extra="开启后自动为知识库创建「版本聚类」每日定时任务（每日 02:00 执行），按同名多版本文件家族生成版本演进总览页"
+                  >
+                    <Switch checkedChildren="开" unCheckedChildren="关" />
+                  </Form.Item>
+                  <div style={{ padding: 8, background: "#f5f7fa", borderRadius: 6, color: "#4d5e7d", fontSize: 12 }}>
+                    保存后平台自动创建「每日 02:00」定时任务调用版本演进编排，并立即执行一次聚类。
+                  </div>
                 </>
               )}
             </div>

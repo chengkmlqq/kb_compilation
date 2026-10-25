@@ -212,6 +212,13 @@ export interface KbItem {
   repo_pull_error?: string | null;
   repo_last_pull_at?: string | null;
   repo_file_count?: number;
+  /** 知识聚合配置（2026-10-25）：配置弹窗回填 */
+  aggregation_config?: {
+    topic_cluster_enabled?: boolean;
+    topic_cluster_topics?: string[];
+    version_cluster_enabled?: boolean;
+    cron_expression?: string;
+  };
 }
 
 export interface PageList<T> {
@@ -244,6 +251,13 @@ export interface KbUpdatePayload {
   repo_branch?: string;
   repo_auth_type?: string;
   repo_auth_secret?: string;
+  /** 知识聚合配置（2026-10-25）：配置在 payload 才更新 + 同步定时任务 + 立即聚合 */
+  aggregation_config?: {
+    topic_cluster_enabled?: boolean;
+    topic_cluster_topics?: string[];
+    version_cluster_enabled?: boolean;
+    cron_expression?: string;
+  } | null;
 }
 
 export function apiUpdateKb(kbId: string, payload: KbUpdatePayload) {
@@ -314,6 +328,13 @@ export interface KbCreatePayload {
   repo_branch?: string;
   repo_auth_type?: string; // none / token / ssh_key / user_pass
   repo_auth_secret?: string; // 明文凭证（仅创建/修改时提交，读取不回显）
+  /** 知识聚合配置（2026-10-25）：主题聚类开关+主题列表 / 版本聚类开关 */
+  aggregation_config?: {
+    topic_cluster_enabled?: boolean;
+    topic_cluster_topics?: string[];
+    version_cluster_enabled?: boolean;
+    cron_expression?: string;
+  };
 }
 
 export function apiCreateKb(payload: KbCreatePayload) {

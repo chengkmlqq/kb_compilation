@@ -20,6 +20,7 @@ import {
 } from "antd";
 import {
   BookOutlined,
+  ClusterOutlined,
   CodeOutlined,
   CommentOutlined,
   DeleteOutlined,
@@ -232,6 +233,7 @@ const CREATE_SECTIONS = [
   { key: "source", label: "知识来源", icon: <CodeOutlined /> },
   { key: "wiki", label: "Wiki 构建", icon: <BookOutlined /> },
   { key: "retrieval", label: "检索配置", icon: <SearchOutlined /> },
+  { key: "aggregation", label: "知识聚合", icon: <ClusterOutlined /> },
 ];
 
 /** 知识库详情分段：文档 / Wiki / 知识图谱(Neo4j) / wiki 关系图 / 代码仓库(2026-10)，各自成为顶层动态选项卡 */
@@ -744,6 +746,16 @@ export default function KbsPage() {
       repo_branch: isRepo ? all.repo_branch || "" : "",
       repo_auth_type: isRepo ? all.repo_auth_type || "none" : "none",
       repo_auth_secret: isRepo ? all.repo_auth_secret || "" : "",
+      // 知识聚合（2026-10-25）：开关 + 主题列表（后端校验主题必填 + 建定时任务 + 立即聚合）
+      aggregation_config: {
+        topic_cluster_enabled: !!all.topic_cluster_enabled,
+        topic_cluster_topics: Array.isArray(all.topic_cluster_topics)
+          ? (all.topic_cluster_topics as string[])
+              .map((t) => t.trim())
+              .filter(Boolean)
+          : [],
+        version_cluster_enabled: !!all.version_cluster_enabled,
+      },
     };
     const res = await apiCreateKb(payload);
     if (res.success) {
@@ -1333,6 +1345,57 @@ export default function KbsPage() {
                     >
                       <Select allowClear showSearch optionFilterProp="label" options={embeddingOptions} placeholder="选择向量模型" />
                     </Form.Item>
+                  </>
+                )}
+
+                {createSection === "aggregation" && (
+                  <>
+                    <Form.Item
+                      name="topic_cluster_enabled"
+                      label="主题聚合"
+                      valuePropName="checked"
+                      extra="开启后自动为知识库创建「主题聚类」每日定时任务（每日 02:00 执行），按主题归纳跨文档综述页"
+                    >
+                      <Switch />
+                    </Form.Item>
+                    <Form.Item
+                      name="topic_cluster_topics"
+                      label="主题列表"
+                      rules={[
+                        ({ getFieldValue }) => ({
+                          validator: (_, value) => {
+                            if (getFieldValue("topic_cluster_enabled") && !(value ?? []).length) {
+                              return Promise.reject(new Error("开启主题聚合后请至少填写一个主题"));
+                            }
+                            return Promise.resolve();
+                          },
+                        }),
+                      ]}
+                      extra="按业务关注主题填写，如：采购管理、合同管理；每个主题生成一篇综述页（可新增自定义主题）"
+                    >
+                      <Select
+                        mode="tags"
+                        open={false}
+                        suffixIcon={null}
+                        placeholder="输入主题后回车添加"
+                        tokenSeparators={[","]}
+                        maxTagCount={20}
+                      />
+                    </Form.Item>
+                    <div style={{ padding: 8, background: "#f5f7fa", borderRadius: 6, color: "#4d5e7d", fontSize: 12, marginBottom: 16 }}>
+                      开启后平台会自动创建「每日 02:00」的定时任务调用主题聚类编排；保存即立即执行一次聚合。
+                    </div>
+                    <Form.Item
+                      name="version_cluster_enabled"
+                      label="按版本聚类"
+                      valuePropName="checked"
+                      extra="开启后自动为知识库创建「版本聚类」每日定时任务（每日 02:00 执行），按同名多版本文件家族生成版本演进总览页"
+                    >
+                      <Switch />
+                    </Form.Item>
+                    <div style={{ padding: 8, background: "#f5f7fa", borderRadius: 6, color: "#4d5e7d", fontSize: 12 }}>
+                      开启后平台会自动创建「每日 02:00」的定时任务调用版本演进编排；保存即立即执行一次聚类。
+                    </div>
                   </>
                 )}
               </div>

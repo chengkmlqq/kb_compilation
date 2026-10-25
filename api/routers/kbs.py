@@ -145,6 +145,10 @@ class KBCreateRequest(BaseModel):
     repo_branch: str = ""
     repo_auth_type: str = "none"  # none/token/ssh_key/user_pass
     repo_auth_secret: str = ""  # 明文凭证（创建时加密落库，读取不回显）
+    # ── 知识聚合配置（2026-10-25）──
+    # {"topic_cluster_enabled": bool, "topic_cluster_topics": [...],
+    #  "version_cluster_enabled": bool, "cron_expression": "0 2 * * *"}
+    aggregation_config: dict | None = None
 
 
 class KBUpdateRequest(BaseModel):
@@ -167,6 +171,8 @@ class KBUpdateRequest(BaseModel):
     repo_branch: str | None = None
     repo_auth_type: str | None = None
     repo_auth_secret: str | None = None
+    # ── 知识聚合配置（2026-10-25：配置在 payload 才更新 + 同步定时任务）──
+    aggregation_config: dict | None = None
 
 
 class SearchRequest(BaseModel):
@@ -398,6 +404,7 @@ def post_kb(
             repo_branch=req.repo_branch,
             repo_auth_type=req.repo_auth_type,
             repo_auth_secret=req.repo_auth_secret,
+            aggregation_config=req.aggregation_config,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
