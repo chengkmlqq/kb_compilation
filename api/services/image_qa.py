@@ -124,19 +124,27 @@ def resolve_vision_config(
         vlm_id = (getattr(agent_cfg, "vlm_model_id", "") or "").strip()
         if vlm_id:
             try:
-                cfg = load_chat_config(
+                # 2026-10-26: 显式 vlm_model_id 走 resolve_vision_model_config 解析
+                # （支持 chat/vllm 类型），而非 load_chat_config（只认 chat 类型）——
+                # 此前 vllm 类型的视觉模型（如 mimo-v2.5-pro）显式声明被静默丢弃，
+                # 回落全局视觉模型解析，可能选中错误的模型。
+                resolved = resolve_vision_model_config(
                     db,
-                    user_id=user_id,
-                    team_name=team_name,
+                    caller_user_id=user_id,
+                    caller_team_name=team_name,
                     is_sys_admin=is_sys_admin,
                     model_id=vlm_id,
                 )
-                # 2026-10-18: 显式 vlm_model_id 解析失败会静默回落 env 非视觉模型 →
-                # describe_images 用非视觉模型产出「未检测到图片」垃圾描述。显式声明
-                # 的视觉模型若判定不支持视觉（supports_vision=False）不得采用；None
-                # （未登记能力）保持放行（用户显式指定视为视觉声明）。
-                if cfg.base_url and cfg.supports_vision is not False:
-                    return cfg
+                if resolved and resolved.get("base_url"):
+                    return ChatConfig(
+                        base_url=resolved.get("base_url") or "",
+                        api_key=resolved.get("api_key") or "",
+                        model=resolved.get("model") or "",
+                        custom_headers=resolved.get("custom_headers") or None,
+                        interface_type=(resolved.get("interface_type") or "openai"),
+                        supports_vision=True,
+                        max_tokens=resolved.get("max_tokens"),
+                    )
             except Exception:  # noqa: BLE001
                 logger.warning("agent vlm_model_id=%s unresolvable", vlm_id, exc_info=True)
         if not fallback_enabled(agent_cfg):
