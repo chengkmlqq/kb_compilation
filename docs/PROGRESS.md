@@ -2,7 +2,28 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-25（全站页面查询区 loading 补齐专项 + 「wiki反馈修正」编排交付）
+最后更新：2026-10-26（切片智能增强遗留缺陷修复 + 测试补全）
+
+## 50. 当前状态（2026-10-26 切片增强 seed 遗留缺陷修复 + 测试回归护栏）
+
+- **修复**：`scripts/seed_tape_data/切片智能增强.json` 的 n1 脚本补 `doc_extract_prompt`
+  组装（标题/摘要/切片内容前 12000 字，与 kw_prompt/q_prompt 同构，nodes/steps 双写同步）。
+  背景：n2 kb_llm_chat `prompt={{doc_extract_prompt}}` 此前**无任何节点设置该变量**，
+  bindings 缺键时 `_template_replace` 原样返回字面量 → 二次执行 n2 收到
+  `{{doc_extract_prompt}}` 字面量 prompt → LLM 返回 error 结构 → 增强降级空产物
+  （2026-10-26 实机验证遗留缺陷，详见 skill kb-chunk-enhance-implementation.md）。
+- **测试**（tests/test_chunk_enhance.py）：
+  1. 结构断言：n1 code 含 `bindings['doc_extract_prompt']`、n2 prompt 引用模板；
+  2. 执行断言回归护栏：_FakeClient 记录全部 user prompt，断言 n2 收到渲染后真实
+     prompt（无 `{{` 字面量、含「文档标题：测试文档.md」）、abstract 来自
+     doc_meta.summary、doc_keywords 非空（此前缺变量时 doc_meta={} 全靠短片降级兜底）；
+  3. 突变验证：临时移除 doc_extract_prompt 块 → seed_structure + executes 2 用例失败，
+     恢复后全绿（护栏有效）。
+- **验证**：80 passed（chunk_enhance 8 + retrieval 4 文件 + ingest 2 + storage +
+  orchestration_engine）；commit a95b464 已推送 dev。
+- **部署提示**：线上须重新 `apply_chunk_enhance_tape.py` 灌新种子才生效（docker cp
+  脚本+种子到 /tmp + 容器内跑）；已产生的降级数据不自动回补（enhance_meta={} 的文档
+  需重上传/重嵌入才会重新增强）。
 
 ## 49. 当前状态（2026-10-25 全站页面查询区 loading 补齐专项）
 
