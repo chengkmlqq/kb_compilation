@@ -74,8 +74,9 @@ def main() -> None:
     try:
         existing = db.execute(select(Tape).where(Tape.tape_name == TAPE_NAME)).scalars().first()
         if existing:
-            # 2026-10-26 幂等升级：已存在时仅对齐节点队列（queue_name），
-            # 不动节点/边/配置等设计内容（防覆盖线上手工调整）。
+            # 2026-10-26 幂等升级：已存在时按种子对齐执行层（queue_name + step_config），
+            # nodes/edges 设计内容不动（防覆盖线上画布调整）。step_config 以种子为真源
+            # ——种子修复（如 n1 补 doc_extract_prompt）须能经 apply 推送到线上生效。
             steps = d.get("steps") or []
             if steps:
                 from api.models.orchestration import TapeStep
@@ -90,14 +91,16 @@ def main() -> None:
                     ).scalars().first()
                     if row is not None:
                         new_q = str(st.get("queue_name") or "")
-                        if (row.queue_name or "") != new_q:
+                        new_cfg = st.get("step_config") or {}
+                        if (row.queue_name or "") != new_q or (row.step_config or {}) != new_cfg:
                             row.queue_name = new_q
+                            row.step_config = new_cfg
                             changed += 1
                 if changed:
                     db.commit()
-                    print(f"[apply-chunk-enhance] 编排「{TAPE_NAME}」已存在，对齐 {changed} 个节点队列 (queue_name)")
+                    print(f"[apply-chunk-enhance] 编排「{TAPE_NAME}」已存在，对齐 {changed} 个步骤 (queue_name+step_config)")
                 else:
-                    print(f"[apply-chunk-enhance] 编排「{TAPE_NAME}」已存在且队列已一致 (skip) id={existing.id[:12]}…")
+                    print(f"[apply-chunk-enhance] 编排「{TAPE_NAME}」已存在且执行层一致 (skip) id={existing.id[:12]}…")
             else:
                 print(f"[apply-chunk-enhance] 编排「{TAPE_NAME}」已存在 (skip) id={existing.id[:12]}…")
             return
