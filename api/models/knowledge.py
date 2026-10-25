@@ -326,7 +326,13 @@ class WikiPage(Base):
     slug: Mapped[str] = mapped_column(String(255), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     page_type: Mapped[str] = mapped_column(String(32), default="entity")  # entity/concept/summary
-    content: Mapped[str] = mapped_column(Text, default="")
+    # 2026-10-26 扩列：wiki 构建 n14 实体页内容实测 5.2万+ 字符（UTF-8 中文
+    # ≈15万字节）撞 TEXT 64KB 上限 → Data too long 失败；MEDIUMTEXT(16MB)
+    # 对齐 DocChunk.content 的容量兜底（迁移 0049 同步扩列）。
+    content: Mapped[str] = mapped_column(
+        Text().with_variant(MEDIUMTEXT(length=16 * 1024 * 1024), "mysql"),
+        default="",
+    )
     summary: Mapped[str | None] = mapped_column(Text)
     # JSON array of source document ids used to build this page
     source_refs: Mapped[list] = mapped_column(JSON, default=list)

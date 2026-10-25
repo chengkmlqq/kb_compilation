@@ -74,7 +74,32 @@ def main() -> None:
     try:
         existing = db.execute(select(Tape).where(Tape.tape_name == TAPE_NAME)).scalars().first()
         if existing:
-            print(f"[apply-chunk-enhance] 编排「{TAPE_NAME}」已存在 (skip) id={existing.id[:12]}…")
+            # 2026-10-26 幂等升级：已存在时仅对齐节点队列（queue_name），
+            # 不动节点/边/配置等设计内容（防覆盖线上手工调整）。
+            steps = d.get("steps") or []
+            if steps:
+                from api.models.orchestration import TapeStep
+
+                prefix = existing.id[:12]
+                changed = 0
+                for st in steps:
+                    bare = str(st.get("step_id") or "").rsplit("::", 1)[-1]
+                    sid = f"{prefix}::{bare}"
+                    row = db.execute(
+                        select(TapeStep).where(TapeStep.tape_id == existing.id, TapeStep.id == sid)
+                    ).scalars().first()
+                    if row is not None:
+                        new_q = str(st.get("queue_name") or "")
+                        if (row.queue_name or "") != new_q:
+                            row.queue_name = new_q
+                            changed += 1
+                if changed:
+                    db.commit()
+                    print(f"[apply-chunk-enhance] 编排「{TAPE_NAME}」已存在，对齐 {changed} 个节点队列 (queue_name)")
+                else:
+                    print(f"[apply-chunk-enhance] 编排「{TAPE_NAME}」已存在且队列已一致 (skip) id={existing.id[:12]}…")
+            else:
+                print(f"[apply-chunk-enhance] 编排「{TAPE_NAME}」已存在 (skip) id={existing.id[:12]}…")
             return
         nodes = list(d.get("nodes") or [])
         edges = list(d.get("edges") or [])

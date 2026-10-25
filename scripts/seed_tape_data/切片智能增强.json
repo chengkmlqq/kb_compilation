@@ -230,7 +230,7 @@
     "next_step_ids": [
      "n2"
     ],
-    "queue_name": "build"
+    "queue_name": "default"
    },
    {
     "step_id": "n2",
@@ -253,7 +253,7 @@
     "next_step_ids": [
      "n3"
     ],
-    "queue_name": "build"
+    "queue_name": "default"
    },
    {
     "step_id": "n3",
@@ -269,7 +269,7 @@
     "next_step_ids": [
      "n4"
     ],
-    "queue_name": "build"
+    "queue_name": "default"
    },
    {
     "step_id": "n4",
@@ -286,7 +286,7 @@
     "next_step_ids": [
      "n4a"
     ],
-    "queue_name": "build"
+    "queue_name": "default"
    },
    {
     "step_id": "n4a",
@@ -302,7 +302,7 @@
     "next_step_ids": [
      "n4b"
     ],
-    "queue_name": "build"
+    "queue_name": "default"
    },
    {
     "step_id": "n4b",
@@ -326,7 +326,7 @@
     "next_step_ids": [
      "n4c"
     ],
-    "queue_name": "build"
+    "queue_name": "default"
    },
    {
     "step_id": "n4c",
@@ -342,7 +342,7 @@
     "next_step_ids": [
      "n4d"
     ],
-    "queue_name": "build"
+    "queue_name": "default"
    },
    {
     "step_id": "n4d",
@@ -366,7 +366,7 @@
     "next_step_ids": [
      "n4e"
     ],
-    "queue_name": "build"
+    "queue_name": "default"
    },
    {
     "step_id": "n4e",
@@ -380,7 +380,7 @@
      "n4d"
     ],
     "next_step_ids": [],
-    "queue_name": "build"
+    "queue_name": "default"
    }
   ]
  }
