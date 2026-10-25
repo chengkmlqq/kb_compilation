@@ -179,6 +179,17 @@ def test_chunk_enhance_tape_seed_structure() -> None:
     assert "enhancement" in code
     assert "enhance_map" in code
 
+    # n1 必须设置 doc_extract_prompt，n2 的 prompt 模板才有值
+    # （2026-10-26 修复：此前无节点设置 → 模板残留 {{doc_extract_prompt}} 字面量
+    #   → 二次执行 n2 拿到字面量 prompt，doc_meta 返回 error → 增强降级空产物）
+    n1 = next(s for s in dr["steps"] if s["step_id"] == "n1")
+    n1_code = n1["step_config"]["code"]
+    assert "bindings['doc_extract_prompt']" in n1_code
+    # 与 kw_prompt/q_prompt 同构：拼了标题/摘要/内容三个要素
+    assert "文档标题：" in n1_code or "'文档标题：' + file_name" in n1_code
+    n2 = next(s for s in dr["steps"] if s["step_id"] == "n2")
+    assert n2["step_config"]["prompt"] == "{{doc_extract_prompt}}"
+
     # 编排名需与触发服务常量一致
     from api.services.chunk_enhance import TAPE_NAME
 
@@ -244,12 +255,15 @@ def test_chunk_enhance_tape_executes(env, monkeypatch) -> None:
     # mock ChatClient.chat：按 prompt 关键词返回固定 JSON
     from api.services import chat as chat_mod
 
+    seen_prompts: list[str] = []
+
     class _FakeClient:
         def __init__(self, cfg):
             pass
 
         def chat(self, msgs, temperature=None, max_tokens=None, thinking=None):
             prompt = "\n".join(m.content for m in msgs if m.role == "user")
+            seen_prompts.append(prompt)
             if "文档增强提取器" in prompt:
                 return json.dumps({"keywords": ["皖南地区", "市场份额"], "summary": "安徽装修装饰行业分析报告摘要"}, ensure_ascii=False)
             if "切片关键词提取器" in prompt:
@@ -289,3 +303,12 @@ def test_chunk_enhance_tape_executes(env, monkeypatch) -> None:
     assert "enhancement" in result["bindings"], result["bindings"].keys()
     enh_repr = result["bindings"]["enhancement"]
     assert "皖南地区" in enh_repr or "市场份额" in enh_repr
+    # n2 文档级提取真实生效（2026-10-26 修复回归护栏）：LLM 收到 n1 拼好的真实
+    # 提取 prompt 而非 {{doc_extract_prompt}} 字面量；abstract 来自 doc_meta.summary、
+    # doc_keywords 非空（此前缺 doc_extract_prompt 时 doc_meta={}，摘要/文档词全空）
+    doc_calls = [p for p in seen_prompts if "文档增强提取器" in p]
+    assert doc_calls, "n2 未收到文档级提取 prompt——doc_extract_prompt 可能未设置"
+    assert "{{" not in doc_calls[0], doc_calls[0][:80]
+    assert "文档标题：测试文档.md" in doc_calls[0]
+    assert "安徽装修装饰行业分析报告摘要" in enh_repr
+    assert "doc_keywords" in enh_repr
