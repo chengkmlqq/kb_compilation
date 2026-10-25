@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 TOOL_CATALOG: list[dict] = [
     {"name": "thinking", "group": "推理", "description": "显式思考标注：多步推理/自反思时使用，无副作用。", "capability": ""},
     {"name": "todo_write", "group": "推理", "description": "把复杂任务拆解为可跟踪子任务并记录，无副作用。", "capability": ""},
-    {"name": "knowledge_search", "group": "RAG 检索", "description": "知识库混合检索（向量+关键词），返回文档片段与分数。", "capability": "vector,keyword"},
-    {"name": "kb_search", "group": "RAG 检索", "description": "知识库检索（knowledge_search 兼容别名）。", "capability": "vector,keyword"},
-    {"name": "grep_chunks", "group": "RAG 检索", "description": "关键词精确检索当前知识库分块，返回命中片段。", "capability": "vector,keyword"},
+    {"name": "knowledge_search", "group": "RAG 检索", "description": "知识库混合检索（向量+关键词），返回文档片段与分数。可选传入 document_id 锁定单个文档内部检索（多跳深读）。", "capability": "vector,keyword"},
+    {"name": "kb_search", "group": "RAG 检索", "description": "知识库检索（knowledge_search 兼容别名）。可选传入 document_id 锁定单个文档内部检索（多跳深读）。", "capability": "vector,keyword"},
+    {"name": "grep_chunks", "group": "RAG 检索", "description": "关键词精确检索当前知识库分块，返回命中片段。可选传入 document_id 锁定单个文档内部检索（多跳深读）。", "capability": "vector,keyword"},
     {"name": "list_knowledge_chunks", "group": "RAG 检索", "description": "分页列出知识库文档分块（可指定文档）。", "capability": "vector,keyword"},
     {"name": "get_document_info", "group": "RAG 检索", "description": "读取文档元信息（文件名/解析状态/分块数/摘要）。", "capability": "vector,keyword"},
     {"name": "database_query", "group": "RAG 检索", "description": "对知识库元数据库执行只读查询（仅允许查询受信任的表：文档、分块、Wiki 页面等，自动限制结果行数）。", "capability": "vector,keyword"},
@@ -113,11 +113,13 @@ def _chunk_hits_to_text(hits, cap: int = 6000) -> str:
     lines = []
     for i, h in enumerate(hits, 1):
         title = (getattr(h, "document_title", "") or "").strip() or (getattr(h, "document_id", "") or "")[:8]
+        doc_id = (getattr(h, "document_id", "") or "").strip()
         content = (getattr(h, "content", "") or "").strip()
         if len(content) > 400:
             content = content[:400] + "…"
         score = getattr(h, "score", 0) or 0
-        lines.append(f"[{i}] {title} (score={score:.3f})\n{content}")
+        # 文档 id 一并输出：LLM 据此做多跳深读（带 document_id 再次调用 kb_search）
+        lines.append(f"[{i}] {title} (id={doc_id or '—'}, score={score:.3f})\n{content}")
     return _txt("\n\n".join(lines), cap)
 
 
@@ -190,7 +192,9 @@ def build_full_tool_context(
     top_k = max(1, min(int(getattr(cfg, "embedding_top_k", 10) or 10), 20))
     kb_id = kb.id if kb else ""
 
-    def _hybrid(query: str, topk: int = 0, keyword_only: bool = False) -> list:
+    # ── RAG ──
+    def _hybrid(query: str, topk: int = 0, keyword_only: bool = False,
+                document_id: str | None = None) -> list:
         if not kb:
             return []
         emb = None
@@ -202,7 +206,8 @@ def build_full_tool_context(
                                             is_sys_admin=is_sys_admin).embed_query(query)
             except Exception:  # noqa: BLE001
                 emb = None
-        return hybrid_search(db, kb.id, query, emb, retrieval_cfg)[: (topk or top_k)]
+        return hybrid_search(db, kb.id, query, emb, retrieval_cfg,
+                             document_id=document_id or None)[: (topk or top_k)]
 
     executors: dict[str, Callable[[dict], str]] = {}
 
@@ -215,7 +220,8 @@ def build_full_tool_context(
         q = str(args.get("query") or "").strip()
         if not q:
             return "缺少 query"
-        hits = _hybrid(q)
+        doc_id = str(args.get("document_id") or "").strip()
+        hits = _hybrid(q, document_id=doc_id or None)
         return _chunk_hits_to_text(hits)
 
     executors["knowledge_search"] = _search
@@ -225,7 +231,8 @@ def build_full_tool_context(
         q = str(args.get("query") or "").strip()
         if not q:
             return "缺少 query"
-        hits = _hybrid(q, keyword_only=True)
+        doc_id = str(args.get("document_id") or "").strip()
+        hits = _hybrid(q, keyword_only=True, document_id=doc_id or None)
         return _chunk_hits_to_text(hits)
 
     executors["grep_chunks"] = _grep
@@ -582,8 +589,17 @@ def build_full_tool_context(
         props: dict[str, Any] = {}
         required: list[str] = []
         if name in ("knowledge_search", "kb_search", "grep_chunks"):
-            props = {"query": {"type": "string", "description": "检索关键词/问题"},
-                     "top_k": {"type": "integer", "description": f"返回条数(1-{top_k})"}}
+            props = {
+                "query": {"type": "string", "description": "检索关键词/问题"},
+                "document_id": {
+                    "type": "string",
+                    "description": (
+                        "可选：指定文档 ID 后在**该文档内部**检索（多跳深读）。"
+                        "首次检索不要传入（全库范围）；若返回结果中出现相关文档的 id，"
+                        "可带该文档 id 再次调用锁定阅读该文档的全部切片。"
+                    ),
+                },
+                "top_k": {"type": "integer", "description": f"返回条数(1-{top_k})"}}
             required = ["query"]
         elif name == "list_knowledge_chunks":
             props = {"document_id": {"type": "string"}, "offset": {"type": "integer"},

@@ -67,8 +67,13 @@ class VectorStore(ABC):
         query_vector: list[float],
         top_k: int = 10,
         threshold: float = 0.2,
+        chunk_ids: list[str] | None = None,
     ) -> list[VectorHit]:
-        """Similarity search; returns hits sorted by score desc."""
+        """Similarity search; returns hits sorted by score desc.
+
+        `chunk_ids` 非空时只在该切片集合内检索（agent 多跳深读：锁定
+        某个 document_id 后，向量臂通过该文档的 chunk_id 集合过滤）。
+        """
 
     @abstractmethod
     def list_chunk_ids(self, kb_id: str) -> list[str]:
@@ -142,13 +147,14 @@ class PgVectorStore(VectorStore):
         query_vector: list[float],
         top_k: int = 10,
         threshold: float = 0.2,
+        chunk_ids: list[str] | None = None,
     ) -> list[VectorHit]:
         db = self._sessionmaker()
         try:
             # cosine_distance = 1 - cosine_similarity (vectors are L2-normalized)
             distance = KbEmbedding.embedding.cosine_distance(query_vector)
             max_distance = 1.0 - threshold
-            rows = db.execute(
+            stmt = (
                 select(KbEmbedding.chunk_id, distance.label("dist"))
                 .where(
                     KbEmbedding.kb_id == kb_id,
@@ -157,7 +163,10 @@ class PgVectorStore(VectorStore):
                 .where(distance < max_distance)
                 .order_by(distance)
                 .limit(top_k)
-            ).all()
+            )
+            if chunk_ids:
+                stmt = stmt.where(KbEmbedding.chunk_id.in_(chunk_ids))
+            rows = db.execute(stmt).all()
             return [
                 VectorHit(chunk_id=r.chunk_id, score=1.0 - float(r.dist))
                 for r in rows
@@ -297,10 +306,17 @@ class EsVectorStore(VectorStore):
         query_vector: list[float],
         top_k: int = 10,
         threshold: float = 0.2,
+        chunk_ids: list[str] | None = None,
     ) -> list[VectorHit]:
         if not self.client.indices.exists(index=self.index):
             return []
         k = max(top_k * 4, 100)
+        must: list[dict] = [
+            {"term": {"kb_id": kb_id}},
+            {"term": {"enabled": True}},
+        ]
+        if chunk_ids:
+            must.append({"terms": {"chunk_id": chunk_ids}})
         resp = self.client.knn_search(
             index=self.index,
             knn={
@@ -309,14 +325,7 @@ class EsVectorStore(VectorStore):
                 "k": k,
                 "num_candidates": max(top_k * 10, 100),
             },
-            filter={
-                "bool": {
-                    "must": [
-                        {"term": {"kb_id": kb_id}},
-                        {"term": {"enabled": True}},
-                    ]
-                }
-            },
+            filter={"bool": {"must": must}},
             source=False,
         )
         hits: list[VectorHit] = []

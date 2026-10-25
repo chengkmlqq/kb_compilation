@@ -144,6 +144,7 @@ def vector_search(
     query_embedding: list[float],
     cfg: RetrievalConfig,
     vector_store_id: str | None = None,
+    chunk_ids: list[str] | None = None,
 ) -> list[ChunkHit]:
     """Vector recall through the vector store; returns [] on any backend error.
 
@@ -151,6 +152,8 @@ def vector_search(
     hybrid_search from the business store — the vector store only knows ids.
     `vector_store_id` optionally routes recall to a resource-configured vector
     backend (data-source management); None uses the platform default.
+    `chunk_ids` 非空时只在该切片集合内检索（agent 多跳深读：锁定文档后
+    仅在该文档的切片里做向量召回）。
     """
     from api.services.vector_store import get_vector_store
 
@@ -160,6 +163,7 @@ def vector_search(
             query_embedding,
             top_k=cfg.top_k,
             threshold=cfg.threshold,
+            chunk_ids=chunk_ids,
         )
     except Exception:
         logger.exception("vector recall failed; continuing with keyword arm")
@@ -278,12 +282,19 @@ def _keyword_score(keywords: list[str], content: str) -> float:
     return round(coverage * (0.5 * position_weight + 0.3 * freq_weight + 0.2) * length_penalty, 4)
 
 
-def keyword_search(db: Session, kb_id: str, query: str, cfg: RetrievalConfig) -> list[ChunkHit]:
+def keyword_search(
+    db: Session,
+    kb_id: str,
+    query: str,
+    cfg: RetrievalConfig,
+    document_id: str | None = None,
+) -> list[ChunkHit]:
     """Keyword recall via multi-term substring matching (`ilike` OR).
 
     Query is split into terms (`_split_terms`), then chunks matching ANY term
     are recalled with portable `ilike`/`like` (works on MySQL, PG, SQLite);
     ranking is app-side by `_keyword_score` (no PG-specific extensions).
+    `document_id` 非空时只在该文档的切片里检索（agent 多跳深读的锁定阅读）。
     """
     if not query or not query.strip():
         return []
@@ -311,6 +322,8 @@ def keyword_search(db: Session, kb_id: str, query: str, cfg: RetrievalConfig) ->
         )
         .limit(cfg.top_k * 8)  # over-fetch; app-side scoring then trims
     )
+    if document_id:
+        stmt = stmt.where(DocChunk.document_id == document_id)
     rows = db.execute(stmt).all()
 
     scored: list[ChunkHit] = []
@@ -482,14 +495,33 @@ def hybrid_search(
     query: str,
     query_embedding: list[float] | None,
     cfg: RetrievalConfig,
+    document_id: str | None = None,
 ) -> list[ChunkHit]:
     """Full hybrid retrieval: vector recall + keyword recall + RRF fusion.
 
     - `db` is a session on the BUSINESS store (chunks live there).
     - `query_embedding` drives the vector arm via the vector store.
+    - `document_id` 非空 = 多跳深读（agent kb_search 带文档 id 锁定阅读）：
+      词法臂 SQL 直接 where document_id；向量臂先按 document_id 解析出该
+      文档的 chunk_id 集合再过滤（向量表只有 chunk_id，无 document_id 列）。
     """
     vector_hits: list[ChunkHit] = []
     keyword_hits: list[ChunkHit] = []
+    chunk_ids: list[str] | None = None
+
+    if document_id and cfg.vector_enabled and query_embedding:
+        # 向量臂需要 chunk_id 集合：从业务库 doc_chunk 按 document_id 解析
+        from api.models.knowledge import DocChunk
+
+        chunk_ids = list(
+            db.execute(
+                select(DocChunk.id).where(
+                    DocChunk.kb_id == kb_id,
+                    DocChunk.document_id == document_id,
+                    DocChunk.enabled.is_(True),
+                )
+            ).scalars().all()
+        )
 
     if cfg.vector_enabled and query_embedding:
         from api.models.knowledge import KbDatasource
@@ -500,9 +532,10 @@ def hybrid_search(
             query_embedding,
             cfg,
             vector_store_id=kb_row.vector_store_id if kb_row else None,
+            chunk_ids=chunk_ids,
         )
     if cfg.keyword_enabled and query:
-        keyword_hits = keyword_search(db, kb_id, query, cfg)
+        keyword_hits = keyword_search(db, kb_id, query, cfg, document_id=document_id)
 
     fused = fuse_rrf(vector_hits, keyword_hits, cfg)
     hydrated = hydrate_metadata(db, fused)
