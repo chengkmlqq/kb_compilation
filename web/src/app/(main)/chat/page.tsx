@@ -173,13 +173,15 @@ export default function ChatPage() {
   const kbBtnRef = useRef<HTMLButtonElement | null>(null);
   // 2026-10-12 对齐 WeKnora 输入区联网搜索开关（快速问答/agent 模式通用，请求级生效）
   const [webSearch, setWebSearch] = useState(false);
-  // 2026-10-12 对齐 WeKnora embeddedMode：iframe 嵌入 / ?embed=1 / ?noframe=1 时
-  // 隐藏左侧会话列表，问答区满宽沉浸式展示（宿主页面嵌入问答小窗场景）
+  // 2026-10-12 对齐 WeKnora embeddedMode：iframe 嵌入 / ?embed=1 时
+  // 隐藏左侧会话列表，问答区满宽沉浸式展示（宿主页面嵌入问答小窗场景）。
+  // 2026-10-26 修正：?noframe=1 仅表示无框架挂载（去壳），不应隐藏会话列表——
+  // shandong 菜单 302 挂载 /wiki/chat 带 noframe=1，此前会话列表整块不渲染。
   const [embeddedMode, setEmbeddedMode] = useState(false);
   useEffect(() => {
     const inIframe = typeof window !== "undefined" && window.self !== window.top;
     const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-    const forced = params?.get("embed") === "1" || params?.get("noframe") === "1";
+    const forced = params?.get("embed") === "1";
     setEmbeddedMode(inIframe || forced);
   }, []);
     // 2026-10-07 对齐 WeKnora：@提及多资源（消息级目标覆盖：知识库 / 智能体）
