@@ -129,6 +129,10 @@ class Settings:
     MINIO_SECURE: str = os.getenv("MINIO_SECURE", "false").lower() in ("1", "true", "yes")
     # 默认 bucket（kb 文档/文件上传用）
     MINIO_BUCKET: str = os.getenv("MINIO_BUCKET", "kb-compilation")
+    # 对象存储 region（阿里云 OSS 必需，如 cn-north-1；本地 MinIO 可留空）。
+    # 不传 region 时 minio SDK 对 bucket 操作会先发 GetBucketLocation（path style）探测，
+    # OSS 强制 virtual hosted style 会拒绝（SecondLevelDomainForbidden）。
+    MINIO_REGION: str = os.getenv("MINIO_REGION", "")
 
     # --- Agent gateway (hermes-agent skill execution service) ---
     # Base URL of the separately-deployed agent-gateway (default host:8080).

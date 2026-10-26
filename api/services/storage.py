@@ -104,6 +104,7 @@ def _get_client():
             access_key=s.MINIO_ACCESS_KEY,
             secret_key=s.MINIO_SECRET_KEY,
             secure=bool(s.MINIO_SECURE),
+            region=s.MINIO_REGION or None,
         )
         return _client
 

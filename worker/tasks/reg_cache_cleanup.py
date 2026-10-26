@@ -72,6 +72,7 @@ def cleanup_reg_cache(task_params: dict | None = None) -> dict:
         access_key=st.MINIO_ACCESS_KEY,
         secret_key=st.MINIO_SECRET_KEY,
         secure=st.MINIO_SECURE,
+        region=st.MINIO_REGION or None,
     )
     bucket = st.MINIO_BUCKET
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=retention_days)
