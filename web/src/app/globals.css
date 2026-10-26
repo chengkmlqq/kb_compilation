@@ -3886,6 +3886,8 @@ html[data-theme="dark"] .kb-citation-web:hover {
   min-height: 0;
   overflow: hidden;
   background: #fff;
+  /* 2026-10-26 修复：is-home 态下 .kb-chat-header（标题+新对话）绝对定位贴顶的锚点 */
+  position: relative;
 }
 
 /* chat-header：对齐 DSB Portal Header 面包屑（.sider-breadcrumb）
@@ -3957,6 +3959,16 @@ html[data-theme="dark"] .kb-citation-web:hover {
 }
 .kb-chat-main.is-home {
   justify-content: center;
+}
+/* 2026-10-26 修复：会话列表收起/嵌入模式出现 .kb-chat-header 后，
+   is-home 的 justify-content:center 会把标题+新对话按钮一起垂直居中到页面中间。
+   此处让 header 脱离流内居中，绝对定位固定在顶部，content+footer 仍整组居中。 */
+.kb-chat-main.is-home .kb-chat-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
 }
 .kb-chat-main.is-home .kb-chat-content {
   flex: 0 0 auto;
