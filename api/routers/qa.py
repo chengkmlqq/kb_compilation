@@ -32,6 +32,7 @@ from api.services.chat_sessions import (
     get_context_messages,
     get_session,
     set_attachment_caption,
+    update_message,
 )
 from api.services.identity import decode_identity_cookie
 
@@ -265,6 +266,59 @@ def _run_generation(
         image_description = ""
         plan_images: list[str] = image_urls
         include_doc_images = True
+        # 2026-10-20 增量持久化：生成过程中定期把已生成部分落库（同一消息 UPDATE），
+        # 而非等 finally 一次性落库——刷新/关页后重开会话也能看到已生成的部分内容。
+        # 首条 delta 时创建占位消息拿到 id，之后按时间节流 update，finally 终更。
+        assistant_message_id = ""
+        _last_persist_ts = 0.0
+
+        def _persist_partial(force: bool = False) -> None:
+            """把当前已生成内容写入会话消息（占位不存在则先创建）。"""
+            nonlocal assistant_message_id, _last_persist_ts
+            if not (session and user_id and req.session_id):
+                return
+            content = "".join(answer_parts)
+            if not content and not thinking_parts and not refs:
+                return  # 尚无任何内容，不建占位（避免空消息）
+            now = time.time()
+            if not force and now - _last_persist_ts < 1.0:
+                return  # 节流：至少 1 秒写一次
+            try:
+                # 2026-10-21 空正文兜底（对齐 agents.py）：只有引用没有正文时
+                # （LLM 空流/重试耗尽），落库内容给可读提示而不是空串——前端
+                # 刷新后历史消息能看到原因，不再出现 content='' 的「幽灵回复」。
+                if not content and refs:
+                    content = "模型未返回有效内容，请稍后重试；若持续为空请检查模型服务配置"
+                if assistant_message_id:
+                    update_message(
+                        db, user_id, req.session_id, assistant_message_id,
+                        content=content, refs=refs,
+                        thinking="".join(thinking_parts) if thinking_parts else None,
+                    )
+                else:
+                    saved = append_message(
+                        db, user_id, req.session_id, "assistant",
+                        content,
+                        refs=refs,
+                        thinking="".join(thinking_parts) if thinking_parts else None,
+                    )
+                    assistant_message_id = saved.get("id") or ""
+                    # 2026-10-20 增量落库完成首写：向前端暴露服务端消息 id，
+                    # 前端刷新后续拉时若命中这条消息则直接复用（不再插入重复占位）
+                    if assistant_message_id:
+                        store.append_event(
+                            stream_id,
+                            {"type": "assistant_message", "message_id": assistant_message_id},
+                        )
+                _last_persist_ts = now
+            except Exception as e:  # noqa: BLE001
+                logger.warning("incremental persist assistant failed: %s", e)
+
+        # 2026-10-23 过程追踪 collector（先声明，防 try 中断后 finally 引用未绑定）
+        from api.services.chat_trace import TraceCollector, save_trace
+
+        trace_col = None
+
         try:
             requested_cfg = None
             if req.model_id:
@@ -346,6 +400,17 @@ def _run_generation(
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception("websearch tool resolution failed; websearch disabled for this call")
+            # 2026-10-23 过程追踪：收敛 stage/context/thinking/tool_call 等事件，
+            # 会话模式下 finally 落 chat_trace（分析思考过程/工具调用链/检索命中）
+            trace_col = TraceCollector(
+                session_id=req.session_id or "",
+                user_id=ctx_user_id,
+                team_name=ctx_team_name or "",
+                kb_id=kb.id if kb is not None else (kbs[0].id if kbs else ""),
+                kind="quick",
+                question=req.question,
+                model=(requested_cfg.model or "") if requested_cfg else "",
+            )
             for event in answer_question(
                 kb_db=db,
                 kb=kb,
@@ -387,23 +452,50 @@ def _run_generation(
                 elif event.get("type") == "delta":
                     answer_parts.append(event.get("text", ""))
                     store.append_event(stream_id, {"type": "delta", "text": event.get("text", "")})
+                    _persist_partial()  # 2026-10-20 增量落库：生成中定期保存已生成部分
                 else:
                     store.append_event(stream_id, event)
+                trace_col.on_event(event)
         except Exception as e:  # noqa: BLE001
             logger.exception("qa generation failed")
             store.append_event(stream_id, {"type": "error", "message": str(e)})
+        else:
+            # 2026-10-21 空响应兜底（对齐 agents.py）：生成结束但未产出任何正文
+            # （LLM 空流 0/0、thinking-only、空内容重试耗尽）——此前只有 stage/done
+            # 事件，前端表现为「没有回复」且 refs 非空时仍落 content='' 历史消息。
+            # 补发可见 error，用户至少知道发生了什么（toast + 气泡失败态）。
+            if not answer_parts:
+                logger.warning(
+                    "qa produced empty answer (session=%s refs=%d)",
+                    req.session_id, len(refs),
+                )
+                store.append_event(stream_id, {
+                    "type": "error",
+                    "message": "模型未返回有效内容，请稍后重试；若持续为空请检查模型服务配置",
+                })
         finally:
-            # persist assistant message (content + refs + thinking)
-            assistant_message_id = ""
+            # 终更 assistant 消息：增量持久化已建占位则 UPDATE 同一消息（保留中间
+            # 已落库内容），否则（无内容场景）回落原 append 逻辑。
             if session and user_id and req.session_id:
                 try:
-                    payload = {"content": "".join(answer_parts), "refs": refs}
-                    if thinking_parts:
-                        payload["thinking"] = "".join(thinking_parts)
-                    saved = append_message(db, user_id, req.session_id, "assistant", **payload)
-                    assistant_message_id = saved.get("id") or ""
+                    _persist_partial(force=True)
+                    # 2026-10-21 对齐 agents.py：无正文且无引用时不落空助手消息，
+                    # 避免把网关空响应固化成 content='' 的历史脏数据。
+                    if not assistant_message_id and (answer_parts or refs):
+                        saved = append_message(
+                            db, user_id, req.session_id, "assistant",
+                            "".join(answer_parts), refs=refs,
+                            thinking="".join(thinking_parts) if thinking_parts else None,
+                        )
+                        assistant_message_id = saved.get("id") or ""
                 except Exception as e:  # noqa: BLE001
                     logger.warning("persist assistant failed: %s", e)
+                # 2026-10-23 过程追踪落库（含空响应尝试，失败分析用）
+                try:
+                    if trace_col is not None:
+                        save_trace(db, trace_col, message_id=assistant_message_id)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("persist chat trace failed: %s", e)
             # 2026-10-14 done 事件带回持久化消息 id：前端据此把本地占位 id
             # （local-ai-*）替换为服务端 id，点赞/反馈接口才能按 id 命中消息。
             store.append_event(

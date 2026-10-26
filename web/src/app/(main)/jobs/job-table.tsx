@@ -9,6 +9,7 @@ import {
   PauseCircleOutlined,
 } from "@ant-design/icons";
 import { JobItem } from "@/lib/api";
+import { taskClassLabel } from "./task-class-label";
 
 interface JobTableProps {
   loading: boolean;
@@ -60,28 +61,6 @@ function fmtTime(iso?: string | null): string {
   // 2026-10-07: 横杠格式 YYYY-MM-DD HH:mm:ss（放弃 toLocaleString 的斜杠输出）
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-
-// 2026-10-07: 任务类编码 -> 中文展示
-const TASK_CLASS_LABEL: Record<string, string> = {
-  KbDocumentProcessTask: "文档处理",
-  KbDocumentEmbedTask: "文档向量化",
-  KbSkillDirectBuildTask: "技能直跑构建",
-  KbAgentWikiBuildTask: "智能体 Wiki 构建",
-  KbSkillWikiBuildTask: "技能 Wiki 构建",
-  KbWikiBuildTask: "Wiki 构建",
-  KbGraphBuildTask: "图谱构建",
-  KbOrphanRecoveryTask: "孤儿任务恢复",
-  KbAgentGatewayTask: "智能体网关",
-  KbTableIngestTask: "表摄取",
-  KbMetadataCollectionTask: "元数据采集",
-  KbOrchestrationRunTask: "编排执行",
-  OrchestrationRun: "编排执行",
-};
-
-function taskClassLabel(v?: string | null): string {
-  if (!v) return "-";
-  return TASK_CLASS_LABEL[v] ?? v.replace("Kb", "").replace("Task", "");
 }
 
 // 2026-10-07: 后端 datetime 为 UTC 且序列化不带时区标记（'2026-10-07T01:25:20'），

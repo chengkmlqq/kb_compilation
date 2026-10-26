@@ -60,11 +60,8 @@ def main() -> None:
         "AES_SECRET_KEY=",
         "AES_IV_KEY=",
         "",
-        "# --- embedding (OpenAI-compatible; blank = vector arm off) ---",
+        # 2026-10-21: EMBEDDING_* 环境变量已废弃（向量模型统一由「模型管理」页配置）
         "EMBEDDING_DIM=1024",
-        "EMBEDDING_BASE_URL=",
-        "EMBEDDING_API_KEY=",
-        "EMBEDDING_MODEL=",
         "",
         "# --- LLM (OpenAI-compatible; blank = QA/wiki/graph LLM steps fail) ---",
         "AI_CHAT_API_ENDPOINT=",

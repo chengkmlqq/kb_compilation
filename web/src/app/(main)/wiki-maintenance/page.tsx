@@ -4,12 +4,15 @@
  *
  * 入口：知识库管理卡片「反馈 N」点击进入（带 ?kb_id= 预选）；侧栏菜单直达。
  * 数据源：/api/v1/kbs/{kb_id}/wiki/feedback（过滤+分页）+ 状态流转 + 软删。
- * 布局对齐 feedback-stats / jobs：顶部标题 + 知识库选择 + 汇总徽标 + 筛选行 + 表格 + 钉底分页。
+ * 布局对齐操作日志（system/logs）：ModoTabs 首 tab（页面标题+列表）+ Card 包裹
+ * （body padding "12px 16px 0"）+ 表格 scroll y + 钉底分页；知识库选择与刷新放
+ * tabBarExtraContent（对齐 agents/kbs 页范式）。
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Button,
+  Card,
   Empty,
   Input,
   Popconfirm,
@@ -40,6 +43,7 @@ import {
   WikiFeedbackItem,
 } from "@/lib/api";
 import ModoPagination from "@/components/biz/modo-pagination";
+import { ModoTabs } from "@/components/biz/modo-tabs";
 import { PRESET_LABELS, TYPE_OPTIONS } from "@/lib/wikiFeedback";
 
 const PAGE_SIZE = 20;
@@ -63,6 +67,9 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
   ignored: { label: "已忽略", color: "default" },
 };
 
+/** 动态选项卡条目（复用操作日志页 ModoTabs 模式）：首个 tab 固定为「页面标题 + 列表」 */
+type MaintTab = { key: string; title: string; children: ReactNode };
+
 export default function WikiMaintenancePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -79,6 +86,15 @@ export default function WikiMaintenancePage() {
   const [keyword, setKeyword] = useState("");
   const [keywordInput, setKeywordInput] = useState("");
   const [pendingCount, setPendingCount] = useState(0);
+
+  // ---- 动态选项卡（对齐操作日志页：容器 + 开关 tab 机制就位）----
+  const [tabs, setTabs] = useState<MaintTab[]>([]);
+  const [activeTab, setActiveTab] = useState("home");
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => prev.filter((t) => t.key !== key));
+    if (activeTab === key) setActiveTab("home");
+  };
 
   const selectedKb = useMemo(() => kbs.find((k) => k.id === kbId) || null, [kbs, kbId]);
 
@@ -199,7 +215,6 @@ export default function WikiMaintenancePage() {
           <Space size={6}>
             <LinkOutlined style={{ opacity: 0.6 }} />
             <span
-              className="wm-page-title"
               style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
             >
               {r.page_title || r.slug}
@@ -263,116 +278,164 @@ export default function WikiMaintenancePage() {
     },
   ];
 
-  return (
-    <div style={{ padding: 10, height: "calc(100vh - var(--app-header-h, 48px))", display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 16, fontWeight: 600, color: "#242e43" }}>
-          <CommentOutlined style={{ color: "#3261ce" }} />
-          维护中心
-          <span style={{ fontSize: 12, fontWeight: 400, color: "#79879c" }}>Wiki 页面反馈汇总与处理</span>
-        </div>
-        <Space>
+  // 列表区（首个选项卡内容）：汇总徽标 + 筛选行 + 表格 + 钉底分页
+  const listPane = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <Card
+        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
+        styles={{
+          body: {
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            padding: "12px 16px 0",
+          },
+        }}
+      >
+        {/* 汇总徽标（未选知识库时不展示） */}
+        {kbId && selectedKb && pendingCount > 0 && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 12, flexShrink: 0 }}>
+            <Tag color="blue" style={{ padding: "2px 10px", borderRadius: 999 }}>
+              共 {total} 条
+            </Tag>
+            <Tag color="orange" style={{ padding: "2px 10px", borderRadius: 999 }}>
+              待处理 {pendingCount} 条
+            </Tag>
+          </div>
+        )}
+
+        {/* 筛选行（对齐操作日志页：内联筛选 + 顶边距） */}
+        <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap", flexShrink: 0 }}>
           <Select
-            placeholder="选择知识库"
-            style={{ width: 300 }}
-            value={kbId || undefined}
-            showSearch
-            optionFilterProp="label"
+            placeholder="类型"
+            style={{ width: 130 }}
             allowClear
+            value={typeFilter}
             onChange={(v) => {
-              setKbId(v || "");
+              setTypeFilter(v);
               setPage(1);
             }}
-            options={kbs.map((k) => ({
-              value: k.id,
-              label: `${k.name}${(k.feedback_count ?? 0) > 0 ? `（反馈 ${k.feedback_count}）` : ""}`,
-            }))}
+            options={TYPE_OPTIONS}
           />
-          <Button icon={<ReloadOutlined />} onClick={() => void loadList()}>
-            刷新
-          </Button>
-        </Space>
-      </div>
-
-      {kbId && selectedKb && pendingCount > 0 && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <Tag color="blue" style={{ padding: "2px 10px", borderRadius: 999 }}>
-            共 {total} 条
-          </Tag>
-          <Tag color="orange" style={{ padding: "2px 10px", borderRadius: 999 }}>
-            待处理 {pendingCount} 条
-          </Tag>
-        </div>
-      )}
-
-      <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
-        <Select
-          placeholder="类型"
-          style={{ width: 130 }}
-          allowClear
-          value={typeFilter}
-          onChange={(v) => {
-            setTypeFilter(v);
-            setPage(1);
-          }}
-          options={TYPE_OPTIONS}
-        />
-        <Select
-          placeholder="状态"
-          style={{ width: 130 }}
-          allowClear
-          value={statusFilter}
-          onChange={(v) => {
-            setStatusFilter(v);
-            setPage(1);
-          }}
-          options={STATUS_OPTIONS}
-        />
-        <Input
-          placeholder="按页面标题或 slug 搜索…"
-          style={{ width: 260 }}
-          prefix={<SearchOutlined style={{ color: "#79879c" }} />}
-          allowClear
-          value={keywordInput}
-          onChange={(e) => setKeywordInput(e.target.value)}
-          onPressEnter={applyKeyword}
-          onClear={applyKeyword}
-        />
-        <Button type="primary" onClick={applyKeyword}>
-          筛选
-        </Button>
-      </div>
-
-      <div style={{ flex: 1, minHeight: 0, background: "#fff", border: "1px solid #e3e9ef", borderRadius: 6, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-          <Table<WikiFeedbackItem>
-            rowKey="id"
-            size="small"
-            columns={columns}
-            dataSource={items}
-            loading={loading}
-            pagination={false}
-            locale={{
-              emptyText: (
-                <Empty
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description={kbId ? "暂无维护反馈" : "请先选择知识库"}
-                />
-              ),
+          <Select
+            placeholder="状态"
+            style={{ width: 130 }}
+            allowClear
+            value={statusFilter}
+            onChange={(v) => {
+              setStatusFilter(v);
+              setPage(1);
             }}
+            options={STATUS_OPTIONS}
           />
+          <Input
+            placeholder="按页面标题或 slug 搜索…"
+            style={{ width: 260 }}
+            prefix={<SearchOutlined style={{ color: "#79879c" }} />}
+            allowClear
+            value={keywordInput}
+            onChange={(e) => setKeywordInput(e.target.value)}
+            onPressEnter={applyKeyword}
+            onClear={applyKeyword}
+          />
+          <Button type="primary" onClick={applyKeyword}>
+            筛选
+          </Button>
         </div>
-        {total > 0 && (
-          <div style={{ flexShrink: 0, display: "flex", justifyContent: "flex-end", padding: "12px 16px 8px" }}>
+
+        <Table<WikiFeedbackItem>
+          rowKey="id"
+          size="small"
+          columns={columns}
+          dataSource={items}
+          loading={loading}
+          pagination={false}
+          scroll={{ x: 1200, y: "calc(100vh - 264px)" }}
+          locale={{
+            emptyText: (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={kbId ? "暂无维护反馈" : "请先选择知识库"}
+              />
+            ),
+          }}
+        />
+        <div style={{ flexShrink: 0, marginTop: "auto" }}>
+          {total > 0 && (
             <ModoPagination
               current={page}
               pageSize={PAGE_SIZE}
               total={total}
               onChange={(p) => setPage(p)}
             />
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+
+  return (
+    // 2026-10-21 对齐操作日志页范式：外层固定视口高度不滚动，
+    // 顶部「动态选项卡」——首 tab「维护中心」= 页面标题 + 列表（不可关闭），
+    // 知识库选择与刷新放 tabBarExtraContent（对齐 agents/kbs 页）。
+    <div
+      className="wiki-maintenance-page"
+      style={{
+        padding: 10,
+        height: "calc(100vh - var(--app-header-h, 48px))",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <ModoTabs
+        type="editable-card"
+        hideAdd
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        onEdit={(key, action) => {
+          if (action === "remove") closeTab(String(key));
+        }}
+        tabBarExtraContent={
+          <Space>
+            <Select
+              placeholder="选择知识库"
+              style={{ width: 300 }}
+              value={kbId || undefined}
+              showSearch
+              optionFilterProp="label"
+              allowClear
+              onChange={(v) => {
+                setKbId(v || "");
+                setPage(1);
+              }}
+              options={kbs.map((k) => ({
+                value: k.id,
+                label: `${k.name}${(k.feedback_count ?? 0) > 0 ? `（反馈 ${k.feedback_count}）` : ""}`,
+              }))}
+            />
+            <Button icon={<ReloadOutlined />} onClick={() => void loadList()}>
+              刷新
+            </Button>
+          </Space>
+        }
+        items={[
+          {
+            key: "home",
+            label: (
+              <span style={{ display: "inline-flex", alignItems: "center" }}>
+                <CommentOutlined style={{ color: "#3261ce", marginRight: 6 }} />
+                维护中心
+              </span>
+            ),
+            children: listPane,
+          },
+          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
+        ]}
+      />
     </div>
   );
 }

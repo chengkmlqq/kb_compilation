@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
-import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, TreeSelect, Typography } from "antd";
+import { App, Button, Card, Empty, Form, Input, Modal, Select, Space, Spin, Table, Tag, Tooltip, TreeSelect, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { CheckCircleOutlined, ExperimentOutlined, ExportOutlined, PauseCircleOutlined, FileAddOutlined, AppstoreOutlined, FileTextOutlined, FolderOutlined } from "@ant-design/icons";
 import { ModoInput, ModoTextArea } from "@/components/biz/modo-input";
@@ -72,6 +72,7 @@ export default function OrchestrationsPage() {
   // 左侧分类树（2026-10-13：编排管理页左右结构，参照编排模板页）
   const [selectedCategory, setSelectedCategory] = useState("");
   const [categories, setCategories] = useState<TapeCategory[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
   // 多级树：展开集合（2026-10-15 多级树；默认展开根目录一级，点节点/箭头可展开/收起）
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
 
@@ -226,19 +227,27 @@ export default function OrchestrationsPage() {
   }, [page, pageSize, applied, message]);
 
   const loadCategories = useCallback(async () => {
-    const res = await apiListTapeCategories();
-    if (res.success) {
-      const list = res.data || [];
-      setCategories(list);
-      // 默认展开根目录这一级：初始只展开一级分类（无 parent_id），二级及以下默认收起
-      setExpandedCats(new Set(list.filter((c) => !c.parent_id).map((c) => c.category)));
+    setCategoriesLoading(true);
+    try {
+      const res = await apiListTapeCategories();
+      if (res.success) {
+        const list = res.data || [];
+        setCategories(list);
+        // 默认展开根目录这一级：初始只展开一级分类（无 parent_id），二级及以下默认收起
+        setExpandedCats(new Set(list.filter((c) => !c.parent_id).map((c) => c.category)));
+      }
+    } finally {
+      setCategoriesLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void load();
     void loadCategories();
-  }, [load, loadCategories]);
+  }, [loadCategories]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const doSearch = (v: { keyword?: string; status?: string }) => {
     setPage(1);
@@ -574,6 +583,7 @@ export default function OrchestrationsPage() {
           <span className="kb-tpl-sidebar-title">领域分类</span>
         </div>
         <div className="kb-tpl-cat-list">
+          <Spin spinning={categoriesLoading}>
           <div
             className={`kb-tpl-cat-item${!selectedCategory ? " active" : ""}`}
             onClick={() => selectCategory("")}
@@ -583,6 +593,7 @@ export default function OrchestrationsPage() {
             <span className="kb-tpl-cat-count">{allTotal}</span>
           </div>
           {topCategories.map((c) => renderCatNode(c, 0))}
+          </Spin>
         </div>
       </aside>
 
@@ -715,8 +726,10 @@ export default function OrchestrationsPage() {
                 { label: "通用编排", value: "general" },
                 { label: "摘要", value: "summary" },
                 { label: "知识构建", value: "kb_build" },
+                { label: "知识聚合", value: "kb_aggregate" },
                 { label: "质量评估", value: "quality" },
                 { label: "领域识别", value: "domain_resolve" },
+                { label: "反馈修正", value: "feedback_fix" },
               ]}
             />
           </Form.Item>
@@ -726,6 +739,7 @@ export default function OrchestrationsPage() {
               showSearch
               treeNodeFilterProp="title"
               placeholder="请选择分类"
+              loading={categoriesLoading}
               treeData={categoryTreeData}
             />
           </Form.Item>

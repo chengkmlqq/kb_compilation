@@ -80,10 +80,8 @@ def main() -> None:
         f"AES_SECRET_KEY={ds.get('AES_SECRET_KEY', '')}",
         f"AES_IV_KEY={ds.get('AES_IV_KEY', '')}",
         f"KNOWLEDGE_DATABASE_URL={pg_url}",
+        # 2026-10-21: EMBEDDING_* 环境变量已废弃（向量模型统一由「模型管理」页配置）
         "EMBEDDING_DIM=1024",
-        "EMBEDDING_MODEL=",
-        "EMBEDDING_BASE_URL=",
-        "EMBEDDING_API_KEY=",
         "CELERY_BROKER_URL=",
         "CELERY_RESULT_BACKEND=",
         "KB_STORAGE_DIR=",

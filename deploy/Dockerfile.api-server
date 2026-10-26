@@ -18,9 +18,11 @@ WORKDIR /srv/kb
 
 # system deps used by docreader's PDF/HTML engines and playwright
 # libreoffice-writer: 文档预览/解析时把旧版 .doc/.rtf/.odt 转成 .docx
+# libarchive-tools: rar 压缩包自动解包（bsdtar，2026-10-21）
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         fonts-liberation \
+        libarchive-tools \
         libreoffice-writer \
         libnss3 \
         libnspr4 \

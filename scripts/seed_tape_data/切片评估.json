@@ -1,0 +1,166 @@
+{
+  "exportedAt": "",
+  "schemaVersion": 1,
+  "type": "kb.orchestration.draft",
+  "draft": {
+    "tapeName": "切片评估",
+    "tapeLabel": "切片质量评估（过碎/过长/截断/重复）",
+    "tapeDescr": "单维度评估：检查文档切片自身质量——过短切片占比（<50 字）、过长切片占比（>2000 字）、截断标记（…/（节选）/[截断]）、近似重复切片（前 200 字 MD5 去重计数）；按文件粒度输出 per_doc 明细与健康分。输入 bindings：kb_id / doc_ids(逗号分隔,空=整库) / scope / quality_id / dim=chunk。结果落 kb_quality_run.chunk_metrics + kb_quality_report(dim=chunk) + kb_quality_chunk_eval（每文件一行），供切片评估页面查询。",
+    "tapeType": "general",
+    "category": "通用",
+    "status": "draft",
+    "nodes": [
+      {
+        "id": "n1",
+        "type": "stepNode",
+        "data": {
+          "label": "输入定义",
+          "stepInst": "def",
+          "config": {
+            "queue": "build",
+            "assignments": "[{\"variable\": \"kb_id\", \"expression\": \"bindings.get('kb_id', '')\"}, {\"variable\": \"doc_ids\", \"expression\": \"bindings.get('doc_ids', '')\"}, {\"variable\": \"scope\", \"expression\": \"bindings.get('scope', 'all')\"}, {\"variable\": \"quality_id\", \"expression\": \"bindings.get('quality_id', '')\"}, {\"variable\": \"dim\", \"expression\": \"bindings.get('dim', 'chunk')\"}]"
+          }
+        },
+        "position": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": "n2",
+        "type": "stepNode",
+        "data": {
+          "label": "质量检查",
+          "stepInst": "script",
+          "config": {
+            "queue": "build",
+            "code": "\n\nimport json\nfrom api.db import get_sessionmaker\nfrom sqlalchemy import text\n\nSHORT = 50\nLONG = 2000\nTRUNC_MARKS = (\"…\", \"...\", \"（节选）\", \"[截断]\")\n\n_kb = bindings.get(\"kb_id\") or \"\"\n_docs = [d.strip() for d in str(bindings.get(\"doc_ids\") or \"\").split(\",\") if d.strip()] or None\n_db = get_sessionmaker()()\ntry:\n    if _docs:\n        _cond = \"kb_id=:kb AND document_id IN :ids\"\n        _params = {\"kb\": _kb, \"ids\": tuple(_docs)}\n    else:\n        _cond = \"kb_id=:kb\"\n        _params = {\"kb\": _kb}\n    _rows = _db.execute(\n        text(f\"SELECT document_id, seq, content, meta FROM doc_chunk WHERE {_cond} AND enabled=1 ORDER BY document_id, seq\"),\n        _params,\n    ).all()\nfinally:\n    _db.close()\n\nif not _rows:\n    _r = {\"metrics\": {\"docs\": 0, \"chunks\": 0, \"avg_len\": 0},\n          \"issues\": [{\"dim\": \"chunk\", \"issue_type\": \"no_chunks\", \"detail\": \"无切片数据(文档未解析或无切片)\"}],\n          \"attribution\": [{\"dim\": \"chunk\", \"cause\": \"文档未进入切片阶段或解析失败\", \"suggestion\": \"检查 parse_state / 重跑解析\"}]}\nelse:\n    _by_doc = {}\n    for _rid, _seq, _content, _meta in _rows:\n        _by_doc.setdefault(str(_rid), []).append((int(_seq or 0), str(_content or \"\"), _meta))\n    _issues = []\n    _totals = {\"docs\": len(_by_doc), \"chunks\": 0, \"short\": 0, \"long\": 0, \"truncated\": 0, \"dup\": 0}\n    _per_doc = {}\n    for _doc_id, _chunks in _by_doc.items():\n        _lens = [len(c) for _, c, _ in _chunks]\n        _n = len(_chunks)\n        _totals[\"chunks\"] += _n\n        _short_n = sum(1 for L in _lens if L < SHORT)\n        _long_n = sum(1 for L in _lens if L > LONG)\n        _trunc_n = sum(1 for _, c, _ in _chunks if any(m in c for m in TRUNC_MARKS))\n        _seen = set()\n        _dup_n = 0\n        for _, c, _ in _chunks:\n            _h = __import__(\"hashlib\").md5(c.strip()[:200].encode(\"utf-8\")).hexdigest()\n            if _h in _seen:\n                _dup_n += 1\n            _seen.add(_h)\n        _totals[\"short\"] += _short_n\n        _totals[\"long\"] += _long_n\n        _totals[\"truncated\"] += _trunc_n\n        _totals[\"dup\"] += _dup_n\n        _per_doc[_doc_id] = {\"doc_id\": _doc_id, \"chunks\": _n, \"avg_len\": round(sum(_lens) / _n, 1) if _n else 0,\n                             \"short\": _short_n, \"long\": _long_n, \"truncated\": _trunc_n, \"dup\": _dup_n}\n        if _short_n / max(_n, 1) > 0.3:\n            _issues.append({\"dim\": \"chunk\", \"doc_id\": _doc_id, \"issue_type\": \"too_many_short_chunks\", \"detail\": f\"{_short_n}/{_n} 切片过短(<{SHORT}字),占比 {_short_n/_n:.0%}\"})\n        if _long_n / max(_n, 1) > 0.1:\n            _issues.append({\"dim\": \"chunk\", \"doc_id\": _doc_id, \"issue_type\": \"too_many_long_chunks\", \"detail\": f\"{_long_n}/{_n} 切片过长(>{LONG}字),占比 {_long_n/_n:.0%}\"})\n        if _trunc_n > 0:\n            _issues.append({\"dim\": \"chunk\", \"doc_id\": _doc_id, \"issue_type\": \"truncated_chunks\", \"detail\": f\"{_trunc_n} 个切片含截断标记\"})\n        if _dup_n / max(_n, 1) > 0.2:\n            _issues.append({\"dim\": \"chunk\", \"doc_id\": _doc_id, \"issue_type\": \"duplicate_chunks\", \"detail\": f\"{_dup_n}/{_n} 切片疑似近似重复\"})\n    _short_r = _totals[\"short\"] / max(_totals[\"chunks\"], 1)\n    _long_r = _totals[\"long\"] / max(_totals[\"chunks\"], 1)\n    _trunc_r = _totals[\"truncated\"] / max(_totals[\"chunks\"], 1)\n    _score = max(0, int(100.0 - _short_r * 60 - _long_r * 60 - _trunc_r * 80))\n    _metrics = {**_totals, \"short_ratio\": round(_short_r, 4), \"long_ratio\": round(_long_r, 4),\n                \"health_score\": _score, \"per_doc\": _per_doc}\n    _attr = []\n    if _metrics.get(\"short_ratio\", 0) > 0.3:\n        _attr.append({\"dim\": \"chunk\", \"cause\": \"过短切片占比高 → 切分粒度偏细/按词切分\", \"suggestion\": \"调大 chunk_size 或按段落合并相邻短块\"})\n    if _metrics.get(\"long_ratio\", 0) > 0.1:\n        _attr.append({\"dim\": \"chunk\", \"cause\": \"过长切片占比高 → 切分边界未生效(表/长句整块保留)\", \"suggestion\": \"对长表/长句二次切分,或提高 max_chars 后按语义边界再分\"})\n    if _metrics.get(\"truncated\", 0) > 0:\n        _attr.append({\"dim\": \"chunk\", \"cause\": \"切片带截断标记 → 切分在硬长度处截断而非语义边界\", \"suggestion\": \"开启 overlap/按句号段号切分,减少硬截断\"})\n    if _metrics.get(\"dup\", 0) > 0:\n        _attr.append({\"dim\": \"chunk\", \"cause\": \"近似重复切片 → 重叠窗口/段落重复扫描\", \"suggestion\": \"关闭 overlap 或调小重叠比例,去重后再入库\"})\n    _r = {\"metrics\": _metrics, \"issues\": _issues, \"attribution\": _attr}\n\nbindings[\"chunk_r\"] = _r\nprint(f\"[n02] 切片质量: 健康分 {_r['metrics'].get('health_score')} 问题 {len(_r['issues'])}\")\n\n"
+          }
+        },
+        "position": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": "n3",
+        "type": "stepNode",
+        "data": {
+          "label": "汇总落库",
+          "stepInst": "script",
+          "config": {
+            "queue": "build",
+            "code": "\nimport json\nimport uuid\nfrom api.db import get_sessionmaker\nfrom sqlalchemy import text\n\n_kb = bindings.get(\"kb_id\") or \"\"\n_docs = [d.strip() for d in str(bindings.get(\"doc_ids\") or \"\").split(\",\") if d.strip()] or None\n_scope = str(bindings.get(\"scope\") or \"all\")\n_qid = str(bindings.get(\"quality_id\") or \"\").strip()\n_dim = str(bindings.get(\"dim\") or \"chunk\")\n_r = bindings.get(_dim + \"_r\") or {}\n_col = {\"doc\": \"doc_metrics\", \"chunk\": \"chunk_metrics\", \"graph\": \"graph_metrics\"}.get(_dim, \"chunk_metrics\")\n_label = {\"doc\": \"文档转换\", \"chunk\": \"切片\", \"graph\": \"图数据\"}.get(_dim, _dim)\n\n_m = _r.get(\"metrics\") or {}\n_issues = _r.get(\"issues\") or []\n_attr = _r.get(\"attribution\") or []\n_score = _m.get(\"health_score\")\n_summary = f\"评估完成: {_label}质量 {_score if isinstance(_score, (int, float)) else '-'} 分 | 问题 {len(_issues)} 条, 归因建议 {len(_attr)} 条\"\n\n_db = get_sessionmaker()()\ntry:\n    if _qid:\n        # quality.py 已建 queued 占位行 → 更新它（状态流转 queued→success）\n        _db.execute(\n            text(f\"UPDATE kb_quality_run SET status='success', {_col}=:m, issues=:iss, attribution=:attr, summary=:sum, updated_at=CURRENT_TIMESTAMP WHERE id=:rid\"),\n            {\"rid\": _qid, \"m\": json.dumps(_m, ensure_ascii=False),\n             \"iss\": json.dumps(_issues, ensure_ascii=False),\n             \"attr\": json.dumps(_attr, ensure_ascii=False), \"sum\": _summary},\n        )\n    else:\n        # 兼容独立运行：自建行\n        _rid = uuid.uuid4().hex[:32]\n        _db.execute(\n            text(f\"INSERT INTO kb_quality_run (id, kb_id, scope, doc_ids, status, dim, {_col}, issues, attribution, summary, updated_at) VALUES (:id, :kb, :scope, :docs, 'success', :dim, :m, :iss, :attr, :sum, CURRENT_TIMESTAMP)\"),\n            {\"id\": _rid, \"kb\": _kb, \"scope\": _scope, \"docs\": json.dumps(_docs or [], ensure_ascii=False),\n             \"dim\": _dim, \"m\": json.dumps(_m, ensure_ascii=False),\n             \"iss\": json.dumps(_issues, ensure_ascii=False),\n             \"attr\": json.dumps(_attr, ensure_ascii=False), \"sum\": _summary},\n        )\n        _qid = _rid\n    _db.execute(text(\"DELETE FROM kb_quality_report WHERE run_id=:rid AND dim=:dim\"), {\"rid\": _qid, \"dim\": _dim})\n    _db.execute(\n        text(\"INSERT INTO kb_quality_report (id, run_id, kb_id, doc_id, dim, metrics, issues) VALUES (:id, :rid, :kb, :doc, :dim, :m, :i)\"),\n        {\"id\": uuid.uuid4().hex[:32], \"rid\": _qid, \"kb\": _kb,\n         \"doc\": _docs[0] if _docs and _scope == \"single\" else None,\n         \"dim\": _dim, \"m\": json.dumps(_m, ensure_ascii=False),\n         \"i\": json.dumps(_issues, ensure_ascii=False)},\n    )\n    # ── 文档转换评估（dim=doc）：单文件粒度明细落库，每文件一行，按 kb 整批覆盖 ──\n    if _dim == \"doc\":\n        _db.execute(text(\"DELETE FROM kb_quality_doc_eval WHERE kb_id=:kb\"), {\"kb\": _kb})\n        _per = _m.get(\"per_doc\") or []\n        for _p in _per:\n            _db.execute(\n                text(\"INSERT INTO kb_quality_doc_eval (id, kb_id, doc_id, run_id, file_name, file_ext, file_size, parse_state, parse_error, parse_engine, duration_ms, chunk_count, md_length, garbled, garbled_hits, file_name_garbled, content_garbled, score) VALUES (:id, :kb, :did, :rid, :fn, :ext, :fs, :ps, :perr, :eng, :dur, :cc, :mdl, :gb, :gh, :fngb, :ctgb, :sc)\"),\n                {\"id\": uuid.uuid4().hex[:32], \"kb\": _kb, \"did\": str(_p.get(\"doc_id\") or \"\"),\n                 \"rid\": _qid, \"fn\": str(_p.get(\"file_name\") or \"\"),\n                 \"ext\": str(_p.get(\"file_ext\") or \"\")[:32],\n                 \"fs\": _p.get(\"file_size\"), \"ps\": str(_p.get(\"parse_state\") or \"\"),\n                 \"perr\": str(_p.get(\"parse_error\") or \"\")[:500],\n                 \"eng\": str(_p.get(\"parse_engine\") or \"\"),\n                 \"dur\": _p.get(\"duration_ms\"), \"cc\": _p.get(\"chunk_count\"),\n                 \"mdl\": _p.get(\"md_length\"), \"gb\": 1 if _p.get(\"garbled\") else 0,\n                 \"gh\": json.dumps(_p.get(\"garbled_hits\") or [], ensure_ascii=False),\n                 \"fngb\": 1 if _p.get(\"file_name_garbled\") else 0,\n                 \"ctgb\": 1 if _p.get(\"content_garbled\") else 0,\n                 \"sc\": _p.get(\"score\")},\n            )\n    # ── 切片评估（dim=chunk）：单文件粒度明细落库，每文件一行，按 kb 整批覆盖 ──\n    # 兼容两种 per_doc 形态：v3 LLM 版为 list[dict]；程序版（QC_CODE）为 doc_id → 明细 映射\n    if _dim == \"chunk\":\n        _db.execute(text(\"DELETE FROM kb_quality_chunk_eval WHERE kb_id=:kb\"), {\"kb\": _kb})\n        _per = _m.get(\"per_doc\") or []\n        if isinstance(_per, dict):\n            _db2 = get_sessionmaker()()\n            try:\n                _fnames = dict(_db2.execute(\n                    text(\"SELECT id, file_name FROM kb_document WHERE kb_id=:kb\"), {\"kb\": _kb}\n                ).all())\n            finally:\n                _db2.close()\n            _per = [dict(v, file_name=_fnames.get(str(v.get(\"doc_id\") or \"\"), \"\"))\n                    for v in _per.values()]\n        for _p in _per:\n            _db.execute(\n                text(\"INSERT INTO kb_quality_chunk_eval (id, kb_id, doc_id, run_id, file_name, chunks, avg_len, short, `long`, truncated, dup, wiki_pages, wiki_start_time, wiki_build_sec, doc_process_sec, wiki_tape, eval_duration_sec, score, conclusion, issues, error) VALUES (:id, :kb, :did, :rid, :fn, :ch, :alen, :sh, :lg, :tr, :dp, :wp, :wst, :wbs, :dps, :wt, :eds, :sc, :conc, :iss, :err)\"),\n                {\"id\": uuid.uuid4().hex[:32], \"kb\": _kb, \"did\": str(_p.get(\"doc_id\") or \"\"),\n                 \"rid\": _qid, \"fn\": str(_p.get(\"file_name\") or \"\")[:255],\n                 \"ch\": _p.get(\"chunks\"), \"alen\": _p.get(\"avg_len\"),\n                 \"sh\": _p.get(\"short\"), \"lg\": _p.get(\"long\"),\n                 \"tr\": _p.get(\"truncated\"), \"dp\": _p.get(\"dup\"),\n                 \"wp\": _p.get(\"wiki_pages\"),\n                 \"wst\": _p.get(\"wiki_start_time\"), \"wbs\": _p.get(\"wiki_build_sec\"),\n                 \"dps\": _p.get(\"doc_process_sec\"), \"wt\": str(_p.get(\"wiki_tape\") or \"\")[:128],\n                 \"eds\": _p.get(\"eval_duration_sec\"), \"sc\": _p.get(\"score\"),\n                 \"conc\": str(_p.get(\"conclusion\") or \"\")[:500],\n                 \"iss\": json.dumps(_p.get(\"issues\") or [], ensure_ascii=False),\n                 \"err\": str(_p.get(\"error\") or \"\")[:500]},\n            )\n    # ── 图数据评估（dim=graph）：单文件粒度明细落库，每文件一行，按 kb 整批覆盖 ──\n    if _dim == \"graph\":\n        _db.execute(text(\"DELETE FROM kb_quality_graph_eval WHERE kb_id=:kb\"), {\"kb\": _kb})\n        for _p in (_m.get(\"per_doc\") or []):\n            _db.execute(\n                text(\"INSERT INTO kb_quality_graph_eval (id, kb_id, doc_id, run_id, file_name, nodes, rels, dumb_nodes, untraceable_rels, wiki_missing, score, issues) VALUES (:id, :kb, :did, :rid, :fn, :nd, :rl, :dumb, :utr, :wkm, :sc, :iss)\"),\n                {\"id\": uuid.uuid4().hex[:32], \"kb\": _kb, \"did\": str(_p.get(\"doc_id\") or \"\"),\n                 \"rid\": _qid, \"fn\": str(_p.get(\"file_name\") or \"\")[:255],\n                 \"nd\": _p.get(\"nodes\"), \"rl\": _p.get(\"rels\"),\n                 \"dumb\": _p.get(\"dumb_nodes\"), \"utr\": _p.get(\"untraceable_rels\"),\n                 \"wkm\": _p.get(\"wiki_missing\"), \"sc\": _p.get(\"score\"),\n                 \"iss\": json.dumps(_p.get(\"issues\") or [], ensure_ascii=False)},\n            )\n    _db.commit()\nexcept Exception as _e:\n    _db.rollback()\n    try:\n        _db.execute(text(\"UPDATE kb_quality_run SET status='failed', error=:e, updated_at=CURRENT_TIMESTAMP WHERE id=:rid\"),\n                    {\"e\": str(_e)[:500], \"rid\": _qid or \"\"})\n        _db.commit()\n    except Exception:\n        pass\n    raise\nfinally:\n    _db.close()\n\nbindings[\"quality_summary\"] = _summary\nprint(\"[summary] \" + _summary)\n\n"
+          }
+        },
+        "position": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": "n4",
+        "type": "stepNode",
+        "data": {
+          "label": "完成汇总",
+          "stepInst": "print",
+          "config": {
+            "queue": "build",
+            "text": "{{quality_summary}}"
+          }
+        },
+        "position": {
+          "x": 0,
+          "y": 0
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "n1",
+        "target": "n2"
+      },
+      {
+        "source": "n2",
+        "target": "n3"
+      },
+      {
+        "source": "n3",
+        "target": "n4"
+      }
+    ],
+    "execParams": {
+      "kb_id": "",
+      "doc_ids": "",
+      "scope": "all",
+      "quality_id": "",
+      "dim": "chunk"
+    },
+    "steps": [
+      {
+        "step_seq": 0,
+        "step_id": "n1",
+        "step_inst": "def",
+        "step_label": "输入定义",
+        "pre_step_ids": [],
+        "next_step_ids": [
+          "n2"
+        ],
+        "queue_name": "build",
+        "step_config": {
+          "queue": "build",
+          "assignments": "[{\"variable\": \"kb_id\", \"expression\": \"bindings.get('kb_id', '')\"}, {\"variable\": \"doc_ids\", \"expression\": \"bindings.get('doc_ids', '')\"}, {\"variable\": \"scope\", \"expression\": \"bindings.get('scope', 'all')\"}, {\"variable\": \"quality_id\", \"expression\": \"bindings.get('quality_id', '')\"}, {\"variable\": \"dim\", \"expression\": \"bindings.get('dim', 'chunk')\"}]"
+        }
+      },
+      {
+        "step_seq": 1,
+        "step_id": "n2",
+        "step_inst": "script",
+        "step_label": "质量检查",
+        "pre_step_ids": [
+          "n1"
+        ],
+        "next_step_ids": [
+          "n3"
+        ],
+        "queue_name": "build",
+        "step_config": {
+          "queue": "build",
+          "code": "\n\nimport json\nfrom api.db import get_sessionmaker\nfrom sqlalchemy import text\n\nSHORT = 50\nLONG = 2000\nTRUNC_MARKS = (\"…\", \"...\", \"（节选）\", \"[截断]\")\n\n_kb = bindings.get(\"kb_id\") or \"\"\n_docs = [d.strip() for d in str(bindings.get(\"doc_ids\") or \"\").split(\",\") if d.strip()] or None\n_db = get_sessionmaker()()\ntry:\n    if _docs:\n        _cond = \"kb_id=:kb AND document_id IN :ids\"\n        _params = {\"kb\": _kb, \"ids\": tuple(_docs)}\n    else:\n        _cond = \"kb_id=:kb\"\n        _params = {\"kb\": _kb}\n    _rows = _db.execute(\n        text(f\"SELECT document_id, seq, content, meta FROM doc_chunk WHERE {_cond} AND enabled=1 ORDER BY document_id, seq\"),\n        _params,\n    ).all()\nfinally:\n    _db.close()\n\nif not _rows:\n    _r = {\"metrics\": {\"docs\": 0, \"chunks\": 0, \"avg_len\": 0},\n          \"issues\": [{\"dim\": \"chunk\", \"issue_type\": \"no_chunks\", \"detail\": \"无切片数据(文档未解析或无切片)\"}],\n          \"attribution\": [{\"dim\": \"chunk\", \"cause\": \"文档未进入切片阶段或解析失败\", \"suggestion\": \"检查 parse_state / 重跑解析\"}]}\nelse:\n    _by_doc = {}\n    for _rid, _seq, _content, _meta in _rows:\n        _by_doc.setdefault(str(_rid), []).append((int(_seq or 0), str(_content or \"\"), _meta))\n    _issues = []\n    _totals = {\"docs\": len(_by_doc), \"chunks\": 0, \"short\": 0, \"long\": 0, \"truncated\": 0, \"dup\": 0}\n    _per_doc = {}\n    for _doc_id, _chunks in _by_doc.items():\n        _lens = [len(c) for _, c, _ in _chunks]\n        _n = len(_chunks)\n        _totals[\"chunks\"] += _n\n        _short_n = sum(1 for L in _lens if L < SHORT)\n        _long_n = sum(1 for L in _lens if L > LONG)\n        _trunc_n = sum(1 for _, c, _ in _chunks if any(m in c for m in TRUNC_MARKS))\n        _seen = set()\n        _dup_n = 0\n        for _, c, _ in _chunks:\n            _h = __import__(\"hashlib\").md5(c.strip()[:200].encode(\"utf-8\")).hexdigest()\n            if _h in _seen:\n                _dup_n += 1\n            _seen.add(_h)\n        _totals[\"short\"] += _short_n\n        _totals[\"long\"] += _long_n\n        _totals[\"truncated\"] += _trunc_n\n        _totals[\"dup\"] += _dup_n\n        _per_doc[_doc_id] = {\"doc_id\": _doc_id, \"chunks\": _n, \"avg_len\": round(sum(_lens) / _n, 1) if _n else 0,\n                             \"short\": _short_n, \"long\": _long_n, \"truncated\": _trunc_n, \"dup\": _dup_n}\n        if _short_n / max(_n, 1) > 0.3:\n            _issues.append({\"dim\": \"chunk\", \"doc_id\": _doc_id, \"issue_type\": \"too_many_short_chunks\", \"detail\": f\"{_short_n}/{_n} 切片过短(<{SHORT}字),占比 {_short_n/_n:.0%}\"})\n        if _long_n / max(_n, 1) > 0.1:\n            _issues.append({\"dim\": \"chunk\", \"doc_id\": _doc_id, \"issue_type\": \"too_many_long_chunks\", \"detail\": f\"{_long_n}/{_n} 切片过长(>{LONG}字),占比 {_long_n/_n:.0%}\"})\n        if _trunc_n > 0:\n            _issues.append({\"dim\": \"chunk\", \"doc_id\": _doc_id, \"issue_type\": \"truncated_chunks\", \"detail\": f\"{_trunc_n} 个切片含截断标记\"})\n        if _dup_n / max(_n, 1) > 0.2:\n            _issues.append({\"dim\": \"chunk\", \"doc_id\": _doc_id, \"issue_type\": \"duplicate_chunks\", \"detail\": f\"{_dup_n}/{_n} 切片疑似近似重复\"})\n    _short_r = _totals[\"short\"] / max(_totals[\"chunks\"], 1)\n    _long_r = _totals[\"long\"] / max(_totals[\"chunks\"], 1)\n    _trunc_r = _totals[\"truncated\"] / max(_totals[\"chunks\"], 1)\n    _score = max(0, int(100.0 - _short_r * 60 - _long_r * 60 - _trunc_r * 80))\n    _metrics = {**_totals, \"short_ratio\": round(_short_r, 4), \"long_ratio\": round(_long_r, 4),\n                \"health_score\": _score, \"per_doc\": _per_doc}\n    _attr = []\n    if _metrics.get(\"short_ratio\", 0) > 0.3:\n        _attr.append({\"dim\": \"chunk\", \"cause\": \"过短切片占比高 → 切分粒度偏细/按词切分\", \"suggestion\": \"调大 chunk_size 或按段落合并相邻短块\"})\n    if _metrics.get(\"long_ratio\", 0) > 0.1:\n        _attr.append({\"dim\": \"chunk\", \"cause\": \"过长切片占比高 → 切分边界未生效(表/长句整块保留)\", \"suggestion\": \"对长表/长句二次切分,或提高 max_chars 后按语义边界再分\"})\n    if _metrics.get(\"truncated\", 0) > 0:\n        _attr.append({\"dim\": \"chunk\", \"cause\": \"切片带截断标记 → 切分在硬长度处截断而非语义边界\", \"suggestion\": \"开启 overlap/按句号段号切分,减少硬截断\"})\n    if _metrics.get(\"dup\", 0) > 0:\n        _attr.append({\"dim\": \"chunk\", \"cause\": \"近似重复切片 → 重叠窗口/段落重复扫描\", \"suggestion\": \"关闭 overlap 或调小重叠比例,去重后再入库\"})\n    _r = {\"metrics\": _metrics, \"issues\": _issues, \"attribution\": _attr}\n\nbindings[\"chunk_r\"] = _r\nprint(f\"[n02] 切片质量: 健康分 {_r['metrics'].get('health_score')} 问题 {len(_r['issues'])}\")\n\n"
+        }
+      },
+      {
+        "step_seq": 2,
+        "step_id": "n3",
+        "step_inst": "script",
+        "step_label": "汇总落库",
+        "pre_step_ids": [
+          "n2"
+        ],
+        "next_step_ids": [
+          "n4"
+        ],
+        "queue_name": "build",
+        "step_config": {
+          "queue": "build",
+          "code": "\nimport json\nimport uuid\nfrom api.db import get_sessionmaker\nfrom sqlalchemy import text\n\n_kb = bindings.get(\"kb_id\") or \"\"\n_docs = [d.strip() for d in str(bindings.get(\"doc_ids\") or \"\").split(\",\") if d.strip()] or None\n_scope = str(bindings.get(\"scope\") or \"all\")\n_qid = str(bindings.get(\"quality_id\") or \"\").strip()\n_dim = str(bindings.get(\"dim\") or \"chunk\")\n_r = bindings.get(_dim + \"_r\") or {}\n_col = {\"doc\": \"doc_metrics\", \"chunk\": \"chunk_metrics\", \"graph\": \"graph_metrics\"}.get(_dim, \"chunk_metrics\")\n_label = {\"doc\": \"文档转换\", \"chunk\": \"切片\", \"graph\": \"图数据\"}.get(_dim, _dim)\n\n_m = _r.get(\"metrics\") or {}\n_issues = _r.get(\"issues\") or []\n_attr = _r.get(\"attribution\") or []\n_score = _m.get(\"health_score\")\n_summary = f\"评估完成: {_label}质量 {_score if isinstance(_score, (int, float)) else '-'} 分 | 问题 {len(_issues)} 条, 归因建议 {len(_attr)} 条\"\n\n_db = get_sessionmaker()()\ntry:\n    if _qid:\n        # quality.py 已建 queued 占位行 → 更新它（状态流转 queued→success）\n        _db.execute(\n            text(f\"UPDATE kb_quality_run SET status='success', {_col}=:m, issues=:iss, attribution=:attr, summary=:sum, updated_at=CURRENT_TIMESTAMP WHERE id=:rid\"),\n            {\"rid\": _qid, \"m\": json.dumps(_m, ensure_ascii=False),\n             \"iss\": json.dumps(_issues, ensure_ascii=False),\n             \"attr\": json.dumps(_attr, ensure_ascii=False), \"sum\": _summary},\n        )\n    else:\n        # 兼容独立运行：自建行\n        _rid = uuid.uuid4().hex[:32]\n        _db.execute(\n            text(f\"INSERT INTO kb_quality_run (id, kb_id, scope, doc_ids, status, dim, {_col}, issues, attribution, summary, updated_at) VALUES (:id, :kb, :scope, :docs, 'success', :dim, :m, :iss, :attr, :sum, CURRENT_TIMESTAMP)\"),\n            {\"id\": _rid, \"kb\": _kb, \"scope\": _scope, \"docs\": json.dumps(_docs or [], ensure_ascii=False),\n             \"dim\": _dim, \"m\": json.dumps(_m, ensure_ascii=False),\n             \"iss\": json.dumps(_issues, ensure_ascii=False),\n             \"attr\": json.dumps(_attr, ensure_ascii=False), \"sum\": _summary},\n        )\n        _qid = _rid\n    _db.execute(text(\"DELETE FROM kb_quality_report WHERE run_id=:rid AND dim=:dim\"), {\"rid\": _qid, \"dim\": _dim})\n    _db.execute(\n        text(\"INSERT INTO kb_quality_report (id, run_id, kb_id, doc_id, dim, metrics, issues) VALUES (:id, :rid, :kb, :doc, :dim, :m, :i)\"),\n        {\"id\": uuid.uuid4().hex[:32], \"rid\": _qid, \"kb\": _kb,\n         \"doc\": _docs[0] if _docs and _scope == \"single\" else None,\n         \"dim\": _dim, \"m\": json.dumps(_m, ensure_ascii=False),\n         \"i\": json.dumps(_issues, ensure_ascii=False)},\n    )\n    # ── 文档转换评估（dim=doc）：单文件粒度明细落库，每文件一行，按 kb 整批覆盖 ──\n    if _dim == \"doc\":\n        _db.execute(text(\"DELETE FROM kb_quality_doc_eval WHERE kb_id=:kb\"), {\"kb\": _kb})\n        _per = _m.get(\"per_doc\") or []\n        for _p in _per:\n            _db.execute(\n                text(\"INSERT INTO kb_quality_doc_eval (id, kb_id, doc_id, run_id, file_name, file_ext, file_size, parse_state, parse_error, parse_engine, duration_ms, chunk_count, md_length, garbled, garbled_hits, file_name_garbled, content_garbled, score) VALUES (:id, :kb, :did, :rid, :fn, :ext, :fs, :ps, :perr, :eng, :dur, :cc, :mdl, :gb, :gh, :fngb, :ctgb, :sc)\"),\n                {\"id\": uuid.uuid4().hex[:32], \"kb\": _kb, \"did\": str(_p.get(\"doc_id\") or \"\"),\n                 \"rid\": _qid, \"fn\": str(_p.get(\"file_name\") or \"\"),\n                 \"ext\": str(_p.get(\"file_ext\") or \"\")[:32],\n                 \"fs\": _p.get(\"file_size\"), \"ps\": str(_p.get(\"parse_state\") or \"\"),\n                 \"perr\": str(_p.get(\"parse_error\") or \"\")[:500],\n                 \"eng\": str(_p.get(\"parse_engine\") or \"\"),\n                 \"dur\": _p.get(\"duration_ms\"), \"cc\": _p.get(\"chunk_count\"),\n                 \"mdl\": _p.get(\"md_length\"), \"gb\": 1 if _p.get(\"garbled\") else 0,\n                 \"gh\": json.dumps(_p.get(\"garbled_hits\") or [], ensure_ascii=False),\n                 \"fngb\": 1 if _p.get(\"file_name_garbled\") else 0,\n                 \"ctgb\": 1 if _p.get(\"content_garbled\") else 0,\n                 \"sc\": _p.get(\"score\")},\n            )\n    # ── 切片评估（dim=chunk）：单文件粒度明细落库，每文件一行，按 kb 整批覆盖 ──\n    # 兼容两种 per_doc 形态：v3 LLM 版为 list[dict]；程序版（QC_CODE）为 doc_id → 明细 映射\n    if _dim == \"chunk\":\n        _db.execute(text(\"DELETE FROM kb_quality_chunk_eval WHERE kb_id=:kb\"), {\"kb\": _kb})\n        _per = _m.get(\"per_doc\") or []\n        if isinstance(_per, dict):\n            _db2 = get_sessionmaker()()\n            try:\n                _fnames = dict(_db2.execute(\n                    text(\"SELECT id, file_name FROM kb_document WHERE kb_id=:kb\"), {\"kb\": _kb}\n                ).all())\n            finally:\n                _db2.close()\n            _per = [dict(v, file_name=_fnames.get(str(v.get(\"doc_id\") or \"\"), \"\"))\n                    for v in _per.values()]\n        for _p in _per:\n            _db.execute(\n                text(\"INSERT INTO kb_quality_chunk_eval (id, kb_id, doc_id, run_id, file_name, chunks, avg_len, short, `long`, truncated, dup, wiki_pages, wiki_start_time, wiki_build_sec, doc_process_sec, wiki_tape, eval_duration_sec, score, conclusion, issues, error) VALUES (:id, :kb, :did, :rid, :fn, :ch, :alen, :sh, :lg, :tr, :dp, :wp, :wst, :wbs, :dps, :wt, :eds, :sc, :conc, :iss, :err)\"),\n                {\"id\": uuid.uuid4().hex[:32], \"kb\": _kb, \"did\": str(_p.get(\"doc_id\") or \"\"),\n                 \"rid\": _qid, \"fn\": str(_p.get(\"file_name\") or \"\")[:255],\n                 \"ch\": _p.get(\"chunks\"), \"alen\": _p.get(\"avg_len\"),\n                 \"sh\": _p.get(\"short\"), \"lg\": _p.get(\"long\"),\n                 \"tr\": _p.get(\"truncated\"), \"dp\": _p.get(\"dup\"),\n                 \"wp\": _p.get(\"wiki_pages\"),\n                 \"wst\": _p.get(\"wiki_start_time\"), \"wbs\": _p.get(\"wiki_build_sec\"),\n                 \"dps\": _p.get(\"doc_process_sec\"), \"wt\": str(_p.get(\"wiki_tape\") or \"\")[:128],\n                 \"eds\": _p.get(\"eval_duration_sec\"), \"sc\": _p.get(\"score\"),\n                 \"conc\": str(_p.get(\"conclusion\") or \"\")[:500],\n                 \"iss\": json.dumps(_p.get(\"issues\") or [], ensure_ascii=False),\n                 \"err\": str(_p.get(\"error\") or \"\")[:500]},\n            )\n    # ── 图数据评估（dim=graph）：单文件粒度明细落库，每文件一行，按 kb 整批覆盖 ──\n    if _dim == \"graph\":\n        _db.execute(text(\"DELETE FROM kb_quality_graph_eval WHERE kb_id=:kb\"), {\"kb\": _kb})\n        for _p in (_m.get(\"per_doc\") or []):\n            _db.execute(\n                text(\"INSERT INTO kb_quality_graph_eval (id, kb_id, doc_id, run_id, file_name, nodes, rels, dumb_nodes, untraceable_rels, wiki_missing, score, issues) VALUES (:id, :kb, :did, :rid, :fn, :nd, :rl, :dumb, :utr, :wkm, :sc, :iss)\"),\n                {\"id\": uuid.uuid4().hex[:32], \"kb\": _kb, \"did\": str(_p.get(\"doc_id\") or \"\"),\n                 \"rid\": _qid, \"fn\": str(_p.get(\"file_name\") or \"\")[:255],\n                 \"nd\": _p.get(\"nodes\"), \"rl\": _p.get(\"rels\"),\n                 \"dumb\": _p.get(\"dumb_nodes\"), \"utr\": _p.get(\"untraceable_rels\"),\n                 \"wkm\": _p.get(\"wiki_missing\"), \"sc\": _p.get(\"score\"),\n                 \"iss\": json.dumps(_p.get(\"issues\") or [], ensure_ascii=False)},\n            )\n    _db.commit()\nexcept Exception as _e:\n    _db.rollback()\n    try:\n        _db.execute(text(\"UPDATE kb_quality_run SET status='failed', error=:e, updated_at=CURRENT_TIMESTAMP WHERE id=:rid\"),\n                    {\"e\": str(_e)[:500], \"rid\": _qid or \"\"})\n        _db.commit()\n    except Exception:\n        pass\n    raise\nfinally:\n    _db.close()\n\nbindings[\"quality_summary\"] = _summary\nprint(\"[summary] \" + _summary)\n\n"
+        }
+      },
+      {
+        "step_seq": 3,
+        "step_id": "n4",
+        "step_inst": "print",
+        "step_label": "完成汇总",
+        "pre_step_ids": [
+          "n3"
+        ],
+        "next_step_ids": [],
+        "queue_name": "build",
+        "step_config": {
+          "queue": "build",
+          "text": "{{quality_summary}}"
+        }
+      }
+    ]
+  }
+}

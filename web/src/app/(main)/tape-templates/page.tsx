@@ -178,9 +178,12 @@ export default function TapeTemplatesPage() {
   }, []);
 
   useEffect(() => {
-    void load();
     void loadCategories();
-  }, [load, loadCategories]);
+  }, [loadCategories]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const doSearch = (v: { keyword?: string; status?: string }) => {
     setPage(1);

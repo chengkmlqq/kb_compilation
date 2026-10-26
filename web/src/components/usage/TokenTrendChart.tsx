@@ -24,7 +24,19 @@ export interface UsageTrend {
 
 const LINE_COLORS = ["#1677ff", "#52c41a", "#fa8c16", "#722ed1", "#ff4d4f"];
 
-export default function TokenTrendChart({ trend }: { trend: UsageTrend | null }) {
+export default function TokenTrendChart({
+  trend,
+  title = "Token 使用趋势",
+  height = 300,
+  loading = false,
+}: {
+  trend: UsageTrend | null;
+  title?: string;
+  /** 图表高度（数字 px 或 "100%" 撑满父容器） */
+  height?: number | string;
+  /** 数据加载中：Card 骨架屏占位 */
+  loading?: boolean;
+}) {
   const option = useMemo(() => {
     const labels = (trend?.timestamps || []).map((t) => dayjs(t).format("MM-DD HH:00"));
     const t = trend;
@@ -89,8 +101,8 @@ export default function TokenTrendChart({ trend }: { trend: UsageTrend | null })
   }, [trend]);
 
   return (
-    <Card size="small" title="Token 使用趋势" styles={{ body: { paddingTop: 8 } }}>
-      <EChart option={option} height={300} />
+    <Card size="small" title={title} loading={loading} style={{ height: "100%" }} styles={{ body: { height: "100%", paddingTop: 8 } }}>
+      <EChart option={option} height={height} />
     </Card>
   );
 }

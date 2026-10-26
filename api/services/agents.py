@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.models.knowledge import KbAgent, KbDatasource
@@ -42,7 +42,9 @@ class AgentConfig:
     配置项（基础/提示词/模型/对话/建议/知识库/检索/联网/多模态/工具/MCP/技能）。
     """
 
-    agent_mode: str = AGENT_MODE_QUICK_ANSWER
+    # 2026-10-21 默认改为智能推理：quick-answer 纯 RAG 单轮不注入工具
+    # （运行模式生效，对齐 WeKnora qaMode 路由），新建智能体默认给完整能力。
+    agent_mode: str = AGENT_MODE_SMART_REASONING
     system_prompt: str = ""
     context_template: str = ""
     use_custom_system_prompt: bool = False
@@ -259,9 +261,51 @@ def create_agent(
     return agent
 
 
+def sync_agent_for_kb(
+    db: Session,
+    kb_id: str,
+    kb_name: str,
+    created_by: str | None = None,
+    team_name: str | None = None,
+) -> KbAgent:
+    """知识库创建后同步对应的智能推理模式智能体（data_supply_shandong 建库同步专用）。
+
+    幂等按智能体名称（= 知识库名）复用：同名智能体已存在则把该库补进
+    knowledge_bases 绑定（selected 模式，用于重试/重复建库场景）；不存在则新建
+    agent_mode=smart-reasoning、kb_selection_mode=selected、绑定本库的智能体。
+
+    仅 shandong 建库同步端点调用——普通 POST /kbs 建库不自动建智能体。
+    """
+    existing = (
+        db.execute(select(KbAgent).where(KbAgent.state == "1", KbAgent.name == kb_name))
+        .scalars()
+        .first()
+    )
+    if existing is not None:
+        cfg = dict(existing.config or {})
+        kbs = list(cfg.get("knowledge_bases") or [])
+        if kb_id not in kbs:
+            kbs.append(kb_id)
+            cfg["knowledge_bases"] = kbs
+            cfg["kb_selection_mode"] = KB_SELECTION_SELECTED
+            update_agent(db, existing.id, {"config": cfg})
+        return existing
+    return create_agent(
+        db,
+        name=kb_name,
+        team_name=team_name,
+        created_by=created_by,
+        description=f"由知识库「{kb_name}」自动生成的智能推理模式智能体",
+        config={
+            "agent_mode": AGENT_MODE_SMART_REASONING,
+            "kb_selection_mode": KB_SELECTION_SELECTED,
+            "knowledge_bases": [kb_id],
+        },
+    )
+
+
 def copy_agent(db: Session, agent_id: str) -> KbAgent | None:
     """Duplicate an agent (name gets " - 副本" suffix; builtin flag cleared)."""
-    from sqlalchemy import select
 
     src = db.execute(select(KbAgent).where(KbAgent.id == agent_id)).scalars().first()
     if src is None:
@@ -314,7 +358,8 @@ def list_agents(db: Session, team_name: str | None = None, page: int = 1, page_s
     stmt = select(KbAgent).where(KbAgent.state == "1")
     if team_name:
         stmt = stmt.where(KbAgent.team_name == team_name)
-    total = len(db.execute(stmt).scalars().all())
+    # 2026-10-21 性能修复：计数走 SQL count（原 len(all()) 物化全表 ORM 对象）
+    total = int(db.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0)
     rows = db.execute(stmt.order_by(KbAgent.created_at.desc(), KbAgent.id.desc()).offset((page - 1) * page_size).limit(page_size)).scalars().all()
     items = [
         {
@@ -336,18 +381,34 @@ def list_agents(db: Session, team_name: str | None = None, page: int = 1, page_s
 # ---------------------------------------------------------------------------
 
 
-def resolve_kb_scope(db: Session, agent: KbAgent) -> list[KbDatasource]:
-    """Which KBs an agent may retrieve from, per kb_selection_mode."""
+def resolve_kb_scope(
+    db: Session,
+    agent: KbAgent,
+    caller_user_id: str = "",
+    caller_team_name: str = "",
+    is_sys_admin: bool = False,
+) -> list[KbDatasource]:
+    """Which KBs an agent may retrieve from, per kb_selection_mode.
+
+    2026-10-25 个人语义对齐：无论 selected/all，最终可见范围都按调用者
+    过滤（visible_clauses：个人库仅 owner、团队库仅本团队、系统库全员可读，
+    对齐 shandong 知识集 dasup_corpus_perm 的 user/team/role 语义）。
+    """
+    from api.services.scope import visible_clauses
+
     cfg = config_from_dict(agent.config or {})
+    stmt = select(KbDatasource).where(KbDatasource.state == "1")
     if cfg.kb_selection_mode == KB_SELECTION_SELECTED:
         kb_ids = cfg.knowledge_bases
-        return list(db.execute(select(KbDatasource).where(KbDatasource.id.in_(kb_ids))).scalars().all())
-    if cfg.kb_selection_mode == KB_SELECTION_NONE:
+        stmt = stmt.where(KbDatasource.id.in_(kb_ids))
+    elif cfg.kb_selection_mode == KB_SELECTION_NONE:
         return []
-    # all: agent's team KBs (or all if no team scope)
-    stmt = select(KbDatasource).where(KbDatasource.state == "1")
-    if agent.team_name:
-        stmt = stmt.where(KbDatasource.team_name == agent.team_name)
+    else:
+        # all: 不预限团队——由下方可见性联合过滤（个人/团队/系统）
+        pass
+    clauses = visible_clauses(caller_user_id, caller_team_name, is_sys_admin, KbDatasource)
+    if clauses:
+        stmt = stmt.where(*clauses)
     return list(db.execute(stmt).scalars().all())
 
 
@@ -397,6 +458,16 @@ def resolve_agent_qa_overrides(agent: KbAgent) -> dict:
 
 
 def effective_system_prompt(agent: KbAgent, default: str = SYSTEM_PROMPT) -> str:
-    """Agent's system prompt, falling back to the default RAG prompt."""
+    """Agent's system prompt, falling back to the default RAG prompt.
+
+    2026-10-20 对齐 WeKnora：前端无「启用自定义」开关，「非空即用」——
+    system_prompt 有内容即生效，留空回退默认。旧配置里的
+    use_custom_system_prompt 开关不再参与判断（避免填了内容却不生效的
+    语义陷阱），system_prompt_id 预留模板引用兜底。
+    """
     cfg = config_from_dict(agent.config or {})
-    return cfg.system_prompt.strip() or default
+    if cfg.system_prompt.strip():
+        return cfg.system_prompt.strip()
+    if cfg.system_prompt_id:
+        return default
+    return default

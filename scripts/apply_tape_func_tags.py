@@ -1,4 +1,4 @@
-"""给现有编排打「功能标签」（tape_type：summary 摘要 / kb_build 知识构建），幂等可重放。
+"""给现有编排打「功能标签」（tape_type：summary 摘要 / kb_build 知识构建 / kb_aggregate 知识聚合），幂等可重放。
 
 背景（2026-10-15）：编排管理页与「知识库构建配置」（构建引擎下拉）需要按功能内容
 区分编排——摘要编排（摘要-Stuff/Map-Reduce/Refine）与知识构建编排（wiki构建-* 领域版、
@@ -10,6 +10,8 @@ wiki构建-基础原子版、表构建Wiki-基础原子版）是两类主要功�
   - tape_name LIKE '摘要-%'            → summary（摘要）
   - tape_name LIKE 'wiki构建-%'        → kb_build（知识构建）
   - tape_name IN ('表构建Wiki-基础原子版','表构建Wiki') → kb_build
+  - tape_name IN ('聚类知识-主题聚合','制度版本演进') → kb_aggregate（知识聚合，2026-10-21）
+  - tape_name = 'wiki反馈修正' → feedback_fix（反馈修正，2026-10-25）
 
 用法：docker cp scripts/apply_tape_func_tags.py kb-api-server:/tmp/ &&
       docker exec kb-api-server /srv/kb/.venv/bin/python /tmp/apply_tape_func_tags.py
@@ -18,6 +20,9 @@ from sqlalchemy import select
 
 from api.db import get_sessionmaker
 from api.models.orchestration import Tape
+
+
+KB_AGGREGATE_NAMES = ("聚类知识-主题聚合", "制度版本演进")
 
 
 def main() -> None:
@@ -31,6 +36,10 @@ def main() -> None:
                 target = "summary"
             elif name.startswith("wiki构建-") or name in ("表构建Wiki-基础原子版", "表构建Wiki"):
                 target = "kb_build"
+            elif name in KB_AGGREGATE_NAMES:
+                target = "kb_aggregate"
+            elif name == "wiki反馈修正":
+                target = "feedback_fix"
             else:
                 skipped += 1
                 continue

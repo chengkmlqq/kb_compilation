@@ -355,10 +355,11 @@ export default function ModelRegistryPage() {
           <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
             <Spin />
           </div>
-        ) : filtered.length === 0 ? (
+        ) : !loading && filtered.length === 0 ? (
           <Empty description="暂无模型" />
         ) : (
           // 卡片视图（保留）——flex:1 占满剩余高度，内容超出时内部滚动
+          <Spin spinning={loading} style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
           <div
             style={{
               flex: 1,
@@ -488,6 +489,7 @@ export default function ModelRegistryPage() {
               </div>
             ))}
           </div>
+          </Spin>
         )}
 
         {/* 分页常驻底栏 */}

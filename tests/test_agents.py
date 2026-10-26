@@ -22,7 +22,8 @@ from api.services.agents import (
 
 def test_config_defaults() -> None:
     cfg = config_from_dict(None)
-    assert cfg.agent_mode == "quick-answer"
+    # 2026-10-21 默认运行模式改为智能推理（新建智能体默认 Agent 多轮能力）
+    assert cfg.agent_mode == "smart-reasoning"
     assert cfg.kb_selection_mode == "all"
     assert cfg.temperature == 0.7
     assert cfg.top_k == 5
@@ -33,7 +34,7 @@ def test_config_partial_merge_keeps_defaults() -> None:
     cfg = config_from_dict({"temperature": 0.2, "knowledge_bases": ["kb1"]})
     assert cfg.temperature == 0.2
     assert cfg.knowledge_bases == ["kb1"]
-    assert cfg.agent_mode == "quick-answer"  # untouched default
+    assert cfg.agent_mode == "smart-reasoning"  # untouched default
     assert cfg.top_k == 5
 
 
@@ -43,6 +44,111 @@ def test_config_to_dict_roundtrip() -> None:
     assert cfg2.top_k == 8
     assert cfg2.threshold == 0.3
     assert cfg2.agent_mode == "smart-reasoning"
+
+
+# ── 2026-10-20 对齐 WeKnora：有效系统提示词「非空即用」 ─────────────────
+
+
+def _agent(**cfg_kwargs) -> KbAgent:
+    return KbAgent(id="a1", name="测试", team_name="T1", config=cfg_kwargs or None)
+
+
+def test_effective_system_prompt_prefers_custom() -> None:
+    from api.services.agents import effective_system_prompt
+
+    agent = _agent(system_prompt="你是制度专家。")
+    assert effective_system_prompt(agent, default="默认提示词") == "你是制度专家。"
+
+
+def test_effective_system_prompt_falls_back_to_default() -> None:
+    from api.services.agents import effective_system_prompt
+
+    agent = _agent(system_prompt="   ")
+    assert effective_system_prompt(agent, default="默认提示词") == "默认提示词"
+
+
+def test_effective_system_prompt_ignores_switch_flag() -> None:
+    """对齐 WeKnora：use_custom_system_prompt 开关不参与判断，非空即用。
+    旧配置开关为 False 但填了内容时依然生效（避免语义陷阱）。"""
+    from api.services.agents import effective_system_prompt
+
+    agent = _agent(use_custom_system_prompt=False, system_prompt="填了就用。")
+    assert effective_system_prompt(agent, default="默认提示词") == "填了就用。"
+
+
+def test_agents_prompt_defaults_route() -> None:
+    """GET /agents/prompt-defaults 返回平台默认提示词（新建/编辑展示用）。"""
+    from api.routers.agents import prompt_defaults_route
+    from api.services.chat import SYSTEM_PROMPT
+
+    body = prompt_defaults_route()  # 端点无 DB/鉴权依赖，直接调 handler 验证
+    assert body["success"] is True
+    assert body["data"]["system_prompt"] == SYSTEM_PROMPT
+    assert "contexts" in body["data"]["placeholders"]
+
+
+def test_agent_done_event_stats_fields() -> None:
+    """2026-10-21 对齐 WeKnora done 事件统计：done 事件带 total_duration_ms /
+    thinking_rounds / tool_calls_count（整体耗时、思考轮次、工具调用数）。
+
+    直接验证最终 done 事件构造（不含鉴权/知识库依赖）——通过逐行 scan
+    agent_qa_stream 源码里 done 事件的字段构造，或最小化调用链路。
+    这里用源码静态断言：done 事件 dict 构造处必含三个统计字段。
+    """
+    import re
+
+    src = open("api/routers/agents.py", encoding="utf-8").read()
+    done_block = src[src.index('"type": "done"'):]
+    # 找到 finally 里 done yield 的 dict 构造（含 message_id 的那处）
+    m = re.search(r'"type": "done",\s*\n\s*"message_id"[^}]*\}', done_block)
+    assert m, "done 事件构造未找到"
+    block = m.group(0)
+    for field in ("total_duration_ms", "thinking_rounds", "tool_calls_count"):
+        assert field in block, f"done 事件缺统计字段 {field}"
+
+
+def test_agents_prompt_templates_route() -> None:
+    """GET /agents/prompt-templates 返回模板库（2026-10-21 对齐 WeKnora）。
+
+    校验加载器形状与默认标记语义：system_prompt/context_template 两类、
+    每个模板含 id/name/description/content、有且仅有一个 default 模板。
+    """
+    from api.routers.agents import prompt_templates_route
+
+    body = prompt_templates_route()
+    assert body["success"] is True
+    data = body["data"]
+    assert set(data.keys()) == {"system_prompt", "context_template"}
+    for key in ("system_prompt", "context_template"):
+        templates = data[key]
+        assert len(templates) >= 1, key
+        for t in templates:
+            assert t["id"] and t["name"] and t["description"] and t["content"]
+            assert "i18n" not in t  # 已本地化剥离
+        defaults = [t for t in templates if t.get("default")]
+        assert len(defaults) == 1, key
+
+
+def test_prompt_templates_localized_zh_cn() -> None:
+    """i18n.zh-CN 的名称/描述优先生效（对齐 WeKnora LocalizeTemplates）。"""
+    from api.services.prompt_templates import get_prompt_templates
+
+    templates = get_prompt_templates()["system_prompt"]
+    kb_default = next(t for t in templates if t.get("default"))
+    assert kb_default["name"] == "知识库问答助手"  # zh-CN 覆盖英文名
+    assert "{{contexts}}" in kb_default["content"]  # 正文保持模板占位符
+
+
+def test_prompt_templates_default_template_fallback() -> None:
+    """无 default 标记的列表取第一个（对齐 WeKnora DefaultTemplate）。"""
+    from api.services.prompt_templates import get_default_template
+
+    lst = [{"id": "a"}, {"id": "b", "default": True}]
+    assert get_default_template(lst) is not None
+    assert get_default_template(lst)["id"] == "b"  # type: ignore[index]
+    assert get_default_template([{"id": "x"}]) is not None
+    assert get_default_template([{"id": "x"}])["id"] == "x"  # type: ignore[index]
+    assert get_default_template([]) is None
 
 
 @pytest.fixture()
@@ -69,7 +175,7 @@ def test_create_and_list(agent_db) -> None:
     items = list_agents(agent_db, team_name="T1")["items"]
     assert len(items) == 1
     assert items[0]["name"] == "制度助手"
-    assert items[0]["config"]["agent_mode"] == "quick-answer"
+    assert items[0]["config"]["agent_mode"] == "smart-reasoning"
 
 
 def test_update_merges_config(agent_db) -> None:
@@ -78,7 +184,7 @@ def test_update_merges_config(agent_db) -> None:
     assert updated is not None
     cfg = config_from_dict(updated.config)
     assert cfg.top_k == 10
-    assert cfg.agent_mode == "quick-answer"  # preserved
+    assert cfg.agent_mode == "smart-reasoning"  # preserved
 
 
 def test_delete_soft(agent_db) -> None:
@@ -131,3 +237,42 @@ def test_agent_qa_request_accepts_model_id() -> None:
     assert req.model_id == "m-abc"
     # 不传时默认 None（用默认模型），保持旧行为
     assert AgentQARequest(question="你好").model_id is None
+
+
+# ── 2026-10-24 建库同步智能体（shandong 知识集建库专用端点 /kbs/sync-agent）──
+
+
+def test_sync_agent_for_kb_creates_smart_reasoning_agent(agent_db) -> None:
+    from api.services.agents import sync_agent_for_kb
+
+    agent = sync_agent_for_kb(agent_db, kb_id="kb1", kb_name="制度库", created_by="u1", team_name="T1")
+    assert agent.name == "制度库"
+    assert agent.created_by == "u1"
+    assert agent.team_name == "T1"
+    cfg = config_from_dict(agent.config)
+    assert cfg.agent_mode == "smart-reasoning"  # 智能推理模式
+    assert cfg.kb_selection_mode == "selected"
+    assert cfg.knowledge_bases == ["kb1"]
+    assert resolve_kb_scope(agent_db, agent_db.get(KbAgent, agent.id))  # 绑定库可直接检索
+
+
+def test_sync_agent_for_kb_reuses_same_name_and_binds_new_kb(agent_db) -> None:
+    from api.services.agents import sync_agent_for_kb
+
+    first = sync_agent_for_kb(agent_db, kb_id="kb1", kb_name="制度库")
+    # 知识集重试/重复建库：同名智能体已存在（绑其他库）→ 复用并把新库补进绑定
+    second = sync_agent_for_kb(agent_db, kb_id="kb2", kb_name="制度库")
+    assert second.id == first.id
+    cfg = config_from_dict(agent_db.get(KbAgent, first.id).config)
+    assert sorted(cfg.knowledge_bases) == ["kb1", "kb2"]
+    assert cfg.kb_selection_mode == "selected"
+
+
+def test_sync_agent_for_kb_idempotent_when_already_bound(agent_db) -> None:
+    from api.services.agents import sync_agent_for_kb
+
+    first = sync_agent_for_kb(agent_db, kb_id="kb1", kb_name="制度库")
+    second = sync_agent_for_kb(agent_db, kb_id="kb1", kb_name="制度库")
+    assert second.id == first.id
+    cfg = config_from_dict(agent_db.get(KbAgent, first.id).config)
+    assert cfg.knowledge_bases == ["kb1"]  # 不重复追加

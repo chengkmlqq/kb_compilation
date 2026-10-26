@@ -13,6 +13,8 @@ import {
 
 interface JobStatsProps {
   statistics: JobStatistics;
+  /** 统计接口加载中：数值占位“-” */
+  loading?: boolean;
 }
 
 const STAT_CARDS: Array<{
@@ -66,7 +68,7 @@ const STAT_CARDS: Array<{
   },
 ];
 
-function JobStats({ statistics }: JobStatsProps) {
+function JobStats({ statistics, loading = false }: JobStatsProps) {
   return (
     <div
       style={{
@@ -113,7 +115,7 @@ function JobStats({ statistics }: JobStatsProps) {
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {statistics[stat.key] ?? 0}
+                {loading ? "-" : statistics[stat.key] ?? 0}
               </span>
             </div>
             <div

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
@@ -76,6 +77,36 @@ def tool_catalog_route() -> dict:
     return {"success": True, "data": {"tools": TOOL_CATALOG}}
 
 
+@router.get("/prompt-defaults")
+def prompt_defaults_route() -> dict:
+    """平台默认提示词（2026-10-20 对齐 WeKnora 模板预填）：
+
+    新建/编辑智能体时前端展示系统默认提示词正文（SYSTEM_PROMPT 常量，
+    含 {{contexts}} 等占位符与引用规范），用户可直接看到默认人设并在
+    其上修改；留空保存仍回退默认。
+    """
+    return {
+        "success": True,
+        "data": {
+            "system_prompt": SYSTEM_PROMPT,
+            "placeholders": ["query", "contexts", "current_time", "current_week", "language"],
+        },
+    }
+
+
+@router.get("/prompt-templates")
+def prompt_templates_route() -> dict:
+    """提示词模板库（2026-10-21 对齐 WeKnora GET /tenants/kv/prompt-templates）：
+
+    返回系统提示词 / 上下文模板的多模板列表（含名称、描述、正文、默认标记、
+    知识库/联网标签），前端「使用模板」选择器据此填充提示词文本框；
+    「恢复默认」则使用 prompt-defaults 的平台默认提示词。
+    """
+    from api.services.prompt_templates import get_prompt_templates
+
+    return {"success": True, "data": get_prompt_templates()}
+
+
 @router.put("/{agent_id}")
 def update(agent_id: str, req: AgentUpdateRequest, db: Session = Depends(get_db)) -> dict:
     agent = update_agent(db, agent_id, req.model_dump(exclude_none=True))
@@ -145,13 +176,41 @@ def agent_qa_stream(
     """
 
     def generator():
+        # 2026-10-21 对齐 WeKnora done 事件统计：整体耗时（含检索/生成/工具全链）、
+        # 思考轮次（generation 轮数）、工具调用数。前端工具链树根摘要用这些真实值，
+        # 而不是前端把各工具 duration 累加（累加 ≠ 整体耗时）。
+        _t0 = time.monotonic()
+        _thinking_rounds = 0
+        _tool_calls_count = 0
+        # 2026-10-23 过程追踪 collector（kind=agent；无会话时不落库，与 chat_message 一致）
+        from api.services.chat_trace import TraceCollector, save_trace
+
+        trace_col: TraceCollector | None = None
         agent = db.execute(select(KbAgent).where(KbAgent.id == agent_id)).scalars().first()
         if not agent:
             yield _sse({"type": "error", "message": f"agent not found: {agent_id}"})
             yield _sse({"type": "done"})
             return
 
-        kbs = resolve_kb_scope(db, agent)
+        # 身份（2026-10-25 提前解析：resolve_kb_scope 按调用者过滤个人/团队可见库）
+        identity = decode_identity_cookie(x_next_identity or "")
+        ctx_user_id = identity.user_id if identity else ""
+        ctx_team_name = identity.team_name or "" if identity else ""
+        ctx_is_admin = False
+        if ctx_user_id:
+            try:
+                from api.services.models import is_admin
+
+                ctx_is_admin = is_admin(db, ctx_user_id)
+            except Exception:  # noqa: BLE001
+                ctx_is_admin = False
+
+        kbs = resolve_kb_scope(
+            db, agent,
+            caller_user_id=ctx_user_id,
+            caller_team_name=ctx_team_name,
+            is_sys_admin=ctx_is_admin,
+        )
         if not kbs:
             yield _sse({"type": "error", "message": "agent 未绑定可用知识库"})
             yield _sse({"type": "done"})
@@ -167,18 +226,6 @@ def agent_qa_stream(
         # 本轮图片附件 id（对齐 WeKnora attachment_ids）：仅当轮注入；None=旧客户端
         turn_image_ids: list[str] = []
         images_scoped = req.image_attachment_ids is not None
-        # 身份（无 session 也解析：用于个人/团队模型作用域）
-        identity = decode_identity_cookie(x_next_identity or "")
-        ctx_user_id = identity.user_id if identity else ""
-        ctx_team_name = identity.team_name or "" if identity else ""
-        ctx_is_admin = False
-        if ctx_user_id:
-            try:
-                from api.services.models import is_admin
-
-                ctx_is_admin = is_admin(db, ctx_user_id)
-            except Exception:  # noqa: BLE001
-                ctx_is_admin = False
 
         if req.session_id:
             if not identity or not identity.user_id:
@@ -235,6 +282,18 @@ def agent_qa_stream(
 
         # Retrieval overrides from the agent config.
         overrides = resolve_agent_qa_overrides(agent)
+        # 2026-10-23 过程追踪 collector 实例化（会话模式才落库；kb 取首个绑定库）
+        if user_id:
+            trace_col = TraceCollector(
+                session_id=req.session_id or "",
+                user_id=user_id,
+                team_name=ctx_team_name or "",
+                kb_id=(kbs[0].id if kbs else ""),
+                agent_id=agent_id,
+                kind="agent",
+                question=req.question,
+                model="",
+            )
         query_embedding = None
         if overrides.get("vector_enabled", True):
             try:
@@ -332,11 +391,52 @@ def agent_qa_stream(
             ]
 
         answer_parts: list[str] = []
+        # 2026-10-23 思考过程全文收集（此前 agent 链路不落 thinking，随 trace 补齐）
+        thinking_parts: list[str] = []
         refs: list[dict] = []
         last_kb_id = ""
         image_description = ""
         plan_images: list[str] = image_urls
         include_doc_images = True
+        # 2026-10-20 增量持久化（对齐 qa.py）：生成中定期把已生成部分落库，
+        # 刷新/关页后重开会话不丢中间内容；首条 delta 建占位，finally 终更。
+        assistant_message_id = ""
+        _last_persist_ts = 0.0
+
+        def _persist_partial(force: bool = False) -> None:
+            nonlocal assistant_message_id, _last_persist_ts
+            if not (req.session_id and user_id):
+                return
+            content = "".join(answer_parts)
+            if not content and not refs:
+                return  # 尚无内容不建占位（避免空消息）
+            now = time.time()
+            if not force and now - _last_persist_ts < 1.0:
+                return
+            try:
+                from api.services.chat_sessions import append_message, update_message
+
+                # 2026-10-21 空正文兜底：只有引用没有正文时（LLM 空流/重试耗尽），
+                # 落库内容给可读提示而不是空串——前端刷新后历史消息能看到原因，
+                # 不再出现 content='' 的「幽灵回复」。正常有正文时不受影响。
+                if not content and refs:
+                    content = "模型未返回有效内容，请稍后重试；若持续为空请检查模型服务配置"
+                # 2026-10-23 思考过程随消息一并落库（此前 agent 链路不存 thinking）
+                thinking = "".join(thinking_parts) if thinking_parts else None
+                if assistant_message_id:
+                    update_message(
+                        db, user_id, req.session_id, assistant_message_id,
+                        content=content, refs=refs, thinking=thinking,
+                    )
+                else:
+                    saved = append_message(
+                        db, user_id, req.session_id, "assistant", content, refs=refs,
+                        thinking=thinking,
+                    )
+                    assistant_message_id = saved.get("id") or ""
+                _last_persist_ts = now
+            except Exception as e:  # noqa: BLE001
+                logger.warning("incremental persist agent assistant failed: %s", e)
         # 2026-10-12: 模型选择生效——指定模型则显式解析（文本/图片均生效），
         # 与 qa.py 的 _run_generation 同款逻辑；解析失败回退默认模型。
         requested_cfg = None
@@ -411,28 +511,43 @@ def agent_qa_stream(
             # 多 KB 时均摊工具迭代轮数，避免「6 库 × 每库 10 轮」工具循环爆炸（实测 120s+ 无 done）
             kbs_effective = kbs or []
             per_kb_iterations = max(1, int(agent_cfg.max_iterations or 10) // max(1, len(kbs_effective)))
+            # 2026-10-21 运行模式生效（对齐 WeKnora qaMode 路由）：
+            # quick-answer = 纯 RAG 单轮，不注入目录工具（kb_tools 全空）——
+            # 模型拿到 tools 就会自行规划多轮调用，与「快速问答」语义相悖；
+            # smart-reasoning = 注入全套工具走 agent 多轮循环。
+            # 动态工具（web_search / run_skill_script）不受运行模式影响，
+            # 仍由各自 enabled 开关控制（WeKnora 同语义：联网/技能是独立开关）。
+            is_agent_mode = str(agent_cfg.agent_mode or "") == "smart-reasoning"
             for idx, kb in enumerate(kbs_effective):
                 last_kb_id = kb.id
                 extra = attachment_ctx if idx == 0 else ""
                 # 知识库工具（对齐 WeKnora 全套：RAG/图谱/Wiki 读写/数据分析；按 kb 绑定）
                 kb_tools: list[dict] = []
                 kb_executor = None
-                try:
-                    from api.services.agent_tools_full import build_full_tool_context
+                if is_agent_mode:
+                    try:
+                        from api.services.agent_tools_full import build_full_tool_context
 
-                    kb_tools, kb_executor = build_full_tool_context(
-                        db,
-                        agent,
-                        kb=kb,
-                        caller_user_id=ctx_user_id,
-                        caller_team_name=ctx_team_name,
-                        is_sys_admin=ctx_is_admin,
-                    )
-                except Exception:  # noqa: BLE001 — 工具装配失败不阻断问答
-                    logger.exception("agent full tools resolution failed; tools disabled for this call")
-                    kb_tools, kb_executor = [], None
+                        kb_tools, kb_executor = build_full_tool_context(
+                            db,
+                            agent,
+                            kb=kb,
+                            caller_user_id=ctx_user_id,
+                            caller_team_name=ctx_team_name,
+                            is_sys_admin=ctx_is_admin,
+                        )
+                    except Exception:  # noqa: BLE001 — 工具装配失败不阻断问答
+                        logger.exception("agent full tools resolution failed; tools disabled for this call")
+                        kb_tools, kb_executor = [], None
                 # allowed_tools 白名单裁剪（非空仅注入白名单内工具；空=全部允许）
-                per_kb_tools = filter_by_whitelist((merged_tools or []) + kb_tools)
+                # quick-answer（纯 RAG 单轮）：目录工具已空，动态工具也不注入
+                # （联网/技能是 agent 多轮循环侧能力，WeKnora 同语义 qaModeNormal
+                # 不装配任何工具）→ tools 恒为空列表 → answer_question 走单轮流式。
+                per_kb_tools = (
+                    filter_by_whitelist((merged_tools or []) + kb_tools)
+                    if is_agent_mode
+                    else []
+                )
 
                 def per_kb_executor(tool_call: dict) -> str:
                     name = str(tool_call.get("name") or "")
@@ -461,47 +576,108 @@ def agent_qa_stream(
                     image_description=image_description if idx == 0 else "",
                     include_doc_images=include_doc_images,
                     agent_prompt=agent_prompt or "",
+                    context_template=(agent_cfg.context_template or "").strip(),  # 2026-10-20 对齐 WeKnora
                     user_id=ctx_user_id,
                     team_name=ctx_team_name,
                     is_sys_admin=ctx_is_admin,
                     tools=per_kb_tools or None,
                     tool_executor=per_kb_executor,
-                    thinking=req.thinking,  # 2026-10-20 深度思考开关（None=跟随 agent 配置）
+                    thinking=req.thinking if req.thinking is not None else agent_cfg.thinking,  # 2026-10-20 深度思考开关：请求显式传值优先，否则回落 agent 配置（此前仅透传 None → chat.py 不注入 thinking 字段 → 网关默认开思考，deepseek-v4-pro 只输出 reasoning 无正文）
                     max_tool_iterations=per_kb_iterations,
                 ):
                     event["kb_id"] = kb.id
+                    # 2026-10-21 统计：工具调用事件计数 + generation 轮次计数
+                    # （stage/generation/running 出现一次 = 一轮 LLM 生成，即一轮思考）
+                    if event.get("type") == "tool_call":
+                        _tool_calls_count += len(event.get("tool_calls") or [])
+                    elif event.get("type") == "stage" and event.get("stage") == "generation" and event.get("status") == "running":
+                        _thinking_rounds += 1
+                    elif event.get("type") == "thinking":
+                        # 2026-10-23 思考过程收集（此前丢弃，随 trace/chat_message 落库）
+                        thinking_parts.append(event.get("text", ""))
                     if event.get("type") == "delta":
                         answer_parts.append(event.get("text", ""))
+                        _persist_partial()  # 2026-10-20 增量落库：生成中定期保存已生成部分
                     elif event.get("type") == "context":
                         hits = event.get("hits") or []
+                        # 2026-10-21 修复「引用悬停显示『该片段未返回正文』」：
+                        # 原实现只带 chunk_id+score，缺 content/document_id/kb_id/meta，
+                        # 前端 MarkdownViewer 引用浮层 hover.ref?.content 为空 →
+                        # 恒显示占位文案。与 qa.py _run_generation 的 refs 组装对齐，
+                        # 全字段带回（多 KB 循环时 hits 自身已带各 kb 的归属字段）。
                         refs = [
-                            {"chunk_id": h.get("chunk_id", ""), "score": h.get("score", 0)}
+                            {
+                                "chunk_id": h.get("chunk_id", ""),
+                                "content": h.get("content", ""),
+                                "document_id": h.get("document_id", ""),
+                                "kb_id": h.get("kb_id", ""),
+                                "score": h.get("score", 0),
+                                "meta": h.get("meta") or {},
+                            }
                             for h in hits
                         ]
+                    if trace_col is not None:
+                        trace_col.on_event(event)
                     yield _sse(event)
         except Exception as e:  # noqa: BLE001
             logger.exception("agent qa failed for kb %s", last_kb_id)
+            if trace_col is not None:
+                trace_col.error = str(e)[:500]
             yield _sse({"type": "error", "message": str(e), "kb_id": last_kb_id})
+        else:
+            # 2026-10-20 空响应兜底：生成结束但未产出任何正文（LLM 空流、thinking-only、
+            # 空内容重试耗尽）——此前只有 stage/done 事件，前端表现为「没有回复」；这里补一条
+            # 可见提示。判断只看正文有无：即使有检索引用（refs 非空）但模型没给出回答，
+            # 同样要提示，否则会静默 done（2026-10-21 实测：refs 10 条但正文为空 → 无任何提示）。
+            if not answer_parts:
+                logger.warning(
+                    "agent qa produced empty answer for kb %s (refs=%d)",
+                    last_kb_id, len(refs),
+                )
+                yield _sse(
+                    {
+                        "type": "error",
+                        "message": "模型未返回有效内容，请稍后重试；若持续为空请检查模型服务配置",
+                        "kb_id": last_kb_id,
+                    }
+                )
         finally:
-            # 会话模式：持久化助手回答
-            assistant_message_id = ""
+            # 会话模式：终更助手消息（增量占位已建则 UPDATE 同一消息，否则补 append）
             if req.session_id and user_id:
                 try:
                     from api.services.chat_sessions import append_message
 
-                    saved = append_message(
-                        db, user_id, req.session_id, "assistant", "".join(answer_parts), refs=refs
-                    )
-                    assistant_message_id = saved.get("id") or ""
+                    _persist_partial(force=True)
+                    # 2026-10-20 兜底修正：无正文且无引用时不落空助手消息（此前无条件
+                    # append，把网关空响应/403 固化成 content='' 的历史消息）。
+                    if not assistant_message_id and (answer_parts or refs):
+                        saved = append_message(
+                            db, user_id, req.session_id, "assistant", "".join(answer_parts), refs=refs
+                        )
+                        assistant_message_id = saved.get("id") or ""
                 except Exception as e:  # noqa: BLE001
                     logger.warning("failed to persist agent assistant message: %s", e)
+                # 2026-10-23 过程追踪落库（含空响应尝试，失败分析用）
+                try:
+                    if trace_col is not None:
+                        save_trace(db, trace_col, message_id=assistant_message_id)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("failed to persist agent chat trace: %s", e)
             # 2026-10-14 done 事件带回持久化消息 id：前端据此把本地占位 id 换成服务端 id，
             # 否则点赞/反馈按 id 查库会 404「消息不存在」。
+            # 2026-10-21 补统计（对齐 WeKnora done 事件的 total_steps/total_duration_ms）：
+            # total_duration_ms = 整体耗时（含检索/生成/工具全链，多 KB 循环累加）、
+            # thinking_rounds = generation 轮数、tool_calls_count = 工具调用总数
+            # （字段名带 _count 后缀：done 事件已有一个 tool_calls 数组字段名，
+            # 不与前端 QaStreamEvent.tool_calls 冲突）。
             yield _sse(
                 {
                     "type": "done",
                     "message_id": assistant_message_id,
                     "user_message_id": user_message_id,
+                    "total_duration_ms": int((time.monotonic() - _t0) * 1000),
+                    "thinking_rounds": _thinking_rounds,
+                    "tool_calls_count": _tool_calls_count,
                 }
             )
 

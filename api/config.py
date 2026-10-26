@@ -28,15 +28,18 @@ class Settings:
     DB_POOL_PRE_PING: bool = os.getenv("DB_POOL_PRE_PING", "1") == "1"
     # 启动时自动应用 Alembic 迁移（框架库 schema 对齐，见 api/services/migrations.py）
     AUTO_MIGRATE_ON_START: bool = os.getenv("AUTO_MIGRATE_ON_START", "1") == "1"
-    # ── 环境隔离（2026-10-12）：生产/开发双环境 ─────────────────────────
-    # 生产 = DATABASE_URL / KNOWLEDGE_DATABASE_URL；开发 = DEV_*（未配则回落生产）。
-    # 编排执行（手工/设计器/定时）→ 开发环境；知识库上传触发链路 → 生产环境。
-    # 总开关：KB_ENV_ROUTING_ENABLED=0 时全部走生产（零风险回滚开关）。
+    # ── 环境隔离（2026-10-12 双库 → 2026-10-20 双表改造）────────────
+    # 原「dev/prod 双库」方案（DEV_DATABASE_URL 独立库）已废弃：远程库只有
+    # data_supply 一个，dev/prod 共用同一个 DATABASE_URL（api/db.py
+    # _resolve_db_url 恒返回 DATABASE_URL）。环境隔离改为同库双表——
+    # dev 环境（编排测试执行：手工/设计器/定时）的 SQL 由
+    # api/services/env_table_router.py 的 before_cursor_execute 事件自动
+    # 路由到 xxx_dev 表；prod（知识库上传触发链路）写正式表。
+    # 以下 DEV_* / KB_ENV_ROUTING_ENABLED 字段保留仅为.env 兼容读取，
+    # 已无任何消费点（勿重新启用）。
     DEV_DATABASE_URL: str = os.getenv("DEV_DATABASE_URL", "")
-    # 开发向量库：同一 PG 实例的独立 schema（connect_args search_path 注入）
     DEV_KNOWLEDGE_DATABASE_URL: str = os.getenv("DEV_KNOWLEDGE_DATABASE_URL", "")
     DEV_SCHEMA_NAME: str = os.getenv("DEV_SCHEMA_NAME", "dev")
-    # 0/空 = 环境路由关闭（全生产）；1 = 开启（编排→dev，上传→prod）
     KB_ENV_ROUTING_ENABLED: bool = os.getenv("KB_ENV_ROUTING_ENABLED", "0") == "1"
 
     # --- Vector store (PostgreSQL + pgvector, for chunk embeddings only) ---
@@ -46,10 +49,11 @@ class Settings:
     # and HNSW search are available. VECTOR_STORE_TYPE=es is reserved for a
     # future Elasticsearch backend.
     KNOWLEDGE_DATABASE_URL: str = os.getenv("KNOWLEDGE_DATABASE_URL", "")
+    # 2026-10-21: EMBEDDING_BASE_URL / _API_KEY / _MODEL 的 settings 已移除——
+    # 向量模型统一由「模型管理」页（KbModel embedding 类型）解析。
+    # EMBEDDING_DIM 保留：pgvector 建表列维度（api/models/knowledge.py）+ 模型未声明
+    # dimension 时的回落值。
     EMBEDDING_DIM: int = int(os.getenv("EMBEDDING_DIM", "1024"))
-    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "")
-    EMBEDDING_BASE_URL: str = os.getenv("EMBEDDING_BASE_URL", "")
-    EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")
 
     # --- Auth ---
     AUTH_SECRET: str = os.getenv("AUTH_SECRET", os.getenv("NEXTAUTH_SECRET", ""))

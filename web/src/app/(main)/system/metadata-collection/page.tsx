@@ -47,7 +47,6 @@ import { ModoTable } from "@/components/biz/modo-table";
 import {
   apiDeleteMetadataByDatasource,
   apiDownloadMetadataTemplate,
-  apiGetMetadataConfig,
   apiImportMetadataCollection,
   apiListMetadataColumns,
   apiListMetadataDatasources,
@@ -78,7 +77,6 @@ export default function MetadataCollectionPage() {
   const [filter, setFilter] = useState<{ name?: string; dsType?: string }>({});
   const [filterForm] = Form.useForm<{ name?: string; dsType?: string }>();
   const [dsTypeOptions, setDsTypeOptions] = useState<{ label: string; value: string }[]>([]);
-  const [fullCollectionEnabled, setFullCollectionEnabled] = useState(true);
 
   // 采集确认弹窗
   const [collectTarget, setCollectTarget] = useState<MetadataDatasourceItem | null>(null);
@@ -148,12 +146,6 @@ export default function MetadataCollectionPage() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    void apiGetMetadataConfig().then((res) => {
-      if (res.success && res.data) setFullCollectionEnabled(res.data.fullCollectionEnabled);
-    });
-  }, []);
 
   // 短延时二次刷新（采集任务入队后状态异步变化）
   const delayedRefresh = () => {
@@ -427,7 +419,6 @@ export default function MetadataCollectionPage() {
             </Form>
             <div style={{ color: "rgba(0,0,0,.45)", fontSize: 12 }}>
               采集在后台异步执行（约 1-5 分钟，视数据库大小）；提交后页面自动刷新状态。
-              {!fullCollectionEnabled ? <div style={{ color: "#faad14" }}>⚠️ 全量采集开关当前为关闭状态。</div> : null}
             </div>
           </Space>
         )}

@@ -40,11 +40,14 @@ export default function CodeRepoPane({ kbId }: Props) {
   const [pulling, setPulling] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const res = await apiRepoDetail(kbId);
       if (res.success) setDetail(res.data ?? null);
     } catch {
       // 非代码仓库知识库/加载失败不展示
+    } finally {
+      setLoading(false);
     }
   }, [kbId]);
 
@@ -90,6 +93,7 @@ export default function CodeRepoPane({ kbId }: Props) {
 
   return (
     <div style={{ padding: 24, maxWidth: 860 }}>
+      <Spin spinning={loading}>
       <Space style={{ marginBottom: 16 }} size={12}>
         <Button
           type="primary"
@@ -170,6 +174,7 @@ export default function CodeRepoPane({ kbId }: Props) {
         说明：仓库代码存放在对象存储中，仓库目录已镜像为知识库「文档」页签的目录树；每个文件进入解析与
         Wiki 构建编排链路，可在「文档」与「Wiki」页签查看处理结果，任务监控页可查看编排执行进度。
       </div>
+      </Spin>
     </div>
   );
 }

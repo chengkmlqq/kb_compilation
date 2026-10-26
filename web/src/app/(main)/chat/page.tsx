@@ -31,7 +31,6 @@ import {
   FileTextOutlined,
   GlobalOutlined,
   PaperClipOutlined,
-  PictureOutlined,
   RobotOutlined,
   SearchOutlined,
   ArrowUpOutlined,
@@ -85,6 +84,7 @@ import MarkdownViewer from "@/components/MarkdownViewer";
 import TypewriterText from "@/components/TypewriterText";
 import { RagStep } from "@/components/RagPipelineProgress";
 import AgentToolCalls, { ToolCallEvent } from "@/components/AgentToolCalls";
+import AgentAvatar from "@/components/AgentAvatar";
 import { FolderIcon } from "@/components/kb/KbsIcons";
 import { copyText } from "@/lib/clipboard";
 
@@ -93,10 +93,14 @@ const { Text } = Typography;
 interface UiMessage extends ChatMessageItem {
   streaming?: boolean;
   error?: boolean;
+  /** 2026-10-21 失败原因文案（后端 error 事件带回），气泡内展示，避免只弹 toast 后页面无提示 */
+  errorText?: string;
     steps?: RagStep[];
     toolEvents?: ToolCallEvent[];
   /** 2026-10-13 对齐 WeKnora：智能体模式回复（隐藏思考大块，思考折叠进工具步骤） */
   agent?: boolean;
+  /** 2026-10-21 对齐 WeKnora done 事件统计：整体耗时/思考轮次/工具调用数（树根摘要用） */
+  agentStats?: { totalDurationMs?: number; thinkingRounds?: number; toolCalls?: number };
   }
 
 // 切页续传锚点：qa-resume:{sessionId} → {stream_id, offset}
@@ -167,18 +171,19 @@ export default function ChatPage() {
   const [categories, setCategories] = useState<KbCategoryItem[]>([]);
   const kbPanelRef = useRef<HTMLDivElement | null>(null);
   const kbBtnRef = useRef<HTMLButtonElement | null>(null);
-  // 2026-10-12 对齐 WeKnora 输入区联网搜索开关（普通问答/agent 模式通用，请求级生效）
+  // 2026-10-12 对齐 WeKnora 输入区联网搜索开关（快速问答/agent 模式通用，请求级生效）
   const [webSearch, setWebSearch] = useState(false);
-  // 2026-10-20 深度思考开关（请求级 thinking 透传；模型支持 reasoning_content 时流式打印思考过程）
-  const [deepThinking, setDeepThinking] = useState(false);
-  // 2026-10-12 对齐 WeKnora embeddedMode：iframe 嵌入 / ?embed=1 / ?noframe=1 时
-  // 隐藏左侧会话列表，问答区满宽沉浸式展示（宿主页面嵌入问答小窗场景）
+  // 2026-10-12 对齐 WeKnora embeddedMode：?embed=1 时隐藏左侧会话列表，
+  // 问答区满宽沉浸式展示（宿主页面嵌入问答小窗场景）。
+  // 2026-10-26 修正两处：① ?noframe=1 仅表示无框架挂载，不隐藏会话列表；
+  // ② 不再由 iframe 内嵌判定（inIframe）触发——shandong 菜单经 MODO 壳
+  // iframe 挂载 /wiki/chat（src 带 noframe=1&jwt=），iframe 判定会让
+  // 会话列表恒隐藏且顶栏无「展开侧边栏」按钮。现在仅显式 ?embed=1 生效。
   const [embeddedMode, setEmbeddedMode] = useState(false);
   useEffect(() => {
-    const inIframe = typeof window !== "undefined" && window.self !== window.top;
     const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-    const forced = params?.get("embed") === "1" || params?.get("noframe") === "1";
-    setEmbeddedMode(inIframe || forced);
+    const forced = params?.get("embed") === "1";
+    setEmbeddedMode(forced);
   }, []);
     // 2026-10-07 对齐 WeKnora：@提及多资源（消息级目标覆盖：知识库 / 智能体）
   // 声明放在 openSession 之前（openSession 恢复输入态时用到 atTarget）
@@ -207,6 +212,34 @@ export default function ChatPage() {
   const scrollBottom = () => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
   };
+
+  // 2026-10-21 修复「已拉到底部仍提示回到最新」：
+  // 旧实现只在 onScroll 时更新按钮，但消息内容高度会异步变化（答案流式追加、
+  // 工具链折叠/展开、Markdown/图片渲染完成）——这些变化不触发 scroll 事件，
+  // 按钮状态残留（如内容变矮后用户其实已在底部、按钮仍显示）。
+  // 这里统一成 updateScrollBtn：onScroll + 内容尺寸变化（ResizeObserver）都调它；
+  // 内容不足一屏（scrollHeight<=clientHeight，含 is-home overflow:visible）时强制隐藏。
+  const updateScrollBtn = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollHeight <= el.clientHeight + 2) {
+      setShowScrollBtn(false);
+      return;
+    }
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    setShowScrollBtn(!atBottom);
+  };
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    updateScrollBtn();
+    if (typeof ResizeObserver === "undefined") return;
+    // 内容区尺寸变化（答案/工具链/图片异步渲染）时重算按钮状态
+    const ro = new ResizeObserver(updateScrollBtn);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- msgs/streaming 变化即内容变化
+  }, [msgs, streaming]);
 
   // 2026-10-12: 步骤树兜底——把消息里所有仍在 running 的步骤标为 done。
   // 后端此前只发 generation/running 从不发 done（已修复），但这里仍需要
@@ -240,11 +273,12 @@ export default function ChatPage() {
     };
 
     // tool 事件回填：把 tool_call 挂上的 running 卡片按 id（缺 id 时按顺序）标 done 并回填结果/耗时。
+    // 2026-10-21 对齐 WeKnora：回填 success/error（后端 tool 事件新增字段），失败卡红色展示失败原因。
     // 主发送与续传两条 SSE 分支共用。
     const applyToolResults = (
       msgId: string,
       toolCalls: Array<{ id?: string; name?: string }>,
-      results: Array<{ result?: string; name?: string }>,
+      results: Array<{ result?: string; success?: boolean; error?: string; name?: string }>,
       durations: number[],
     ) => {
       setMsgs((prev) =>
@@ -264,6 +298,8 @@ export default function ChatPage() {
                 ...toolEvents[idx],
                 status: "done" as const,
                 result: res?.result !== undefined ? String(res.result) : "",
+                success: res?.success !== undefined ? !!res.success : true,
+                error: res?.error ? String(res.error) : "",
                 duration: dur,
               };
             } else {
@@ -272,6 +308,8 @@ export default function ChatPage() {
                 name: tc.name || "unknown",
                 status: "done" as const,
                 result: res?.result !== undefined ? String(res.result) : "",
+                success: res?.success !== undefined ? !!res.success : true,
+                error: res?.error ? String(res.error) : "",
                 duration: dur,
               });
             }
@@ -374,10 +412,9 @@ export default function ChatPage() {
       kb_id: kbId || null,
       model_id: modelId || null,
       web_search_enabled: webSearch,
-      thinking: deepThinking, // 2026-10-20 深度思考开关随会话快照恢复
       at_target: atTarget,
     }),
-    [agentMode, kbId, modelId, webSearch, deepThinking, atTarget],
+    [agentMode, kbId, modelId, webSearch, atTarget],
   );
 
   // 打开会话：加载历史消息
@@ -410,7 +447,6 @@ export default function ChatPage() {
           if (st.agent_id) setAgentMode(st.agent_id);
           if (st.model_id) setModelId(st.model_id);
           if (st.web_search_enabled != null) setWebSearch(!!st.web_search_enabled);
-          if (st.thinking != null) setDeepThinking(!!st.thinking); // 2026-10-20 深度思考快照
           if (st.at_target) setAtTarget(st.at_target);
           else setAtTarget(null);
         }
@@ -432,14 +468,14 @@ export default function ChatPage() {
   const tryResume = async (sessionId: string) => {
     const raw = sessionStorage.getItem(QA_RESUME_KEY(sessionId));
     if (!raw) return;
-    let anchor: { stream_id: string; offset: number };
+    let anchor: { stream_id: string; offset: number; assistant_message_id?: string };
     try {
       anchor = JSON.parse(raw);
     } catch {
       sessionStorage.removeItem(QA_RESUME_KEY(sessionId));
       return;
     }
-    const { stream_id, offset } = anchor;
+    const { stream_id, offset, assistant_message_id } = anchor;
     setResuming(true);
     try {
       const resp = await fetch(`/api/v1/qa/stream/${stream_id}?after=${offset}`, {
@@ -454,10 +490,16 @@ export default function ChatPage() {
       let fullThinking = "";
       let refs: ChatRefItem[] = [];
       let resumeDone = false;
-      // 补一个续传占位消息（若最后一条不是本流助手消息）
+      // 2026-10-20 增量持久化：后端已把部分内容落库并暴露消息 id，刷新后加载历史
+      // 已含该条 assistant 消息——命中则直接复用续拉（不插占位，避免同一回答出现两条）；
+      // 未命中（流刚开始、尚无落库内容）仍按旧逻辑插入 resume 占位。
       const lastMsg = msgsRef.current?.[msgsRef.current.length - 1];
-      const needPlaceholder =
-        !lastMsg || lastMsg.role !== "assistant" || lastMsg.streaming !== true;
+      const hitServerMsg =
+        !!assistant_message_id &&
+        !!lastMsg &&
+        lastMsg.role === "assistant" &&
+        lastMsg.id === assistant_message_id;
+      const needPlaceholder = !hitServerMsg;
       const placeholderId = `resume-ai-${Date.now()}`;
       if (needPlaceholder) {
         setMsgs((prev) => [
@@ -560,6 +602,24 @@ export default function ChatPage() {
                 );
                 applyId = serverId;
               }
+              // 2026-10-21 done 统计写入消息（续传分支与主发送对齐）
+              if (ev.total_duration_ms != null || ev.thinking_rounds != null || ev.tool_calls_count != null) {
+                const doneId = applyId;
+                setMsgs((prev) =>
+                  prev.map((m) =>
+                    m.id === doneId
+                      ? {
+                          ...m,
+                          agentStats: {
+                            totalDurationMs: ev.total_duration_ms ?? m.agentStats?.totalDurationMs,
+                            thinkingRounds: ev.thinking_rounds ?? m.agentStats?.thinkingRounds,
+                            toolCalls: ev.tool_calls_count ?? m.agentStats?.toolCalls,
+                          },
+                        }
+                      : m,
+                  ),
+                );
+              }
               resumeDone = true;
               break;
             }
@@ -630,12 +690,6 @@ export default function ChatPage() {
     // @提及：本条消息级目标覆盖（kb / agent），未提及则沿用顶部选择
     const effectiveKbId = atTarget?.kind === "kb" ? atTarget.id : kbId;
     const effectiveAgent = atTarget?.kind === "agent" ? atTarget.id : agentMode;
-    // 2026-10-20 对齐 DSB 门户问答（反思模式）：深度思考需至少选一个知识库或上传附件，
-    // 空选择时拦截并提示（普通问答仍走纯 LLM 对话）
-    if (deepThinking && !effectiveKbId && attachments.length === 0) {
-      toast.warning("深度思考需要至少选择一个知识库或上传文档附件");
-      return;
-    }
     // 2026-10-15 纯对话模式：知识库与智能体都未选择时直接走纯 LLM 对话（不再拦截）
     const userMsg: UiMessage = {
       id: `local-user-${Date.now()}`,
@@ -710,11 +764,11 @@ export default function ChatPage() {
       setImagePreviews([]);
       for (const p of pending) {
         try {
-          const attId = await uploadAttachment(p.file, sessionId, { silent: true });
-          if (attId) {
-            turnImageIds.push(attId);
+          const att = await uploadAttachment(p.file, sessionId, { silent: true });
+          if (att) {
+            turnImageIds.push(att.id);
             localImages.push({
-              id: attId,
+              id: att.id,
               file_name: p.file.name,
               file_size: p.file.size,
               url: p.url,
@@ -767,7 +821,13 @@ export default function ChatPage() {
           embed_query: true,
           model_id: modelId || undefined, // 2026-10-06: 模型切换（空=默认模型）
           web_search_enabled: webSearch, // 2026-10-12 对齐 WeKnora 输入区联网开关
-          thinking: deepThinking || undefined, // 2026-10-20 深度思考（空=网关默认）
+          // 2026-10-21 修复「agent 问答无返回」：不再硬编码 thinking: true——
+          // 该参数经 agents.py 优先于 agent 配置，强制网关思考模式后
+          // deepseek-v4-pro 在工具循环/长上下文下只输出 reasoning 无正文；
+          // 对齐 WeKnora（基类 provider 不发 thinking、剥思考兜底）：不传 =
+          // 后端回落 agent 配置（供管制度智能体 thinking=false）正常输出正文。
+          // 思考展示由模型侧 reasoning_content 流式透出逻辑保留（有则折叠展示）。
+          thinking: undefined,
           // 2026-10-18 对齐 WeKnora 图片仅随当轮注入：本轮图片附件 id（[]=本轮无图）
           image_attachment_ids: turnImageIds,
           // 2026-10-20 附件问答交互改造：本轮全部附件 id（图片+文档），
@@ -787,6 +847,9 @@ export default function ChatPage() {
       let streamId = "";
       let eventCount = 0;
       let streamDone = false;
+      // 2026-10-20 增量持久化：后端首写助手消息后回传服务端 id，存入锚点，
+      // 刷新后 tryResume 命中该消息则复用续拉（避免同一回答出现两条）。
+      let anchorAssistantId = "";
 
       while (true) {
         if (streamDone) {
@@ -867,7 +930,7 @@ export default function ChatPage() {
               applyToolResults(
                 placeholder.id,
                 (evt.tool_calls || []) as Array<{ id?: string; name?: string }>,
-                (evt.results || []) as Array<{ result?: string; name?: string }>,
+                (evt.results || []) as Array<{ result?: string; success?: boolean; error?: string; name?: string }>,
                 (evt.durations || []) as number[],
               );
             } else if (evt.type === "stream_meta") {
@@ -879,8 +942,32 @@ export default function ChatPage() {
                   JSON.stringify({ stream_id: streamId, offset: 0 }),
                 );
               }
+            } else if (evt.type === "assistant_message") {
+              // 2026-10-20 增量持久化：后端已首写助手消息，记录服务端 id 供刷新后复用
+              anchorAssistantId = (evt.message_id || "").trim();
+              if (sessionId && streamId && anchorAssistantId) {
+                sessionStorage.setItem(
+                  QA_RESUME_KEY(sessionId),
+                  JSON.stringify({
+                    stream_id: streamId,
+                    offset: eventCount,
+                    assistant_message_id: anchorAssistantId,
+                  }),
+                );
+              }
             } else if (evt.type === "error") {
               toast.error(evt.message || "问答失败");
+              // 2026-10-21 空回复/失败可见化：把占位消息标记为失败态并保留错误文案
+              // （此前只弹 toast，3 秒后页面只剩空白气泡，用户不知为何没有回复）。
+              // 复用它已有的 m.error 分支（红色提示 + 重试按钮），文案带出具体原因。
+              const errMsg = evt.message || "问答失败";
+              setMsgs((prev) =>
+                prev.map((m) =>
+                  m.id === placeholder.id
+                    ? { ...m, content: "", streaming: false, error: true, errorText: errMsg }
+                    : m,
+                ),
+              );
             } else if (evt.type === "done") {
               // 后端已确认生成结束：立即退出循环并复位 streaming，
               // 不再依赖 HTTP 连接关闭（连接可能因 keep-alive/代理延迟关闭，
@@ -889,6 +976,16 @@ export default function ChatPage() {
               // 2026-10-14 对齐服务端 id：本轮流已持久化，改用服务端消息 id
               // （否则点赞/反馈仍按本地占位 id 请求，报「消息不存在」）
               placeholder.id = adoptServerMessageIds(evt, placeholder.id, userMsg.id);
+              // 2026-10-21 对齐 WeKnora done 事件统计：整体耗时/思考轮次/工具调用数
+              // 存入消息，AgentToolCalls 树根摘要用（优先后端真实值）
+              if (evt.total_duration_ms != null || evt.thinking_rounds != null || evt.tool_calls_count != null) {
+                const prevStats = placeholder.agentStats || {};
+                placeholder.agentStats = {
+                  totalDurationMs: evt.total_duration_ms ?? prevStats.totalDurationMs,
+                  thinkingRounds: evt.thinking_rounds ?? prevStats.thinkingRounds,
+                  toolCalls: evt.tool_calls_count ?? prevStats.toolCalls,
+                };
+              }
               streamDone = true;
               break;
             }
@@ -896,7 +993,11 @@ export default function ChatPage() {
             if (sessionId && streamId) {
               sessionStorage.setItem(
                 QA_RESUME_KEY(sessionId),
-                JSON.stringify({ stream_id: streamId, offset: eventCount }),
+                JSON.stringify({
+                  stream_id: streamId,
+                  offset: eventCount,
+                  ...(anchorAssistantId ? { assistant_message_id: anchorAssistantId } : {}),
+                }),
               );
             }
           } catch {
@@ -1078,7 +1179,7 @@ export default function ChatPage() {
   };
 
   // 图片问答门禁：选了智能体时按其 image_upload_enabled 配置判断（对齐
-  // WeKnora ImageUploadEnabled）；未选智能体（普通问答/纯对话模式）默认允许
+  // WeKnora ImageUploadEnabled）；未选智能体（快速问答/纯对话模式）默认允许
   // 传图——后端 /qa/stream 图片链路不依赖知识库/智能体，只要求模型 supports_vision。
   const activeAgentCfg = agents.find((a) => a.id === agentMode)?.config ?? {};
   const canUploadImage = agentMode ? !!activeAgentCfg.image_upload_enabled : true;
@@ -1086,14 +1187,17 @@ export default function ChatPage() {
     ? ".pdf,.doc,.docx,.md,.txt,.html,.xlsx,.pptx,.png,.jpg,.jpeg,.gif,.webp,.bmp"
     : ".pdf,.doc,.docx,.md,.txt,.html,.xlsx,.pptx";
 
-  // ── 2026-10-08 对齐 WeKnora：图片 / 附件两个独立入口 ─────────────────
-  const imageInputRef = useRef<HTMLInputElement>(null);
+  // ── 附件入口（图片 2026-10-20 起去掉上传按钮，走粘贴/拖放）───────────
   const attachmentInputRef = useRef<HTMLInputElement>(null);
-  const IMAGE_ACCEPT = "image/*";
 
   const addImageFiles = (files: FileList | File[] | null) => {
     if (!files || !files.length) return;
-    if (!canUploadImage) return;
+    if (!canUploadImage) {
+      // 2026-10-21 门禁拦截给提示（此前静默 return，用户粘贴图片毫无反馈，
+      // 表现为「不能粘贴图片」；对齐拖放路径 handleChatDrop 的同款提示）
+      toast.warning("当前未启用图片上传，图片已忽略");
+      return;
+    }
     const arr = Array.from(files).filter((f) => f.type.startsWith("image/"));
     if (!arr.length) return;
     setImagePreviews((prev) => {
@@ -1360,11 +1464,7 @@ export default function ChatPage() {
         <div
           ref={scrollRef}
           className="kb-chat-content"
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-            setShowScrollBtn(!atBottom);
-          }}
+          onScroll={updateScrollBtn}
           style={{ position: "relative" }}
         >
           {loadingMsgs ? (
@@ -1437,16 +1537,16 @@ export default function ChatPage() {
                 <div className="kb-chat-assistant">
                     {/* 2026-10-20 对齐 WeKnora AgentStreamDisplay：智能体模式的
                         思考过程 + 工具调用按 action-card 时间线展示在答案之前
-                        （thinking 卡 → 工具卡 → 正文；普通问答无工具事件不受影响） */}
+                        （thinking 卡 → 工具卡 → 正文；快速问答无工具事件不受影响） */}
                     {m.agent && m.thinking ? (
                       <AgentThinkingRow thinking={m.thinking} streaming={!!m.streaming} />
                     ) : null}
                     {m.toolEvents && m.toolEvents.length > 0 ? (
-                      <AgentToolCalls events={m.toolEvents} />
+                      <AgentToolCalls events={m.toolEvents} stats={m.agentStats} answerStreaming={!!m.streaming} />
                     ) : null}
                     {/* 2026-10-16 DSB 对齐：RAG 步骤树/工具卡移除，思考折叠为 think-btn + think-view
                         2026-10-20：智能体模式（m.agent）的思考已在顶部 AgentThinkingRow 展示，
-                        这里只渲染正文；普通问答才用 AssistantThink（思考折叠条 + 正文一体） */}
+                        这里只渲染正文；快速问答才用 AssistantThink（思考折叠条 + 正文一体） */}
                     {!m.agent && m.thinking ? (
                       <AssistantThink
                         thinking={m.thinking}
@@ -1479,7 +1579,7 @@ export default function ChatPage() {
                               })
                             }
                           />
-                        ) : m.streaming ? (
+) : m.streaming ? (
                           <span className="kb-think-shimmer" style={{ fontSize: 14 }}>思考中…</span>
                         ) : (
                           ""
@@ -1488,7 +1588,7 @@ export default function ChatPage() {
                     )}
                     {m.error ? (
                       <div>
-                        <Text type="danger">回答失败，请重试</Text>
+                        <Text type="danger">{m.errorText || "回答失败，请重试"}</Text>
                         <Button
                           size="small"
                           type="primary"
@@ -1744,6 +1844,7 @@ export default function ChatPage() {
                   key: a.id,
                   label: (
                     <div className="kb-chat-model-item">
+                      <AgentAvatar name={a.name} size="small" />
                       <div className="kb-chat-model-item-left">
                         <div className="kb-chat-model-name">{a.name}</div>
                         <div className="kb-chat-model-descr">{a.description || "暂无描述"}</div>
@@ -1756,7 +1857,7 @@ export default function ChatPage() {
                 })),
                 selectable: false,
                 onClick: ({ key }) => {
-                  // 点击当前已选智能体 = 取消（切回普通问答）；否则选中并同步会话绑定
+                  // 点击当前已选智能体 = 取消（切回快速问答）；否则选中并同步会话绑定
                   if (agentMode === key) {
                     setAgentMode(undefined);
                     if (activeSession) {
@@ -1781,9 +1882,14 @@ export default function ChatPage() {
                     : "选择智能体"
                 }
               >
-                <RobotOutlined style={{ color: "rgba(50,97,206,1)", fontSize: 12 }} />
+                {agentMode ? (
+                  <AgentAvatar name={agents.find((a) => a.id === agentMode)?.name || ""} size="small" />
+                ) : (
+                  // 2026-10-20 快速问答与智能体同款彩色图标（AgentAvatar 渐变块 + 首字符，带颜色文字）
+                  <AgentAvatar name="快速问答" size="small" />
+                )}
                 <span className="kb-chat-agent-btn-label">
-                  {agents.find((a) => a.id === agentMode)?.name || "普通问答"}
+                  {agents.find((a) => a.id === agentMode)?.name || "快速问答"}
                 </span>
                 <DsbIconChevronDown size={12} className="kb-chat-agent-btn-arrow" />
               </button>
@@ -1803,31 +1909,6 @@ export default function ChatPage() {
                 onClick={() => setWebSearch((v) => !v)}
               >
                 <GlobalOutlined />
-              </button>
-            )}
-            {/* 2026-10-20 深度思考开关：开启后请求级透传 thinking，模型支持
-                reasoning_content 时思考过程流式打印（非 Agent/Agent 均生效） */}
-            <button
-              type="button"
-              className={`kb-chat-input-icon-btn${deepThinking ? " active" : ""}`}
-              title={
-                deepThinking
-                  ? "深度思考已开启：回答前先流式展示推理过程"
-                  : "深度思考已关闭（开启后先展示推理过程再回答）"
-              }
-              aria-pressed={deepThinking}
-              onClick={() => setDeepThinking((v) => !v)}
-            >
-              <BulbOutlined />
-            </button>
-            {canUploadImage && (
-              <button
-                type="button"
-                className="kb-chat-input-icon-btn"
-                title="上传图片（随问答发给模型识别）"
-                onClick={() => imageInputRef.current?.click()}
-              >
-                <PictureOutlined />
               </button>
             )}
           </div>
@@ -1937,6 +2018,7 @@ export default function ChatPage() {
                 <div className="kb-chat-kb-tags-list">
                   {activeKb ? (
                     <Tag
+                      className="kb-chat-kb-tag"
                       closable
                       onClose={(e) => {
                         e.preventDefault();
@@ -1984,17 +2066,6 @@ export default function ChatPage() {
             </div>
           </div>
         </div>
-        <input
-          ref={imageInputRef}
-          type="file"
-          accept={IMAGE_ACCEPT}
-          multiple
-          style={{ display: "none" }}
-          onChange={(e) => {
-            addImageFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
         <input
           ref={attachmentInputRef}
           type="file"
@@ -2096,7 +2167,7 @@ export default function ChatPage() {
                     onMouseEnter={(e) => (e.currentTarget.style.background = atTarget?.kind === "agent" && atTarget.id === a.id ? token.controlItemBgActive : token.colorFillTertiary)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = atTarget?.kind === "agent" && atTarget.id === a.id ? token.controlItemBgActive : "transparent")}
                   >
-                    <RobotOutlined style={{ color: token.colorPrimary, fontSize: 12 }} />
+                    <AgentAvatar name={a.name} size="small" />
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
                   </div>
                 ));
@@ -2183,10 +2254,10 @@ export default function ChatPage() {
                 {g.items.map((item, ii) => (
                   <div key={ii}>
                     {item.content && (
-                      <Text style={{ fontSize: 13 }}>
-                        {item.content.slice(0, 400)}
-                        {item.content.length > 400 ? "…" : ""}
-                      </Text>
+                      // 2026-10-21 引用切片按 md 渲染（切片原文含表格/列表等结构）
+                      <div className="kb-ref-drawer-md">
+                        <MarkdownViewer text={item.content.slice(0, 400)} />
+                      </div>
                     )}
                     <Space size={8} wrap style={{ marginTop: 4 }}>
                       <Tag color="geekblue">
@@ -2362,7 +2433,7 @@ function AssistantThink({
             active={!!answerStreaming}
             onCitationClick={onCitationClick}
           />
-        ) : answerStreaming ? (
+) : answerStreaming ? (
           <span className="kb-think-shimmer">思考中…</span>
         ) : (
           ""
@@ -2510,17 +2581,16 @@ function AgentThinkingRow({ thinking, streaming }: { thinking: string; streaming
       </div>
       {expanded && (
         <div
-          className="kb-agent-tool-details"
+          className="kb-agent-tool-details kb-agent-tool-details--thinking"
           style={{
             padding: "8px 12px",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
             maxHeight: 240,
             overflow: "auto",
             fontSize: 12,
           }}
         >
-          {thinking}
+          {/* 2026-10-21 对齐 WeKnora thinking 卡：正文 markdown 渲染（而非纯文本 pre） */}
+          <MarkdownViewer text={thinking} />
         </div>
       )}
     </div>

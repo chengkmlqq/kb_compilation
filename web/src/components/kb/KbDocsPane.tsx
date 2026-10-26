@@ -12,7 +12,6 @@ import {
   App,
   Button,
   Card,
-  Dropdown,
   Input,
   Modal,
   Select,
@@ -26,10 +25,8 @@ import {
   AppstoreOutlined,
   CloudUploadOutlined,
   DeleteOutlined,
-  DownOutlined,
   DownloadOutlined,
   EditOutlined,
-  FileZipOutlined,
   FolderAddOutlined,
   FolderOutlined,
   PlusOutlined,
@@ -78,9 +75,11 @@ import { emitUploadTask, makeUploadTaskId, setFileDropTarget } from "@/lib/uploa
 import { createDocFolderEnsurer } from "@/lib/doc-folder-ensure";
 import { collectDirFiles, isDirectoryUpload, relativePathOf } from "@/lib/upload-dir";
 import {
+  ARCHIVE_EXTS,
   DEFAULT_SUPPORTED_EXTS,
   acceptAttr,
   isArchiveFileName,
+  isSupportedFileName,
   partitionBySupport,
   supportedLabel,
 } from "@/lib/upload-support";
@@ -98,15 +97,27 @@ export interface KbDocsPaneProps {
   onDocsChange?: (docs: DocItem[]) => void;
   /** 单个文档被删除后回调（父级关闭对应详情页签） */
   onDocRemoved?: (docId: string) => void;
+  /**
+   * 锁定到指定根目录（2026-10-21 语义层页面复用）：
+   * 语义层「元数据」「文档库」页只展示电信语义层知识库对应根目录下的数据，
+   * 传入该目录 id 后：左侧目录树只渲染该目录及其子树、默认选中该目录，
+   * 文档列表固定按该目录过滤（切换到其他目录的入口被移除）。
+   */
+  lockedFolderId?: string;
 }
 
-export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange, onDocRemoved }: KbDocsPaneProps) {
+export default function KbDocsPane({
+  kbId,
+  refreshTick,
+  onOpenDoc,
+  onDocsChange,
+  onDocRemoved,
+  lockedFolderId,
+}: KbDocsPaneProps) {
   const { message, modal } = App.useApp();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // 目录上传（webkitdirectory）隐藏选择器
   const dirInputRef = useRef<HTMLInputElement | null>(null);
-  // zip 压缩包上传（服务端自动解包）隐藏选择器
-  const zipInputRef = useRef<HTMLInputElement | null>(null);
   // 所在页签可见性：antd Tabs 默认不销毁隐藏 pane，隐藏时应暂停轮询/摘要，
   // 否则多开页签会各自在后台持续打接口（文档解析中每 3s 一轮）。
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -123,9 +134,11 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
   const [docKeyword, setDocKeyword] = useState("");
   const [docStatus, setDocStatus] = useState("");
   const [docType, setDocType] = useState("");
-  // 文档多级目录（doc_folder）：选中目录 id（"" = 全部/根），递归子树浏览
+  // 文档多级目录（doc_folder）：选中目录 id（"" = 全部/根），递归子树浏览。
+  // 2026-10-21 锁定模式（lockedFolderId 非空）：初始即选中锁定目录，且列表固定按它过滤
   const [docFolders, setDocFolders] = useState<DocFolderItem[]>([]);
-  const [docFolderId, setDocFolderId] = useState("");
+  const [folderLoading, setFolderLoading] = useState(false);
+  const [docFolderId, setDocFolderId] = useState(lockedFolderId || "");
   // 移至目录（批量）
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveFolderId, setMoveFolderId] = useState("");
@@ -183,6 +196,7 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
 
   // 文档目录树（多级）：全量轻量元数据，前端按 parent_id 构建缩进树
   const loadDocFolders = useCallback(async () => {
+    setFolderLoading(true);
     try {
       const res = await apiListDocFolders(kbId);
       if (res.success) {
@@ -194,6 +208,8 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
       }
     } catch (e) {
       console.error("load doc folders failed", e);
+    } finally {
+      setFolderLoading(false);
     }
   }, [kbId]);
 
@@ -233,9 +249,18 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
     );
   };
 
-  const renderFolderNodes = (parentId: string, depth: number): ReactNode =>
-    docFolders
-      .filter((f) => (f.parent_id || "") === parentId)
+  /**
+   * 递归渲染目录节点。默认 parentId=""/0 = 全部根目录；
+   * 锁定模式（asRoot=true，语义层页）渲染「指定目录 + 其子树」，
+   * 传入 lockedFolderId 即只见该目录分支，不出现兄弟根目录。
+   */
+  const renderFolderNodes = (parentId: string, depth: number, asRoot = false): ReactNode => {
+    const items = docFolders.filter((f) => (f.parent_id || "") === parentId);
+    if (asRoot && items.length === 0 && parentId) {
+      // 锁定目录尚未加载（首次渲染时 docFolders 可能为空）：占位空态
+      return <div className="kb-doc-folder-empty">目录加载中…</div>;
+    }
+    return items
       .map((f) => {
         const children = docFolders.filter((x) => x.parent_id === f.id);
         const expanded = folderExpandedKeys.includes(f.id);
@@ -304,6 +329,7 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
           </div>
         );
       });
+  };
 
   useEffect(() => {
     void loadKb();
@@ -320,7 +346,8 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
         keyword: docKeyword.trim() || undefined,
         parseStatus: docStatus || undefined,
         fileType: docType || undefined,
-        folderId: docFolderId || undefined,
+        // 锁定模式（语义层页）：固定按锁定目录过滤，不随左侧树选中变化
+        folderId: (lockedFolderId || docFolderId) || undefined,
       });
       if (res.success) {
         setDocs(res.data?.items || []);
@@ -329,7 +356,7 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
     } finally {
       setDocsLoading(false);
     }
-  }, [kbId, docPage, docPageSize, docKeyword, docStatus, docType, docFolderId]);
+  }, [kbId, docPage, docPageSize, docKeyword, docStatus, docType, docFolderId, lockedFolderId]);
 
   useEffect(() => {
     if (!paneActive) return;
@@ -668,8 +695,8 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
   /**
    * 目录上传：取出目录及子孙目录中的文件落库（2026-10-17）。
    *
-   * - mirror=true：按相对路径在知识库内创建/复用文档目录，再把文件传到对应目录；
-   *   对齐 WeKnora，**顶层所选目录本身不单独建目录**（"制度/2024/a.pdf" → 目录「2024」）。
+   * - mirror=true：按相对路径在知识库内创建/复用文档目录（**保留完整层级含顶层所选
+   *   目录**，2026-10-20 用户确认），再把文件传到对应目录；
    * - mirror=false：全部文件直接传到当前所选目录。
    * 逐个串行上传（大目录并发会把存储与解析队列同时打满），聚合进度用同 key 的
    * message 就地更新，单文件明细仍进上传任务浮层。
@@ -701,6 +728,7 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
     let ok = 0;
     let fail = 0;
     let folderFail = 0;
+    let archives = 0;
     message.open({
       key: progressKey,
       type: "loading",
@@ -718,6 +746,21 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
           console.error("ensure doc folder failed", e);
           continue;
         }
+      }
+      // zip 压缩包（2026-10-21）：服务端自动解包，解包内容落到 zip 所在目录下
+      // （mirror 关闭时落到当前所选目录，与「平铺上传」一致）
+      if (isArchiveFileName(file.name)) {
+        archives += 1;
+        message.open({
+          key: progressKey,
+          type: "loading",
+          content: `正在解包 ${i + 1}/${total}：${relativePathOf(file) || file.name}`,
+          duration: 0,
+        });
+        const done = await handleArchiveUpload(file, targetFolderId);
+        if (done) ok += 1;
+        else fail += 1;
+        continue;
       }
       message.open({
         key: progressKey,
@@ -738,7 +781,9 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
     }
 
     const parts: string[] = [];
-    if (ok > 0) parts.push(`成功 ${ok} 个`);
+    if (ok > 0) {
+      parts.push(archives > 0 ? `成功 ${ok} 个（含 ${archives} 个压缩包已解包）` : `成功 ${ok} 个`);
+    }
     if (fail > 0) parts.push(`失败 ${fail} 个`);
     if (folderFail > 0) parts.push(`目录创建失败未上传 ${folderFail} 个`);
     if (skipped > 0) parts.push(`跳过隐藏/空文件 ${skipped} 个`);
@@ -756,16 +801,17 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
   };
 
   /**
-   * 上传 zip 压缩包（服务端**自动解包**，2026-10-20）：
-   * 包内目录结构由后端还原到当前所选目录下（同级同名复用），逐个文件入队解析；
+   * 上传压缩包（zip / rar，服务端**自动解包**，2026-10-20 zip、2026-10-21 增 rar）：
+   * 包内目录结构由后端还原到指定目录下（同级同名复用），逐个文件入队解析；
    * 进度/结果用同 key 的 message 就地更新，完成后刷新列表与目录树。
+   * @param folderId 解包目标目录（缺省 = 当前所选目录；文件夹内压缩包传所在子目录）
    */
-  const handleArchiveUpload = async (file: File) => {
+  const handleArchiveUpload = async (file: File, folderId?: string): Promise<boolean> => {
     if (!isArchiveFileName(file.name)) {
-      message.warning(`仅支持 zip 压缩包自动解包（当前文件：${file.name}）`);
-      return;
+      message.warning(`仅支持 zip / rar 压缩包自动解包（当前文件：${file.name}）`);
+      return false;
     }
-    const progressKey = "kb-archive-upload";
+    const progressKey = `kb-archive-upload-${file.name}`;
     message.open({
       key: progressKey,
       type: "loading",
@@ -782,11 +828,11 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
           content: `正在上传并解包「${file.name}」… ${pct}%`,
           duration: 0,
         }),
-      docFolderId || undefined,
+      folderId || docFolderId || undefined,
     ).catch(() => null);
     if (!res) {
       message.open({ key: progressKey, type: "error", content: "压缩包上传失败", duration: 6 });
-      return;
+      return false;
     }
     if (!res.success || !res.data) {
       message.open({
@@ -795,7 +841,7 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
         content: apiErrorMessage(res, "压缩包上传失败"),
         duration: 8,
       });
-      return;
+      return false;
     }
     const d = res.data;
     const detail: string[] = [];
@@ -824,19 +870,24 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
       await loadDocFolders();
       void load();
     }
+    return d.created_count > 0;
   };
 
-  /** 目录选择（webkitdirectory）回调：先按格式白名单分拣，再进上传确认弹窗 */
+  /** 目录选择（webkitdirectory）回调：先按格式白名单分拣（zip 保留，确认后自动解包），再进上传确认弹窗 */
   const handleDirPicked = (files: File[]) => {
     if (files.length === 0) return;
     const { entries, hiddenSkipped, emptySkipped } = collectDirFiles(files);
-    // 只保留系统能解析的格式（压缩包不在白名单内：请用「上传压缩包」单独解包）
-    const { kept } = partitionBySupport(
-      entries.map((e) => e.file),
-      supportedExts,
+    // 只保留系统能解析的格式 + zip 压缩包（zip 由 uploadDirectoryBatch 分流服务端解包，
+    // 2026-10-21 起文件夹内的压缩包不再跳过）
+    const keptNames = new Set(
+      entries
+        .filter(
+          (e) =>
+            isSupportedFileName(e.file.name, supportedExts) || isArchiveFileName(e.file.name),
+        )
+        .map((e) => e.file.name),
     );
-    const keptSet = new Set(kept);
-    const validEntries = entries.filter((e) => keptSet.has(e.file));
+    const validEntries = entries.filter((e) => keptNames.has(e.file.name));
     const unsupportedSkipped = entries.length - validEntries.length;
     if (validEntries.length === 0) {
       message.warning(
@@ -905,28 +956,38 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
           </Space>
         </div>
         <div className="kb-doc-folder-tree">
-          {/* 全部文档（根层级，对齐知识库管理页「全部」一级节点） */}
-          <div
-            className={`kb-doc-tree-row kb-doc-tree-row--root${docFolderId === "" ? " active" : ""}`}
-            style={{ paddingLeft: 8 }}
-            title="全部文档"
-            onClick={() => {
-              setDocFolderId("");
-              setDocPage(1);
-            }}
-          >
-            <span className="kb-doc-tree-icon">
-              <span className="kb-doc-tree-node-icon kb-doc-tree-node-icon--visible">
-                <FolderIcon />
-              </span>
-            </span>
-            <span className="kb-doc-tree-title">全部文档</span>
-          </div>
-          {docFolders.length === 0 ? (
-            <div className="kb-doc-folder-empty">暂无目录，点击右上角 + 新建</div>
+          <Spin spinning={folderLoading}>
+          {/* 锁定模式（语义层页）：不显示「全部文档」根节点与兄弟根目录，
+              只渲染锁定目录及其子树；点目录仍可切换锁内子目录 */}
+          {lockedFolderId ? (
+            renderFolderNodes(lockedFolderId, 0, true)
           ) : (
-            renderFolderNodes("", 0)
+            <>
+              {/* 全部文档（根层级，对齐知识库管理页「全部」一级节点） */}
+              <div
+                className={`kb-doc-tree-row kb-doc-tree-row--root${docFolderId === "" ? " active" : ""}`}
+                style={{ paddingLeft: 8 }}
+                title="全部文档"
+                onClick={() => {
+                  setDocFolderId("");
+                  setDocPage(1);
+                }}
+              >
+                <span className="kb-doc-tree-icon">
+                  <span className="kb-doc-tree-node-icon kb-doc-tree-node-icon--visible">
+                    <FolderIcon />
+                  </span>
+                </span>
+                <span className="kb-doc-tree-title">全部文档</span>
+              </div>
+              {docFolders.length === 0 ? (
+                <div className="kb-doc-folder-empty">暂无目录，点击右上角 + 新建</div>
+              ) : (
+                renderFolderNodes("", 0)
+              )}
+            </>
           )}
+          </Spin>
         </div>
       </div>
 
@@ -1003,57 +1064,57 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                 </button>
               </Tooltip>
             </div>
-            <ModoButton icon={<ReloadOutlined />} onClick={() => void load()}>
+            {/* 2026-10-21 对齐参数管理页 UI：按钮去胶囊（ModoButton 默认 shape=round，
+                显式 shape=default 走全局 antd borderRadius=2，与搜索框统一） */}
+            <ModoButton shape="default" icon={<ReloadOutlined />} onClick={() => void load()}>
               刷新
             </ModoButton>
-            <Dropdown
-              menu={{
-                items: [
-                  {
-                    key: "upload",
-                    icon: <CloudUploadOutlined />,
-                    label: "上传文件",
-                    onClick: () => fileInputRef.current?.click(),
-                  },
-                  {
-                    key: "upload-folder",
-                    icon: <FolderAddOutlined />,
-                    label: "上传文件夹",
-                    onClick: () => dirInputRef.current?.click(),
-                  },
-                  {
-                    key: "upload-archive",
-                    icon: <FileZipOutlined />,
-                    label: "上传压缩包（自动解包）",
-                    onClick: () => zipInputRef.current?.click(),
-                  },
-                  {
-                    key: "table",
-                    icon: <TableOutlined />,
-                    label: "添加表",
-                    onClick: () => setSelectTableOpen(true),
-                  },
-                ],
-              }}
-            >
-              <ModoButton type="primary" icon={<CloudUploadOutlined />}>
-                添加知识
-                <DownOutlined style={{ fontSize: 10, marginLeft: 2 }} />
+            {/* 2026-10-21 上传入口三按钮：选择文件 / 选择文件夹 / 添加表（弃用下拉合并形态）。
+                「选择文件」支持普通文件 + zip / rar（自动解包，保留包内子孙目录）；
+                「选择文件夹」保留完整子目录结构（webkitdirectory），文件夹内的压缩包同样自动解包 */}
+            <Space size={8}>
+              <ModoButton
+                shape="default"
+                type="primary"
+                icon={<CloudUploadOutlined />}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                选择文件
               </ModoButton>
-            </Dropdown>
-            {/* 隐藏的文件选择触发器（本地上传）：accept 只列系统可解析的格式 */}
+              <ModoButton
+                shape="default"
+                icon={<FolderOutlined />}
+                onClick={() => dirInputRef.current?.click()}
+              >
+                选择文件夹
+              </ModoButton>
+              <ModoButton
+                shape="default"
+                icon={<TableOutlined />}
+                onClick={() => setSelectTableOpen(true)}
+              >
+                添加表
+              </ModoButton>
+            </Space>
+            {/* 隐藏的文件选择触发器（本地上传）：accept 只列系统可解析的格式 + zip / rar
+                （压缩包自动解包，2026-10-21 起并入「选择文件」，不再单列压缩包入口） */}
             <input
               ref={fileInputRef}
               type="file"
               multiple
-              accept={acceptAttr(supportedExts)}
+              accept={acceptAttr(supportedExts, ARCHIVE_EXTS)}
               style={{ display: "none" }}
               onChange={(e) => {
                 const picked = e.target.files ? Array.from(e.target.files) : [];
                 e.target.value = "";
                 if (picked.length === 0) return;
-                // 只放行系统能解析的格式（与后端门禁同源；压缩包走「上传压缩包」入口）
-                const { kept, skipped } = partitionBySupport(picked, supportedExts);
+                // zip 压缩包分流：走服务端自动解包（保留包内子孙目录结构，同「拖拽 zip」语义）
+                const archives = picked.filter((f) => isArchiveFileName(f.name));
+                for (const f of archives) void handleArchiveUpload(f);
+                const others = picked.filter((f) => !isArchiveFileName(f.name));
+                if (others.length === 0) return;
+                // 其余按格式白名单分拣
+                const { kept, skipped } = partitionBySupport(others, supportedExts);
                 if (skipped.length > 0) {
                   const names = skipped.slice(0, 3).map((f) => f.name).join("、");
                   message.warning(
@@ -1066,18 +1127,6 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
                 // 对齐 WeKnora：先收集到确认弹窗，用户可选处理配置后确认上传
                 setPendingUploadFiles((prev) => [...prev, ...kept]);
                 setUploadConfirmOpen(true);
-              }}
-            />
-            {/* 隐藏的压缩包选择触发器（zip 自动解包：服务端按包内目录结构建文档目录） */}
-            <input
-              ref={zipInputRef}
-              type="file"
-              accept=".zip"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                const picked = e.target.files?.[0];
-                e.target.value = "";
-                if (picked) void handleArchiveUpload(picked);
               }}
             />
             {/* 隐藏的目录选择触发器（上传文件夹：取出目录及子孙目录中的全部文件）
@@ -1117,16 +1166,24 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
         )}
         {docView === "card" ? (
           <>
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-              <DocCardView
-                items={docs}
-                onOpen={onOpenDoc}
-                onDownload={onDownloadDoc}
-                onReparse={onReparseDoc}
-                onDelete={onDeleteDoc}
-                onTrace={onViewTrace}
-              />
-            </div>
+            {docsLoading && docs.length === 0 ? (
+              <div style={{ display: "flex", justifyContent: "center", paddingTop: 96 }}>
+                <Spin size="large" tip="正在加载文档..." />
+              </div>
+            ) : (
+              <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+                <Spin spinning={docsLoading}>
+                  <DocCardView
+                    items={docs}
+                    onOpen={onOpenDoc}
+                    onDownload={onDownloadDoc}
+                    onReparse={onReparseDoc}
+                    onDelete={onDeleteDoc}
+                    onTrace={onViewTrace}
+                  />
+                </Spin>
+              </div>
+            )}
             {/* 卡片视图分页：统一由内容列底部的 DSB simple 分页条承担（见 kb-doc-pagination-bar） */}
           </>
         ) : (
@@ -1271,6 +1328,11 @@ export default function KbDocsPane({ kbId, refreshTick, onOpenDoc, onDocsChange,
             return;
           }
           for (const f of filesToUpload) {
+            // zip 分流服务端解包（弹窗「继续添加」无 accept 限制，可能混入压缩包）
+            if (isArchiveFileName(f.name)) {
+              void handleArchiveUpload(f, docFolderId || undefined);
+              continue;
+            }
             startDocUpload(f, undefined, docFolderId, processConfig, buildEngine);
           }
         }}

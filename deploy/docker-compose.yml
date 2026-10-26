@@ -9,7 +9,8 @@
 #   celery-beat    Celery beat（扫描 modo_cron_task）
 #   redis          Celery broker + result backend
 #   pg             PostgreSQL + pgvector（知识库存储）
-#   mysql          框架库（用户/角色/菜单/数据源/调度/日志）
+#   mysql          框架库，2026-10-20 起使用远程库（KB_DATABASE_URL 指向
+#                  10.1.206.135:3306/data_supply），本地 mysql 服务已移除
 #
 # 使用（全部配置在 deploy/.env，无凭据字面量）：
 #   cd deploy && cp .env.example .env   # 填好凭据
@@ -60,6 +61,10 @@ x-api-env: &api-env
     LLM_BASE_URL: ${AI_CHAT_API_ENDPOINT:-}
     LLM_API_KEY: ${AI_CHAT_API_KEY:-}
     LLM_MODEL: ${AI_CHAT_MODEL:-}
+    # 宿主挂载 JWT 换签共享密钥（与 data_supply 的 KB_JWT_SECRET 同值；
+    # 2026-10-26 补注入：此前仅 .env 无此键、容器 env 恒空 → /auth/jwt-exchange
+    # fail-closed「服务端未启用 JWT 认证」→ shandong 302 挂载链路断）
+    JWT_SECRET: ${JWT_SECRET:-}
     # inline=worker 内联 agent（默认）；gateway=回退外部 agent-gateway
     WIKI_AGENT_MODE: ${WIKI_AGENT_MODE:-inline}
     # 技能脚本超时（wiki 构建可能较久）
@@ -70,10 +75,13 @@ x-api-env: &api-env
     # 启动自动迁移开关（默认开）：迁移链 multi-head 等异常时运维可临时关掉
     # 跳过启动迁移（DB 手动推到最新）快速恢复 api-server，修复后恢复开。
     AUTO_MIGRATE_ON_START: ${AUTO_MIGRATE_ON_START:-}
-    # 编排节点 weknora_rpc 直连开关（.env 置 1）：进程内调 api.services，不经 HTTP，
-    # 消除 api-server 单点（40 并发编排打爆单进程 uvicorn 的根因）。仅执行编排
-    # script 节点的 worker 需要；放共享锚点对纯 API/调度服务无害。
-    KB_INTERNAL_DIRECT: ${KB_INTERNAL_DIRECT:-}
+    # 编排节点 weknora_rpc 直连开关（默认开）：进程内调 api.services，不经 HTTP，
+    # 消除 api-server 单点（40 并发编排打爆单进程 uvicorn 的根因）与登录凭证失效
+    # 故障（2026-10-20 实测 admin/sys 密码不匹配致 wiki构建-* 编排整批失败）。
+    # 直连模式唯一前提：进程能 import 平台 services（worker/api-server 容器均满足，
+    # PYTHONPATH=/srv/kb）；纯外部/独立脚本环境需显式置 0 走 HTTP 登录。
+    # 仅执行编排 script 节点的 worker 需要；放共享锚点对纯 API/调度服务无害。
+    KB_INTERNAL_DIRECT: ${KB_INTERNAL_DIRECT:-1}
 
 services:
   nginx:
@@ -120,8 +128,6 @@ services:
         condition: service_started
       pg:
         condition: service_healthy
-      mysql:
-        condition: service_healthy
     networks:
       - kb-net
 
@@ -140,8 +146,6 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       pg:
-        condition: service_healthy
-      mysql:
         condition: service_healthy
     networks:
       - kb-net
@@ -162,8 +166,6 @@ services:
       redis:
         condition: service_started
       pg:
-        condition: service_healthy
-      mysql:
         condition: service_healthy
     networks:
       - kb-net
@@ -188,8 +190,6 @@ services:
         condition: service_started
       pg:
         condition: service_healthy
-      mysql:
-        condition: service_healthy
     networks:
       - kb-net
 
@@ -207,8 +207,6 @@ services:
       redis:
         condition: service_started
       pg:
-        condition: service_healthy
-      mysql:
         condition: service_healthy
     networks:
       - kb-net
@@ -230,8 +228,6 @@ services:
         condition: service_started
       pg:
         condition: service_healthy
-      mysql:
-        condition: service_healthy
     networks:
       - kb-net
 
@@ -250,8 +246,6 @@ services:
         condition: service_started
       pg:
         condition: service_healthy
-      mysql:
-        condition: service_healthy
     networks:
       - kb-net
 
@@ -265,8 +259,6 @@ services:
       redis:
         condition: service_started
       pg:
-        condition: service_healthy
-      mysql:
         condition: service_healthy
     networks:
       - kb-net
@@ -377,27 +369,7 @@ services:
     networks:
       - kb-net
 
-  mysql:
-    image: mysql:8.0
-    container_name: kb-mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
-    volumes:
-      - mysql-data:/var/lib/mysql
-      # 首次启动自动应用知识库业务表 DDL（幂等；框架 modo_* 表仍需手动建表+种子）
-      - ../scripts/knowledge_business_schema.sql:/docker-entrypoint-initdb.d/01-knowledge-business-schema.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p${MYSQL_ROOT_PASSWORD}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    networks:
-      - kb-net
+
 
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
@@ -460,7 +432,7 @@ services:
 
 volumes:
   pg-data:
-  mysql-data:
+
   redis-data:
   kb-docs:
   minio-data:

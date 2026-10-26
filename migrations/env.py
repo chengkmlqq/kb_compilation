@@ -30,7 +30,9 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # URL resolved at runtime from env (never stored in alembic.ini).
-config.set_main_option("sqlalchemy.url", get_settings().require_database_url())
+# 密码可能含 URL 编码的 %（如 %21/%40/%23/%25XX）：configparser BasicInterpolation
+# 把 % 当插值语法，set 前转义为 %%（get 时自动还原），避免 ValueError。
+config.set_main_option("sqlalchemy.url", get_settings().require_database_url().replace("%", "%%"))
 
 target_metadata = Base.metadata
 

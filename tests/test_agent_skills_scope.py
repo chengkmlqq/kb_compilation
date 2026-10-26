@@ -572,10 +572,17 @@ def api_env(monkeypatch):
     session.add_all(
         [
             KbAgent(id="agent-plain", name="普通助手", state="1",
-                    config=config_from_dict({"embed_query": False}).to_dict()),
+                    # 2026-10-21 显式 quick-answer（新建默认已改 smart-reasoning）：
+                    # 本 agent 用于验证快速问答 = 纯 RAG 单轮不注入工具
+                    config=config_from_dict(
+                        {"agent_mode": "quick-answer", "embed_query": False}
+                    ).to_dict()),
+            # 2026-10-21 运行模式生效：技能执行属于 agent 多轮能力，测试用
+            # smart-reasoning（quick-answer 纯 RAG 单轮不注入任何工具）
             KbAgent(id="agent-skilled", name="技能助手", state="1",
                     config=config_from_dict(
-                        {"skills_enabled": True, "skills_selection_mode": "selected",
+                        {"agent_mode": "smart-reasoning", "skills_enabled": True,
+                         "skills_selection_mode": "selected",
                          "selected_skills": ["alpha"], "embed_query": False,
                          "max_iterations": 3}
                     ).to_dict()),
@@ -614,12 +621,12 @@ def _sse_events(text: str) -> list[dict]:
 
 
 def test_agent_qa_default_has_no_tools(api_env, monkeypatch) -> None:
-    """默认 agent（skills_enabled=false）：不注入技能/联网工具。
+    """默认 agent（quick-answer 运行模式）：不注入任何工具，纯 RAG 单轮。
 
-    2026-10-12 更新断言：ca624ec 起 kb_search 知识库检索工具改为**默认注入**
-    （智能体对话即可多轮工具调用，无需开技能/联网），故默认 agent 的请求里
-    **会**带 tools——但只含 RAG 检索/Wiki/分析等常驻工具，不含
-    run_skill_script / web_search（二者由技能/联网开关控制装配）。
+    2026-10-21 运行模式生效（对齐 WeKnora qaMode 路由）：quick-answer =
+    纯 RAG 单轮，模型不拿 tools 就不会自行规划多轮调用（此前无条件注入
+    常驻工具，导致「快速问答」也走工具循环，与模式语义相悖）。
+    技能/联网工具同样不注入（属 smart-reasoning 多轮循环侧能力）。
     """
     captured: list[dict] = []
     monkeypatch.setattr(
@@ -636,13 +643,33 @@ def test_agent_qa_default_has_no_tools(api_env, monkeypatch) -> None:
     deltas = "".join(e.get("text", "") for e in events if e.get("type") == "delta")
     assert deltas == "默认回答"
     assert len(captured) == 1
-    # 常驻工具全集（RAG 检索 + Wiki + 数据分析 + 推理标注）；技能/联网工具不注入
-    tool_names = {
-        (t.get("function") or {}).get("name") for t in (captured[0].get("tools") or [])
-    }
-    assert tool_names >= {"kb_search", "grep_chunks", "get_document_info", "wiki_read_page", "data_analysis", "thinking"}
-    assert "run_skill_script" not in tool_names
-    assert "web_search" not in tool_names
+    # quick-answer：请求不带 tools（单轮流式，模型无法发起工具调用）
+    assert "tools" not in captured[0] or not captured[0].get("tools")
+    assert "run_skill_script" not in (captured[0].get("tools") or [])
+    assert "web_search" not in (captured[0].get("tools") or [])
+
+
+def test_agent_qa_empty_llm_response_yields_error_not_empty_message(api_env, monkeypatch) -> None:
+    """LLM 空流（无正文也无工具调用，空内容重试耗尽）→ 发可见 error 提示，
+    不静默产生「没有回复」；同时不再落空 assistant 消息（finally guard）。
+
+    2026-10-21：改用 agent-skilled（smart-reasoning）——空内容 nudge 重试
+    属 agent 多轮循环能力（quick-answer 单轮无重试，空流直接兜底提示）。
+    """
+    empty_round = ["data: [DONE]"]
+    captured: list[dict] = []
+    # 首轮空 + 2 次空内容 nudge 重试均空 → 重试耗尽
+    monkeypatch.setattr("httpx.Client", _scripted_client(captured, [empty_round, empty_round, empty_round]))
+    r = api_env.post("/api/v1/agents/agent-skilled/qa/stream", json={"question": "问一下"})
+    assert r.status_code == 200
+    events = _sse_events(r.text)
+    # 无正文 delta
+    assert not [e for e in events if e.get("type") == "delta"]
+    # 空响应兜底提示（非静默）
+    errors = [e for e in events if e.get("type") == "error"]
+    assert errors, "空响应应发 error 提示事件"
+    assert "模型未返回有效内容" in errors[0]["message"]
+    assert len(captured) == 3  # 首轮 + 2 次 nudge 重试
 
 
 def test_agent_qa_with_skills_injects_tool_and_executes(api_env, monkeypatch) -> None:

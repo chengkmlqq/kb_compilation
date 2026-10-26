@@ -63,6 +63,8 @@ export default function SystemUsersPage() {
   const [teams, setTeams] = useState<SysTeamItem[]>([]);
   // 角色（角色配置多选）
   const [roles, setRoles] = useState<SysRoleItem[]>([]);
+  // 团队/角色下拉选项加载中
+  const [dropdownLoading, setDropdownLoading] = useState(false);
 
   // 新增 / 编辑 Drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -130,12 +132,13 @@ export default function SystemUsersPage() {
   }, [load]);
 
   useEffect(() => {
-    void apiListTeams(1, 500).then((res) => {
-      if (res.success) setTeams(res.data?.items || []);
-    });
-    void apiListRoles(1, 500).then((res) => {
-      if (res.success) setRoles(res.data?.items || []);
-    });
+    setDropdownLoading(true);
+    void Promise.all([apiListTeams(1, 500), apiListRoles(1, 500)])
+      .then(([t, r]) => {
+        if (t.success) setTeams(t.data?.items || []);
+        if (r.success) setRoles(r.data?.items || []);
+      })
+      .finally(() => setDropdownLoading(false));
   }, []);
 
   const doSearch = () => {
@@ -473,7 +476,7 @@ export default function SystemUsersPage() {
             <Input placeholder="请输入邮箱" />
           </Form.Item>
           <Form.Item name="defaultTeam" label="默认团队">
-            <Select allowClear showSearch placeholder="请选择默认团队" options={teamOptions} />
+            <Select allowClear showSearch loading={dropdownLoading} placeholder="请选择默认团队" options={teamOptions} />
           </Form.Item>
           <Form.Item name="state" label="状态" rules={[{ required: true }]}>
             <Select
@@ -501,6 +504,7 @@ export default function SystemUsersPage() {
           allowClear
           showSearch
           style={{ width: "100%" }}
+          loading={dropdownLoading}
           placeholder="请选择角色"
           value={roleIds}
           onChange={(v) => setRoleIds(v as string[])}

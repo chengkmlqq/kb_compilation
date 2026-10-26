@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""kb_compilation 平台 HTTP 直调版 weknora_rpc（2026-10-06 由 WeKnora MCP 网关版适配）。
+"""kb_compilation 平台直调版 weknora_rpc（2026-10-21 起直连唯一模式，无登录）。
 
 上层 30+ 脚本（build_full.py / gen_summary.py / extract_entities_single.py 等）**零改动**：
 本模块保留原有全部函数名与签名，把原 WeKnora MCP 网关调用（rpc/tool_call）改写为
 kb_compilation 平台 HTTP 直调（登录 cookie + REST），并按各脚本既有预期对齐返回结构。
 
 连接配置（环境变量 > 技能根 config.yaml > 默认）
-  - API 入口:  KB_API_BASE_URL            > config.yaml kb.api_base_url > http://api-server:8000
-  - 服务账号:  KB_API_USER / KB_API_PWD    > config.yaml kb.api_user/api_pwd > admin/sys
+  - 平台访问:  直连唯一模式（进程内调 api.services + DB，无 HTTP 登录，2026-10-21 起）
   - 目标知识库: WEKNORA_KB_ID（agent 任务注入） > config.yaml kb.kb_id
   - LLM:       WEKNORA_LLM_*（任务级）> LLM_* / AI_CHAT_*（容器注入）> config.yaml model 段
                > 默认 https://inferaiapi.com/v1 + deepseek-v4-pro（key 兜底读
@@ -77,7 +76,6 @@ KB = None  # 调用前设置：wr.KB = '<目标知识库 id>'；或从环境变�
 
 _ID = [0]
 SESSION = {'id': None}
-_COOKIE = ""
 
 # 页面详情缓存（list_wiki_pages 的 content 补齐 + create/update 写穿）：
 # key = (kb_id, flat_slug) -> page dict（含 content/source_refs 等完整字段）
@@ -180,61 +178,16 @@ def api_base_url():
     return base.rstrip('/')
 
 
-def api_credentials():
-    cfg = _skill_config().get('kb', {}) or {}
-    # 2026-10-09 fix: 默认服务账号由 huqiang 改为 admin——huqiang 已删除，
-    # 沿用旧默认值会让编排业务原子组件(llm_extract/wiki_publish)登录 KB
-    # 报「用户不存在」。与 seed_framework_db.SEED_USER_ID 默认值保持一致。
-    user = _env('KB_API_USER') or str(cfg.get('api_user') or 'admin')
-    pwd = _env('KB_API_PWD') or str(cfg.get('api_pwd') or 'sys')
-    return user, pwd
-
-
 # ---------------------------------------------------------------------------
-# HTTP 客户端（登录 cookie + 401 重登 + 5xx 退避；失败带状态码+响应体）
-# ---------------------------------------------------------------------------
-def _login():
-    """登录 kb_compilation 平台，返回 identity cookie。
-
-    并发 4 构建时 api-server 偶发过载（登录读超时）——2026-10-07 实证 9 篇
-    任务因单次登录超时整篇失败。这里做 4 次重试 + 递增退避（3/6/12s），
-    过载是瞬时的，重试即可恢复；4 次仍失败才抛（真故障）。
-    """
-    user, pwd = api_credentials()
-    body = json.dumps({'userId': user, 'pwd': pwd}).encode()
-    last_err = None
-    for attempt in range(4):
-        if attempt:
-            time.sleep(3 * (2 ** (attempt - 1)))
-        req = urllib.request.Request(
-            f'{api_base_url()}/api/v1/auth/login', data=body, method='POST',
-            headers={'Content-Type': 'application/json', 'Accept': 'application/json'})
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
-        except urllib.error.HTTPError as e:
-            last_err = f"HTTP {e.code} {e.read().decode('utf-8', 'replace')[:300]}"
-            continue
-        except Exception as e:
-            last_err = str(e)
-            continue
-        if not data.get('success'):
-            last_err = str(data.get('message') or data)
-            continue
-        ck = (data.get('identity_cookie') or '').strip()
-        if ck:
-            return ck
-        last_err = f'响应无 identity_cookie（{json.dumps(data, ensure_ascii=False)[:200]}）'
-    raise RuntimeError(f"kb 登录失败（重试 4 次）: {last_err}")
-
-
-
-# ---------------------------------------------------------------------------
-# 内部直连模式（KB_INTERNAL_DIRECT=1，worker 内置技能）：跳过 HTTP/登录认证，
-# 进程内直接调平台 services（api.services.kb_admin + DB）。返回结构与 REST 同构
+# 平台调用统一走内部直连（2026-10-21 起唯一模式）：进程内直接调平台 services
+# （api.services.kb_admin + DB），不经 HTTP、无登录认证。返回结构与 REST 同构
 # （{"success": true, "data": ...}），技能侧 api_get/api_post 无感知。
+# 此前 HTTP 登录路径（_login/api_credentials/identity cookie）已整体移除——
+# 2026-10-20 实测登录凭证（admin/sys 密码不匹配平台）致 wiki构建-* 编排整批
+# 失败；直连模式同时消除 api-server 单点（40 并发编排打爆单进程 uvicorn 的根因）。
+# 唯一前提：进程能 import 平台 services（worker/api-server 容器均满足，PYTHONPATH=/srv/kb）。
 # ---------------------------------------------------------------------------
-_DIRECT = os.environ.get("KB_INTERNAL_DIRECT") == "1"
+_DIRECT = True
 
 
 def _direct_call(method, path, payload=None):
@@ -250,9 +203,10 @@ def _direct_call(method, path, payload=None):
 
     _qstr = path.split("?", 1)[1] if "?" in path else ""
     parts = [p for p in path.split("?", 1)[0].strip("/").split("/") if p]
-    if len(parts) < 4 or parts[0] != "api" or parts[1] != "v1" or parts[2] != "kbs":
+    # /api/v1/kbs（无 kb 段）→ 知识库列表；其余需 /api/v1/kbs/{kb}/...
+    if len(parts) < 3 or parts[0] != "api" or parts[1] != "v1" or parts[2] != "kbs":
         raise RuntimeError(f"内部直连不支持的路径: {path}")
-    kb = parts[3]
+    kb = parts[3] if len(parts) > 3 else ""
     rest = parts[4:]
     db = get_sessionmaker()()
     try:
@@ -344,7 +298,7 @@ def _direct_call(method, path, payload=None):
                 },
             }
         # ---- 文档 ----
-        if rest[0] == "documents":
+        if rest and rest[0] == "documents":
             if len(rest) == 1:
                 page = 1
                 ps = 100
@@ -374,45 +328,13 @@ def _direct_call(method, path, payload=None):
 
 
 def _request(method, path, payload=None, retries=3):
-    """统一平台请求。KB_INTERNAL_DIRECT=1 时进程内直连 services（无认证）。"""
-    if _DIRECT:
-        return _direct_call(method, path, payload)
-    """HTTP 路径：统一请求。失败抛 RuntimeError（含状态码+响应体）。"""
-    global _COOKIE
-    url = f'{api_base_url()}{path}'
-    last = None
-    for attempt in range(retries):
-        if not _COOKIE:
-            _COOKIE = _login()
-        data = json.dumps(payload, ensure_ascii=False).encode() if payload is not None else None
-        headers = {'Accept': 'application/json', 'Cookie': f'x-next-identity={_COOKIE}'}
-        if data is not None:
-            headers['Content-Type'] = 'application/json'
-        req = urllib.request.Request(url, data=data, method=method, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                body = resp.read().decode('utf-8', 'replace')
-            return json.loads(body) if body.strip() else {}
-        except urllib.error.HTTPError as e:
-            body = e.read().decode('utf-8', 'replace')
-            if e.code == 401:
-                _COOKIE = ''  # 强制重登
-                last = RuntimeError(f'kb API {method} {path} 失败: HTTP 401')
-                time.sleep(1)
-                continue
-            if e.code in (500, 502, 503, 504) and attempt < retries - 1:
-                last = RuntimeError(f'kb API {method} {path} 失败: HTTP {e.code} {body[:200]}')
-                time.sleep(1 + attempt)
-                continue
-            raise RuntimeError(f'kb API {method} {path} 失败: HTTP {e.code} {body[:300]}')
-        except (urllib.error.URLError, TimeoutError, ConnectionResetError,
-                ConnectionAbortedError, OSError) as e:
-            last = RuntimeError(f'kb API {method} {path} 网络错误: {e}')
-            if attempt < retries - 1:
-                time.sleep(2 * (attempt + 1))
-                continue
-            raise last
-    raise last
+    """统一平台请求（直连唯一模式，2026-10-21 起不再走 HTTP/登录）。
+
+    HTTP 路径（登录 cookie + 401 重登 + 5xx 退避）已随登录模式一并移除；
+    平台调用一律进程内直连 services（_DIRECT 恒真）。retries 参数保留
+    兼容历史调用（直连无重试语义，忽略）。
+    """
+    return _direct_call(method, path, payload)
 
 
 def api_get(path, retries=3):
@@ -509,7 +431,11 @@ def _map_status(status):
 # 配置加载（与旧版同名的兼容入口）
 # ---------------------------------------------------------------------------
 def load_config():
-    """初始化平台连接：URL=API 入口；KB 取 WEKNORA_KB_ID（任务注入）> config.yaml kb.kb_id。"""
+    """初始化平台连接：KB 取 WEKNORA_KB_ID（任务注入）> config.yaml kb.kb_id。
+
+    直连唯一模式（2026-10-21 起）：无 HTTP 登录，不再需要 API 入口。
+    URL 保留赋值以兼容旧调用（值仅为展示用，平台调用走进程内直连）。
+    """
     global KEY, URL, KB
     env_kb = os.environ.get('WEKNORA_KB_ID', '').strip()
     if env_kb:
@@ -517,8 +443,6 @@ def load_config():
     if not KB:
         KB = str((_skill_config().get('kb', {}) or {}).get('kb_id') or '').strip() or None
     URL = api_base_url()
-    if not URL:
-        raise RuntimeError('未配置 kb_compilation API 入口：请设置环境变量 KB_API_BASE_URL')
     return URL
 
 
@@ -630,17 +554,11 @@ def list_all_folders_cached(kb_id=None, ttl=600):
 
 
 def mcp_init():
-    """（历史命名）登录平台并初始化 HTTP 会话——**不走 MCP**。
-    技能与平台交互 = HTTP 直调 + Neo4j 直连（无 MCP 服务）。
-    平台适配版：等价于「确保已登录」（预热 cookie，失败早抛便于排查）。
+    """（历史命名）初始化平台连接——直连唯一模式，无需登录。
+
+    技能与平台交互 = 进程内直连 services（api.services.kb_admin + DB），
+    无 HTTP cookie、无 MCP 服务。保留函数名兼容旧调用，恒直接可用。
     """
-    global _COOKIE
-    if _DIRECT:
-        # 内部直连模式：平台调用走进程内 services，无需 HTTP cookie——
-        # 跳过登录（2026-10-07 实证：api-server 过载时登录重试 4x60s 卡数分钟）
-        return True
-    if not _COOKIE:
-        _COOKIE = _login()
     return True
 
 

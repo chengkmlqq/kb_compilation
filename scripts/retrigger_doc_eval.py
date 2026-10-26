@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""清空旧的文档转换评估记录并按知识库重新触发整库评估（2026-10-23）。
+
+用途（配合 scripts/apply_doc_eval_tape.py 在容器内执行）：
+  1) 收集当前 dim=doc 的评估任务（含其 kb_quality_report）并删除
+  2) 对删除前有 doc 评估记录的每个知识库，按 scope=all 重新触发「文档转换评估」
+     编排（execute_tape env=prod，与页面发起等价），串行执行——编排防重复发起，
+     必须等上一个 run 到终态才能发起下一个（纯程序检查，整库一般秒级完成）
+
+用法（api-server 或 worker 容器内，须能连 celery broker + DATABASE_URL）：
+  docker cp scripts/retrigger_doc_eval.py kb-api-server:/tmp/
+  docker exec kb-api-server nohup /srv/kb/.venv/bin/python /tmp/retrigger_doc_eval.py \
+      > /tmp/retrigger_doc_eval.log 2>&1 &
+  # 进度：docker exec kb-api-server tail -f /tmp/retrigger_doc_eval.log
+"""
+from __future__ import annotations
+
+import sys
+import time
+import uuid
+
+sys.path.insert(0, "/srv/kb")
+
+from sqlalchemy import delete, select, text  # noqa: E402
+
+from api.db import get_sessionmaker  # noqa: E402
+from api.models.knowledge import QualityReport, QualityRun  # noqa: E402
+from api.services.orchestration import execute_tape  # noqa: E402
+
+TAPE_NAME = "文档转换评估"
+POLL_INTERVAL_S = 5
+RUN_TIMEOUT_S = 1800  # 单个库整库评估最久等待（纯程序，一般秒级）
+
+
+def tape_id_by_name(db, name: str) -> str:
+    row = db.execute(select(text("id")).select_from(text("kb_tape")).where(text("tape_name=:n")), {"n": name}).first()
+    if row is None:
+        raise SystemExit(f"编排不存在: {name}")
+    return str(row[0])
+
+
+def wait_run_terminal(db, run_id: str) -> str:
+    """轮询 kb_tape_run 到成功/失败（超时返回 timeout）。
+
+    注意：同一会话连续 SELECT 在 MySQL REPEATABLE READ 下共享同一快照，
+    轮询前必须 rollback 结束旧事务，否则永远读不到更新后的状态。
+    """
+    deadline = time.monotonic() + RUN_TIMEOUT_S
+    while time.monotonic() < deadline:
+        db.rollback()  # 结束旧快照，读到最新状态
+        row = db.execute(
+            text("SELECT status, COALESCE(error,'') FROM kb_tape_run WHERE id=:rid"),
+            {"rid": run_id},
+        ).first()
+        if row is not None and row[0] in ("success", "failed"):
+            return str(row[0])
+        time.sleep(POLL_INTERVAL_S)
+    return "timeout"
+
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--kbs", default="", help="显式指定知识库 id 列表（逗号分隔），缺省扫描现有 dim=doc 评估记录")
+    parser.add_argument("--include-empty", action="store_true",
+                        help="缺省只对曾评估过的知识库重触发；传此参数则对所有有文档的知识库重触发")
+    args = parser.parse_args()
+
+    db = get_sessionmaker()()
+    try:
+        # 1) 确定目标知识库 + 清空其旧的 dim=doc 评估记录
+        if args.kbs:
+            kbs = sorted({k.strip() for k in args.kbs.split(",") if k.strip()})
+            old_runs = db.execute(
+                select(QualityRun).where(QualityRun.dim == "doc", QualityRun.kb_id.in_(kbs))
+            ).scalars().all()
+        elif args.include_empty:
+            # 所有有文档的知识库（含从未评估过的）
+            rows = db.execute(
+                text("SELECT DISTINCT kb_id FROM kb_document")
+            ).all()
+            kbs = sorted({str(r[0]) for r in rows})
+            old_runs = db.execute(
+                select(QualityRun).where(QualityRun.dim == "doc", QualityRun.kb_id.in_(kbs))
+            ).scalars().all()
+        else:
+            old_runs = db.execute(
+                select(QualityRun).where(QualityRun.dim == "doc")
+            ).scalars().all()
+            kbs = sorted({r.kb_id for r in old_runs})
+        if not kbs:
+            print("[retrigger] 目标知识库为空，无需触发")
+            return
+        print(f"[retrigger] 目标知识库 {len(kbs)} 个: {kbs}；待清空 doc 评估任务 {len(old_runs)} 条")
+        if old_runs:
+            old_ids = [r.id for r in old_runs]
+            db.execute(delete(QualityReport).where(QualityReport.run_id.in_(old_ids)))
+            db.execute(delete(QualityRun).where(QualityRun.dim == "doc", QualityRun.kb_id.in_(kbs)))
+            db.commit()
+            print(f"[retrigger] 已删除 kb_quality_run(dim=doc) {len(old_ids)} 条 + 对应 kb_quality_report")
+
+        # 2) 逐库重触发整库评估（串行，等终态）
+        tape_id = tape_id_by_name(db, TAPE_NAME)
+        print(f"[retrigger] 编排「{TAPE_NAME}」id={tape_id}，逐库发起 scope=all ...")
+        for kb_id in kbs:
+            qrun = QualityRun(
+                id=uuid.uuid4().hex[:32], kb_id=kb_id, scope="all", doc_ids=None,
+                status="queued", dim="doc", created_by="system",
+            )
+            db.add(qrun)
+            db.commit()
+            inputs = {
+                "kb_id": kb_id,
+                "doc_ids": "",
+                "scope": "all",
+                "quality_id": qrun.id,
+                "dim": "doc",
+            }
+            try:
+                r = execute_tape(db, tape_id, inputs, env="prod")
+                run_id = str(r.get("run_id") or "")
+                print(f"[retrigger] {kb_id} 已发起 run_id={run_id} quality_id={qrun.id}，等待终态...")
+                db.commit()
+            except Exception as exc:  # noqa: BLE001 — 编排已有一个在跑/触发失败，标记 failed
+                print(f"[retrigger] {kb_id} 发起失败: {exc}")
+                qrun.status = "failed"
+                qrun.error = str(exc)[:500]
+                db.commit()
+                continue
+            status = wait_run_terminal(db, run_id)
+            print(f"[retrigger] {kb_id} 评估结束: {status} (run_id={run_id})")
+        print("[retrigger] 全部完成")
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    main()

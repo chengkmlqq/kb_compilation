@@ -21,7 +21,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import case, cast, delete, func, or_, select, update
+from sqlalchemy import String as _String
 from sqlalchemy.orm import Session
 
 from api.config import get_settings
@@ -29,6 +30,7 @@ from api.models.framework import User
 from api.models.knowledge import (
     DocChunk,
     DocFolder,
+    KbAgent,
     KbDatasource,
     KbDocument,
     WIKI_FEEDBACK_PRESETS,
@@ -126,42 +128,52 @@ def list_kbs(
     keyword_counts: dict[str, int] = {}
     feedback_counts: dict[str, int] = {}
     if kb_ids:
-        doc_counts = dict(
-            db.execute(
-                select(KbDocument.kb_id, func.count())
-                .where(KbDocument.kb_id.in_(kb_ids))
-                .group_by(KbDocument.kb_id)
-            ).all()
-        )
-        page_counts = dict(
-            db.execute(
-                select(WikiPage.kb_id, func.count())
+        # 2026-10-23 性能审计：四组计数整块走 15s 进程内缓存（stale-while-revalidate：
+        # 过期先返回旧值 + 后台刷新，页面请求恒定毫秒级）。计数 SQL 会全扫含
+        # MEDIUMTEXT content 的大表（doc_chunk/wiki_page），远端库缓冲池小、冷
+        # 索引页读取秒级（热时 100-300ms）；卡片计数（文件/Wiki/反馈数）容忍
+        # 短时陈旧。fn 自建 session（后台刷新线程无请求上下文）。
+        from api.services.agg_cache import agg_cached_swr
+
+        def _load_counts(s) -> tuple[dict, dict, dict, dict]:
+            c_doc = dict(
+                s.execute(
+                    select(KbDocument.kb_id, func.count())
+                    .where(KbDocument.kb_id.in_(kb_ids))
+                    .group_by(KbDocument.kb_id)
+                ).all()
+            )
+            # 高频词页计数（page_type=frequent_keyword）+ 总页数：一次条件聚合产出
+            # （2026-10-21 合并，原两次 group-by 各自全扫 wiki_page 命中集）。
+            keyword_rows = s.execute(
+                select(
+                    WikiPage.kb_id,
+                    func.count(),
+                    func.coalesce(
+                        func.sum(case((WikiPage.page_type == "frequent_keyword", 1), else_=0)),
+                        0,
+                    ),
+                )
                 .where(
                     WikiPage.kb_id.in_(kb_ids),
                     WikiPage.status == "active",
                 )
                 .group_by(WikiPage.kb_id)
             ).all()
-        )
-        # 高频词页计数（page_type=frequent_keyword）：高频词管理页知识库卡片统计
-        keyword_counts = dict(
-            db.execute(
-                select(WikiPage.kb_id, func.count())
-                .where(
-                    WikiPage.kb_id.in_(kb_ids),
-                    WikiPage.status == "active",
-                    WikiPage.page_type == "frequent_keyword",
-                )
-                .group_by(WikiPage.kb_id)
-            ).all()
-        )
-        # 反馈计数（未软删）：知识库卡片「反馈 N」统计 → 维护中心
-        feedback_counts = dict(
-            db.execute(
-                select(WikiFeedback.kb_id, func.count())
-                .where(WikiFeedback.kb_id.in_(kb_ids), WikiFeedback.deleted_at.is_(None))
-                .group_by(WikiFeedback.kb_id)
-            ).all()
+            c_page = {kb_id: total for kb_id, total, _kw in keyword_rows}
+            c_kw = {kb_id: int(kw) for kb_id, _total, kw in keyword_rows}
+            # 反馈计数（未软删）：知识库卡片「反馈 N」统计 → 维护中心
+            c_fb = dict(
+                s.execute(
+                    select(WikiFeedback.kb_id, func.count())
+                    .where(WikiFeedback.kb_id.in_(kb_ids), WikiFeedback.deleted_at.is_(None))
+                    .group_by(WikiFeedback.kb_id)
+                ).all()
+            )
+            return c_doc, c_page, c_kw, c_fb
+
+        doc_counts, page_counts, keyword_counts, feedback_counts = agg_cached_swr(
+            "kbs_counts:" + ",".join(sorted(kb_ids)), 15.0, _load_counts, db=db
         )
 
     items = [
@@ -239,6 +251,10 @@ def create_kb(
     repo_branch: str = "",
     repo_auth_type: str = "none",
     repo_auth_secret: str = "",
+    # ── 知识聚合配置（2026-10-25）：主题聚类/版本聚类开关 + 主题列表 + 定时频率
+    aggregation_config: dict | None = None,
+    # ── 切片智能增强配置（2026-10-25）：开启后解析完成触发增强编排
+    enhancement_config: dict | None = None,
 ) -> KbDatasource:
     """Create a KB; name is required, id is generated if absent.
 
@@ -327,6 +343,14 @@ def create_kb(
         repo_auth_secret=encrypted_secret,
         state="1",
     )
+    if aggregation_config is not None:
+        from api.services.aggregation import normalize_aggregation_config
+
+        kb.aggregation_config = normalize_aggregation_config(aggregation_config)
+    if enhancement_config is not None:
+        from api.services.chunk_enhance import normalize_enhancement_config
+
+        kb.enhancement_config = normalize_enhancement_config(enhancement_config)
     db.add(kb)
     db.commit()
     db.refresh(kb)
@@ -339,6 +363,9 @@ def create_kb(
         else:
             db.add(KbOntologySchema(kb_id=kb.id, schema_name=ontology_schema_name))
         db.commit()
+    # 知识聚合（2026-10-25）：开启开关 → 建每日定时任务 + 立即触发一次编排
+    if kb.aggregation_config:
+        _sync_and_trigger_aggregation(db, kb, kb.aggregation_config, trigger=True)
     return kb
 
 
@@ -442,6 +469,14 @@ def update_kb(
             kb.vector_store_id = new_store
     if "indexing_strategy" in fields and isinstance(fields["indexing_strategy"], dict):
         kb.indexing_strategy = normalize_indexing_strategy(fields["indexing_strategy"])
+    if "aggregation_config" in fields and isinstance(fields["aggregation_config"], dict):
+        from api.services.aggregation import normalize_aggregation_config
+
+        kb.aggregation_config = normalize_aggregation_config(fields["aggregation_config"])
+    if "enhancement_config" in fields and isinstance(fields["enhancement_config"], dict):
+        from api.services.chunk_enhance import normalize_enhancement_config
+
+        kb.enhancement_config = normalize_enhancement_config(fields["enhancement_config"])
     raw_cfg = fields.get("configs")
     cfg: dict = raw_cfg if isinstance(raw_cfg, dict) else {}
     normalizers = {
@@ -467,6 +502,9 @@ def update_kb(
         _apply_repo_fields(db, kb, fields)
     db.commit()
     db.refresh(kb)
+    # 知识聚合（2026-10-25）：配置在 payload 才同步 cron + 立即触发
+    if "aggregation_config" in fields and isinstance(fields["aggregation_config"], dict):
+        _sync_and_trigger_aggregation(db, kb, kb.aggregation_config or {}, trigger=True)
     return kb
 
 
@@ -498,12 +536,45 @@ def _apply_repo_fields(db: Session, kb: KbDatasource, fields: dict) -> None:
     kb.repo_pull_error = None
 
 
-def delete_kb(db: Session, kb_id: str) -> dict:
-    """级联删除知识库（对齐 WeKnora：KB 记录软删 + 内容一并清理，不再设守卫）。
+def _agents_bound_to_kb(db: Session, kb_id: str) -> list[dict]:
+    """返回显式绑定该知识库的启用智能体（kb_selection_mode=selected 且 kb_id 在列表中）。
 
-    WeKnora 的 DeleteKnowledgeBase 不校验文档数：先软删 KB 记录，再清理
-    共享/数据源，最后异步删 embeddings/chunks/files/图谱。本实现同步清理
-    （本库数据量小），语义一致：
+    判定口径（对齐 AgentEditorModal「知识库范围」）：
+    - selected：config.knowledge_bases / knowledge_ids 里含该 kb_id → 显式绑定；
+    - all：智能体检索全部知识库，删除后 resolve_kb_scope 按 state=="1" 自动
+      排除软删库，不构成悬空引用 —— 不拦截，避免「存在一个 all 智能体就
+      删不掉任何知识库」；
+    - none：不绑定。
+
+    返回 [{id, name, kb_selection_mode}, ...]，仅含 state=="1"（启用）智能体；
+    已删除智能体（state=="0"）不参与拦截。
+    """
+    agents = db.execute(
+        select(KbAgent).where(KbAgent.state == "1")
+    ).scalars().all()
+    bound: list[dict] = []
+    for ag in agents:
+        cfg = ag.config or {}
+        if cfg.get("kb_selection_mode") != "selected":
+            continue
+        kb_ids = set(cfg.get("knowledge_bases") or []) | set(
+            cfg.get("knowledge_ids") or []
+        )
+        if kb_id in kb_ids:
+            bound.append(
+                {"id": ag.id, "name": ag.name, "kb_selection_mode": "selected"}
+            )
+    return bound
+
+
+def delete_kb(db: Session, kb_id: str) -> dict:
+    """级联删除知识库（对齐 WeKnora：KB 记录软删 + 内容一并清理）。
+
+    删除前守卫（2026-10-20）：被启用智能体显式绑定（kb_selection_mode=selected
+    且 kb_id 在 knowledge_bases/knowledge_ids 中）的知识库拒绝删除，返回
+    code=AGENT_BOUND；all 模式智能体不拦截（软删后其检索范围自动排除）。
+
+    删除流程（同步清理，本库数据量小，语义与 WeKnora 一致）：
 
       1. KB 软删（state=0）
       2. wiki 链接 → 页面 → 文件夹（先删依赖，避免孤儿链接）
@@ -516,6 +587,17 @@ def delete_kb(db: Session, kb_id: str) -> dict:
     kb = get_kb(db, kb_id)
     if not kb:
         return {"success": False, "message": f"知识库不存在: {kb_id}"}
+
+    # 0) 智能体绑定校验（2026-10-20：删除前校验是否绑定了智能体）
+    bound_agents = _agents_bound_to_kb(db, kb_id)
+    if bound_agents:
+        names = "、".join(a["name"] for a in bound_agents)
+        return {
+            "success": False,
+            "code": "AGENT_BOUND",
+            "message": f"知识库已被智能体「{names}」绑定，请先解除绑定后再删除",
+            "data": {"bound_agents": bound_agents},
+        }
 
     # 快照计数（前端确认框「将一并删除 N 文档 / M Wiki 页」用）
     doc_count = (
@@ -544,6 +626,15 @@ def delete_kb(db: Session, kb_id: str) -> dict:
     # 1.5) 级联取消该库未完成的转换/wiki 任务（2026-10-05 实测: 删库后
     #      关联任务行残留 PENDING, celery 仍会消费 -> agent 为已删库建页）
     _cancel_kb_tasks(db, kb_id)
+
+    # 1.6) 级联删除知识聚合定时任务（2026-10-25：否则删除后定时任务仍按
+    #      cron 触发编排 → 对已删知识库建 wiki 页）
+    try:
+        from api.services.aggregation import delete_aggregation_crons
+
+        delete_aggregation_crons(db, kb_id)
+    except Exception as exc:  # noqa: BLE001 — 清理失败不阻塞删除
+        logging.getLogger(__name__).warning("聚合定时任务清理失败(kb=%s): %s", kb_id, exc)
 
     # 2) wiki 层：链接 → 页面 → 文件夹
     db.execute(delete(WikiLink).where(WikiLink.kb_id == kb_id))
@@ -609,6 +700,45 @@ def delete_kb(db: Session, kb_id: str) -> dict:
     }
 
 
+def _sync_and_trigger_aggregation(
+    db: Session, kb: KbDatasource, cfg: dict, trigger: bool = True
+) -> None:
+    """同步知识聚合定时任务 + 立即触发一次编排（create/update 共用）。
+
+    - sync_aggregation_crons：按开关 upsert/删除 modo_cron_task（每日定时）。
+    - trigger=True 时对开启的聚合项各触发一次编排（幂等：同编排已有
+      queued/running run 会跳过），满足「修改配置立即聚合」。
+    触发失败不抛（best-effort，定时任务兜底每日执行）；cron 同步失败抛
+    异常让保存失败（配置了开关却没有定时任务=功能缺失，应阻止保存）。
+    """
+    from api.services.aggregation import (
+        TAPE_NAME_TOPIC_CLUSTER,
+        TAPE_NAME_VERSION_EVOLUTION,
+        enqueue_aggregation_run,
+        sync_aggregation_crons,
+    )
+
+    _ = sync_aggregation_crons(db, kb.id, kb.name or kb.id, cfg)
+    if not trigger:
+        return
+    if cfg.get("topic_cluster_enabled"):
+        try:
+            enqueue_aggregation_run(
+                db, TAPE_NAME_TOPIC_CLUSTER, kb.id, cfg.get("topic_cluster_topics") or []
+            )
+        except Exception as exc:  # noqa: BLE001 — 触发失败不阻断保存
+            logging.getLogger(__name__).warning(
+                "主题聚合立即执行失败(kb=%s): %s", kb.id, exc
+            )
+    if cfg.get("version_cluster_enabled"):
+        try:
+            enqueue_aggregation_run(db, TAPE_NAME_VERSION_EVOLUTION, kb.id)
+        except Exception as exc:  # noqa: BLE001 — 触发失败不阻断保存
+            logging.getLogger(__name__).warning(
+                "版本聚类立即执行失败(kb=%s): %s", kb.id, exc
+            )
+
+
 def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0, keyword_count: int = 0, feedback_count: int = 0) -> dict:
     return {
         "id": kb.id,
@@ -651,6 +781,10 @@ def _kb_dict(kb: KbDatasource, doc_count: int = 0, page_count: int = 0, keyword_
         "repo_pull_error": getattr(kb, "repo_pull_error", None) or "",
         "repo_last_pull_at": kb.repo_last_pull_at.isoformat() if kb.repo_last_pull_at else None,
         "repo_file_count": getattr(kb, "repo_file_count", None) or 0,
+        # ── 知识聚合配置（2026-10-25，配置弹窗回填）──
+        "aggregation_config": getattr(kb, "aggregation_config", None) or {},
+        # ── 切片智能增强配置（2026-10-25，配置弹窗回填）──
+        "enhancement_config": getattr(kb, "enhancement_config", None) or {},
     }
 
 
@@ -778,6 +912,16 @@ SUMMARY_STRATEGIES: tuple[str, ...] = ("off", "auto", "stuff", "mapreduce", "ref
 
 
 def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
+    """异步删除入口（2026-10-23 异步化改造）：标记 DELETING 并入队清理任务后立即返回。
+
+    级联清理（wiki 页/链接/目录、chunks、向量、存储文件、Neo4j 图谱、任务
+    监控残留）由 worker/tasks/doc_delete.purge_document 在后台执行——大文档
+    删除不再占用 HTTP 请求线程（此前同步清理数秒起步，见下方 purge 函数的
+    2026-10-21 性能注释）。broker 不可达时回退同步清理，删除语义不因队列
+    故障丢失；同步清理也失败时保持 DELETING 状态，由 beat 定时扫描重投。
+
+    幂等：文档已处于 DELETING/DELETE_FAILED 时重复调用无害（purge 幂等）。
+    """
     doc = db.execute(
         select(KbDocument).where(
             KbDocument.id == document_id, KbDocument.kb_id == kb_id
@@ -785,6 +929,44 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
     ).scalars().first()
     if not doc:
         return {"success": False, "message": f"文档不存在: {document_id}"}
+    doc.delete_state = "DELETING"
+    doc.delete_error = None
+    db.commit()
+
+    try:
+        from worker.tasks.doc_delete import enqueue_doc_delete
+
+        enqueue_doc_delete(kb_id, document_id)
+    except Exception as exc:  # noqa: BLE001 — broker 不可达：同步兜底，删除语义不丢
+        logger.warning(
+            "failed to enqueue async doc delete (doc=%s), falling back to sync purge: %s",
+            document_id, exc,
+        )
+        try:
+            purge_document_resources(db, kb_id, document_id)
+        except Exception as exc2:  # noqa: BLE001
+            logger.exception("sync purge fallback failed (doc=%s)", document_id)
+            return {
+                "success": False,
+                "message": f"删除任务提交失败，同步清理也失败: {exc2}",
+            }
+    return {"success": True, "data": {"id": document_id, "async": True}}
+
+
+def purge_document_resources(db: Session, kb_id: str, document_id: str) -> dict:
+    """完整级联清理并物理删除文档（worker 异步任务 / 同步兜底共用）。
+
+    幂等：各子步骤对已清理数据均为 no-op——wiki 粗筛找不到已删页、chunks
+    为空、向量按 chunk_id 重复删除无效果、文件删除幂等、Neo4j 子图不存在
+    即跳过、任务行为空。并发双跑（beat 重投）安全。
+    """
+    doc = db.execute(
+        select(KbDocument).where(
+            KbDocument.id == document_id, KbDocument.kb_id == kb_id
+        )
+    ).scalars().first()
+    if not doc:
+        return {"success": True, "data": {"id": document_id, "already_deleted": True}}
     # 2026-10-05 实测: 删文档后其 wiki 构建任务仍执行（假成功/白跑 LLM）——
     # 删除时先级联取消关联的未完成 wiki 任务（PENDING/RUNNING → STOPPED + revoke）。
     _cancel_related_wiki_tasks(db, document_id)
@@ -795,29 +977,44 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
     # 1) wiki 层：该文档专属页（source_refs 仅含本文档）整页删除；共享页
     #    （跨文档合并实体页）只摘除本 kid 引用不删页——防误伤其他文档。
     #    页面删除后，指向这些页的链接一并清；不再被任何页引用的目录删除。
-    pages = db.execute(
-        select(WikiPage).where(
-            WikiPage.kb_id == kb_id, WikiPage.source_refs.isnot(None)
-        )
-    ).scalars().all()
+    # 2026-10-21 性能：原实现 select(WikiPage) 全量物化整库 wiki 页（含
+    #    content 大字段）到 Python 再逐页 startswith——库页数上万时删除请求
+    #    数秒起步。改为 SQL 层先用 source_refs JSON 文本 LIKE 粗筛出候选页
+    #    （只取 id/folder_id/source_refs 三列），Python 侧仍做精判（startswith
+    #    + 引用计数），语义不变但传输/物化量从「全库页」缩到「命中本文档的页」。
+    #    注意：粗筛后的 pages 只有引用本文档的页，不能再用它收集「所有保留页
+    #    的 folder」（会漏掉其他文档页 → 误删目录）；目录保留改由下方
+    #    still_used 精确查询（affected folder 是否还有被删页之外的页引用）。
     doc_prefix = f"{document_id}|"
+    like_pat = f"%{document_id}|%"
+    pages = db.execute(
+        select(WikiPage.id, WikiPage.folder_id, WikiPage.source_refs).where(
+            WikiPage.kb_id == kb_id,
+            WikiPage.source_refs.isnot(None),
+            cast(WikiPage.source_refs, _String).like(like_pat),
+        )
+    ).all()
     page_ids_to_delete: list[str] = []
-    kept_folder_ids: set[str] = set()
+    shared_ref_updates: list[tuple[str, list]] = []  # (page_id, 摘除后的 source_refs)
     for p in pages:
         refs = p.source_refs if isinstance(p.source_refs, list) else []
         hits = [r for r in refs if isinstance(r, str) and r.startswith(doc_prefix)]
         if not hits:
-            if p.folder_id:
-                kept_folder_ids.add(str(p.folder_id))
             continue
         if len(refs) <= len(hits):
             # 专属页：本页所有 source_ref 都属于该文档 → 整页删除
-            page_ids_to_delete.append(p.id)
+            page_ids_to_delete.append(str(p.id))
         else:
             # 共享页：摘除本 kid 引用，保留其他文档引用
-            p.source_refs = [r for r in refs if not r.startswith(doc_prefix)]
-            if p.folder_id:
-                kept_folder_ids.add(str(p.folder_id))
+            shared_ref_updates.append(
+                (str(p.id), [r for r in refs if not r.startswith(doc_prefix)])
+            )
+    for pid, new_refs in shared_ref_updates:
+        db.execute(
+            update(WikiPage)
+            .where(WikiPage.kb_id == kb_id, WikiPage.id == pid)
+            .values(source_refs=new_refs)
+        )
     if page_ids_to_delete:
         db.execute(delete(WikiLink).where(WikiLink.from_page_id.in_(page_ids_to_delete)))
         db.execute(delete(WikiLink).where(WikiLink.to_page_id.in_(page_ids_to_delete)))
@@ -826,17 +1023,15 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
         )
     # 该文档目录子树清理：从被删页所在 folder 向上收敛（该文档页专属目录），
     # 不删根目录（parent_id 为空，全库共用）也不误伤其他文档目录。
-    # 收集被删页/共享页的 folder，向上找其根（parent_id 为空即停），只删
-    # 该子树下不再被任何保留页引用的目录。
-    if page_ids_to_delete:
-        affected_folder_ids = {
-            str(p.folder_id)
-            for p in pages
-            if p.id in page_ids_to_delete and p.folder_id
-        }
-    else:
-        affected_folder_ids = set()
-    # 子树内所有目录
+    # folder 是否可删 = 被删页的 folder 中，已无任何被删页之外的页引用
+    # （含其他文档页、共享页、未引用本文档的页）→ 用 SQL 精确判定，避免
+    # 全量拉页统计。
+    affected_folder_ids = {
+        str(p.folder_id)
+        for p in pages
+        if str(p.id) in set(page_ids_to_delete) and p.folder_id
+    }
+    # 子树内所有目录（对齐原实现：folder 必须真实存在于目录树才删）
     all_folder_ids = {
         str(f.id)
         for f in db.execute(
@@ -844,11 +1039,22 @@ def delete_document(db: Session, kb_id: str, document_id: str) -> dict:
         ).scalars()
         if f.id
     }
-    # 保留页引用的目录（含其他文档页 → 绝不能删）
-    folder_ids_to_delete = [
-        fid for fid in affected_folder_ids
-        if fid not in kept_folder_ids and fid in all_folder_ids
-    ]
+    folder_ids_to_delete: list[str] = []
+    if affected_folder_ids and page_ids_to_delete:
+        still_used = set(
+            db.execute(
+                select(WikiPage.folder_id)
+                .where(
+                    WikiPage.kb_id == kb_id,
+                    WikiPage.folder_id.in_(affected_folder_ids),
+                    WikiPage.id.not_in(page_ids_to_delete),
+                )
+            ).scalars()
+        )
+        folder_ids_to_delete = [
+            fid for fid in affected_folder_ids
+            if fid not in still_used and fid in all_folder_ids
+        ]
     if folder_ids_to_delete:
         db.execute(
             delete(WikiFolder).where(WikiFolder.id.in_(folder_ids_to_delete))
@@ -1195,7 +1401,11 @@ def doc_branch(
         KbDocument.kb_id == kb_id,
         func.coalesce(KbDocument.folder_id, "") == fid,
     )
-    total_docs = len(db.execute(docs_q).scalars().all())
+    # 2026-10-21 性能修复：计数走 SQL count，原 len(all()) 会把目录下全部文档
+    # 全列（含 summary Text 大列）物化到 Python，大目录下每次分支展开都拖全量。
+    total_docs = int(
+        db.execute(select(func.count()).select_from(docs_q.subquery())).scalar() or 0
+    )
     rows = db.execute(
         docs_q.order_by(KbDocument.created_at.desc())
         .offset((page - 1) * page_size)
@@ -1490,7 +1700,11 @@ def wiki_branch(
     )
     if page_types:
         pages_q = pages_q.where(WikiPage.page_type.in_(page_types))
-    total_pages = len(db.execute(pages_q).scalars().all())
+    # 2026-10-21 性能修复：计数走 SQL count，原 len(all()) 会把目录下全部页面
+    # 全列（含 content Text 正文）物化到 Python，大知识库下主目录每次展开都变慢。
+    total_pages = int(
+        db.execute(select(func.count()).select_from(pages_q.subquery())).scalar() or 0
+    )
     rows = db.execute(
         pages_q.order_by(WikiPage.created_at).offset((page - 1) * page_size).limit(page_size)
     ).scalars().all()
@@ -2672,7 +2886,9 @@ def list_wiki_pages(
             .scalar_subquery()
         )
         stmt = stmt.where((WikiPage.folder_id == folder_id) | (WikiPage.id.in_(sub)))
-    total = len(db.execute(stmt).scalars().all())
+    # 2026-10-21 性能修复：计数走 SQL count，原 len(all()) 会把全部匹配页全列
+    # （content Text 正文）物化到 Python，大知识库分页时一次请求拖回整库正文。
+    total = int(db.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0)
     rows = (
         db.execute(
             stmt.order_by(WikiPage.created_at.desc(), WikiPage.id.desc())

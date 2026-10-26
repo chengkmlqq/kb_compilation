@@ -12,7 +12,6 @@ import {
   Tag,
   Timeline,
   Tooltip,
-  Tree,
   Typography,
 } from "antd";
 import { ArrowLeftOutlined, ReloadOutlined } from "@ant-design/icons";
@@ -20,11 +19,10 @@ import {
   apiGetJob,
   apiGetJobTrace,
   AgentTraceData,
-  AgentTraceSpan,
   JobItem,
-  TraceStepNode,
 } from "@/lib/api";
 import { resolveJobMonitorQueueLabel } from "./queue-label";
+import { taskClassLabel } from "./task-class-label";
 
 interface JobLogDrawerProps {
   visible: boolean;
@@ -34,57 +32,6 @@ interface JobLogDrawerProps {
 }
 
 const { Text } = Typography;
-
-// 直跑模式「执行轨迹」：把后端按 measure 嵌套还原的步骤树渲染成树
-// （build_full → 子步骤 → …），带状态、耗时与占比条（>40% 橙色高亮）。
-interface TraceTreeNode {
-  key: string;
-  title: React.ReactNode;
-  children?: TraceTreeNode[];
-}
-
-function buildTraceTree(nodes: TraceStepNode[], rootTotalMs: number): TraceTreeNode[] {
-  return nodes.map((n, i) => {
-    const done = n.status === "done" || n.status === "fail";
-    const pct = rootTotalMs > 0 ? Math.round(((n.ms || 0) / rootTotalMs) * 100) : 0;
-    const statusTag =
-      n.status === "done" ? (
-        <Tag color="green">完成</Tag>
-      ) : n.status === "fail" ? (
-        <Tag color="red">失败</Tag>
-      ) : n.status === "running" ? (
-        <Tag color="blue">进行中</Tag>
-      ) : (
-        <Tag>中断</Tag>
-      );
-    return {
-      key: `${n.step}-${n.start_ts ?? i}`,
-      title: (
-        <Space size={8} style={{ fontSize: 12 }}>
-          <span style={{ fontWeight: 500 }}>{n.step}</span>
-          {statusTag}
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {((n.ms || 0) / 1000).toFixed(1)}s
-          </Text>
-          {done ? (
-            <span style={{ background: "#f0f0f0", borderRadius: 4, height: 8, width: 120 }}>
-              <span
-                style={{
-                  display: "block",
-                  width: `${Math.min(100, pct)}%`,
-                  height: 8,
-                  borderRadius: 4,
-                  background: pct > 40 ? "#fa8c16" : "#1677ff",
-                }}
-              />
-            </span>
-          ) : null}
-        </Space>
-      ),
-      children: n.children?.length ? buildTraceTree(n.children, rootTotalMs) : undefined,
-    };
-  });
-}
 
 const STATE_COLOR: Record<string, string> = {
   PENDING: "purple",
@@ -123,14 +70,6 @@ function fmtTime(iso?: string | null): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString("zh-CN", { hour12: false });
-}
-
-function paramsText(job: JobItem): string {
-  try {
-    return JSON.stringify(job.params || {}, null, 2);
-  } catch {
-    return String(job.params || "");
-  }
 }
 
 const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
@@ -242,8 +181,9 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
     setActiveJobId((prev) => prev ?? jobId);
   }, [jobId]);
 
-  // Agent Trace：activeJobId 变化/打开时拉取 span 明细；抽屉打开期间每 6s 轮询
-  // （运行中任务的 span 由 worker 每 3s 增量落盘，需轮询才能看到增长）
+  // 构建轨迹/事件数据：activeJobId 变化/打开时拉取；抽屉打开期间每 6s 轮询
+  // （运行中任务的 span 由 worker 每 3s 增量落盘，需轮询才能看到增长；
+  //  2026-10-21 Agent Trace 区块已下线，trace 仍供构建步骤时间线/LLM 调用明细使用）
   useEffect(() => {
     if (!visible || !activeJobId) return;
     let cancelled = false;
@@ -297,6 +237,11 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
           };
           const payload = data.payload || {};
 
+          if (data.type === "snapshot") {
+            // 编排 run：服务端每轮把 step_results 整体格式化推送，整体替换
+            setLogContent(payload.content || "");
+            return;
+          }
           if (data.type === "chunk") {
             if (payload.content) {
               setLogContent((prev) => `${prev}${payload.content}`);
@@ -347,13 +292,13 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
       setLogContent("");
       void fetchDetail().then((detail) => {
         if (!detail || !activeJobId) return;
-        // 已有 error_message 作为初始日志（SSE 从其后增量追加）
-        setLogContent(detail.error_message || "");
+        // 2026-10-21 全量日志：不再用 error_message 预填 + 以其长度做 offset
+        // （旧逻辑只能看到 error_message 槽位增量，历史日志全丢）。现在
+        // SSE 从 offset=0 开始拉，服务端合并 local 日志文件 / events jsonl /
+        // MinIO / error_message 全量推送（modo_job 增量 chunk / 编排 run 快照）。
         streamFinishedRef.current = false;
-        // 初始 offset：error_message 已有长度（对齐 ds getByteLength 语义）
-        const initOffset = (detail.error_message || "").length;
         const es = new EventSource(
-          `/api/v1/jobs/${encodeURIComponent(activeJobId)}/log-stream?offset=${initOffset}`,
+          `/api/v1/jobs/${encodeURIComponent(activeJobId)}/log-stream`,
         );
         eventSourceRef.current = es;
         es.onopen = () => {
@@ -367,7 +312,10 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
               payload?: { content?: string; message?: string; reason?: string };
             };
             const payload = data.payload || {};
-            if (data.type === "chunk" && payload.content) {
+            if (data.type === "snapshot") {
+              // 编排 run：快照整体替换
+              setLogContent(payload.content || "");
+            } else if (data.type === "chunk" && payload.content) {
               setLogContent((prev) => `${prev}${payload.content}`);
             } else if (data.type === "warning" || data.type === "error") {
               setStreamError(payload.message || "");
@@ -603,12 +551,22 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
                 </Text>
               </Descriptions.Item>
               <Descriptions.Item label="任务类">
-                <Tooltip title={job.task_class}>
+                <Tooltip title={job.task_class || "-"}>
                   <Text style={{ wordBreak: "break-all" }}>
-                    {job.task_class || "-"}
+                    {taskClassLabel(job.task_class)}
                   </Text>
                 </Tooltip>
               </Descriptions.Item>
+              {/* 2026-10-21：编排子任务（KbOrchestrationRunTask）后端附带 tape_name
+                  （编排名，如「摘要-Map-Reduce（分块合并）」）——摘要任务日志抽屉
+                  直接显示编排名，而非笼统的「编排执行」 */}
+              {(job as { tape_name?: string }).tape_name ? (
+                <Descriptions.Item label="编排名称">
+                  <Text style={{ wordBreak: "break-all" }}>
+                    {(job as { tape_name?: string }).tape_name}
+                  </Text>
+                </Descriptions.Item>
+              ) : null}
               <Descriptions.Item label="队列">
                 {resolveJobMonitorQueueLabel(job.queue_name, "")}
               </Descriptions.Item>
@@ -666,7 +624,7 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
                   gap: 12,
                 }}
               >
-                <span>实时日志（Span 进度流）</span>
+                <span>执行日志（全量）</span>
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   当前位置：{logScrollPercent}%
                 </Text>
@@ -703,104 +661,7 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
               )}
             </div>
 
-            {/* Agent Trace / 执行轨迹：agent 模式渲染 span 表格；
-                直跑模式渲染 measure 嵌套还原的步骤树（执行轨迹） */}
-            <div>
-              <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 8 }}>
-                {trace?.trace_kind === "direct" ? "执行轨迹" : "Agent Trace"}
-                {trace?.has_trace && trace.summary ? (
-                  <Space size={6} style={{ marginLeft: 8, fontWeight: 400, fontSize: 12 }}>
-                    <Tag color="blue">{trace.summary.span_count} spans</Tag>
-                    <Tag>{trace.summary.duration_ms}ms</Tag>
-                    <Tag color="cyan">LLM {trace.summary.llm_calls}</Tag>
-                    {trace.summary.tools.map((t) => (
-                      <Tag key={t} color="green">
-                        {t}
-                      </Tag>
-                    ))}
-                  </Space>
-                ) : trace?.events?.tree?.length ? (
-                  <Space size={6} style={{ marginLeft: 8, fontWeight: 400, fontSize: 12 }}>
-                    <Tag color="blue">
-                      {(() => {
-                        const tot = (function sum(ns: TraceStepNode[]): number {
-                          return ns.reduce((a, n) => a + (n.ms || 0) + sum(n.children || []), 0);
-                        })(trace.events?.tree ?? []);
-                        return `${Math.round(tot / 1000)}s`;
-                      })()}
-                    </Tag>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      步骤{(() => {
-                        const cnt = (function count(ns: TraceStepNode[]): number {
-                          return ns.reduce((a, n) => a + 1 + count(n.children || []), 0);
-                        })(trace.events?.tree ?? []);
-                        return cnt;
-                      })()}
-                    </Text>
-                  </Space>
-                ) : null}
-              </div>
-              {trace?.has_trace && trace.spans.length > 0 ? (
-                <Table
-                  size="small"
-                  rowKey={(r: AgentTraceSpan) => r.span_id || r.name || String(Math.random())}
-                  pagination={false}
-                  dataSource={trace.spans}
-                  expandable={{
-                    expandedRowRender: (r: AgentTraceSpan) => (
-                      <pre
-                        style={{
-                          background: "#1f2630",
-                          color: "#d7e0ea",
-                          padding: 10,
-                          borderRadius: 6,
-                          fontSize: 12,
-                          maxHeight: 260,
-                          overflow: "auto",
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-all",
-                        }}
-                      >
-                        {JSON.stringify(r.span_data || r, null, 2)}
-                      </pre>
-                    ),
-                  }}
-                  columns={[
-                    { title: "Span", dataIndex: "name", width: 260, ellipsis: true },
-                    { title: "类型", dataIndex: "type", width: 150 },
-                    {
-                      title: "耗时",
-                      dataIndex: "duration_ms",
-                      width: 90,
-                      render: (v?: number) => (v ? `${v}ms` : "-"),
-                    },
-                    {
-                      title: "开始",
-                      dataIndex: "started_at",
-                      width: 190,
-                      render: (v?: string) => (v ? new Date(v).toLocaleTimeString() : "-"),
-                    },
-                  ]}
-                />
-              ) : trace?.events?.tree?.length ? (
-                <Tree
-                  treeData={buildTraceTree(
-                    trace.events.tree,
-                    (function sum(ns: TraceStepNode[]): number {
-                      return ns.reduce((a, n) => a + (n.ms || 0) + sum(n.children || []), 0);
-                    })(trace.events.tree),
-                  )}
-                  defaultExpandAll
-                  showLine
-                />
-              ) : (
-                <Text type="secondary" italic>
-                  该任务无执行轨迹（仅 agent 构建 / 新版直跑任务会生成）
-                </Text>
-              )}
-            </div>
-
-            {/* 构建步骤时间线（flat 列表；直跑新模式用上方执行轨迹树，隐藏避免重复） */}
+            {/* 构建步骤时间线（flat 列表） */}
             {trace?.events && !trace.events.tree?.length ? (
               <div>
                 <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 8 }}>
@@ -923,34 +784,6 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
                 />
               </div>
             ) : null}
-
-            <div>
-              <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 8 }}>
-                任务参数
-              </div>
-              {job.params && Object.keys(job.params).length > 0 ? (
-                <pre
-                  style={{
-                    background: "#fafafa",
-                    border: "1px solid #f0f0f0",
-                    borderRadius: 6,
-                    padding: 12,
-                    fontSize: 12,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-all",
-                    maxHeight: 280,
-                    overflow: "auto",
-                    fontFamily: "monospace",
-                  }}
-                >
-                  {paramsText(job)}
-                </pre>
-              ) : (
-                <Text type="secondary" italic>
-                  无参数
-                </Text>
-              )}
-            </div>
           </div>
         ) : (
           !loading &&

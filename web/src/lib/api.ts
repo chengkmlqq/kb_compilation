@@ -212,6 +212,20 @@ export interface KbItem {
   repo_pull_error?: string | null;
   repo_last_pull_at?: string | null;
   repo_file_count?: number;
+  /** 知识聚合配置（2026-10-25）：配置弹窗回填 */
+  aggregation_config?: {
+    topic_cluster_enabled?: boolean;
+    topic_cluster_topics?: string[];
+    version_cluster_enabled?: boolean;
+    cron_expression?: string;
+  };
+  /** 切片智能增强配置（2026-10-25）：配置弹窗回填 */
+  enhancement_config?: {
+    enabled?: boolean;
+    keywords_dividend?: number;
+    questions_dividend?: number;
+    max_chunks?: number;
+  };
 }
 
 export interface PageList<T> {
@@ -244,6 +258,20 @@ export interface KbUpdatePayload {
   repo_branch?: string;
   repo_auth_type?: string;
   repo_auth_secret?: string;
+  /** 知识聚合配置（2026-10-25）：配置在 payload 才更新 + 同步定时任务 + 立即聚合 */
+  aggregation_config?: {
+    topic_cluster_enabled?: boolean;
+    topic_cluster_topics?: string[];
+    version_cluster_enabled?: boolean;
+    cron_expression?: string;
+  } | null;
+  /** 切片智能增强配置（2026-10-25：配置在 payload 才更新） */
+  enhancement_config?: {
+    enabled?: boolean;
+    keywords_dividend?: number;
+    questions_dividend?: number;
+    max_chunks?: number;
+  } | null;
 }
 
 export function apiUpdateKb(kbId: string, payload: KbUpdatePayload) {
@@ -314,6 +342,20 @@ export interface KbCreatePayload {
   repo_branch?: string;
   repo_auth_type?: string; // none / token / ssh_key / user_pass
   repo_auth_secret?: string; // 明文凭证（仅创建/修改时提交，读取不回显）
+  /** 知识聚合配置（2026-10-25）：主题聚类开关+主题列表 / 版本聚类开关 */
+  aggregation_config?: {
+    topic_cluster_enabled?: boolean;
+    topic_cluster_topics?: string[];
+    version_cluster_enabled?: boolean;
+    cron_expression?: string;
+  };
+  /** 切片智能增强配置（2026-10-25：开启后解析完成触发增强编排） */
+  enhancement_config?: {
+    enabled?: boolean;
+    keywords_dividend?: number;
+    questions_dividend?: number;
+    max_chunks?: number;
+  };
 }
 
 export function apiCreateKb(payload: KbCreatePayload) {
@@ -334,7 +376,7 @@ export interface BuildEngineItem {
   tape_name: string;
   tape_label?: string;
   tape_descr?: string;
-  /** 2026-10-15 功能标签：summary（摘要）/ kb_build（知识构建）/ general（其他） */
+  /** 2026-10-15 功能标签：summary（摘要）/ kb_build（知识构建）/ kb_aggregate（知识聚合）/ general（其他） */
   tape_type?: string;
 }
 
@@ -458,7 +500,9 @@ export function apiMoveDocumentsToFolder(kbId: string, documentIds: string[], fo
 
 export function apiUploadDocument(kbId: string, file: File) {
   const form = new FormData();
-  form.append("file", file);
+  // 显式指定 filename：Chrome 对 <input webkitdirectory> 的文件把 webkitRelativePath
+  // 作为 multipart filename 发送（File.name 才是裸文件名）——不覆盖会得到「目录名/文件」入库
+  form.append("file", file, file.name);
   return request<DocItem>(`/api/v1/kbs/${kbId}/documents/upload`, {
     method: "POST",
     body: form,
@@ -481,7 +525,10 @@ export function apiUploadDocumentWithProgress(
   buildTapeId?: string,
 ) {
   const form = new FormData();
-  form.append("file", file);
+  // 显式指定 filename（basename）：Chrome 对 webkitdirectory 文件把 webkitRelativePath
+  // 当 multipart filename 发（如「制度文件/2024/a.pdf」），后端会原样落成文档名 ——
+  // 目录层级由 uploadDirectoryBatch 建真实文档目录承载，文件名必须只留裸名。
+  form.append("file", file, file.name);
   // 文件级处理配置（对齐 WeKnora upload process_config：上传确认弹窗选定的
   // 切片/解析引擎配置，JSON 字符串覆盖 KB 默认）
   if (processConfig && Object.keys(processConfig).length > 0) {
@@ -622,6 +669,47 @@ export async function apiFetchDocumentBlob(kbId: string, docId: string) {
   }
   const blob = await res.blob();
   return { blob, contentType: res.headers.get("content-type") || "", size: res.headers.get("content-length") || blob.size };
+}
+
+// ---- 知识库导出/导入（2026-10-21，整库 zip） ----
+
+export interface KbImportResult {
+  kb_id: string;
+  kb_name: string;
+  docs_created: number;
+  docs_skipped: number;
+  warnings: string[];
+}
+
+/** 导出整个知识库为 zip（后端流式返回，需 blob 下载不走 request envelope）。 */
+export async function apiExportKb(kbId: string, kbName: string) {
+  const res = await fetch(`/api/v1/kbs/${encodeURIComponent(kbId)}/export`);
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const data = await res.json();
+      detail = data?.detail || data?.message || "";
+    } catch {
+      /* 非 JSON 响应，退化为状态码提示 */
+    }
+    throw new Error(detail || `导出失败 (${res.status})`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${kbName || "kb"}_export.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** 上传知识库导出 zip 导入（replace=true 覆盖同名库）。 */
+export async function apiImportKb(file: File, replace: boolean): Promise<ApiEnvelope<KbImportResult>> {
+  const fd = new FormData();
+  fd.append("file", file);
+  return requestUpload(`/api/v1/kbs/import?replace=${replace}`, fd);
 }
 
 // ---- wiki ----
@@ -1058,6 +1146,39 @@ export interface AgentToolCatalogItem {
 
 export function apiAgentToolCatalog() {
   return request<{ tools: AgentToolCatalogItem[] }>("/api/v1/agents/tool-catalog");
+}
+
+/** 平台默认提示词（2026-10-20：新建/编辑智能体时展示默认 system_prompt 正文） */
+export interface AgentPromptDefaults {
+  system_prompt: string;
+  placeholders: string[];
+}
+
+export function apiAgentPromptDefaults() {
+  return request<AgentPromptDefaults>("/api/v1/agents/prompt-defaults");
+}
+
+/** 提示词模板库条目（2026-10-21 对齐 WeKnora PromptTemplate 结构） */
+export interface AgentPromptTemplate {
+  id: string;
+  name: string;
+  description: string;
+  content: string;
+  user?: string;
+  default?: boolean;
+  has_knowledge_base?: boolean;
+  has_web_search?: boolean;
+  mode?: string;
+}
+
+/** 提示词模板库（类型 → 模板列表；对齐 WeKnora PromptTemplatesConfig 键） */
+export interface AgentPromptTemplates {
+  system_prompt: AgentPromptTemplate[];
+  context_template: AgentPromptTemplate[];
+}
+
+export function apiAgentPromptTemplates() {
+  return request<AgentPromptTemplates>("/api/v1/agents/prompt-templates");
 }
 
 export function apiDeleteAgent(agentId: string) {
@@ -2705,8 +2826,13 @@ export interface QaStreamEvent {
   summary?: string;
   hits_count?: number;
   tool_calls?: Array<{ id?: string; name?: string; arguments?: string }>;
-  results?: Array<{ id?: string; name?: string; result?: string }>;
+  results?: Array<{ id?: string; name?: string; result?: string; success?: boolean; error?: string }>;
   durations?: number[];
+  /** 2026-10-21 done 事件统计（对齐 WeKnora total_steps/total_duration_ms） */
+  total_duration_ms?: number;
+  thinking_rounds?: number;
+  /** done 事件的工具调用总数（避免与同名的 tool_calls 数组字段混淆） */
+  tool_calls_count?: number;
 }
 
 export interface ChatSessionInputState {
@@ -3173,6 +3299,21 @@ export function apiOverviewTrend(days = 7) {
   return request<{ days: OverviewTrendDay[] }>(
     `/api/v1/overview/trend?days=${encodeURIComponent(String(days))}`,
   );
+}
+
+/** 知识库维度统计条目（总览页「知识库维度」区块；GET /overview/kb-stats） */
+export interface OverviewKbStat {
+  id: string;
+  name: string;
+  docs: { total: number; by_state: Record<string, number> };
+  chunks: number;
+  wiki_pages: number;
+  issues_open: number;
+  last_doc_at: string | null;
+}
+
+export function apiOverviewKbStats() {
+  return request<{ items: OverviewKbStat[] }>("/api/v1/overview/kb-stats");
 }
 
 // ---- 任务管理（定时任务 modo_cron_task，对齐 data-synth cron） ----
@@ -4183,10 +4324,6 @@ export function apiDeleteMetadataByDatasource(datasourceId: string) {
   });
 }
 
-export function apiGetMetadataConfig() {
-  return request<{ fullCollectionEnabled: boolean }>("/api/v1/metadata/config");
-}
-
 /** 下载导入模板（xlsx 二进制，需 blob 下载不走 request envelope） */
 export async function apiDownloadMetadataTemplate(datasourceId: string): Promise<{ blob: Blob; filename: string }> {
   const res = await fetch(`/api/v1/metadata/template?datasource_id=${encodeURIComponent(datasourceId)}`, {
@@ -4248,6 +4385,7 @@ export function apiGetTableSample(kbId: string, docId: string, limit = 50) {
 /* ── 质量评估（2026-10-14 v1）────────────────────────────────── */
 
 export interface QualityScores {
+  doc?: number | null;
   chunk?: number | null;
   wiki?: number | null;
   graph?: number | null;
@@ -4266,6 +4404,7 @@ export interface QualityRunItem {
   scope: string;
   doc_ids?: string[];
   status: string;
+  dim?: string;
   scores: QualityScores;
   issues_count: number;
   attribution?: QualityAttribution[];
@@ -4291,6 +4430,11 @@ export interface QualityMetrics {
   chunks?: number;
   short_ratio?: number;
   dup?: number;
+  // 切片评估程序版（dim=chunk，2026-10-23 恢复 QC_CODE：过碎/过长/截断/重复）
+  short?: number;
+  long?: number;
+  truncated?: number;
+  long_ratio?: number;
   pages?: number;
   orphan?: number;
   broken_links?: number;
@@ -4303,6 +4447,65 @@ export interface QualityMetrics {
   error_pages?: number;
   nodes_sampled?: number;
   rels_sampled?: number;
+  // 文档转换评估（dim=doc，2026-10-21）
+  docs?: number;
+  ready?: number;
+  failed?: number;
+  pending?: number;
+  empty_conversion?: number;
+  fail_ratio?: number;
+  by_state?: Record<string, number>;
+  // 切片评估 LLM 版（dim=chunk，2026-10-22；2026-10-23 对照原文评估 Wiki）
+  files_eval?: number;
+  eval_errors?: number;
+  avg_len?: number;
+  /** 该次评估覆盖的 wiki 页面总数（2026-10-23） */
+  wiki_pages?: number;
+  // 文档转换评估-单文件明细（dim=doc，2026-10-22 改造）
+  garbled?: number;
+  avg_score?: number;
+  avg_duration_ms?: number | null;
+  engines?: Record<string, number>;
+  per_doc?: (ChunkDocEval | DocQualityItem)[];
+}
+
+/** 切片评估单文件明细（LLM 版，2026-10-23：对照原文评估 Wiki） */
+export interface ChunkDocEval {
+  doc_id?: string;
+  file_name?: string;
+  chunks?: number;
+  avg_len?: number;
+  /** Wiki 页面数（该文档构建出的 active wiki 页） */
+  wiki_pages?: number;
+  /** Wiki 构建起始时间：该文档 wiki 构建编排 run 创建时间（回落最早 wiki 页创建时间） */
+  wiki_start_time?: string | null;
+  /** Wiki 构建耗时（秒）：run 结束-起始（回落最早-最晚 wiki 页创建跨度） */
+  wiki_build_sec?: number | null;
+  /** 文档处理时长（秒）：kb_document updated_at - created_at */
+  doc_process_sec?: number | null;
+  /** LLM 评估本文件耗时（秒） */
+  eval_duration_sec?: number | null;
+  score?: number | null;
+  conclusion?: string;
+  issues?: string[];
+  error?: string;
+}
+
+/** 文档转换评估-单文件明细（metrics.per_doc 元素） */
+export interface DocQualityItem {
+  doc_id?: string;
+  file_name?: string;
+  file_ext?: string;
+  file_size?: number | null;
+  parse_state?: string;
+  parse_error?: string;
+  parse_engine?: string;
+  duration_ms?: number | null;
+  chunk_count?: number;
+  md_length?: number;
+  garbled?: boolean;
+  garbled_hits?: string[];
+  score?: number;
 }
 
 export interface QualityRunDetail extends QualityRunItem {
@@ -4312,6 +4515,7 @@ export interface QualityRunDetail extends QualityRunItem {
 export function apiListQualityRuns(params: {
   kb_id?: string;
   status?: string;
+  dim?: string;
   page?: number;
   page_size?: number;
 }) {
@@ -4321,15 +4525,37 @@ export function apiListQualityRuns(params: {
   });
   if (params.kb_id) sp.set("kb_id", params.kb_id);
   if (params.status) sp.set("status", params.status);
+  if (params.dim) sp.set("dim", params.dim);
   return request<PageList<QualityRunItem>>(`/api/v1/quality/runs?${sp.toString()}`);
+}
+
+/** 评估任务状态统计（评估页顶部统计卡片）。dim/kb_id 过滤语义与列表一致。 */
+export interface QualityRunStats {
+  total: number;
+  queued: number;
+  running: number;
+  success: number;
+  failed: number;
+}
+
+export function apiGetQualityRunStats(params: { dim?: string; kb_id?: string } = {}) {
+  const sp = new URLSearchParams();
+  if (params.dim) sp.set("dim", params.dim);
+  if (params.kb_id) sp.set("kb_id", params.kb_id);
+  return request<QualityRunStats>(`/api/v1/quality/runs/statistics?${sp.toString()}`);
 }
 
 export function apiGetQualityRun(qualityId: string) {
   return request<QualityRunDetail>(`/api/v1/quality/runs/${encodeURIComponent(qualityId)}`);
 }
 
-export function apiLaunchQualityRun(payload: { kb_id: string; doc_ids?: string[]; scope?: string }) {
-  return request<{ run_id: string; quality_id: string; scope: string; status: string }>(
+export function apiLaunchQualityRun(payload: {
+  kb_id: string;
+  doc_ids?: string[];
+  scope?: string;
+  dim?: string;
+}) {
+  return request<{ run_id: string; quality_id: string; scope: string; status: string; dim?: string }>(
     "/api/v1/quality/runs",
     { method: "POST", body: JSON.stringify(payload) },
   );
@@ -4339,6 +4565,154 @@ export function apiDeleteQualityRun(qualityId: string) {
   return request<{ id: string; deleted: boolean }>(
     `/api/v1/quality/runs/${encodeURIComponent(qualityId)}`,
     { method: "DELETE" },
+  );
+}
+
+export interface QualityDocItem {
+  doc_id?: string;
+  kb_id?: string;
+  kb_name?: string;
+  run_id?: string;
+  file_name?: string;
+  file_ext?: string;
+  file_size?: number | null;
+  parse_state?: string;
+  parse_error?: string;
+  parse_engine?: string;
+  duration_ms?: number | null;
+  chunk_count?: number;
+  md_length?: number;
+  garbled?: boolean;
+  garbled_hits?: string[];
+  file_name_garbled?: boolean;
+  content_garbled?: boolean;
+  score?: number | null;
+  updated_at?: string | null;
+  // 切片评估维度（dim=chunk，程序版计数 + 历史 v3 字段保留）
+  chunks?: number;
+  avg_len?: number | null;
+  short?: number;
+  long?: number;
+  truncated?: number;
+  dup?: number;
+  wiki_pages?: number;
+  wiki_start_time?: string | null;
+  wiki_build_sec?: number | null;
+  doc_process_sec?: number | null;
+  wiki_tape?: string;
+  eval_duration_sec?: number | null;
+  conclusion?: string;
+  error?: string;
+  // 图数据评估维度（dim=graph）
+  nodes?: number;
+  rels?: number;
+  dumb_nodes?: number;
+  untraceable_rels?: number;
+  wiki_missing?: number;
+  // wiki 评估维度（dim=wiki）
+  pages?: number;
+  empty?: number;
+  orphan?: number;
+  broken_links?: number;
+  placeholder?: number;
+  missing_source?: number;
+  no_folder?: number;
+  issues?: string[];
+}
+
+export function apiListQualityDocEval(params: {
+  kb_id?: string;
+  status?: string;
+  keyword?: string;
+  page?: number;
+  page_size?: number;
+  dim?: string;
+}) {
+  const sp = new URLSearchParams({
+    page: String(params.page ?? 1),
+    page_size: String(params.page_size ?? 20),
+  });
+  if (params.dim) sp.set("dim", params.dim);
+  if (params.kb_id) sp.set("kb_id", params.kb_id);
+  if (params.status) sp.set("status", params.status);
+  if (params.keyword) sp.set("keyword", params.keyword);
+  return request<PageList<QualityDocItem>>(`/api/v1/quality/docs?${sp.toString()}`);
+}
+
+/* ── 构建任务完成检查（2026-10-22，质量评估目录子菜单）────────────────── */
+
+export interface BuildCheckItem {
+  id: string;
+  kind: string; // doc_parse | summary | build | domain_resolve | unknown
+  kind_label: string;
+  task_class: string;
+  tape_name: string;
+  kb_id: string;
+  kb_name: string;
+  doc_id: string;
+  doc_name: string;
+  env: string; // prod | dev
+  display_state: string; // 页面显示状态（modo_job.state 大写）
+  real_state: string; // 真实状态（run.status / parse_state 推断）
+  result: string; // ok | fake_success | failed | running | stale | unknown
+  result_label: string;
+  checks: Array<{
+    key: string;
+    label: string;
+    ok: boolean | null;
+    detail: string;
+  }>;
+  artifact_summary: string;
+  created_at?: string | null;
+  has_run: boolean;
+  run_id?: string;
+  error?: string;
+}
+
+export interface BuildCheckStep {
+  step_id?: string;
+  step_label?: string;
+  step_inst?: string;
+  status?: string;
+  duration_ms?: number;
+  round?: number;
+  error?: string;
+}
+
+export interface BuildCheckDetail extends BuildCheckItem {
+  steps: BuildCheckStep[];
+}
+
+export interface BuildCheckOverview {
+  total: number;
+  by_result: Record<string, number>;
+  by_kind: Record<string, number>;
+}
+
+export function apiBuildCheckOverview() {
+  return request<BuildCheckOverview>("/api/v1/quality/build-check/overview");
+}
+
+export function apiListBuildCheckTasks(params: {
+  kb_id?: string;
+  kind?: string;
+  result?: string;
+  page?: number;
+  page_size?: number;
+}) {
+  const sp = new URLSearchParams({
+    page: String(params.page ?? 1),
+    page_size: String(params.page_size ?? 20),
+  });
+  if (params.kb_id) sp.set("kb_id", params.kb_id);
+  if (params.kind) sp.set("kind", params.kind);
+  if (params.result) sp.set("result", params.result);
+  return request<PageList<BuildCheckItem>>(`/api/v1/quality/build-check/tasks?${sp.toString()}`);
+}
+
+export function apiGetBuildCheckTask(taskId: string) {
+  return request<BuildCheckDetail>(
+    `/api/v1/quality/build-check/tasks/${encodeURIComponent(taskId)}`,
   );
 }
 

@@ -30,6 +30,8 @@ export interface UploadProcessConfig {
   parser_engine_rules?: Array<{ file_types: string[]; engine: string }>;
   /** 摘要生成策略（文件级覆盖 KB 默认 summary_strategy）：off/auto/stuff/mapreduce/refine */
   summary_strategy?: string;
+  /** 切片智能增强（文件级覆盖 KB 默认 enhancement_config.enabled）：on/off（缺省跟随 KB） */
+  enhancement?: string;
 }
 
 export interface UploadConfirmResult {
@@ -39,6 +41,8 @@ export interface UploadConfirmResult {
   buildEngine?: string;
   /** 文档级摘要生成策略（重选覆盖 KB 默认 summary_strategy；空 = 跟随知识库默认） */
   summaryStrategy?: string;
+  /** 切片智能增强（文件级覆盖 KB 默认；空 = 跟随知识库默认） */
+  enhancement?: string;
   /**
    * 目录上传专用：是否按子目录结构在知识库内创建文档目录（默认 true）。
    * 仅当 files 带 webkitRelativePath（来自「上传文件夹」）时有意义。
@@ -124,6 +128,8 @@ export default function UploadConfirmDialog({
   const [showParser, setShowParser] = useState(false);
   const [buildEngine, setBuildEngine] = useState<string>("");
   const [summaryStrategy, setSummaryStrategy] = useState<string>("");
+  // 切片智能增强（文件级覆盖 KB 默认；空 = 跟随知识库默认）
+  const [enhancement, setEnhancement] = useState<string>("");
   // 目录上传：按子目录结构在知识库内创建文档目录（默认开）
   const [mirrorFolders, setMirrorFolders] = useState<boolean>(true);
   // 「继续添加」按钮点击不到隐藏 input（label 包裹 button 时 antd Button 会阻止
@@ -218,11 +224,13 @@ export default function UploadConfirmDialog({
       if (rules.length > 0) pc.parser_engine_rules = rules;
     }
     if (summaryStrategy) pc.summary_strategy = summaryStrategy;
+    if (enhancement) pc.enhancement = enhancement;
     onConfirm({
       files: [...files],
-      processConfig: hasChunkingDiff || !!summaryStrategy ? pc : null,
+      processConfig: hasChunkingDiff || !!summaryStrategy || !!enhancement ? pc : null,
       buildEngine: buildEngine || undefined,
       summaryStrategy: summaryStrategy || undefined,
+      enhancement: enhancement || undefined,
       mirrorFolders: dirUpload ? mirrorFolders : undefined,
     });
   };
@@ -241,8 +249,11 @@ export default function UploadConfirmDialog({
     const summary = summaryStrategy
       ? (SUMMARY_STRATEGY_OPTIONS.find((o) => o.value === summaryStrategy)?.label || summaryStrategy)
       : "跟随知识库默认";
-    return `Wiki 构建：${wiki} · 摘要：${summary}`;
-  }, [buildEngine, summaryStrategy, buildEngines]);
+    const enhance = enhancement
+      ? (enhancement === "on" ? "开启" : "关闭")
+      : "跟随知识库默认";
+    return `Wiki 构建：${wiki} · 摘要：${summary} · 切片增强：${enhance}`;
+  }, [buildEngine, summaryStrategy, enhancement, buildEngines]);
 
   // 右侧配置面板标题（配置项名 + 当前取值摘要），供 Collapse 逐项展开使用
   const panelLabel = (title: string, value: string, highlight = false) => (
@@ -341,7 +352,7 @@ export default function UploadConfirmDialog({
                 <Text style={{ fontSize: 12 }}>保留子目录结构</Text>
               </Space>
               <div style={{ fontSize: 11, color: "rgba(0,0,0,.45)", marginTop: 2 }}>
-                按子目录自动创建文档目录（所选目录本身不创建）；关闭则全部上传到当前所选目录
+                按文件夹结构自动创建文档目录（含所选文件夹本身，2026-10-20 起）；关闭则全部上传到当前所选目录
               </div>
             </div>
           )}
@@ -397,12 +408,12 @@ export default function UploadConfirmDialog({
                         {rules.map((r, idx) => (
                           <Row key={idx} gutter={8} align="middle" style={{ marginBottom: 8 }}>
                             <Col span={11}>
-                              <Select mode="multiple" placeholder="文件类型" style={{ width: "100%" }}
+                              <Select mode="multiple" showSearch optionFilterProp="label" placeholder="文件类型" style={{ width: "100%" }}
                                 value={r.file_types} options={FILE_TYPE_OPTIONS}
                                 onChange={(v) => setRules((prev) => prev.map((x, i) => (i === idx ? { ...x, file_types: v } : x)))} />
                             </Col>
                             <Col span={11}>
-                              <Select placeholder="解析引擎" style={{ width: "100%" }} value={r.engine}
+                              <Select placeholder="解析引擎" showSearch optionFilterProp="label" style={{ width: "100%" }} value={r.engine}
                                 options={engineOptions}
                                 onChange={(v) => setRules((prev) => prev.map((x, i) => (i === idx ? { ...x, engine: v } : x)))} />
                             </Col>
@@ -452,7 +463,7 @@ export default function UploadConfirmDialog({
                       </Col>
                     </Row>
                     <Form.Item label="分隔符">
-                      <Select mode="tags" style={{ width: "100%" }} value={chunking.separators as string[]}
+                      <Select mode="tags" showSearch optionFilterProp="label" style={{ width: "100%" }} value={chunking.separators as string[]}
                         options={SEPARATOR_PRESETS.map((v) => ({ value: v, label: JSON.stringify(v) }))}
                         onChange={(v) => setChunking((p) => ({ ...p, separators: v }))} />
                     </Form.Item>
@@ -480,7 +491,7 @@ export default function UploadConfirmDialog({
                       </Row>
                     )}
                     <Form.Item label="语言（留空自动识别）">
-                      <Select mode="multiple" style={{ width: "100%" }} value={chunking.languages as string[]}
+                      <Select mode="multiple" showSearch optionFilterProp="label" style={{ width: "100%" }} value={chunking.languages as string[]}
                         options={LANG_OPTIONS} allowClear
                         onChange={(v) => setChunking((p) => ({ ...p, languages: v }))} />
                     </Form.Item>
@@ -500,6 +511,8 @@ export default function UploadConfirmDialog({
                     >
                       <Select
                         style={{ width: "100%" }}
+                        showSearch
+                        optionFilterProp="label"
                         allowClear
                         placeholder="跟随知识库默认"
                         value={summaryStrategy || undefined}
@@ -514,11 +527,30 @@ export default function UploadConfirmDialog({
                     >
                       <Select
                         style={{ width: "100%" }}
+                        showSearch
+                        optionFilterProp="label"
                         allowClear
                         placeholder="跟随知识库默认"
                         value={buildEngine || undefined}
                         onChange={setBuildEngine}
                         options={groupBuildEngineOptions(buildEngines)}
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      label="切片智能增强"
+                      tooltip="文档解析切分完成后自动调用 LLM 逐切片提取关键词/生成问题（随向量存储，检索命中率提升）；开启可能增加解析耗时"
+                      extra={enhancement ? undefined : "当前跟随知识库默认"}
+                    >
+                      <Select
+                        style={{ width: "100%" }}
+                        allowClear
+                        placeholder="跟随知识库默认"
+                        value={enhancement || undefined}
+                        onChange={setEnhancement}
+                        options={[
+                          { value: "on", label: "开启（推荐）" },
+                          { value: "off", label: "关闭" },
+                        ]}
                       />
                     </Form.Item>
                     <Text type="secondary" style={{ fontSize: 12 }}>仅对本次上传的文件生效，不修改知识库默认配置</Text>

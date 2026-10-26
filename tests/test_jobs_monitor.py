@@ -727,7 +727,9 @@ def test_parents_attached_run_not_top_level(monkeypatch) -> None:
         assert "DOC_doc2" in by_id
 
         # children：链头下能看到编排放种子任务；2026-10-20 粒度修正后不再附带
-        # step_results/run_tape_name/run_id（节点归编排详情视图），仅状态跟随 run
+        # step_results 节点明细（节点归编排详情视图）；2026-10-21 起附带
+        # tape_name（编排名，中文展示）+ run_id（日志流定位真实 run），
+        # 但仍不注入 step_results。
         r = client.get("/api/v1/jobs/DOC_doc1/children")
         assert r.status_code == 200
         d = r.json()["data"]
@@ -735,8 +737,10 @@ def test_parents_attached_run_not_top_level(monkeypatch) -> None:
         child = d["items"][0]
         assert child["id"] == "SUMMARY_RUN_abc"
         assert "step_results" not in child
-        assert "run_id" not in child
         assert "run_tape_name" not in child
+        # 2026-10-21：编排名 + 真实 run id 随子任务返回（摘要子任务中文展示 + 日志定位）
+        assert child["tape_name"] == "摘要-Map-Reduce（分块合并）"
+        assert child["run_id"] == "run_summary"
     finally:
         app.dependency_overrides.clear()
 
@@ -833,6 +837,62 @@ def test_orchestration_child_duration_follows_run(monkeypatch) -> None:
         assert child["job_start_time"] == "2026-10-19T09:28:38"
         assert child["job_end_time"] == "2026-10-19T09:28:38"
         assert child["job_state"] == "SUCCESS"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_parent_duration_follows_child_run_span(monkeypatch) -> None:
+    """2026-10-20 主任务耗时口径：链头 job 的 duration 跟随其编排子任务 run 的
+    真实执行时间范围（earliest run.created_at → latest run.updated_at）。
+
+    链头 job 是「投递」秒级（解析完成即 SUCCESS，end_time 早于子任务真实结束），
+    此前主任务耗时 << 子任务耗时总和对不上账——与 children 接口同口径，把
+    start/end/duration 按子任务 run 聚合范围覆盖，原始 job 耗时保留在
+    job_start_time/job_end_time/job_duration_ms。
+    """
+    from api.models.orchestration import TapeRun
+
+    db = _make_session()
+    db.query(Job).delete()
+    db.query(TapeRun).delete()
+    db.commit()
+
+    t0 = datetime(2026, 10, 20, 9, 0, 0)
+    # 链头 job：投递完成（end 仅比 start 晚 2s，投递语义）
+    db.add(Job(id="DOC_doc1", task_id="doc1", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"kbId": "kb1", "documentId": "doc1"}),
+               trigger_type="API", state="SUCCESS",
+               start_time=t0, end_time=t0 + timedelta(seconds=2), duration_ms=2000))
+    # 3 个编排子任务：job 投递秒级，run 真实执行分钟级、时间错开
+    for i, rid in enumerate(["run_a", "run_b", "run_c"]):
+        db.add(Job(id=f"SUMMARY_RUN_{rid}", task_id=f"SUMMARY_RUN_{rid}",
+                   task_class="KbOrchestrationRunTask", queue_name="orch",
+                   task_params=json.dumps({"runId": rid, "env": "prod"}),
+                   trigger_type="API", state="SUCCESS", parent_id="DOC_doc1",
+                   start_time=t0 + timedelta(seconds=3),
+                   end_time=t0 + timedelta(seconds=3),
+                   duration_ms=97))
+        db.add(TapeRun(id=rid, tape_id="tape1", tape_name="摘要-Map-Reduce（分块合并）",
+                       status="success", inputs={"kb_id": "kb1"},
+                       created_at=t0 + timedelta(seconds=5 + i * 30),
+                       updated_at=t0 + timedelta(seconds=65 + i * 30),
+                       step_results=[{"step_id": "n1", "step_inst": "kb_read_doc", "status": "success"}]))
+    db.commit()
+
+    client = _jobs_client(db, monkeypatch)
+    try:
+        r = client.get("/api/v1/jobs/parents")
+        assert r.status_code == 200
+        by_id = {it["id"]: it for it in r.json()["data"]["items"]}
+        parent = by_id["DOC_doc1"]
+        # 主任务耗时 = 最晚 run 结束（t0+125s）− 最早 run 开始（t0+5s）= 120s
+        assert parent["duration_ms"] == 120000, parent["duration_ms"]
+        assert parent["start_time"] == "2026-10-20T09:00:05"
+        assert parent["end_time"] == "2026-10-20T09:02:05"
+        # 原始 job 投递耗时保留，供排障对比
+        assert parent["job_duration_ms"] == 2000
+        assert parent["job_start_time"] == "2026-10-20T09:00:00"
+        assert parent["job_end_time"] == "2026-10-20T09:00:02"
     finally:
         app.dependency_overrides.clear()
 
@@ -964,5 +1024,67 @@ def test_parents_include_doc_name(monkeypatch) -> None:
         assert by_id["DOC_doc1"]["doc_name"] == "监管制度汇编.docx"
         # 无 documentId / 文档不存在 → 不附 doc_name（前端回退 document_id）
         assert "doc_name" not in by_id["DOC_doc2"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_log_stream_resolves_run_from_orchestration_job(monkeypatch, tmp_path) -> None:
+    """2026-10-21 摘要/编排子任务日志全量：SUMMARY_RUN_*（KbOrchestrationRunTask
+    承接 job）的 log-stream 应按 task_params.runId 解析到真实 kb_tape_run，走
+    run 快照流（step_results 全量节点明细）。
+
+    修复前：_find_run 只按 job_id 查 kb_tape_run → 查不到 → 退化成 modo_job
+    增量流 → 日志框只有 scheduler 写的两行生命周期日志（用户反馈「摘要任务的
+    日志为什么只有一点点」，实际编排有 124 条节点执行记录）。
+    """
+    import types
+
+    from api.models.orchestration import TapeRun
+
+    db = _make_session()
+    db.query(Job).delete()
+    db.query(TapeRun).delete()
+    db.commit()
+
+    db.add(Job(id="SUMMARY_RUN_x", task_id="SUMMARY_RUN_x",
+               task_class="KbOrchestrationRunTask", queue_name="orch",
+               task_params=json.dumps({"runId": "run_full", "env": "prod"}),
+               trigger_type="API", state="SUCCESS"))
+    db.add(TapeRun(id="run_full", tape_id="tape1", tape_name="摘要-Map-Reduce（分块合并）",
+                   status="success", inputs={"kb_id": "kb1"}, step_results=[
+                       {"step_id": "n01", "step_label": "读切片", "status": "success",
+                        "duration_ms": 120},
+                       {"step_id": "n02", "step_label": "LLM合并", "status": "failed",
+                        "duration_ms": 800, "error": "超时"},
+                       {"step_id": "n03", "step_label": "落库", "status": "skipped"},
+                   ]))
+    db.commit()
+
+    # SSE 端点每轮用独立短会话 → 指向测试内存引擎
+    monkeypatch.setattr("api.routers.jobs.get_sessionmaker", lambda: Session)
+    monkeypatch.setattr(
+        "api.middleware.get_settings",
+        lambda: types.SimpleNamespace(AUTH_ADMIN_USERS="u1", KB_STORAGE_DIR=str(tmp_path)),
+    )
+    client = _jobs_client(db, monkeypatch)
+    try:
+        assert client.get("/api/v1/jobs/SUMMARY_RUN_x").json()["data"]["tape_name"] == (
+            "摘要-Map-Reduce（分块合并）"
+        )
+        with client.stream("GET", "/api/v1/jobs/SUMMARY_RUN_x/log-stream") as resp:
+            assert resp.status_code == 200
+            lines = []
+            for chunk in resp.iter_lines():
+                if chunk:
+                    lines.append(chunk)
+                if len(lines) >= 6:
+                    break
+        joined = "\n".join(lines)
+        # run 快照流：磁带名 + 三个节点明细（而非只有 modo_job 的生命周期两行）
+        assert "snapshot" in joined
+        assert "摘要-Map-Reduce（分块合并）" in joined
+        assert "节点 读切片 success" in joined
+        assert "节点 LLM合并 failed" in joined
+        assert "节点 落库 skipped" in joined
     finally:
         app.dependency_overrides.clear()

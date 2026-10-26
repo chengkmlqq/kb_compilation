@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-18T03:01:25.710470",
+ "exportedAt": "2026-10-20T23:15:47.509431",
  "draft": {
   "tapeName": "题材分析-领域判定",
   "tapeLabel": "题材分析（自动选择领域构建编排）",
@@ -19,7 +19,11 @@
      },
      "stepInst": "script"
     },
-    "type": "custom"
+    "type": "custom",
+    "position": {
+     "x": 60,
+     "y": 120
+    }
    },
    {
     "id": "n2",
@@ -37,7 +41,11 @@
      },
      "stepInst": "kb_llm_chat"
     },
-    "type": "custom"
+    "type": "custom",
+    "position": {
+     "x": 380,
+     "y": 120
+    }
    },
    {
     "id": "n3",
@@ -48,7 +56,11 @@
      },
      "stepInst": "script"
     },
-    "type": "custom"
+    "type": "custom",
+    "position": {
+     "x": 700,
+     "y": 120
+    }
    }
   ],
   "edges": [

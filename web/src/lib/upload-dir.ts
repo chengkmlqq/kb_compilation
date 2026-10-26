@@ -5,8 +5,9 @@
  * filterUploadFiles + KnowledgeBase.vue 的 getFolderUploadFileName）：
  *  - 路径中任一段以 "." 开头（隐藏目录 / .DS_Store 等）或文件名命中系统垃圾文件 → 跳过
  *  - 空文件（0 字节）→ 跳过（后端会以「文件内容为空」拒绝）
- *  - 取出目录及**子孙目录**中的全部文件；所选目录本身不作为一层目录
- *    （相对路径 "所选目录/子目录/a.pdf" → 目录层级 ["子目录"]）
+ *  - 取出目录及**子孙目录**中的全部文件；**保留完整相对路径层级**（2026-10-20 起，
+ *    含顶层所选目录：相对路径 "所选目录/子目录/a.pdf" → 目录层级 ["所选目录","子目录"]，
+ *    左侧树原样呈现文件夹结构；根级文件 → []）。
  */
 
 /** 系统垃圾文件（不以 "." 开头但不应入库） */
@@ -15,8 +16,9 @@ const JUNK_FILE_NAMES = new Set(["thumbs.db", "desktop.ini", ".ds_store"]);
 export interface DirFileEntry {
   /** 原始 File 对象（保留 webkitRelativePath） */
   file: File;
-  /** 相对路径去掉顶层所选目录与文件名后的目录层级，如 ["2024", "报销"] */
-  dirs: string[];
+  /** 完整相对路径去掉文件名后的目录层级（含顶层所选目录，2026-10-20 起），
+     *  如 ["制度", "2024"]；根级文件为 [] */
+    dirs: string[];
 }
 
 export interface CollectDirFilesResult {
@@ -45,12 +47,13 @@ export function baseNameOfPath(pathOrName: string): string {
 }
 
 /**
- * 由相对路径推导需要在知识库内创建的目录层级：去掉顶层所选/拖入目录本身
- * 与文件名（"制度/2024/a.pdf" → ["2024"]；根级文件 → []）。
+ * 由相对路径推导需要在知识库内创建的目录层级：**保留完整路径层级**（含顶层
+ * 所选/拖入目录本身，2026-10-20 用户确认），只去掉文件名（"制度/2024/a.pdf"
+ * → ["制度","2024"]；根级文件 → []）。
  */
 export function dirsFromPath(pathOrName: string): string[] {
   const parts = pathOrName.split("/").filter(Boolean);
-  return parts.slice(1, -1);
+  return parts.slice(0, -1);
 }
 
 /** 本次选择是否来自「上传文件夹」（存在带相对路径的文件） */
@@ -85,7 +88,8 @@ export function collectDirFiles(files: File[]): CollectDirFilesResult {
       emptySkipped += 1;
       continue;
     }
-    // 去掉顶层所选目录名（parts[0]）与文件名（parts[-1]）→ 需要还原的目录层级
+    // 保留完整相对路径的目录层级（含顶层所选目录名，2026-10-20 用户确认），
+    // 只去掉文件名 → 需要还原的目录层级
     entries.push({ file, dirs: dirsFromPath(rel) });
   }
 

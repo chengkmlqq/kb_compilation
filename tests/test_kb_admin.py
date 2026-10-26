@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from api.db import Base
 from api.models.knowledge import (
     DocChunk,
+    KbAgent,
     KbDatasource,
     KbDocument,
     WikiFolder,
@@ -116,6 +117,71 @@ def test_delete_kb_missing(kb_db) -> None:
     assert result["success"] is False
 
 
+def _make_agent(kb_db, agent_id: str, name: str, mode: str, kb_ids: list[str], state: str = "1") -> KbAgent:
+    agent = KbAgent(
+        id=agent_id,
+        name=name,
+        state=state,
+        config={
+            "kb_selection_mode": mode,
+            "knowledge_bases": list(kb_ids),
+            "knowledge_ids": [],
+        },
+    )
+    kb_db.add(agent)
+    kb_db.commit()
+    return agent
+
+
+def test_delete_kb_rejected_when_agent_bound(kb_db) -> None:
+    """显式绑定该库的启用智能体 → 拒绝删除（AGENT_BOUND，知识库保持可用）。"""
+    kb = create_kb(kb_db, "被绑定库")
+    _make_agent(kb_db, "ag1", "供管制度知识智能体", "selected", [kb.id])
+
+    result = delete_kb(kb_db, kb.id)
+
+    assert result["success"] is False
+    assert result["code"] == "AGENT_BOUND"
+    assert "供管制度知识智能体" in result["message"]
+    assert result["data"]["bound_agents"][0]["id"] == "ag1"
+    # 库未被软删（仍在可见列表里）
+    assert get_kb(kb_db, kb.id) is not None
+    assert kb_db.get(KbDatasource, kb.id).state == "1"
+
+
+def test_delete_kb_ok_when_agent_binds_other_kb(kb_db) -> None:
+    """智能体绑定的是别的库 → 不拦截。"""
+    kb = create_kb(kb_db, "待删库")
+    other = create_kb(kb_db, "另一个库")
+    _make_agent(kb_db, "ag2", "其他智能体", "selected", [other.id])
+
+    result = delete_kb(kb_db, kb.id)
+
+    assert result["success"] is True
+    assert get_kb(kb_db, kb.id) is None
+
+
+def test_delete_kb_ok_when_agent_mode_all(kb_db) -> None:
+    """all 模式智能体不构成显式绑定（软删后检索范围自动排除），不拦截。"""
+    kb = create_kb(kb_db, "全量智能体库")
+    _make_agent(kb_db, "ag3", "全量智能体", "all", [])
+
+    result = delete_kb(kb_db, kb.id)
+
+    assert result["success"] is True
+    assert get_kb(kb_db, kb.id) is None
+
+
+def test_delete_kb_ok_when_agent_soft_deleted(kb_db) -> None:
+    """已删除（state=0）的智能体绑定不算阻断。"""
+    kb = create_kb(kb_db, "库")
+    _make_agent(kb_db, "ag4", "已删智能体", "selected", [kb.id], state="0")
+
+    result = delete_kb(kb_db, kb.id)
+
+    assert result["success"] is True
+
+
 def test_create_list_delete_document(kb_db) -> None:
     kb = create_kb(kb_db, "库")
     doc = create_document(kb_db, kb.id, "说明.pdf", file_ext=".pdf", file_size=1024)
@@ -163,6 +229,66 @@ def test_delete_document_missing(kb_db) -> None:
     kb = create_kb(kb_db, "库")
     result = delete_document(kb_db, kb.id, "nope")
     assert result["success"] is False
+
+
+def test_delete_document_wiki_shared_page_kept(kb_db, monkeypatch) -> None:
+    """删文档时 wiki 层语义（2026-10-21 性能改造回归护栏）：
+
+    - 专属页（source_refs 仅含本文档）整页删除 + 目录清理；
+    - 共享页（跨文档合并实体）只摘除本文档引用、页保留；
+    - 其他文档页完全不受影响。
+    原实现 select(WikiPage) 全量物化整库页后 Python 精判；现改 SQL LIKE 粗筛
+    + 仅取三列，此测试保证两种实现的清理结果一致。
+    """
+    calls: dict = {}
+
+    class _FakeStore:
+        def delete_by_chunks(self, chunk_ids):  # noqa: ARG002
+            calls["chunk_ids"] = chunk_ids
+
+    monkeypatch.setattr(
+        "api.services.vector_store.get_vector_store", lambda *a, **k: _FakeStore()
+    )
+    kb = create_kb(kb_db, "库")
+    doc1 = create_document(kb_db, kb.id, "a.md")
+    doc2 = create_document(kb_db, kb.id, "b.md")
+    f_exclusive = WikiFolder(id="f_ex", kb_id=kb.id, name="专属目录", parent_id="")
+    f_shared = WikiFolder(id="f_sh", kb_id=kb.id, name="共享目录", parent_id="")
+    p_exclusive = WikiPage(
+        id="p_ex", kb_id=kb.id, slug="ex", title="专属页", content="x",
+        source_refs=[f"{doc1.id}|c1", f"{doc1.id}|c2"], folder_id="f_ex",
+        status="active",
+    )
+    p_shared = WikiPage(
+        id="p_sh", kb_id=kb.id, slug="sh", title="共享页", content="y",
+        source_refs=[f"{doc1.id}|c3", f"{doc2.id}|c4"], folder_id="f_sh",
+        status="active",
+    )
+    p_other = WikiPage(
+        id="p_ot", kb_id=kb.id, slug="ot", title="其他文档页", content="z",
+        source_refs=[f"{doc2.id}|c5"], folder_id="f_sh", status="active",
+    )
+    kb_db.add_all([f_exclusive, f_shared, p_exclusive, p_shared, p_other])
+    kb_db.commit()
+
+    result = delete_document(kb_db, kb.id, doc1.id)
+
+    assert result["success"] is True
+    # 专属页整页删除 + 其独占目录回收
+    assert kb_db.get(WikiPage, "p_ex") is None
+    assert kb_db.get(WikiFolder, "f_ex") is None
+    # 共享页保留，引用仅剩 doc2
+    shared = kb_db.get(WikiPage, "p_sh")
+    assert shared is not None
+    assert shared.source_refs == [f"{doc2.id}|c4"]
+    # 其他文档页不受影响；被共享目录（仍有 p_other/p_sh 挂靠）不删
+    other = kb_db.get(WikiPage, "p_ot")
+    assert other is not None
+    assert other.source_refs == [f"{doc2.id}|c5"]
+    assert kb_db.get(WikiFolder, "f_sh") is not None
+    # 文档行删除
+    assert kb_db.get(KbDocument, doc1.id) is None
+    assert kb_db.get(KbDocument, doc2.id) is not None
 
 
 def test_wiki_tree_and_page_detail(kb_db) -> None:

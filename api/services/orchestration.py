@@ -9,6 +9,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from api.config import get_settings
+from api.db import ENV_DEV, ENV_PROD, env_scope
 from api.models.orchestration import (
     Tape,
     TapeCategory,
@@ -488,10 +489,10 @@ def _create_tape_run(db, tape_id: str, inputs: dict | None = None, env: str | No
     if not step_count:
         raise ValueError("编排没有可执行的步骤（请先在设计器保存）")
 
-    run_env = env or ("dev" if get_settings().KB_ENV_ROUTING_ENABLED else "prod")
+    run_env = env or ENV_DEV  # 2026-10-20 双表改造：手工执行恒 dev（测试执行）；上传链显式传 "prod"
     run_id = uuid.uuid4().hex[:32]
     bindings0 = dict(inputs or {})
-    bindings0["__env__"] = run_env  # 2026-10-12 环境隔离：编排执行一律落开发库
+    bindings0["__env__"] = run_env  # 2026-10-20 环境隔离：编排执行落 _dev 表
     run = TapeRun(
         id=run_id,
         tape_id=tape_id,
@@ -501,8 +502,14 @@ def _create_tape_run(db, tape_id: str, inputs: dict | None = None, env: str | No
         step_results=[],
         bindings=bindings0,
     )
-    db.add(run)
-    db.commit()
+    # 2026-10-21 fix：建行必须与执行同环境——execute_tape 手动路径 env=None→dev，
+    # 若用 API 默认 prod 上下文 INSERT，行落正式表而 worker 按 dev 查 _dev 表 →
+    # execute_run 报 run not found（双表改造回归，质量评估/编排页手动执行均中招）；
+    # 上传链显式传 "prod" 不受影响（env_scope(prod) 路由关闭零开销）。
+    # Tape 校验查询留在 prod 上下文（Tape/TapeStep 不在隔离名单，不受路由影响）。
+    with env_scope(run_env):
+        db.add(run)
+        db.commit()
     return {"run_id": run_id, "run_env": run_env}
 
 
@@ -513,13 +520,16 @@ def execute_tape(db, tape_id: str, inputs: dict | None = None, env: str | None =
     前端通过 GET runs/{run_id} 轮询逐步日志。
     env：None 按原逻辑（路由开启时编排→dev）；worker 上传链传 "prod"。
     """
+    run_env_resolved = env or ENV_DEV
     # 防重复发起（2026-10-14）：同一编排已有未结束（queued/running）的运行时不重复投递。
     # 只拦手动执行路径（API/质量评估）；worker 自动构建走 _create_tape_run 直调，不受影响。
-    active = (
-        db.query(TapeRun)
-        .filter(TapeRun.tape_id == tape_id, TapeRun.status.in_(("queued", "running")))
-        .first()
-    )
+    # 2026-10-21：按本次执行环境查（dev 查 _dev 表），否则漏判 dev 表里的在跑任务。
+    with env_scope(run_env_resolved):
+        active = (
+            db.query(TapeRun)
+            .filter(TapeRun.tape_id == tape_id, TapeRun.status.in_(("queued", "running")))
+            .first()
+        )
     if active:
         raise ValueError("该编排已有运行中的任务，请等待其结束后再执行（可查看运行历史）")
 
@@ -536,18 +546,30 @@ def execute_tape(db, tape_id: str, inputs: dict | None = None, env: str | None =
             queue="orch",
         )
     except Exception as exc:  # noqa: BLE001
-        run = db.get(TapeRun, run_id)
-        if run:
-            run.status = "failed"
-            run.error = f"编排任务投递失败: {exc}"
-            db.commit()
-        raise ValueError(f"编排任务投递失败: {exc}")
+        # 回写失败态：run 行在 run_env 对应表，须同环境写（2026-10-21）
+        with env_scope(run_env):
+            run = db.get(TapeRun, run_id)
+            if run:
+                run.status = "failed"
+                run.error = f"编排任务投递失败: {exc}"
+                db.commit()
+        raise ValueError(f"编排任务投递失败: {exc}") from exc
 
     return {"success": True, "run_id": run_id, "tape_id": tape_id, "status": "queued"}
 
 
 def get_tape_run(db, run_id: str) -> TapeRun:
+    """执行记录详情：正式表 + _dev 表双查（测试执行的 run 落 _dev 表）。
+
+    2026-10-20 双表改造：dev 环境（手工/定时执行的 run）在 kb_tape_run_dev，
+    prod（上传链 run）在 kb_tape_run。API 进程默认 prod env，故正式表先查，
+    未命中再切 dev env 查 _dev 表。
+    """
     run = db.get(TapeRun, run_id)
+    if run:
+        return run
+    with env_scope(ENV_DEV):
+        run = db.get(TapeRun, run_id)
     if not run:
         raise KeyError(f"执行记录不存在: {run_id}")
     return run
@@ -562,25 +584,42 @@ def list_tape_runs(db, tape_id: str, page=1, page_size=20) -> dict:
     # → 端点 500（与任务监控 parents 修复 9c5d15b 同源）。
     # 列表只展示窄字段，排序只取窄列 id（filesort 只碰 id 行），
     # 再按 id 回表取全行并保持排序顺序（不依赖优化器选索引）。
-    from sqlalchemy import func, select
+    #
+    # 2026-10-20 双表改造：手工执行（dev）的 run 在 kb_tape_run_dev，上传链
+    # （prod）在 kb_tape_run。两表分别取窄列 (id, created_at)，应用层合并
+    # 排序后再分页（run 总量小，不依赖单表 SQL 分页）。
+    from sqlalchemy import select
 
-    total_stmt = select(func.count()).select_from(TapeRun).where(TapeRun.tape_id == tape_id)
-    total = db.execute(total_stmt).scalar() or 0
-    run_id_stmt = select(TapeRun.id).where(TapeRun.tape_id == tape_id)
-    run_ids: list[str] = list(
-        db.execute(
-            run_id_stmt.order_by(TapeRun.created_at.desc(), TapeRun.id.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-        )
-        .scalars()
-        .all()
-    )
+    rows: list[tuple[str, object, str]] = []  # (id, created_at, env)
+    with env_scope(ENV_PROD):
+        rows += [
+            (rid, ts, ENV_PROD)
+            for rid, ts in db.execute(
+                select(TapeRun.id, TapeRun.created_at).where(TapeRun.tape_id == tape_id)
+            ).all()
+        ]
+    with env_scope(ENV_DEV):
+        rows += [
+            (rid, ts, ENV_DEV)
+            for rid, ts in db.execute(
+                select(TapeRun.id, TapeRun.created_at).where(TapeRun.tape_id == tape_id)
+            ).all()
+        ]
+    rows.sort(key=lambda r: (r[1] or datetime.min, r[0]), reverse=True)
+    total = len(rows)
+    page_rows = rows[(page - 1) * page_size : page * page_size]
+
     items: list[dict] = []
-    if run_ids:
-        pos = {rid: i for i, rid in enumerate(run_ids)}
-        fetched = db.execute(select(TapeRun).where(TapeRun.id.in_(run_ids))).scalars().all()
-        for r in sorted(fetched, key=lambda r: pos.get(r.id, len(run_ids))):
+    if page_rows:
+        pos = {rid: i for i, (rid, _ts, _e) in enumerate(page_rows)}
+        fetched = []
+        for env, ids in ((ENV_PROD, [r[0] for r in page_rows if r[2] == ENV_PROD]),
+                         (ENV_DEV, [r[0] for r in page_rows if r[2] == ENV_DEV])):
+            if not ids:
+                continue
+            with env_scope(env):
+                fetched += db.execute(select(TapeRun).where(TapeRun.id.in_(ids))).scalars().all()
+        for r in sorted(fetched, key=lambda r: pos.get(r.id, len(page_rows))):
             items.append(
                 {
                     "id": r.id,
@@ -589,6 +628,8 @@ def list_tape_runs(db, tape_id: str, page=1, page_size=20) -> dict:
                     "status": r.status,
                     "created_at": r.created_at.isoformat() if r.created_at else "",
                     "updated_at": r.updated_at.isoformat() if r.updated_at else "",
+                    # 2026-10-20 双表改造：env 标记（prod=正式 / dev=测试执行）
+                    "env": next((e for _rid, _ts, e in page_rows if _rid == r.id), ENV_PROD),
                 }
             )
     return {"total": total, "items": items}
@@ -609,6 +650,8 @@ def serialize_tape_run(run: TapeRun) -> dict:
         "error": run.error or "",
         "created_at": run.created_at.isoformat() if run.created_at else "",
         "updated_at": run.updated_at.isoformat() if run.updated_at else "",
+        # 2026-10-20 双表改造：env 标记（dev=测试执行 / prod=正式；缺省按正式）
+        "env": str((run.bindings or {}).get("__env__") or ENV_PROD),
     }
 
 

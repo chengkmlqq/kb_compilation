@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Button, Empty, Form, Input, Select, Space, Table, Tag } from "antd";
+import { Button, Empty, Form, Input, Select, Space, Spin, Table, Tag } from "antd";
 import {
   CalendarOutlined,
   DislikeOutlined,
@@ -25,6 +25,8 @@ export default function FeedbackStatsPage() {
   const [stats, setStats] = useState<FeedbackStatsData | null>(null);
   const [rows, setRows] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(false);
+  // 汇总卡片加载中
+  const [statsLoading, setStatsLoading] = useState(false);
   const [feedbackType, setFeedbackType] = useState<string | undefined>(undefined);
   const [keyword, setKeyword] = useState("");
   const [page, setPage] = useState(1);
@@ -47,11 +49,14 @@ export default function FeedbackStatsPage() {
   }, []);
 
   const loadStats = useCallback(async () => {
+    setStatsLoading(true);
     try {
       const res = await apiFeedbackStats();
       if (res.success) setStats(res.data || null);
     } catch {
       /* 统计卡片失败不阻断列表 */
+    } finally {
+      setStatsLoading(false);
     }
   }, []);
 
@@ -173,6 +178,7 @@ export default function FeedbackStatsPage() {
         }}
       >
         {/* Stats Area */}
+        <Spin spinning={statsLoading}>
         <div
           style={{
             display: "grid",
@@ -239,6 +245,7 @@ export default function FeedbackStatsPage() {
             </div>
           ))}
         </div>
+        </Spin>
 
         {/* Filter Area */}
         <div

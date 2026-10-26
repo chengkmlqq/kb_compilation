@@ -618,6 +618,7 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
         {!indexData ? (
           <Spin />
         ) : (
+          <Spin spinning={indexLoading}>
           <Space direction="vertical" style={{ display: "flex" }} size="middle">
             <Space wrap>
               <Statistic title="页面" value={indexData.total_pages} />
@@ -671,6 +672,7 @@ export default function WikiManagePanel({ kbId }: { kbId: string }) {
               />
             </div>
           </Space>
+          </Spin>
         )}
       </Drawer>
       <Drawer

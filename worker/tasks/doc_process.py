@@ -110,7 +110,8 @@ def embed_document(document_id: str) -> dict:
     """Re-embed an existing document's chunks (embedding-model-change path).
 
     Chunks live in the business store; their new vectors go to the vector
-    store (kb_embedding) via VectorStore.
+    store (kb_embedding) via VectorStore. 2026-10-25: 重嵌入保留增强字段
+    （重算向量时不丢切片关键词/问题——先读旧 enhance，新向量同字段写回）。
     """
     from api.services.vector_store import get_vector_store
 
@@ -130,8 +131,18 @@ def embed_document(document_id: str) -> dict:
         texts = [c.content for c in chunks]
         vectors = client.embed_texts(texts)
         store = get_vector_store()
+        # 读旧增强字段（无增强的 chunk 不出现在返回字典 → 走普通 upsert）
+        enhances = {}
+        try:
+            enhances = store.read_enhances([c.id for c in chunks]) or {}
+        except Exception:  # noqa: BLE001 — 增强读取失败不阻断重嵌入
+            enhances = {}
         for chunk, vec in zip(chunks, vectors):
-            store.upsert(chunk.kb_id, chunk.id, l2_normalize(vec))
+            enh = enhances.get(chunk.id)
+            if enh:
+                store.upsert_with_enhance(chunk.kb_id, chunk.id, l2_normalize(vec), enh)
+            else:
+                store.upsert(chunk.kb_id, chunk.id, l2_normalize(vec))
         return {"success": True, "document_id": document_id, "embedded": len(chunks)}
     finally:
         db.close()
@@ -174,51 +185,66 @@ def _handle_process_document(job_id: str, task_params: str | None) -> dict:
     #     处理编排自行承接，避免上传即全库切片 LLM 抽取 + 网关 429 限流）
     # 成功标志：ingest_document 返回 parse_state == "READY"（无 success 键）。
     if result.get("parse_state") == "READY" and kb_id:
-        # 2026-10-13 上传链摘要（方案A 自动路由）：文档解析成功后按 KB 摘要策略
-        # （off/auto/stuff/mapreduce/refine）触发标准摘要编排，生成摘要 wiki 页。
-        # 独立于 wiki 构建（build_tape_id），两者可并存；失败静默不阻断解析。
-        # 2026-10-16 起返回 run_id：未选构建引擎时要等它结束后驱动题材分析。
-        summary_run_id = None
-        try:
-            summary_run_id = _enqueue_summary_task(
-                kb_id, document_id, parent_job_id=job_id, cookie=caller_cookie,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("failed to trigger summary task: %s", exc)
-        result["summary_triggered"] = bool(summary_run_id)
-        if summary_run_id:
-            result["summary_run_id"] = summary_run_id
-        flags = _kb_pipeline_flags(kb_id, document_id)
-        tape_id = flags.get("tape") or ""
-        if tape_id:
-            # 绑定了构建编排（文档级优先于 KB 级）：按编排构建，不看任何开关
-            try:
-                result["build_engine_triggered"] = _enqueue_build_engine_task(
-                    kb_id, document_id, tape_id,
-                    parent_job_id=job_id,  # 2026-10-12 父子：挂链头解析任务
-                    cookie=caller_cookie,
-                )
-            except Exception as exc:  # noqa: BLE001 — 触发失败不使文档处理任务失败
-                logger.warning("failed to trigger build engine task: %s", exc)
-                result["build_engine_triggered"] = False
-        elif flags["wiki"]:
-            # 2026-10-16 摘要驱动自动领域构建：知识库创建时未选构建引擎、上传
-            # 文件也未选时，构建任务等摘要任务结束，题材分析编排基于摘要 +
-            # 平台已有领域构建编排的划分自动选定编排继续构建；任一环节
-            # 缺失/失败/超时即停止（2026-10-16 起废除技能直跑兜底，摘要失败
-            # 不再用直跑顶替，未构建状态如实反映到任务监控）。
-            result.update(_enqueue_domain_guided_build(
-                kb_id, document_id, parent_job_id=job_id, cookie=caller_cookie,
-                summary_run_id=summary_run_id,
-            ))
-        else:
-            # 2026-10-15：不再依赖 wiki_enabled 开关——仅 custom_wiki_generation
-            # （手动模式）会跳过自动构建
-            result["wiki_skill_triggered"] = False
-            result["wiki_skipped"] = "custom_wiki_generation=true（手动模式）"
-        # 2026-10-14: 移除上传链自动触发 KbGraphBuildTask（图谱构建改由文档 wiki
-        # 处理编排自行承接，避免上传即全库切片 LLM 抽取 + 网关 429 限流）。
+        result.update(_trigger_post_ready(kb_id, document_id, job_id, caller_cookie))
     return result
+
+
+def _trigger_post_ready(kb_id: str, document_id: str, job_id: str, caller_cookie: str) -> dict:
+    """文档落库 READY 后触发下游构建链路（摘要 → 构建引擎 / 题材分析驱动）。
+
+    供 KbDocumentProcessTask（文件解析）与 KbPreChunkedIngestTask（外部
+    预制 md+切片摄取，见 worker/tasks/prechunk_ingest.py）共用：只要
+    doc_chunk 落库完成、parse_state=READY，下游即按同一规则触发——
+      - 摘要编排（按 KB 摘要策略 off/auto/stuff/mapreduce/refine，独立于构建）
+      - 绑定了构建引擎（文档级优先 KB 级）→ 按编排构建
+      - 未绑定且自动模式 → 摘要完成后经题材分析编排自动选领域编排构建
+    """
+    out: dict = {}
+    # 2026-10-13 上传链摘要（方案A 自动路由）：文档解析成功后按 KB 摘要策略
+    # （off/auto/stuff/mapreduce/refine）触发标准摘要编排，生成摘要 wiki 页。
+    # 独立于 wiki 构建（build_tape_id），两者可并存；失败静默不阻断解析。
+    # 2026-10-16 起返回 run_id：未选构建引擎时要等它结束后驱动题材分析。
+    summary_run_id = None
+    try:
+        summary_run_id = _enqueue_summary_task(
+            kb_id, document_id, parent_job_id=job_id, cookie=caller_cookie,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("failed to trigger summary task: %s", exc)
+    out["summary_triggered"] = bool(summary_run_id)
+    if summary_run_id:
+        out["summary_run_id"] = summary_run_id
+    flags = _kb_pipeline_flags(kb_id, document_id)
+    tape_id = flags.get("tape") or ""
+    if tape_id:
+        # 绑定了构建编排（文档级优先于 KB 级）：按编排构建，不看任何开关
+        try:
+            out["build_engine_triggered"] = _enqueue_build_engine_task(
+                kb_id, document_id, tape_id,
+                parent_job_id=job_id,  # 2026-10-12 父子：挂链头解析任务
+                cookie=caller_cookie,
+            )
+        except Exception as exc:  # noqa: BLE001 — 触发失败不使文档处理任务失败
+            logger.warning("failed to trigger build engine task: %s", exc)
+            out["build_engine_triggered"] = False
+    elif flags["wiki"]:
+        # 2026-10-16 摘要驱动自动领域构建：知识库创建时未选构建引擎、上传
+        # 文件也未选时，构建任务等摘要任务结束，题材分析编排基于摘要 +
+        # 平台已有领域构建编排的划分自动选定编排继续构建；任一环节
+        # 缺失/失败/超时即停止（2026-10-16 起废除技能直跑兜底，摘要失败
+        # 不再用直跑顶替，未构建状态如实反映到任务监控）。
+        out.update(_enqueue_domain_guided_build(
+            kb_id, document_id, parent_job_id=job_id, cookie=caller_cookie,
+            summary_run_id=summary_run_id,
+        ))
+    else:
+        # 2026-10-15：不再依赖 wiki_enabled 开关——仅 custom_wiki_generation
+        # （手动模式）会跳过自动构建
+        out["wiki_skill_triggered"] = False
+        out["wiki_skipped"] = "custom_wiki_generation=true（手动模式）"
+    # 2026-10-14: 移除上传链自动触发 KbGraphBuildTask（图谱构建改由文档 wiki
+    # 处理编排自行承接，避免上传即全库切片 LLM 抽取 + 网关 429 限流）。
+    return out
 
 
 def _enqueue_build_engine_task(
@@ -452,6 +478,10 @@ def _enqueue_summary_task(
             "only_codes": "",
             "build_summary": "",
             "language": "中文",
+            # 2026-10-21 摘要编排身份标记：run 失败时 orch_runner 据此把
+            # kb_document.summary_status 回写 FAILED（此前摘要编排失败只留
+            # 空状态，文档列表灰色「已就绪」，无法区分「没配摘要」与「摘要失败」）。
+            "purpose": "summary",
             # 2026-10-13 增量修订：Refine 编排把历史摘要（kb_document.summary）
             # 作为滚动起点（n2 读 prev_summary）；其它模式忽略该键。
             "prev_summary": (doc.summary or "").strip(),

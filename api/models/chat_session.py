@@ -109,3 +109,40 @@ def new_message_id() -> str:
 
 def new_attachment_id() -> str:
     return _new_id("att")
+
+
+class ChatTrace(Base):
+    """智能问答过程追踪（2026-10-23 分析需求）：按 assistant 消息一条。
+
+    记录 quick/agent 两条问答链路的思考过程全文（thinking）、时序事件明细
+    （events：stage/context/tool_call/tool_result/done，含相对耗时毫秒）、
+    检索命中明细（hits）、回合汇总（summary），供后续分析知识库知识质量与
+    模型能力影响定位。无正文/空响应的尝试同样记录（失败分析）。
+    """
+
+    __tablename__ = "chat_trace"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    # assistant 消息 id（无正文/无引用未落消息时为 ""）
+    message_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    team_name: Mapped[str | None] = mapped_column(String(64))
+    kb_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    agent_id: Mapped[str | None] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(16), default="quick")  # quick / agent
+    question: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(String(128))
+    # reasoning_content 全文（chat_message.thinking 的补充：agent 链路此前不落）
+    thinking: Mapped[str | None] = mapped_column(Text)
+    # JSON 数组：时序事件 [{t, ms, ...}]（stage/context/thinking/tool_call/tool_result/done）
+    events: Mapped[str | None] = mapped_column(Text)
+    # JSON 数组：检索命中明细 [{kb_id, chunk_id, document_id, score, content 截断}]
+    hits: Mapped[str | None] = mapped_column(Text)
+    # JSON：汇总 {rounds, tool_calls, retrieval_hits, dur_ms, error, ...}
+    summary: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String(32), default=_now_iso)
+
+
+def new_trace_id() -> str:
+    return _new_id("trace")

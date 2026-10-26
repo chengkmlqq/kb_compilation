@@ -1,0 +1,166 @@
+{
+ "type": "kb.orchestration.draft",
+ "schemaVersion": 1,
+ "exportedAt": "",
+ "draft": {
+  "tapeName": "索引wiki创建",
+  "tapeLabel": "索引wiki创建（通用文档→wiki：摘要/长句/关键词/实体/规则/图谱/链接）",
+  "tapeDescr": "从已索引（解析入库、有切片）的文档创建 wiki 的通用编排，不依赖领域本体 Schema，任何知识库文档可用。链路：切片门禁 → 摘要（gen_summary）→ 长句/关键词/实体/规则/图谱/合并/链接（build_full）。输入：kid（文档 knowledge_id，必填）/ kb_id（必填）；doc_name/source_file 缺省自动取文档 元数据；skip_final=true 时跳过跨文档合并+链接（批次末统一执行）。",
+  "tapeType": "kb_build",
+  "category": "通用",
+  "status": "effective",
+  "nodes": [
+   {
+    "id": "n1",
+    "type": "stepNode",
+    "data": {
+     "label": "输入定义",
+     "stepInst": "def",
+     "config": {
+      "queue": "build",
+      "assignments": "[{\"variable\": \"kid\", \"expression\": \"bindings.get('kid', '')\"}, {\"variable\": \"doc_name\", \"expression\": \"bindings.get('doc_name', '')\"}, {\"variable\": \"source_file\", \"expression\": \"bindings.get('source_file', '')\"}, {\"variable\": \"kb_id\", \"expression\": \"bindings.get('kb_id', '')\"}, {\"variable\": \"skip_final\", \"expression\": \"bindings.get('skip_final', 'false')\"}]"
+     }
+    },
+    "position": {
+     "x": 0,
+     "y": 0
+    }
+   },
+   {
+    "id": "n2",
+    "type": "stepNode",
+    "data": {
+     "label": "切片门禁",
+     "stepInst": "script",
+     "config": {
+      "queue": "build",
+      "code": "import sys, os, json\nSD = '/srv/kb/worker/builtin_engine/scripts'\nif SD not in sys.path:\n    sys.path.insert(0, SD)\nos.environ.setdefault('KB_API_BASE_URL', 'http://api-server:8000')\nimport weknora_rpc as wr\nG = globals()\nG['wr'] = wr\nG['bindings'] = bindings\nG['context'] = context\nG['config'] = config\nwr.load_config()\n_kb = bindings.get('kb_id') or os.environ.get('WEKNORA_KB_ID', '')\nif _kb:\n    wr.KB = _kb\n    os.environ['WEKNORA_KB_ID'] = _kb\nwr.mcp_init()\n\n_kid = str(bindings.get('kid') or '').strip()\nif not _kid:\n    raise ValueError('缺少 kid（文档 knowledge_id）')\nchunks = []\npage, psize = 1, 100\nwhile True:\n    r = wr.list_chunks(_kid, kb_id=wr.KB, page=page, page_size=psize)\n    data = (r or {}).get('data') or []\n    if not data:\n        break\n    chunks.extend(data)\n    if len(data) < psize:\n        break\n    page += 1\nif not chunks:\n    raise RuntimeError(f'文档 {_kid} 无切片（未解析完成或解析失败），阻断构建')\nbindings['chunk_count'] = len(chunks)\n# 文档元数据兜底 doc_name/source_file（编排页执行时可不填）\nif not bindings.get('doc_name') or not bindings.get('source_file'):\n    try:\n        meta = wr.tool_call('get_document', {'knowledge_id': _kid})\n        data = meta.get('data', meta) or {}\n        if isinstance(data, str):\n            data = json.loads(data)\n        fname = (data.get('file_name') or data.get('title') or '').strip()\n        if fname:\n            bindings['source_file'] = fname\n            bindings['doc_name'] = bindings.get('doc_name') or fname\n    except Exception as e:\n        print(f'[n2] 文档元数据获取失败（忽略，用入参继续）: {e}')\nprint(f\"[n2] 门禁通过: chunks={len(chunks)} doc={bindings.get('doc_name') or _kid}\")\n"
+     }
+    },
+    "position": {
+     "x": 0,
+     "y": 0
+    }
+   },
+   {
+    "id": "n3",
+    "type": "stepNode",
+    "data": {
+     "label": "索引wiki创建",
+     "stepInst": "script",
+     "config": {
+      "queue": "build",
+      "code": "import sys, os, json, subprocess\nSD = '/srv/kb/worker/builtin_engine/scripts'\nif SD not in sys.path:\n    sys.path.insert(0, SD)\n_kid = str(bindings.get('kid') or '').strip()\nif not _kid:\n    raise ValueError('缺少 kid（文档 knowledge_id）')\n_kb = bindings.get('kb_id') or os.environ.get('WEKNORA_KB_ID', '')\n_env = dict(os.environ)\nif _kb:\n    _env['WEKNORA_KB_ID'] = _kb\n_env['WEKNORA_KNOWLEDGE_ID'] = _kid\n_fname = str(bindings.get('source_file') or bindings.get('doc_name') or '').strip()\nif _fname:\n    _env['WEKNORA_DOC_NAME'] = _fname\n_cmd = [sys.executable, os.path.join(SD, 'run_one.py'), _kid]\nif _kb:\n    _cmd += ['--kb', _kb]\nif str(bindings.get('skip_final') or 'false').strip().lower() in ('true', '1'):\n    _cmd += ['--skip-final']\nprint(f'[n3] 执行: {\" \".join(_cmd)}')\n_r = subprocess.run(_cmd, env=_env, capture_output=True, text=True, timeout=9000)\nif _r.stdout:\n    print(_r.stdout[-4000:])\nif _r.returncode != 0:\n    if _r.stderr:\n        print('STDERR:', _r.stderr[-2000:])\n    raise RuntimeError(f'索引wiki创建失败（exit {_r.returncode}）')\nbindings['build_summary'] = (\n    f'索引wiki创建完成: doc={_fname or _kid} chunks={bindings.get(\"chunk_count\", 0)}'\n)\nprint(f'[n3] {bindings[\"build_summary\"]}')\n"
+     }
+    },
+    "position": {
+     "x": 0,
+     "y": 0
+    }
+   },
+   {
+    "id": "n4",
+    "type": "stepNode",
+    "data": {
+     "label": "完成汇总",
+     "stepInst": "print",
+     "config": {
+      "queue": "build",
+      "text": "{{build_summary}}"
+     }
+    },
+    "position": {
+     "x": 0,
+     "y": 0
+    }
+   }
+  ],
+  "edges": [
+   {
+    "source": "n1",
+    "target": "n2"
+   },
+   {
+    "source": "n2",
+    "target": "n3"
+   },
+   {
+    "source": "n3",
+    "target": "n4"
+   }
+  ],
+  "execParams": {
+   "kid": "",
+   "doc_name": "",
+   "source_file": "",
+   "kb_id": "",
+   "skip_final": "false"
+  },
+  "steps": [
+   {
+    "step_seq": 0,
+    "step_id": "n1",
+    "step_inst": "def",
+    "step_label": "输入定义",
+    "pre_step_ids": [],
+    "next_step_ids": [
+     "n2"
+    ],
+    "queue_name": "build",
+    "step_config": {
+     "queue": "build",
+     "assignments": "[{\"variable\": \"kid\", \"expression\": \"bindings.get('kid', '')\"}, {\"variable\": \"doc_name\", \"expression\": \"bindings.get('doc_name', '')\"}, {\"variable\": \"source_file\", \"expression\": \"bindings.get('source_file', '')\"}, {\"variable\": \"kb_id\", \"expression\": \"bindings.get('kb_id', '')\"}, {\"variable\": \"skip_final\", \"expression\": \"bindings.get('skip_final', 'false')\"}]"
+    }
+   },
+   {
+    "step_seq": 1,
+    "step_id": "n2",
+    "step_inst": "script",
+    "step_label": "切片门禁",
+    "pre_step_ids": [
+     "n1"
+    ],
+    "next_step_ids": [
+     "n3"
+    ],
+    "queue_name": "build",
+    "step_config": {
+     "queue": "build",
+     "code": "import sys, os, json\nSD = '/srv/kb/worker/builtin_engine/scripts'\nif SD not in sys.path:\n    sys.path.insert(0, SD)\nos.environ.setdefault('KB_API_BASE_URL', 'http://api-server:8000')\nimport weknora_rpc as wr\nG = globals()\nG['wr'] = wr\nG['bindings'] = bindings\nG['context'] = context\nG['config'] = config\nwr.load_config()\n_kb = bindings.get('kb_id') or os.environ.get('WEKNORA_KB_ID', '')\nif _kb:\n    wr.KB = _kb\n    os.environ['WEKNORA_KB_ID'] = _kb\nwr.mcp_init()\n\n_kid = str(bindings.get('kid') or '').strip()\nif not _kid:\n    raise ValueError('缺少 kid（文档 knowledge_id）')\nchunks = []\npage, psize = 1, 100\nwhile True:\n    r = wr.list_chunks(_kid, kb_id=wr.KB, page=page, page_size=psize)\n    data = (r or {}).get('data') or []\n    if not data:\n        break\n    chunks.extend(data)\n    if len(data) < psize:\n        break\n    page += 1\nif not chunks:\n    raise RuntimeError(f'文档 {_kid} 无切片（未解析完成或解析失败），阻断构建')\nbindings['chunk_count'] = len(chunks)\n# 文档元数据兜底 doc_name/source_file（编排页执行时可不填）\nif not bindings.get('doc_name') or not bindings.get('source_file'):\n    try:\n        meta = wr.tool_call('get_document', {'knowledge_id': _kid})\n        data = meta.get('data', meta) or {}\n        if isinstance(data, str):\n            data = json.loads(data)\n        fname = (data.get('file_name') or data.get('title') or '').strip()\n        if fname:\n            bindings['source_file'] = fname\n            bindings['doc_name'] = bindings.get('doc_name') or fname\n    except Exception as e:\n        print(f'[n2] 文档元数据获取失败（忽略，用入参继续）: {e}')\nprint(f\"[n2] 门禁通过: chunks={len(chunks)} doc={bindings.get('doc_name') or _kid}\")\n"
+    }
+   },
+   {
+    "step_seq": 2,
+    "step_id": "n3",
+    "step_inst": "script",
+    "step_label": "索引wiki创建",
+    "pre_step_ids": [
+     "n2"
+    ],
+    "next_step_ids": [
+     "n4"
+    ],
+    "queue_name": "build",
+    "step_config": {
+     "queue": "build",
+     "code": "import sys, os, json, subprocess\nSD = '/srv/kb/worker/builtin_engine/scripts'\nif SD not in sys.path:\n    sys.path.insert(0, SD)\n_kid = str(bindings.get('kid') or '').strip()\nif not _kid:\n    raise ValueError('缺少 kid（文档 knowledge_id）')\n_kb = bindings.get('kb_id') or os.environ.get('WEKNORA_KB_ID', '')\n_env = dict(os.environ)\nif _kb:\n    _env['WEKNORA_KB_ID'] = _kb\n_env['WEKNORA_KNOWLEDGE_ID'] = _kid\n_fname = str(bindings.get('source_file') or bindings.get('doc_name') or '').strip()\nif _fname:\n    _env['WEKNORA_DOC_NAME'] = _fname\n_cmd = [sys.executable, os.path.join(SD, 'run_one.py'), _kid]\nif _kb:\n    _cmd += ['--kb', _kb]\nif str(bindings.get('skip_final') or 'false').strip().lower() in ('true', '1'):\n    _cmd += ['--skip-final']\nprint(f'[n3] 执行: {\" \".join(_cmd)}')\n_r = subprocess.run(_cmd, env=_env, capture_output=True, text=True, timeout=9000)\nif _r.stdout:\n    print(_r.stdout[-4000:])\nif _r.returncode != 0:\n    if _r.stderr:\n        print('STDERR:', _r.stderr[-2000:])\n    raise RuntimeError(f'索引wiki创建失败（exit {_r.returncode}）')\nbindings['build_summary'] = (\n    f'索引wiki创建完成: doc={_fname or _kid} chunks={bindings.get(\"chunk_count\", 0)}'\n)\nprint(f'[n3] {bindings[\"build_summary\"]}')\n"
+    }
+   },
+   {
+    "step_seq": 3,
+    "step_id": "n4",
+    "step_inst": "print",
+    "step_label": "完成汇总",
+    "pre_step_ids": [
+     "n3"
+    ],
+    "next_step_ids": [],
+    "queue_name": "build",
+    "step_config": {
+     "queue": "build",
+     "text": "{{build_summary}}"
+    }
+   }
+  ]
+ }
+}

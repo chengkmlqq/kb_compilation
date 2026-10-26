@@ -192,6 +192,36 @@ export function ModoIconTaskMonitor(props: IconProps) {
   );
 }
 
+/**
+ * ModoIconSidebarCollapse —— 侧边栏收起按钮图标（对齐 data_supply_shandong MODO 壳
+ * narrow 菜单的收缩按钮）。
+ *
+ * 来源：shandong 壳构建产物引用 `473bc018253a10baf7cc2caccf54f8be.svg`
+ * （modo-design「侧边栏收起-多色-slider-off-color」，viewBox 0 0 12 12，
+ * 三层 opacity 的 currentColor 分层上色），路径按官方 SVG 原样内联。
+ * 壳中 collapseDefault / collapseActive 均用同一张图（收起/展开共用）。
+ */
+export function ModoIconSidebarCollapse(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path
+        fill="currentColor"
+        d="M3.93883,1.80368V2.7133A.30025.30025,0,0,0,4.2355,3.017h6.718A.3.3,0,0,0,11.25,2.72156V1.79541A.3.3,0,0,0,10.95352,1.5H4.2355A.30024.30024,0,0,0,3.93883,1.80368Z"
+        opacity="0.25"
+      />
+      <path
+        fill="currentColor"
+        d="M11.25,6.4658v-.932a.29991.29991,0,0,0-.2964-.29246H5.4234a.29983.29983,0,0,0-.29668.30366v.90963a.29983.29983,0,0,0,.29668.30366h5.5302A.29992.29992,0,0,0,11.25,6.4658Z"
+        opacity="0.55"
+      />
+      <path
+        fill="currentColor"
+        d="M3.93883,9.28671v.90963A.30025.30025,0,0,0,4.2355,10.5h6.718a.3.3,0,0,0,.29648-.29541V9.27844a.3.3,0,0,0-.29648-.29541H4.2355A.30024.30024,0,0,0,3.93883,9.28671ZM.84892,6.23221,3.314,8.18035c.13712.12079.39688.12146.39688-.28746V4.16531c0-.33673-.25976-.40083-.39688-.28746L.84892,5.826A.258.258,0,0,0,.84892,6.23221Z"
+      />
+    </Svg>
+  );
+}
+
 /** 9 个 shandong 菜单彩色图标名（后端 MENU_ICONS 目录、菜单管理下拉可选） */
 export const MODO_MENU_ICON_NAMES = [
   "IconBook1Color",

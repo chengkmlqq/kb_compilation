@@ -13,15 +13,19 @@ import {
   Row,
   Select,
   Space,
+  Spin,
   Switch,
   Tag,
   Typography,
 } from "antd";
 import {
   BookOutlined,
+  ClusterOutlined,
   CodeOutlined,
   CommentOutlined,
   DeleteOutlined,
+  ExperimentOutlined,
+  FileZipOutlined,
   ProfileOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
@@ -30,7 +34,10 @@ import {
   apiCreateKbCategory,
   apiDeleteKb,
   apiDeleteKbCategory,
+  apiExportKb,
   apiGetDocument,
+  apiImportKb,
+  apiListAgents,
   apiListBuildEngines,
   apiListKbCategories,
   apiListKbs,
@@ -38,14 +45,17 @@ import {
   apiListSkillsRegistry,
   apiRenameKbCategory,
   apiUpdateKb,
+  AgentItem,
   BuildEngineItem,
   DocItem,
   KbCategoryItem,
   KbCreatePayload,
+  KbImportResult,
   KbItem,
   ModelItem,
 } from "@/lib/api";
 import { groupBuildEngineOptions } from "@/lib/tape-func";
+import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 import KBConfigModal from "@/components/KBConfigModal";
 import KbDocsPane from "@/components/kb/KbDocsPane";
@@ -123,23 +133,10 @@ const SearchLineIcon = () => (
   </svg>
 );
 
-/** arco Empty 默认插画（viewBox 48 / 描边 4）；容器 font-size 148px → 插画 148px */
+/** arco Empty 默认插画（viewBox 48 / 描边 4）；容器 font-size 48px → 插画 48px（对齐 arco Empty 原生规格） */
 const EmptyIllustration = () => (
   <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth={4} aria-hidden>
     <path d="M24 5v6m7 1 4-4m-18 4-4-4m28.5 22H28s-1 3-4 3-4-3-4-3H6.5M40 41H8a2 2 0 0 1-2-2v-8.46a2 2 0 0 1 .272-1.007l6.15-10.54A2 2 0 0 1 14.148 18H33.85a2 2 0 0 1 1.728.992l6.149 10.541A2 2 0 0 1 42 30.541V39a2 2 0 0 1-2 2Z" />
-  </svg>
-);
-
-/** arco IconLeft / IconRight（分页上一页 / 下一页：viewBox 48 / 描边 4） */
-const ChevronLeftIcon = () => (
-  <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth={4} aria-hidden>
-    <path d="M32 8.4 16.444 23.956 32 39.513" />
-  </svg>
-);
-
-const ChevronRightIcon = () => (
-  <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth={4} aria-hidden>
-    <path d="m16 39.513 15.556-15.557L16 8.4" />
   </svg>
 );
 
@@ -201,12 +198,44 @@ const CaretRightIcon = () => (
   </svg>
 );
 
+/**
+ * 删除前预校验：拉取全量启用智能体（分页循环取完），返回显式绑定该知识库的
+ * 智能体列表。判定口径与后端 delete_kb 的 AGENT_BOUND 守卫一致：
+ * kb_selection_mode=selected 且库 id 在 knowledge_bases / knowledge_ids 中。
+ */
+async function fetchAgentsBoundToKb(kbId: string): Promise<AgentItem[]> {
+  const bound: AgentItem[] = [];
+  const pageSize = 100; // 后端 list_agents page_size 上限
+  for (let page = 1; ; page += 1) {
+    const res = await apiListAgents(page, pageSize);
+    if (!res.success || !res.data) break;
+    const { items, total } = res.data;
+    for (const ag of items) {
+      const cfg = (ag.config ?? {}) as {
+        kb_selection_mode?: string;
+        knowledge_bases?: string[];
+        knowledge_ids?: string[];
+      };
+      if (cfg.kb_selection_mode !== "selected") continue;
+      const kbIds = new Set([
+        ...(cfg.knowledge_bases ?? []),
+        ...(cfg.knowledge_ids ?? []),
+      ]);
+      if (kbIds.has(kbId)) bound.push(ag);
+    }
+    if (items.length < pageSize || page * pageSize >= total) break;
+  }
+  return bound;
+}
+
 /** 新建知识库弹窗分区导航（对齐智能体编辑器 AgentEditorModal 与配置弹窗 KBConfigModal） */
 const CREATE_SECTIONS = [
   { key: "basic", label: "基本信息", icon: <ProfileOutlined /> },
   { key: "source", label: "知识来源", icon: <CodeOutlined /> },
   { key: "wiki", label: "Wiki 构建", icon: <BookOutlined /> },
   { key: "retrieval", label: "检索配置", icon: <SearchOutlined /> },
+  { key: "enhance", label: "文档增强", icon: <ExperimentOutlined /> },
+  { key: "aggregation", label: "知识聚合", icon: <ClusterOutlined /> },
 ];
 
 /** 知识库详情分段：文档 / Wiki / 知识图谱(Neo4j) / wiki 关系图 / 代码仓库(2026-10)，各自成为顶层动态选项卡 */
@@ -248,7 +277,10 @@ export default function KbsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
   const [total, setTotal] = useState(0);
-  const [search, setSearch] = useState("");
+  // 2026-10-21 关键字检索改走后台接口：searchInput = 输入框即时值（回车/防抖提交），
+  // keyword = 已提交给后端的检索关键字（load 依赖，变化即触发 /api/v1/kbs?keyword=）
+  const [searchInput, setSearchInput] = useState("");
+  const [keyword, setKeyword] = useState("");
   const [configKb, setConfigKb] = useState<KbItem | null>(null);
   // 卡片拖拽改分类（2026-10-20）：dragKbId = 正在拖拽的知识库；dropTargetLabel = 当前悬停的分类目标（高亮）
   const [dragKbId, setDragKbId] = useState<string | null>(null);
@@ -271,9 +303,13 @@ export default function KbsPage() {
   >(null);
   const [catName, setCatName] = useState("");
   const [catSubmitting, setCatSubmitting] = useState(false);
-  // DSB 对齐：分类树展开态（DSB 默认展开全部）+ 分页页码输入框文本
+  // DSB 对齐：分类树展开态（DSB 默认展开全部）
   const [treeExpanded, setTreeExpanded] = useState(true);
-  const [jumpText, setJumpText] = useState("1");
+  // 知识库导入导出（2026-10-21）：导入 = 上传 zip 文件 + 可选覆盖同名槽位
+  const [importOpen, setImportOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importReplace, setImportReplace] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   // ---- 动态选项卡（复用用户管理页 ModoTabs 模式）----
   // 首个 tab「知识库管理」= 页面标题 + 列表，不可关闭；后续把知识库的
@@ -419,21 +455,11 @@ export default function KbsPage() {
     );
   };
 
+  // 分类过滤保留前端（后端 keyword 已过滤关键字；分类树是前端交互，仅按 label 过滤当前页）
   const visibleKbs = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    let list = kbs;
-    if (selectedLabel !== "all") {
-      list = list.filter((k) => (k.label || "无标签") === selectedLabel);
-    }
-    if (q) {
-      list = list.filter(
-        (k) =>
-          k.name.toLowerCase().includes(q) ||
-          (k.label || "").toLowerCase().includes(q)
-      );
-    }
-    return list;
-  }, [kbs, search, selectedLabel]);
+    if (selectedLabel === "all") return kbs;
+    return kbs.filter((k) => (k.label || "无标签") === selectedLabel);
+  }, [kbs, selectedLabel]);
 
   // 2026-10-19 分类树数据源：后端合并 kb_category 行与可见知识库的 label（含计数，倒序）
   const loadCategories = useCallback(async () => {
@@ -448,6 +474,68 @@ export default function KbsPage() {
   useEffect(() => {
     void loadCategories();
   }, [loadCategories]);
+
+  // 2026-10-21 搜索分类框生效：左侧分类树按 categoryKeyword 过滤（此前 Input 绑定了
+  // state 但树渲染未引用，输入关键字目录无反应——空壳搜索框）。
+  const filteredCategories = useMemo(() => {
+    const kw = categoryKeyword.trim().toLowerCase();
+    if (!kw) return categories;
+    return categories.filter((c) => (c.name || "").toLowerCase().includes(kw));
+  }, [categories, categoryKeyword]);
+
+  // ---- 知识库导出/导入（2026-10-21）----
+  // 导出 = 整库 zip（配置快照 + 文档原文件 + wiki 页快照）；导入 = 上传 zip 建库
+  // + 文档入上传链（解析/摘要/wiki 构建由既有链路自动恢复，不携带切片二进制）。
+  const onExportKb = async (kb: KbItem) => {
+    try {
+      await apiExportKb(kb.id, kb.name);
+      message.success(`知识库「${kb.name}」已导出为 zip`);
+    } catch (err) {
+      message.error((err as Error)?.message || "导出失败");
+    }
+  };
+
+  const onImportKb = async () => {
+    if (!importFile) {
+      message.warning("请先选择导出的 zip 文件");
+      return;
+    }
+    setImporting(true);
+    try {
+      const res = await apiImportKb(importFile, importReplace);
+      if (res.success && res.data) {
+        const d: KbImportResult = res.data;
+        const warnSuffix = d.warnings.length ? `（${d.warnings.length} 条警告）` : "";
+        message.success(
+          `导入完成：知识库「${d.kb_name}」已创建${warnSuffix}，${d.docs_created} 篇文档进入解析队列`
+        );
+        if (d.warnings.length) {
+          // 警告逐条展示（模型/编排不存在回退等，导入仍成功）
+          Modal.info({
+            title: "导入警告",
+            content: (
+              <div>
+                {d.warnings.map((w, i) => (
+                  <div key={i}>· {w}</div>
+                ))}
+              </div>
+            ),
+          });
+        }
+        setImportOpen(false);
+        setImportFile(null);
+        setImportReplace(false);
+        void load();
+        void loadCategories();
+      } else {
+        message.error(res.message || "导入失败");
+      }
+    } catch {
+      message.error("导入失败：网络错误或文件过大");
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const openCatCreate = () => {
     setCatName("");
@@ -517,23 +605,21 @@ export default function KbsPage() {
     });
   };
 
-  // 分页（DSB 同款：total > 页容量时才出现分页条，页码输入框可跳页）
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const commitJump = () => {
-    const n = Number.parseInt(jumpText, 10);
-    const next = Number.isNaN(n) ? page : Math.min(Math.max(n, 1), pageCount);
-    setJumpText(String(next));
-    if (next !== page) setPage(next);
-  };
-
-  useEffect(() => {
-    setJumpText(String(page));
-  }, [page]);
+  // 关键字提交：回车触发（2026-10-21 改为调后台接口检索，不再前端过滤）
+  const submitSearch = useCallback(
+    (v: string) => {
+      const kw = v.trim();
+      if (kw === keyword) return;
+      setKeyword(kw);
+      setPage(1);
+    },
+    [keyword],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiListKbs(page, pageSize);
+      const res = await apiListKbs(page, pageSize, keyword);
       if (res.success) {
         setKbs(res.data?.items || []);
         setTotal(res.data?.total ?? 0);
@@ -543,7 +629,7 @@ export default function KbsPage() {
     } finally {
       setLoading(false);
     }
-  }, [message, page, pageSize]);
+  }, [message, page, pageSize, keyword]);
 
   useEffect(() => {
     void load();
@@ -589,11 +675,11 @@ export default function KbsPage() {
     () =>
       models
         .filter((m) => m.type === "embedding")
-        .map((m) => ({ label: m.name, value: m.id })),
+        .map((m) => ({ label: m.display_name || m.name, value: m.id })),
     [models]
   );
   const chatOptions = useMemo(
-    () => models.filter((m) => m.type === "chat").map((m) => ({ label: m.name, value: m.id })),
+    () => models.filter((m) => m.type === "chat").map((m) => ({ label: m.display_name || m.name, value: m.id })),
     [models]
   );
 
@@ -615,35 +701,70 @@ export default function KbsPage() {
   };
 
   const onCreate = async () => {
+    // 分区表单校验/取值坑（2026-10-20 二次修复）：antd validateFields() 不传
+    // nameList 时只返回「当前挂载分区」字段的值——其他分区的 Form.Item 卸载后，
+    // 值虽保留在 store（preserve=true）但不在 validateFields 返回值里。
+    // ① name 输入框只在「基本信息」分区挂载，故先用 getFieldValue 单独校验非空：
+    //    未填则切回基本信息分区并提示（切回后已填值仍在）；
+    // ② payload 必须从 getFieldsValue(true)（整个 store）取值——否则停留在
+    //    「检索配置」时提交 name 缺失（后端报 name: Field required），停留在
+    //    「基本信息」时提交则检索/构建/来源分区的设置被静默丢弃。
+    const nameVal = form.getFieldValue("name");
+    if (!nameVal || !String(nameVal).trim()) {
+      if (createSection !== "basic") setCreateSection("basic");
+      form.validateFields(["name"]).catch(() => null);
+      message.warning("请先填写知识库名称");
+      return;
+    }
     const values = await form.validateFields().catch(() => null);
     if (!values) return;
-    const isRepo = values.repo_type === "git";
+    // 全分区已填值（含未挂载分区保留在 store 的值）；未到访过分区/未设置的字段
+    // 不在 store 中，以下各取值均带与表单项 initialValue 一致的默认兜底
+    const all = form.getFieldsValue(true);
+    const isRepo = all.repo_type === "git";
     const payload: KbCreatePayload = {
-      name: values.name,
-      label: values.label || undefined,
-      description: values.description,
-      scope: values.scope || "personal",
-      type: values.type || "document",
+      name: String(nameVal).trim(),
+      label: all.label || undefined,
+      description: all.description,
+      scope: all.scope || "personal",
+      type: all.type || "document",
       indexing_strategy: {
-        vector_enabled: !!values.vector_enabled,
-        keyword_enabled: !!values.keyword_enabled,
+        vector_enabled: all.vector_enabled !== false,
+        keyword_enabled: all.keyword_enabled !== false,
         // 「Wiki 构建」开关表单已移除（2026-10-15）：新建不再需要该开关——
         // 配置了构建引擎（build_engine）即自动触发构建任务
         wiki_enabled: true,
         // 知识图谱开关表单已移除（2026-10-15）：新建默认关闭（对齐后端新库默认）
         graph_enabled: false,
       },
-      embedding_model_id: values.embedding_model_id || undefined,
-      summary_model_id: values.summary_model_id || undefined,
-      build_tape_id: values.build_engine || undefined,
+      embedding_model_id: all.embedding_model_id || undefined,
+      summary_model_id: all.summary_model_id || undefined,
+      build_tape_id: all.build_engine || undefined,
       // 摘要策略固定 auto：系统按文档规模自动路由（小文档全文直塞 / 大文档分块合并），不再开放给用户选择
       summary_strategy: "auto",
       // 代码仓库知识库（2026-10）
       repo_type: isRepo ? "git" : "",
-      repo_url: isRepo ? values.repo_url : "",
-      repo_branch: isRepo ? values.repo_branch || "" : "",
-      repo_auth_type: isRepo ? values.repo_auth_type || "none" : "none",
-      repo_auth_secret: isRepo ? values.repo_auth_secret || "" : "",
+      repo_url: isRepo ? all.repo_url : "",
+      repo_branch: isRepo ? all.repo_branch || "" : "",
+      repo_auth_type: isRepo ? all.repo_auth_type || "none" : "none",
+      repo_auth_secret: isRepo ? all.repo_auth_secret || "" : "",
+      // 知识聚合（2026-10-25）：开关 + 主题列表（后端校验主题必填 + 建定时任务 + 立即聚合）
+      aggregation_config: {
+        topic_cluster_enabled: !!all.topic_cluster_enabled,
+        topic_cluster_topics: Array.isArray(all.topic_cluster_topics)
+          ? (all.topic_cluster_topics as string[])
+              .map((t) => t.trim())
+              .filter(Boolean)
+          : [],
+        version_cluster_enabled: !!all.version_cluster_enabled,
+      },
+      // 切片智能增强（2026-10-25）：开关 + 密度参数
+      enhancement_config: {
+        enabled: !!all.enhance_enabled,
+        keywords_dividend: (all.enhance_keywords_dividend as number | undefined) ?? 120,
+        questions_dividend: (all.enhance_questions_dividend as number | undefined) ?? 180,
+        max_chunks: (all.enhance_max_chunks as number | undefined) ?? 0,
+      },
     };
     const res = await apiCreateKb(payload);
     if (res.success) {
@@ -657,7 +778,23 @@ export default function KbsPage() {
     }
   };
 
-  const onDelete = (kb: KbItem) => {
+  const onDelete = async (kb: KbItem) => {
+    // 删除前预校验：该库是否被智能体显式绑定（kb_selection_mode=selected 且
+    // 库 id 在 knowledge_bases/knowledge_ids 中）。有绑定则提示并中止，
+    // 避免删完后智能体检索范围悬空（后端同样拦截，双保险）。
+    let boundAgents: AgentItem[] = [];
+    try {
+      boundAgents = await fetchAgentsBoundToKb(kb.id);
+    } catch {
+      // 预校验失败不回退：后端 delete 接口自身也有 AGENT_BOUND 守卫
+    }
+    if (boundAgents.length > 0) {
+      modal.warning({
+        title: `无法删除知识库「${kb.name}」`,
+        content: `该知识库已被 ${boundAgents.length} 个智能体绑定（${boundAgents.map((a) => a.name).join("、")}），请先在智能体配置中解除绑定后再删除。`,
+      });
+      return;
+    }
     const docN = kb.doc_count ?? 0;
     const wikiN = kb.page_count ?? 0;
     const content =
@@ -766,7 +903,7 @@ export default function KbsPage() {
               </div>
             </Dropdown>
             {treeExpanded &&
-              categories.map((c) => (
+              filteredCategories.map((c) => (
                 <Dropdown
                   key={c.name}
                   trigger={["contextMenu"]}
@@ -821,8 +958,15 @@ export default function KbsPage() {
 
         <div className="kb-kbs-list-panel">
           <div className="kb-kbs-content">
-          {visibleKbs.length === 0 ? (
-            /* 空态（对齐 arco Empty：148px 插画 + 「暂无数据」） */
+          {loading && visibleKbs.length === 0 ? (
+            /* 首载/查询加载中（2026-10-22：此前 loading 状态未消费，加载期间
+               误显示「暂无数据」空态，接口慢时无任何反馈——对齐 models 页
+               loading && items.length===0 ? <Spin 居中> 惯例） */
+            <div style={{ display: "flex", justifyContent: "center", paddingTop: 96 }}>
+              <Spin size="large" tip="正在加载知识库..." />
+            </div>
+          ) : visibleKbs.length === 0 ? (
+            /* 空态（对齐 arco Empty 原生规格：48px 插画 + 「暂无数据」） */
             <div className="kb-kbs-empty">
               <div className="kb-kbs-empty-wrapper">
                 <div className="kb-kbs-empty-image">
@@ -832,8 +976,9 @@ export default function KbsPage() {
               </div>
             </div>
           ) : (
+            <Spin spinning={loading}>
             <Row
-              className={`kb-kbs-rows${total > 30 ? " kb-kbs-rows--paged" : ""}`}
+              className="kb-kbs-rows"
               gutter={[16, 16]}
             >
               {visibleKbs.map((kb) => (
@@ -900,6 +1045,7 @@ export default function KbsPage() {
                                 ? [{ key: "repo", label: "代码仓库" }]
                                 : []),
                               { key: "config", label: "知识库配置" },
+                              { key: "export", label: "导出" },
                               { type: "divider" },
                               { key: "delete", label: "删除", danger: true },
                             ],
@@ -911,6 +1057,7 @@ export default function KbsPage() {
                               else if (key === "wiki-graph") openKbSection(kb, "wiki-graph");
                               else if (key === "repo") openKbSection(kb, "repo");
                               else if (key === "config") setConfigKb(kb);
+                              else if (key === "export") void onExportKb(kb);
                               else if (key === "delete") onDelete(kb);
                             },
                           }}
@@ -923,67 +1070,74 @@ export default function KbsPage() {
                 </Col>
               ))}
             </Row>
+            </Spin>
           )}
           </div>
 
-          {/* 分页条（对齐 .knowledge-set-pagniation + arco Pagination simple：total > 30 才出现） */}
-          {total > 30 && (
-            <div className="kb-kbs-pagination-bar">
-              <div className="kb-kbs-pagination">
-                <div className="kb-kbs-pagination-total">共 {total} 条</div>
-                <ul className="kb-kbs-pagination-list">
-                  <li
-                    className={`kb-kbs-pagination-item kb-kbs-pagination-item-prev${
-                      page <= 1 ? " kb-kbs-pagination-item-disabled" : ""
-                    }`}
-                    onClick={() => {
-                      if (page > 1) setPage(page - 1);
-                    }}
-                  >
-                    <ChevronLeftIcon />
-                  </li>
-                  <li className="kb-kbs-pagination-item-simple-pager">
-                    <Input
-                      className="kb-kbs-pagination-jumper-input"
-                      value={jumpText}
-                      onChange={(e) => setJumpText(e.target.value)}
-                      onBlur={commitJump}
-                      onPressEnter={commitJump}
-                      disabled={pageCount <= 1}
-                    />
-                    <span className="kb-kbs-pagination-separator">/</span>
-                    <span>{pageCount}</span>
-                  </li>
-                  <li
-                    className={`kb-kbs-pagination-item kb-kbs-pagination-item-next${
-                      page >= pageCount ? " kb-kbs-pagination-item-disabled" : ""
-                    }`}
-                    onClick={() => {
-                      if (page < pageCount) setPage(page + 1);
-                    }}
-                  >
-                    <ChevronRightIcon />
-                  </li>
-                </ul>
-                <div className="kb-kbs-pagination-option">
-                  <Select
-                    value={pageSize}
-                    style={{ width: 96 }}
-                    options={[10, 20, 30, 40, 50].map((n) => ({
-                      label: `${n} 条/页`,
-                      value: n,
-                    }))}
-                    onChange={(v) => {
-                      setPageSize(v);
-                      setPage(1);
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
+          {/* 分页底栏（2026-10-21 参考参数管理页：ModoPagination 常驻底栏，不再 total>30 才出现） */}
+          <div style={{ flexShrink: 0, marginTop: "auto" }}>
+            <ModoPagination
+              current={page}
+              pageSize={pageSize}
+              total={total}
+              showSizeChanger
+              showQuickJumper
+              showTotal={(t) => `共 ${t} 条`}
+              pageSizeOptions={[10, 20, 30, 40, 50]}
+              onChange={(p, ps) => {
+                setPage(p);
+                if (ps && ps !== pageSize) {
+                  setPageSize(ps);
+                  setPage(1);
+                }
+              }}
+            />
+          </div>
         </div>
       </div>
+
+        {/* 知识库导入弹窗（2026-10-21：上传导出的 zip，可覆盖同名库） */}
+        <Modal
+          title="导入知识库"
+          open={importOpen}
+          onOk={() => void onImportKb()}
+          onCancel={() => {
+            setImportOpen(false);
+            setImportFile(null);
+            setImportReplace(false);
+          }}
+          okText="导入"
+          cancelText="取消"
+          confirmLoading={importing}
+          width={520}
+          destroyOnClose
+        >
+          <Space direction="vertical" style={{ display: "flex" }} size={12}>
+            <div>
+              <div style={{ marginBottom: 6, fontSize: 13, color: "rgba(0,0,0,.65)" }}>
+                选择导出的知识库 zip 文件
+              </div>
+              <input
+                type="file"
+                accept=".zip,application/zip"
+                onChange={(e) => {
+                  const f = e.target.files?.[0] || null;
+                  setImportFile(f);
+                }}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(0,0,0,.45)" }}>
+              导入后将创建新知识库，文档自动进入解析/摘要/wiki 构建链路（与上传一致）。
+            </div>
+            <Switch
+              checked={importReplace}
+              onChange={setImportReplace}
+              checkedChildren="覆盖同名库"
+              unCheckedChildren="同名报错"
+            />
+          </Space>
+        </Modal>
 
         {/* 新建知识库弹窗（对齐智能体编辑器 AgentEditorModal：Modal + 左侧分区导航 + 底部确定/取消） */}
         <Modal
@@ -996,7 +1150,9 @@ export default function KbsPage() {
           width={860}
           destroyOnClose
         >
-          <Form form={form} layout="vertical" preserve={false}>
+          {/* 2026-10-20 修复：preserve={false} 会在分区切换（Form.Item 卸载）时清空
+              已填字段——去掉，改用打开弹窗时 resetFields 清空（openCreate 已有） */}
+          <Form form={form} layout="vertical">
             <div style={{ display: "flex", gap: 16, minHeight: 440 }}>
               {/* 左侧分区导航（对齐智能体编辑器 AgentEditorModal） */}
               <div
@@ -1051,6 +1207,8 @@ export default function KbsPage() {
                       extra="个人知识库仅自己可见，团队知识库团队成员可见，系统知识库所有用户可见（仅管理员可建）"
                     >
                       <Select
+                        showSearch
+                        optionFilterProp="label"
                         options={[
                           { label: "个人", value: "personal" },
                           { label: "团队", value: "team" },
@@ -1065,6 +1223,8 @@ export default function KbsPage() {
                     >
                       <Select
                         allowClear
+                        showSearch
+                        optionFilterProp="label"
                         placeholder="选择分类"
                         options={categories.map((c) => ({ label: c.name, value: c.name }))}
                       />
@@ -1080,6 +1240,8 @@ export default function KbsPage() {
                       extra="文档上传 = 手动上传文件/目录构建知识库；Git 代码仓库 = 创建后自动拉取仓库代码并按目录结构建立知识库"
                     >
                       <Select
+                        showSearch
+                        optionFilterProp="label"
                         options={[
                           { label: "文档上传（手动）", value: "file" },
                           { label: "Git 代码仓库（自动拉取）", value: "git" },
@@ -1105,6 +1267,8 @@ export default function KbsPage() {
                           initialValue="none"
                         >
                           <Select
+                            showSearch
+                            optionFilterProp="label"
                             options={[
                               { label: "无凭证（公开仓库）", value: "none" },
                               { label: "Token（访问令牌）", value: "token" },
@@ -1147,6 +1311,8 @@ export default function KbsPage() {
                     >
                       <Select
                         allowClear
+                        showSearch
+                        optionFilterProp="label"
                         placeholder={buildEngines.length ? "选择构建引擎" : "暂无已发布的编排，请先到服务编排发布"}
                         options={groupBuildEngineOptions(buildEngines)}
                       />
@@ -1156,7 +1322,7 @@ export default function KbsPage() {
                       label="大语言模型（LLM）"
                       extra="Wiki 合成/文档理解用；留空 = 系统默认"
                     >
-                      <Select allowClear options={chatOptions} placeholder="选择大语言模型" />
+                      <Select allowClear showSearch optionFilterProp="label" options={chatOptions} placeholder="选择大语言模型" />
                     </Form.Item>
                   </>
                 )}
@@ -1186,8 +1352,75 @@ export default function KbsPage() {
                       label="向量模型（Embedding）"
                       extra="知识向量化用；留空 = 系统默认"
                     >
-                      <Select allowClear options={embeddingOptions} placeholder="选择向量模型" />
+                      <Select allowClear showSearch optionFilterProp="label" options={embeddingOptions} placeholder="选择向量模型" />
                     </Form.Item>
+                  </>
+                )}
+
+                {createSection === "enhance" && (
+                  <>
+                    <Form.Item
+                      name="enhance_enabled"
+                      label="切片智能增强"
+                      valuePropName="checked"
+                      extra="开启后文档解析切分完成时，自动调用 LLM 逐切片提取关键词、生成用户可能提问的问题，并汇总文档级摘要与关键词（随向量同介质存储，检索命中率提升；对标 duowen 智能问答的增强检索）"
+                    >
+                      <Switch />
+                    </Form.Item>
+                    <div style={{ padding: 8, background: "#f5f7fa", borderRadius: 6, color: "#4d5e7d", fontSize: 12 }}>
+                      增强为入库前同步执行：大文档（数百切片）可能增加数分钟解析耗时。
+                    </div>
+                  </>
+                )}
+
+                {createSection === "aggregation" && (
+                  <>
+                    <Form.Item
+                      name="topic_cluster_enabled"
+                      label="主题聚合"
+                      valuePropName="checked"
+                      extra="开启后自动为知识库创建「主题聚类」每日定时任务（每日 02:00 执行），按主题归纳跨文档综述页"
+                    >
+                      <Switch />
+                    </Form.Item>
+                    <Form.Item
+                      name="topic_cluster_topics"
+                      label="主题列表"
+                      rules={[
+                        ({ getFieldValue }) => ({
+                          validator: (_, value) => {
+                            if (getFieldValue("topic_cluster_enabled") && !(value ?? []).length) {
+                              return Promise.reject(new Error("开启主题聚合后请至少填写一个主题"));
+                            }
+                            return Promise.resolve();
+                          },
+                        }),
+                      ]}
+                      extra="按业务关注主题填写，如：采购管理、合同管理；每个主题生成一篇综述页（可新增自定义主题）"
+                    >
+                      <Select
+                        mode="tags"
+                        open={false}
+                        suffixIcon={null}
+                        placeholder="输入主题后回车添加"
+                        tokenSeparators={[","]}
+                        maxTagCount={20}
+                      />
+                    </Form.Item>
+                    <div style={{ padding: 8, background: "#f5f7fa", borderRadius: 6, color: "#4d5e7d", fontSize: 12, marginBottom: 16 }}>
+                      开启后平台会自动创建「每日 02:00」的定时任务调用主题聚类编排；保存即立即执行一次聚合。
+                    </div>
+                    <Form.Item
+                      name="version_cluster_enabled"
+                      label="按版本聚类"
+                      valuePropName="checked"
+                      extra="开启后自动为知识库创建「版本聚类」每日定时任务（每日 02:00 执行），按同名多版本文件家族生成版本演进总览页"
+                    >
+                      <Switch />
+                    </Form.Item>
+                    <div style={{ padding: 8, background: "#f5f7fa", borderRadius: 6, color: "#4d5e7d", fontSize: 12 }}>
+                      开启后平台会自动创建「每日 02:00」的定时任务调用版本演进编排；保存即立即执行一次聚类。
+                    </div>
                   </>
                 )}
               </div>
@@ -1260,9 +1493,9 @@ export default function KbsPage() {
               className="kb-kbs-search"
               placeholder="输入并搜索..."
               prefix={<SearchColorIcon size={14} />}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onPressEnter={() => setSearch(search.trim())}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onPressEnter={() => submitSearch(searchInput)}
             />
             <Button
               className="kb-kbs-new-btn"
@@ -1271,6 +1504,17 @@ export default function KbsPage() {
               onClick={openCreate}
             >
               新建
+            </Button>
+            <Button
+              className="kb-kbs-new-btn"
+              icon={<FileZipOutlined />}
+              onClick={() => {
+                setImportFile(null);
+                setImportReplace(false);
+                setImportOpen(true);
+              }}
+            >
+              导入
             </Button>
           </div>
         }

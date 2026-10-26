@@ -447,6 +447,14 @@ export default function SystemMenusPage() {
     } catch {
       return; // 校验失败，antd 已高亮错误项
     }
+    // 条件字段坑（2026-10-21 修复，对齐 kbs/page.tsx / AgentEditorModal）：
+    // url/linkType/fetchMode/route/routeParam 按 openType/linkType 条件渲染，
+    // validateFields() 只返回「当前分支挂载」字段——编辑 openType=1（仅 URL）
+    // 的菜单直接保存时，linkType/route 等字段不在 values 里，旧代码用 ?? null
+    // 会把原有 inner/路由配置清空。打开时 setFieldsValue 已回填全量字段
+    // （store 保留），用 getFieldsValue(true) 合并后未挂载分支字段取原值。
+    const all = menuForm.getFieldsValue(true);
+    values = { ...all, ...values };
     setSavingMenu(true);
     try {
       const { openType, linkType, fetchMode, route, routeParam, url, ...base } = values;

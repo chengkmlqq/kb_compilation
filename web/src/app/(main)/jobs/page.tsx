@@ -49,6 +49,7 @@ export default function JobsPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState<JobStatistics>(EMPTY_STATS);
+  const [statsLoading, setStatsLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [filters, setFilters] = useState<JobFilterValues>({});
@@ -115,8 +116,13 @@ export default function JobsPage() {
   );
 
   const loadStats = useCallback(async () => {
-    const res = await apiJobStatistics();
-    if (res.success && res.data) setStats(res.data);
+    setStatsLoading(true);
+    try {
+      const res = await apiJobStatistics();
+      if (res.success && res.data) setStats(res.data);
+    } finally {
+      setStatsLoading(false);
+    }
   }, []);
 
   const refresh = useCallback(() => {
@@ -206,7 +212,7 @@ export default function JobsPage() {
       >
         {/* Stats Area */}
         <div style={{ flexShrink: 0 }}>
-          <JobStats statistics={stats} />
+          <JobStats statistics={stats} loading={statsLoading} />
         </div>
 
         {/* Filter Area：视图切换（主任务/全部任务）作为 extra 放到筛选卡片右侧 */}

@@ -43,6 +43,9 @@ class VectorHit:
 
     chunk_id: str
     score: float
+    # 切片增强元数据（2026-10-25 对齐 duowen）：检索命中时从向量介质带回，
+    # 供加权重排 / 引用展示（关键词/问题/摘要/标题）。无增强时为 None。
+    enhance: dict | None = None
 
 
 class VectorStore(ABC):
@@ -51,6 +54,22 @@ class VectorStore(ABC):
     @abstractmethod
     def upsert(self, kb_id: str, chunk_id: str, vector: list[float]) -> None:
         """Insert or replace the embedding for one chunk."""
+
+    # 2026-10-25 增强入库：与向量同介质存切片增强元数据（duowen 对齐）。
+    # 默认实现退回 upsert（旧后端 / 调用方未传增强时行为不变）。
+    def upsert_with_enhance(
+        self, kb_id: str, chunk_id: str, vector: list[float], enhance: dict | None = None
+    ) -> None:
+        if enhance:
+            self.upsert_enhance(kb_id, chunk_id, vector, enhance)
+        else:
+            self.upsert(kb_id, chunk_id, vector)
+
+    # 子类实现：向量 + 增强字段一起写（PG: enhance_meta 列；ES: doc 字段）。
+    def upsert_enhance(
+        self, kb_id: str, chunk_id: str, vector: list[float], enhance: dict
+    ) -> None:  # pragma: no cover - abstract-ish default
+        raise NotImplementedError
 
     @abstractmethod
     def delete_by_chunks(self, chunk_ids: list[str]) -> None:
@@ -67,8 +86,30 @@ class VectorStore(ABC):
         query_vector: list[float],
         top_k: int = 10,
         threshold: float = 0.2,
+        chunk_ids: list[str] | None = None,
     ) -> list[VectorHit]:
-        """Similarity search; returns hits sorted by score desc."""
+        """Similarity search; returns hits sorted by score desc.
+
+        `chunk_ids` 非空时只在该切片集合内检索（agent 多跳深读：锁定
+        某个 document_id 后，向量臂通过该文档的 chunk_id 集合过滤）。
+        """
+
+    # 2026-10-25 增强检索：同 search 语义，但命中带回 enhance 元数据
+    # （search 默认不携带；需要增强字段做加权/展示时调用此方法）。
+    def search_enhanced(
+        self,
+        kb_id: str,
+        query_vector: list[float],
+        top_k: int = 10,
+        threshold: float = 0.2,
+        chunk_ids: list[str] | None = None,
+    ) -> list[VectorHit]:
+        return self.search(kb_id, query_vector, top_k, threshold, chunk_ids=chunk_ids)
+
+    # 2026-10-25 批量读增强元数据（重嵌入/重建向量时保留增强字段）。
+    # 返回 {chunk_id: enhance_dict}；无增强的 chunk 不出现。默认空实现。
+    def read_enhances(self, chunk_ids: list[str]) -> dict[str, dict]:
+        return {}
 
     @abstractmethod
     def list_chunk_ids(self, kb_id: str) -> list[str]:
@@ -118,6 +159,36 @@ class PgVectorStore(VectorStore):
         finally:
             db.close()
 
+    def upsert_enhance(
+        self, kb_id: str, chunk_id: str, vector: list[float], enhance: dict
+    ) -> None:
+        """向量 + 增强元数据一起写（enhance 落 enhance_meta 列，同事务）。"""
+        db = self._sessionmaker()
+        try:
+            row = (
+                db.execute(select(KbEmbedding).where(KbEmbedding.chunk_id == chunk_id))
+                .scalars()
+                .first()
+            )
+            if row is None:
+                db.add(
+                    KbEmbedding(
+                        id=uuid.uuid4().hex,
+                        kb_id=kb_id,
+                        chunk_id=chunk_id,
+                        embedding=vector,
+                        enabled=True,
+                        enhance_meta=enhance,
+                    )
+                )
+            else:
+                row.embedding = vector
+                row.kb_id = kb_id
+                row.enhance_meta = enhance
+            db.commit()
+        finally:
+            db.close()
+
     def delete_by_chunks(self, chunk_ids: list[str]) -> None:
         if not chunk_ids:
             return
@@ -142,13 +213,14 @@ class PgVectorStore(VectorStore):
         query_vector: list[float],
         top_k: int = 10,
         threshold: float = 0.2,
+        chunk_ids: list[str] | None = None,
     ) -> list[VectorHit]:
         db = self._sessionmaker()
         try:
             # cosine_distance = 1 - cosine_similarity (vectors are L2-normalized)
             distance = KbEmbedding.embedding.cosine_distance(query_vector)
             max_distance = 1.0 - threshold
-            rows = db.execute(
+            stmt = (
                 select(KbEmbedding.chunk_id, distance.label("dist"))
                 .where(
                     KbEmbedding.kb_id == kb_id,
@@ -157,11 +229,74 @@ class PgVectorStore(VectorStore):
                 .where(distance < max_distance)
                 .order_by(distance)
                 .limit(top_k)
-            ).all()
+            )
+            if chunk_ids:
+                stmt = stmt.where(KbEmbedding.chunk_id.in_(chunk_ids))
+            rows = db.execute(stmt).all()
             return [
                 VectorHit(chunk_id=r.chunk_id, score=1.0 - float(r.dist))
                 for r in rows
             ]
+        finally:
+            db.close()
+
+    def search_enhanced(
+        self,
+        kb_id: str,
+        query_vector: list[float],
+        top_k: int = 10,
+        threshold: float = 0.2,
+        chunk_ids: list[str] | None = None,
+    ) -> list[VectorHit]:
+        """同 search，命中带回 enhance_meta（增强加权/引用展示用）。"""
+        db = self._sessionmaker()
+        try:
+            distance = KbEmbedding.embedding.cosine_distance(query_vector)
+            max_distance = 1.0 - threshold
+            stmt = (
+                select(
+                    KbEmbedding.chunk_id,
+                    distance.label("dist"),
+                    KbEmbedding.enhance_meta,
+                )
+                .where(
+                    KbEmbedding.kb_id == kb_id,
+                    KbEmbedding.enabled.is_(True),
+                )
+                .where(distance < max_distance)
+                .order_by(distance)
+                .limit(top_k)
+            )
+            if chunk_ids:
+                stmt = stmt.where(KbEmbedding.chunk_id.in_(chunk_ids))
+            rows = db.execute(stmt).all()
+            return [
+                VectorHit(
+                    chunk_id=r.chunk_id,
+                    score=1.0 - float(r.dist),
+                    enhance=(dict(r.enhance_meta) if r.enhance_meta else None),
+                )
+                for r in rows
+            ]
+        finally:
+            db.close()
+
+    def read_enhances(self, chunk_ids: list[str]) -> dict[str, dict]:
+        """批量读 enhance_meta（重嵌入保留增强字段用）。"""
+        if not chunk_ids:
+            return {}
+        db = self._sessionmaker()
+        try:
+            rows = db.execute(
+                select(KbEmbedding.chunk_id, KbEmbedding.enhance_meta).where(
+                    KbEmbedding.chunk_id.in_(chunk_ids)
+                )
+            ).all()
+            return {
+                r.chunk_id: dict(r.enhance_meta)
+                for r in rows
+                if r.enhance_meta
+            }
         finally:
             db.close()
 
@@ -256,6 +391,16 @@ class EsVectorStore(VectorStore):
                             "index": True,
                             "similarity": "cosine",
                         },
+                        # ── 切片增强元数据（2026-10-25 对齐 duowen）──
+                        # 与向量同 doc 存储：标题/摘要/文档关键词/切片关键词/问题。
+                        # keywords/questions 存 text 便于 query_string 加权命中
+                        # （title^10 / keywords^30 / questions^20，检索组装时用）。
+                        "enhance_title": {"type": "text", "analyzer": "standard"},
+                        "enhance_abstract": {"type": "text"},
+                        "enhance_doc_keywords": {"type": "keyword"},
+                        "enhance_keywords": {"type": "keyword"},
+                        "enhance_questions": {"type": "text"},
+                        "enhance_pagerank": {"type": "float"},
                     }
                 },
             )
@@ -274,6 +419,32 @@ class EsVectorStore(VectorStore):
                 "embedding": vector,
             },
         )
+
+    def upsert_enhance(
+        self, kb_id: str, chunk_id: str, vector: list[float], enhance: dict
+    ) -> None:
+        """向量 + 增强字段同 doc 写入（enhance 扁平为 enhance_* 字段）。"""
+        self._ensure_index(len(vector))
+        doc: dict[str, Any] = {
+            "kb_id": kb_id,
+            "chunk_id": chunk_id,
+            "enabled": True,
+            "embedding": vector,
+        }
+        enhance = dict(enhance or {})
+        if enhance.get("title"):
+            doc["enhance_title"] = str(enhance["title"])
+        if enhance.get("abstract"):
+            doc["enhance_abstract"] = str(enhance["abstract"])
+        if enhance.get("doc_keywords"):
+            doc["enhance_doc_keywords"] = list(enhance["doc_keywords"])
+        if enhance.get("chunk_keywords"):
+            doc["enhance_keywords"] = list(enhance["chunk_keywords"])
+        if enhance.get("chunk_questions"):
+            doc["enhance_questions"] = list(enhance["chunk_questions"])
+        if enhance.get("pagerank"):
+            doc["enhance_pagerank"] = float(enhance["pagerank"])
+        self.client.index(index=self.index, id=chunk_id, document=doc)
 
     def delete_by_chunks(self, chunk_ids: list[str]) -> None:
         if not chunk_ids:
@@ -297,10 +468,17 @@ class EsVectorStore(VectorStore):
         query_vector: list[float],
         top_k: int = 10,
         threshold: float = 0.2,
+        chunk_ids: list[str] | None = None,
     ) -> list[VectorHit]:
         if not self.client.indices.exists(index=self.index):
             return []
         k = max(top_k * 4, 100)
+        must: list[dict] = [
+            {"term": {"kb_id": kb_id}},
+            {"term": {"enabled": True}},
+        ]
+        if chunk_ids:
+            must.append({"terms": {"chunk_id": chunk_ids}})
         resp = self.client.knn_search(
             index=self.index,
             knn={
@@ -309,14 +487,7 @@ class EsVectorStore(VectorStore):
                 "k": k,
                 "num_candidates": max(top_k * 10, 100),
             },
-            filter={
-                "bool": {
-                    "must": [
-                        {"term": {"kb_id": kb_id}},
-                        {"term": {"enabled": True}},
-                    ]
-                }
-            },
+            filter={"bool": {"must": must}},
             source=False,
         )
         hits: list[VectorHit] = []
@@ -332,6 +503,93 @@ class EsVectorStore(VectorStore):
             if len(hits) >= top_k:
                 break
         return hits
+
+    def search_enhanced(
+        self,
+        kb_id: str,
+        query_vector: list[float],
+        top_k: int = 10,
+        threshold: float = 0.2,
+        chunk_ids: list[str] | None = None,
+    ) -> list[VectorHit]:
+        """同 search，命中带回 enhance_* 字段（组装回 enhance dict）。"""
+        if not self.client.indices.exists(index=self.index):
+            return []
+        k = max(top_k * 4, 100)
+        must: list[dict] = [
+            {"term": {"kb_id": kb_id}},
+            {"term": {"enabled": True}},
+        ]
+        if chunk_ids:
+            must.append({"terms": {"chunk_id": chunk_ids}})
+        resp = self.client.knn_search(
+            index=self.index,
+            knn={
+                "field": "embedding",
+                "query_vector": query_vector,
+                "k": k,
+                "num_candidates": max(top_k * 10, 100),
+            },
+            filter={"bool": {"must": must}},
+            source=True,
+        )
+        hits: list[VectorHit] = []
+        for h in resp.get("hits", {}).get("hits", []):
+            es_score = float(h.get("_score") or 0.0)
+            cosine = es_score * 2.0 - 1.0
+            if cosine < threshold:
+                continue
+            src = h.get("_source") or {}
+            enhance: dict[str, Any] = {}
+            if src.get("enhance_title"):
+                enhance["title"] = src["enhance_title"]
+            if src.get("enhance_abstract"):
+                enhance["abstract"] = src["enhance_abstract"]
+            if src.get("enhance_doc_keywords"):
+                enhance["doc_keywords"] = list(src["enhance_doc_keywords"])
+            if src.get("enhance_keywords"):
+                enhance["chunk_keywords"] = list(src["enhance_keywords"])
+            if src.get("enhance_questions"):
+                enhance["chunk_questions"] = list(src["enhance_questions"])
+            if src.get("enhance_pagerank") is not None:
+                enhance["pagerank"] = float(src["enhance_pagerank"])
+            hits.append(
+                VectorHit(
+                    chunk_id=h["_id"],
+                    score=cosine,
+                    enhance=enhance or None,
+                )
+            )
+            if len(hits) >= top_k:
+                break
+        return hits
+
+    def read_enhances(self, chunk_ids: list[str]) -> dict[str, dict]:
+        """mget 批量读增强字段（重嵌入保留增强字段用）。"""
+        if not chunk_ids:
+            return {}
+        if not self.client.indices.exists(index=self.index):
+            return {}
+        resp = self.client.mget(index=self.index, ids=chunk_ids)
+        out: dict[str, dict] = {}
+        for doc in resp.get("docs", []):
+            src = doc.get("_source") or {}
+            enhance: dict[str, Any] = {}
+            if src.get("enhance_title"):
+                enhance["title"] = src["enhance_title"]
+            if src.get("enhance_abstract"):
+                enhance["abstract"] = src["enhance_abstract"]
+            if src.get("enhance_doc_keywords"):
+                enhance["doc_keywords"] = list(src["enhance_doc_keywords"])
+            if src.get("enhance_keywords"):
+                enhance["chunk_keywords"] = list(src["enhance_keywords"])
+            if src.get("enhance_questions"):
+                enhance["chunk_questions"] = list(src["enhance_questions"])
+            if src.get("enhance_pagerank") is not None:
+                enhance["pagerank"] = float(src["enhance_pagerank"])
+            if enhance:
+                out[doc.get("_id", "")] = enhance
+        return out
 
     def list_chunk_ids(self, kb_id: str) -> list[str]:
         if not self.client.indices.exists(index=self.index):

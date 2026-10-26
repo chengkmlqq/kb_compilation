@@ -389,6 +389,43 @@ def append_message(
     return _message_dict(db, msg)
 
 
+def update_message(
+    db: Session,
+    user_id: str,
+    session_id: str,
+    message_id: str,
+    content: str | None = None,
+    refs: list[dict] | None = None,
+    thinking: str | None = None,
+) -> dict | None:
+    """按 id 更新已持久化的消息内容（增量持久化用）。
+
+    区别于 append_message：不新建消息，只刷新同一消息的 content/refs/thinking
+    （流式生成中定期落盘已生成部分，关页面后重开会话不丢中间内容）。
+    refs/thinking 传 None 表示不更新该字段；传 []/"" 表示清空。
+    """
+    get_session(db, user_id, session_id)
+    msg = db.execute(
+        select(ChatMessage).where(
+            ChatMessage.id == message_id,
+            ChatMessage.session_id == session_id,
+        )
+    ).scalars().first()
+    if not msg:
+        return None
+    if content is not None:
+        msg.content = content
+    if refs is not None:
+        msg.refs = json.dumps(refs, ensure_ascii=False) if refs else None
+    if thinking is not None:
+        msg.thinking = thinking or None
+    s = db.execute(select(ChatSession).where(ChatSession.id == session_id)).scalars().first()
+    if s:
+        s.updated_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    db.commit()
+    return _message_dict(db, msg)
+
+
 def get_context_messages(
     db: Session,
     session_id: str,

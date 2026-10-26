@@ -10,7 +10,6 @@
   DELETE /metadata/datasources/{ds_id}    级联删除该数据源元数据
   GET    /metadata/tables                 表列表（分页 + column_count）
   GET    /metadata/tables/{table_id}/columns  字段列表
-  GET    /metadata/config                  全量采集开关（modo_dim）
 
 采集在 celery worker 内异步跑（task_class=KbMetadataCollectionTask）。
 需要登录（x-next-identity cookie）；未登录 401。
@@ -30,7 +29,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from api.db import get_db, get_sessionmaker
-from api.models.framework import Datasource, Dim, Job
+from api.models.framework import Datasource, Job
 from api.models.metadata import MetadataColumn, MetadataTable
 from api.services.identity import Identity, decode_identity_cookie
 
@@ -96,39 +95,60 @@ def list_metadata_datasources(
     db: Session = Depends(get_db),
 ) -> dict:
     """可采集数据源列表（表数量 + 最近采集时间 + 状态）。"""
+    from api.services.agg_cache import agg_cached_swr
     from api.services.metadata_collector import DS_TYPE_GROUPS
 
-    types = _collectable_types()
-    dss = db.execute(
-        select(Datasource).where(
-            Datasource.ds_type.in_(types),
-            or_(Datasource.state.is_(None), Datasource.state == "1"),
+    def _load(s) -> list[dict]:
+        types = _collectable_types()
+        dss = s.execute(
+            select(Datasource).where(
+                Datasource.ds_type.in_(types),
+                or_(Datasource.state.is_(None), Datasource.state == "1"),
+            )
+        ).scalars().all()
+        return _datasource_items(s, dss, DS_TYPE_GROUPS)
+
+    # 2026-10-23 性能审计：逐源最近任务查询冷缓冲池秒级，列表页走 15s
+    # stale-while-revalidate 缓存（过期先返回旧值后台刷新）
+    out = agg_cached_swr("metadata_datasources", 15.0, _load, db=db)
+    return {"success": True, "data": {"items": out, "total": len(out)}}
+
+
+def _datasource_items(db, dss, DS_TYPE_GROUPS) -> list[dict]:
+    """可采集数据源逐源装配（表数/最近采集时间批量聚合 + 最近 5 条任务判状态）。"""
+    # 2026-10-21 性能修复：表数/最近采集时间批量聚合（原每数据源 2 次查询 N+1），
+    # 只保留「最近 5 条任务」逐源查询（有 datasource_id 索引，且语义上需每源 LIMIT）。
+    ds_ids = [ds.id for ds in dss]
+    counts: dict[str, int] = {}
+    lasts: dict[str, str | None] = {}
+    if ds_ids:
+        counts = dict(
+            db.execute(
+                select(MetadataTable.datasource_id, func.count(MetadataTable.id))
+                .where(MetadataTable.datasource_id.in_(ds_ids))
+                .group_by(MetadataTable.datasource_id)
+            ).all()
         )
-    ).scalars().all()
+        lasts = dict(
+            db.execute(
+                select(MetadataTable.datasource_id, func.max(MetadataTable.collection_time))
+                .where(MetadataTable.datasource_id.in_(ds_ids))
+                .group_by(MetadataTable.datasource_id)
+            ).all()
+        )
 
     out: list[dict] = []
     for ds in dss:
-        cnt = db.execute(
-            select(func.count(MetadataTable.id)).where(MetadataTable.datasource_id == ds.id)
-        ).scalar() or 0
-        last = db.execute(
-            select(func.max(MetadataTable.collection_time)).where(
-                MetadataTable.datasource_id == ds.id
-            )
-        ).scalar()
+        cnt = int(counts.get(ds.id, 0) or 0)
+        last = lasts.get(ds.id)
         # 该数据源最近 5 条采集任务（用于状态判定）
+        # 2026-10-21 性能修复：datasource_id 冗余列等值索引直查，替代原
+        # task_params LIKE '%"datasource_id": ...%' 全文扫（每数据源一次全表扫）。
         rows = db.execute(
             select(Job.state, Job.create_time, Job.error_message)
             .where(
                 Job.task_class == TASK_CLASS_METADATA,
-                # 2026-10-15 修复：两个 like 此前是隐式 AND——json.dumps 默认分隔符
-                # 带空格（`"datasource_id": "xxx"`），无空格变体恒不匹配 → jobs 恒空
-                # → COLLECTING/FAILED 分支永远不触发，full 重采清空表格的窗口期
-                # 显示「未采集」。改 or_ 兼容两种分隔符（与 list_collection_runs 一致）。
-                or_(
-                    Job.task_params.like(f'%"datasource_id": "{ds.id}"%'),
-                    Job.task_params.like(f'%"datasource_id":"{ds.id}"%'),
-                ),
+                Job.datasource_id == ds.id,
             )
             .order_by(Job.create_time.desc())
             .limit(5)
@@ -147,7 +167,7 @@ def list_metadata_datasources(
                 "lastError": next((j["error_message"] for j in jobs if j["state"] == "FAILED"), None),
             }
         )
-    return {"success": True, "data": {"items": out, "total": len(out)}}
+    return out
 
 
 @router.post("/collection")
@@ -238,12 +258,8 @@ def list_collection_runs(
     """采集记录（modo_job，按 datasource_id 过滤 task_params）。"""
     stmt = select(Job).where(Job.task_class == TASK_CLASS_METADATA)
     if datasource_id:
-        stmt = stmt.where(
-            or_(
-                Job.task_params.like(f'%"datasource_id": "{datasource_id}"%'),
-                Job.task_params.like(f'%"datasource_id":"{datasource_id}"%'),
-            )
-        )
+        # 2026-10-21 性能修复：datasource_id 冗余列等值索引直查（原 task_params LIKE 全文扫）
+        stmt = stmt.where(Job.datasource_id == datasource_id)
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
     rows = db.execute(
         stmt.order_by(Job.create_time.desc()).offset((page - 1) * page_size).limit(page_size)
@@ -510,16 +526,7 @@ def list_metadata_columns(
     return {"success": True, "data": {"items": items, "total": len(items)}}
 
 
-@router.get("/config")
-def get_metadata_config(
-    identity: Identity = Depends(_require_identity),
-    db: Session = Depends(get_db),
-) -> dict:
-    """元数据全量采集开关（modo_dim dim_code=metadata_full_collection_enabled，默认 true）。"""
-    row = db.execute(
-        select(Dim).where(Dim.dim_code == "metadata_full_collection_enabled")
-    ).scalars().first()
-    enabled = True
-    if row is not None and str(row.dim_value or "").strip():
-        enabled = str(row.dim_value).strip().lower() not in ("0", "false", "off", "no")
-    return {"success": True, "data": {"fullCollectionEnabled": enabled}}
+# ---------------------------------------------------------------------------
+# 全量采集开关（2026-10-21 移除：页面已有 full/incremental 选择，参数仅渲染
+# 警示条不拦截任何操作，属冗余配置，参数/端点/前端提示一并删除）
+# ---------------------------------------------------------------------------

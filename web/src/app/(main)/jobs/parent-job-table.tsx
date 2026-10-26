@@ -50,26 +50,8 @@ const STATE_LABEL: Record<string, string> = {
   cancelled: "已取消",
 };
 
-const TASK_CLASS_LABEL: Record<string, string> = {
-  KbDocumentProcessTask: "文档处理",
-  KbDocumentEmbedTask: "文档向量化",
-  KbSkillDirectBuildTask: "技能直跑构建",
-  KbAgentWikiBuildTask: "智能体 Wiki 构建",
-  KbSkillWikiBuildTask: "技能 Wiki 构建",
-  KbWikiBuildTask: "Wiki 构建",
-  KbGraphBuildTask: "图谱构建",
-  KbOrphanRecoveryTask: "孤儿任务恢复",
-  KbAgentGatewayTask: "智能体网关",
-  KbTableIngestTask: "表摄取",
-  KbMetadataCollectionTask: "元数据采集",
-  KbOrchestrationRunTask: "编排执行",
-  OrchestrationRun: "编排执行",
-};
-
-function taskClassLabel(v?: string | null): string {
-  if (!v) return "-";
-  return TASK_CLASS_LABEL[v] ?? v.replace("Kb", "").replace("Task", "");
-}
+// 2026-10-07: 任务类编码 -> 中文展示（共享映射见 ./task-class-label）
+import { taskClassLabel } from "./task-class-label";
 
 // 后端 datetime 为 UTC 且序列化不带时区标记 → 无时区后缀时按 UTC 处理
 function parseIsoUtc(iso: string): Date {
@@ -147,11 +129,18 @@ function childProgress(record: ParentJobItem): string {
  *  SUCCESS，不等编排子任务），后端 child_states 已按编排 run 真实状态聚合。
  *  自身终态但存在非终态子任务（RUNNING/PENDING）时主任务展示为「运行中」，
  *  全部子任务终态后才显示自身状态。
+ *  2026-10-21 失败优先：子任务存在 FAILED 时主任务展示「失败」——此前
+ *  链头 SUCCESS 而编排 run 失败时主任务仍显示成功（用户反馈「子任务失败
+ *  了，父任务却显示成功」），页面状态对不上账。失败优先级最高（用户最关心
+ *  是否出错），其后是运行中，最后才是链头自身终态。
  */
 function effectiveState(record: ParentJobItem): string {
   const own = String(record.state || "");
   if (own === "RUNNING" || own === "running") return own;
   const states = record.child_states || {};
+  const failed =
+    (states.FAILED || 0) + (states.failed || 0) + (states.cancelled || 0);
+  if (failed > 0) return "FAILED";
   const pending =
     (states.RUNNING || 0) +
     (states.PENDING || 0) +
@@ -166,7 +155,13 @@ function effectiveState(record: ParentJobItem): string {
  * 执行步骤，归编排详情/日志视图（tape-run-log-drawer / 日志抽屉），任务监控
  * 子任务粒度只到「编排 run」这一级。 */
 
-function ChildTable({ parent }: { parent: ParentJobItem }) {
+function ChildTable({
+  parent,
+  onViewLog,
+}: {
+  parent: ParentJobItem;
+  onViewLog: (job: JobItem) => void;
+}) {
   const { message } = App.useApp();
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(false);
@@ -190,22 +185,37 @@ function ChildTable({ parent }: { parent: ParentJobItem }) {
   // 子任务粒度只到「编排 run」这一级。
   const jobCols: ColumnsType<Record<string, unknown>> = [
     { title: "子任务ID", dataIndex: "id", ellipsis: true, render: (v) => <Tooltip title={String(v)}><Text style={{ fontFamily: "monospace", fontSize: 12 }}>{String(v).slice(0, 12)}</Text></Tooltip> },
-    { title: "任务类", dataIndex: "task_class", ellipsis: true, render: (v) => taskClassLabel(String(v || "")) },
+    // 2026-10-21：编排子任务（KbOrchestrationRunTask）后端附带 tape_name（编排名，
+    // 如「摘要-Map-Reduce（分块合并）」）——优先展示编排名，让用户一眼看出是
+    // 摘要/构建哪一个编排，而非笼统的「编排执行」；tooltip 展示完整名。
+    { title: "任务类", dataIndex: "task_class", ellipsis: true, render: (v, row) => {
+        const tapeName = String((row as Record<string, unknown>)?.tape_name || "").trim();
+        if (tapeName) return <Tooltip title={tapeName}><Text>{tapeName}</Text></Tooltip>;
+        return taskClassLabel(String(v || ""));
+      } },
     { title: "状态", dataIndex: "state", width: 110, render: (v) => renderStateTag(String(v || "")) },
     { title: "开始时间", dataIndex: "start_time", width: 150, render: (v) => fmtTime(String(v || "")) },
+    { title: "结束时间", dataIndex: "end_time", width: 150, render: (v) => fmtTime(String(v || "")) },
     { title: "耗时", dataIndex: "duration_ms", width: 90, render: (v) => fmtDur(v as number | null) },
     {
-      title: "信息 / 错误",
-      dataIndex: "error_message",
-      ellipsis: true,
-      render: (v, row) =>
-        v ? (
-          <Text type={row.state === "FAILED" || row.state === "failed" ? "danger" : "secondary"} style={{ fontSize: 12 }}>
-            {String(v).length > 70 ? `${String(v).slice(0, 70)}…` : String(v)}
-          </Text>
-        ) : (
-          <Text type="secondary">-</Text>
-        ),
+      title: "操作",
+      key: "action",
+      width: 80,
+      render: (_, row) => {
+        // 编排 run 概要行（id 为 TapeRun id，非 modo_job id）：日志抽屉按 modo_job
+        // 查详情会 404 → 打开父任务日志（抽屉内正是编排时间线/详情视图）
+        const isRunSummary = String(row.task_class || "") === "OrchestrationRun";
+        return (
+          <Button
+            type="link"
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => onViewLog(isRunSummary ? (parent as JobItem) : (row as unknown as JobItem))}
+          >
+            日志
+          </Button>
+        );
+      },
     },
   ];
 
@@ -374,7 +384,9 @@ const ParentJobTable: React.FC<ParentJobTableProps> = ({
       pagination={false}
       scroll={{ x: 1220, y: scrollY }}
       expandable={{
-        expandedRowRender: (record) => <ChildTable parent={record} />,
+        expandedRowRender: (record) => (
+          <ChildTable parent={record} onViewLog={onViewLog} />
+        ),
         rowExpandable: (record) => (record.child_count || 0) > 0,
       }}
       rowClassName={(record) =>

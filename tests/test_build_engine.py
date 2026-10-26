@@ -43,10 +43,11 @@ def be_db():
     db.close()
 
 
-def _seed_tape(db, tape_id="tape-1", name="构建-基础原子版", status="effective") -> Tape:
+def _seed_tape(db, tape_id="tape-1", name="构建-基础原子版", status="effective",
+               tape_type: str = "general") -> Tape:
     t = Tape(
         id=tape_id, tape_name=name, tape_label=name,
-        tape_type="general", status=status, nodes=[], edges=[],
+        tape_type=tape_type, status=status, nodes=[], edges=[],
     )
     db.add(t)
     db.commit()
@@ -116,15 +117,22 @@ def be_client(be_db, monkeypatch):
 
 
 def test_build_engines_only_published(be_client, be_db) -> None:
-    _seed_tape(be_db, "tape-ok", "已发布引擎", status="effective")
-    _seed_tape(be_db, "tape-draft", "草稿引擎", status="draft")
-    _seed_tape(be_db, "tape-off", "下线引擎", status="offline")
+    """构建引擎下拉：只返回已发布且类型为知识构建（kb_build）的编排。
+
+    2026-10-21 过滤：summary（摘要）/ general（其他）类型编排不进下拉。
+    """
+    _seed_tape(be_db, "tape-ok", "已发布引擎", status="effective", tape_type="kb_build")
+    # 非 kb_build 类型（默认 general）不展示
+    _seed_tape(be_db, "tape-draft", "草稿引擎", status="draft", tape_type="kb_build")
+    _seed_tape(be_db, "tape-off", "下线引擎", status="offline", tape_type="kb_build")
+    _seed_tape(be_db, "tape-summary", "摘要引擎", status="effective", tape_type="summary")
     r = be_client.get("/api/v1/kbs/build-engines")
     assert r.status_code == 200
     data = r.json()["data"]
     ids = [it["id"] for it in data["items"]]
     assert ids == ["tape-ok"]
     assert data["items"][0]["tape_label"] == "已发布引擎"
+    assert data["items"][0]["tape_type"] == "kb_build"
 
 
 # ───────────────────────── worker：上传链触发编排 ─────────────────────────

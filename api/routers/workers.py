@@ -182,6 +182,7 @@ TASK_DISPLAY_NAME_CN: dict[str, str] = {
     "KbMetadataCollectionTask": "元数据采集",
     "KbChunkVerifyTask": "分块校验",
     "KbOrphanRecoveryTask": "孤儿任务恢复",
+    "KbOrphanDocCleanupTask": "孤儿文档任务清理",
 }
 
 

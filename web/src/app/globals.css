@@ -164,7 +164,8 @@ html[data-theme="dark"] body {
 .orchestrations-page .ant-table-body,
 .steps-page .ant-table-body,
 .chunk-verify-page .ant-table-body,
-.feedback-stats-page .ant-table-body {
+.feedback-stats-page .ant-table-body,
+.kb-wk-root .ant-table-body {
   overflow-y: auto !important;
 }
 
@@ -677,10 +678,52 @@ html[data-theme="dark"] body {
 .kb-wiki-tree-panel {
   --kb-wiki-depth-indent: 14px;
   padding: 0 8px;
+  /* 2026-10-23 虚拟滚动：列表容器撑满可视高度，内部自行滚动 */
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .kb-wiki-tree-list {
   padding: 0 0 4px;
+}
+
+/* 2026-10-23 虚拟滚动容器：父级高度 100%，overflow 交给列表自身 */
+.kb-wiki-tree-list--virtual {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── 分支「加载更多」行（34px / 缩进同目录行 / 对齐 WeKnora .wiki-directory-load-more） ── */
+.kb-wiki-load-more {
+  height: 34px;
+  box-sizing: border-box;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: calc(var(--kb-wiki-depth, 0) * var(--kb-wiki-depth-indent, 14px));
+  border-radius: 6px;
+  cursor: pointer;
+  margin: 1px 0;
+  color: rgba(0, 0, 0, 0.45);
+  background: transparent;
+  user-select: none;
+  font-size: 12px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.kb-wiki-load-more:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.kb-wiki-load-more-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kb-wiki-group-loading {
@@ -826,6 +869,13 @@ html[data-theme="dark"] body {
   -webkit-box-orient: vertical;
   overflow: hidden;
   margin-bottom: 6px;
+}
+
+/* 空状态：树面板（flex column）内时撑满剩余空间并居中 */
+.kb-wiki-tree-panel > .kb-wiki-empty-state {
+  flex: 1;
+  min-height: 0;
+  padding: 40px 12px;
 }
 
 /* ── 空状态 ── */
@@ -1911,7 +1961,7 @@ html[data-theme="dark"] body {
   overflow-y: auto;
 }
 
-/* 空态（对齐 arco Empty + modo 主题：插画 1em=148px、文案 12px gray-5） */
+/* 空态（对齐 arco Empty 原生规格：插画 1em=48px、文案 14px gray-5） */
 .agents-empty {
   width: 100%;
   height: 100%;
@@ -1919,14 +1969,14 @@ html[data-theme="dark"] body {
 .agents-empty-wrapper {
   position: relative;
   top: 50%;
-  transform: translateY(-40px);
+  transform: translateY(-32px);
   width: 100%;
   box-sizing: border-box;
   text-align: center;
   color: #95a6ba;
 }
 .agents-empty-image {
-  font-size: 148px;
+  font-size: 48px;
   line-height: 1;
   margin-bottom: 4px;
 }
@@ -1939,7 +1989,7 @@ html[data-theme="dark"] body {
 }
 .agents-empty-description {
   color: #95a6ba;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -2191,8 +2241,8 @@ html[data-theme="dark"] body {
   align-items: center;
 }
 
-/* 搜索框（对齐知识库管理页 .kb-kbs-search：fill-2 底 / 无边框 / 14px 胶囊 / 28px 高 / 12px 字）。
-   普通 Input 的 className 落在 affix-wrapper 自身，故自带类选择器与后代选择器都写上 */
+/* 搜索框（2026-10-21 对齐参数管理页 UI：去胶囊圆角，与全局 antd token borderRadius=2
+   统一为 2px；此前 14px 胶囊与其他列表页搜索框不一致）。fill-2 底 / 无边框 / 28px 高 */
 .kb-doc-search-input.ant-input-affix-wrapper,
 .kb-doc-search-input .ant-input-affix-wrapper {
   grid-area: search;
@@ -2202,7 +2252,7 @@ html[data-theme="dark"] body {
   max-width: 100%;
   height: 28px;
   padding: 0 12px;
-  border-radius: 14px;
+  border-radius: 2px;
   background: #eff4f9;
   border-color: transparent;
 }
@@ -2358,7 +2408,7 @@ html[data-theme="dark"] body {
   padding: 20px 0;
 }
 .kb-kbs-empty--inline .kb-kbs-empty-image {
-  font-size: 96px;
+  font-size: 48px;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -2619,8 +2669,24 @@ html[data-theme="dark"] .kb-citation-web:hover {
   white-space: pre-wrap;
 }
 
+/* 2026-10-21 引用浮层内 md 渲染：表格等宽内容横向滚动而非撑破浮层 */
+.kb-citation-float__body .kb-chat-md {
+  overflow-x: auto;
+}
+.kb-citation-float__body .kb-chat-md-table th {
+  white-space: normal;
+}
+
 .kb-citation-float__muted {
   color: var(--kb-c-text-secondary);
+}
+
+/* 2026-10-21 「回答引用」抽屉内 md 渲染：表格等宽内容横向滚动而非撑破卡片 */
+.kb-ref-drawer-md {
+  overflow-x: auto;
+}
+.kb-ref-drawer-md .kb-chat-md-table th {
+  white-space: normal;
 }
 
 
@@ -2687,31 +2753,119 @@ html[data-theme="dark"] .kb-citation-web:hover {
   height: auto;
 }
 
-/* ── Agent 多轮工具调用卡片（迁移自 WeKnora AgentStreamDisplay action-card） ── */
-.kb-agent-tool-calls {
+/* ── Agent 多轮工具调用树形时间线（2026-10-21 完全对齐 WeKnora AgentStreamDisplay
+   tree-container / tree-child：纵向竖线 + 树根折叠摘要 + 无圆圈勾） ── */
+.kb-agent-tree {
+  margin: 4px 0 16px;
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+/* 树根（对齐 .tree-root）：完成态折叠摘要「思考 N 轮 · 调用 N 次工具 · 耗时 N」 */
+.kb-agent-tree-root {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 4px 0 8px;
-  width: 100%;
-  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  color: var(--kb-c-text-placeholder);
+  border-radius: 4px;
+  padding: 0 4px;
+  transition: background-color 0.15s ease;
+}
+.kb-agent-tree-root:hover {
+  background: var(--kb-c-citation-bg);
+}
+.kb-agent-tree-root-icon {
+  flex-shrink: 0;
+  color: #1677ff;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+}
+.kb-agent-tree-root-text {
+  color: var(--kb-c-text);
+  font-size: 13px;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
   min-width: 0;
 }
+.kb-agent-tree-root-arrow {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--kb-c-text-placeholder);
+  display: inline-flex;
+  align-items: center;
+}
+/* 时间线子节点（对齐 .tree-child）：左侧纵向竖线贯穿，末节点截断 */
+.kb-agent-tree-children {
+  position: relative;
+  margin-top: 14px;
+  margin-left: 10px;
+  padding-left: 0;
+}
+.kb-agent-tree-child {
+  position: relative;
+  padding-left: 42px;
+  margin-bottom: 18px;
+}
+/* 纵向主线（继续到下一节点） */
+.kb-agent-tree-child::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 24px;
+  bottom: -18px;
+  width: 0;
+  border-left: 1px solid var(--kb-c-border, #e5e6eb);
+}
+/* 末节点：竖线只到分支处截断 */
+.kb-agent-tree-child--last {
+  margin-bottom: 0;
+}
+.kb-agent-tree-child--last::before {
+  content: none;
+}
+/* 工具卡（对齐 .action-card：透明无边框，图标挂竖线处） */
 .kb-agent-tool-card {
-  border-left: 2px solid var(--kb-c-border, #e5e6eb);
-  padding-left: 10px;
-  transition: border-color 0.2s ease;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
   width: 100%;
   max-width: 100%;
   min-width: 0;
 }
-.kb-agent-tool-card--pending {
-  border-left-color: #1677ff;
+/* 执行中：标题/图标品牌色 + 脉冲动效（对齐 action-pending，不用圆圈勾） */
+.kb-agent-tool-card--pending .kb-agent-tool-name {
+  color: #1677ff;
+}
+.kb-agent-tool-card--pending .kb-agent-tool-tool {
+  color: #1677ff;
+}
+.kb-agent-tool-card--pending .kb-agent-tool-status {
+  color: #1677ff;
+}
+.kb-agent-tool-card--pending .kb-agent-tool-summary {
+  display: none;
+}
+/* 失败（对齐 .action-error）：名称/状态/图标红色 */
+.kb-agent-tool-card--failed .kb-agent-tool-name,
+.kb-agent-tool-card--failed .kb-agent-tool-status {
+  color: #ff4d4f;
+}
+.kb-agent-tool-card--failed .kb-agent-tool-tool {
+  color: #ff4d4f;
 }
 .kb-agent-tool-card-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
   min-height: 24px;
   width: 100%;
   min-width: 0;
@@ -2719,39 +2873,42 @@ html[data-theme="dark"] .kb-citation-web:hover {
   user-select: none;
   font-size: 13px;
   color: var(--kb-c-text);
-  transition: background-color 0.15s ease;
-  border-radius: 4px;
-  padding: 0 4px;
+  position: relative;
+  padding: 0;
+  transition: color 0.15s ease;
 }
 .kb-agent-tool-card-head:hover {
-  background: var(--kb-c-citation-bg);
+  color: var(--kb-c-text);
 }
+/* 工具图标：绝对定位挂到左侧竖线位置（对齐 .action-title-icon left:-42px） */
 .kb-agent-tool-tool {
-  color: #1677ff;
+  position: absolute;
+  left: -42px;
+  top: 3px;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--kb-c-text-placeholder);
   font-size: 13px;
 }
 .kb-agent-tool-name {
-  font-weight: 500;
-  max-width: 220px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--kb-c-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.kb-agent-tool-card--pending .kb-agent-tool-name {
-  color: #1677ff;
-}
-.kb-agent-tool-spin {
-  color: #1677ff;
-  font-size: 13px;
-}
-.kb-agent-tool-done {
-  color: #52c41a;
-  font-size: 13px;
+  flex-shrink: 0;
+  max-width: 260px;
 }
 .kb-agent-tool-status {
   color: var(--kb-c-text-placeholder);
   font-size: 12px;
   flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 .kb-agent-tool-summary {
   color: var(--kb-c-text-placeholder);
@@ -2767,6 +2924,8 @@ html[data-theme="dark"] .kb-citation-web:hover {
   font-size: 10px;
   margin-left: auto;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
 }
 .kb-agent-tool-details {
   display: flex;
@@ -2790,6 +2949,15 @@ html[data-theme="dark"] .kb-citation-web:hover {
   word-break: break-all;
   max-height: 320px;
   overflow: auto;
+}
+.kb-agent-tool-pre--error {
+  background: rgba(255, 77, 79, 0.06);
+  color: #ff4d4f;
+}
+/* 思考详情（markdown 渲染容器） */
+.kb-agent-tool-details--thinking {
+  white-space: normal;
+  word-break: break-word;
 }
 
 /* ── 编排模板：左分类树 + 右列表（2026-10-13，参考 wiki 两栏结构） ── */
@@ -3718,6 +3886,8 @@ html[data-theme="dark"] .kb-citation-web:hover {
   min-height: 0;
   overflow: hidden;
   background: #fff;
+  /* 2026-10-26 修复：is-home 态下 .kb-chat-header（标题+新对话）绝对定位贴顶的锚点 */
+  position: relative;
 }
 
 /* chat-header：对齐 DSB Portal Header 面包屑（.sider-breadcrumb）
@@ -3789,6 +3959,16 @@ html[data-theme="dark"] .kb-citation-web:hover {
 }
 .kb-chat-main.is-home {
   justify-content: center;
+}
+/* 2026-10-26 修复：会话列表收起/嵌入模式出现 .kb-chat-header 后，
+   is-home 的 justify-content:center 会把标题+新对话按钮一起垂直居中到页面中间。
+   此处让 header 脱离流内居中，绝对定位固定在顶部，content+footer 仍整组居中。 */
+.kb-chat-main.is-home .kb-chat-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
 }
 .kb-chat-main.is-home .kb-chat-content {
   flex: 0 0 auto;
@@ -4483,6 +4663,26 @@ html[data-theme="dark"] .kb-citation-web:hover {
   row-gap: 4px;
   column-gap: 4px;
 }
+/* 已选知识库 Tag：蓝色主色系（对齐 DSB 选中态：主色浅底 + 主色描边 + 主色文字/关闭） */
+.kb-chat-kb-tags-list .kb-chat-kb-tag.ant-tag {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 0 8px;
+  line-height: 22px;
+  font-size: 12px;
+  color: rgba(50, 97, 206, 1);
+  background: rgba(232, 243, 255, 1);
+  border-color: rgba(50, 97, 206, 1);
+}
+.kb-chat-kb-tags-list .kb-chat-kb-tag.ant-tag .ant-tag-close-icon {
+  color: rgba(50, 97, 206, 1);
+  font-size: 10px;
+  margin-left: 4px;
+}
+.kb-chat-kb-tags-list .kb-chat-kb-tag.ant-tag .ant-tag-close-icon:hover {
+  color: rgba(36, 46, 67, 1);
+}
 /* 卡片列表区（对齐 .kb-list：padding 12px 20px 20px、3 列） */
 .kb-chat-kb-cards-wrap {
   width: 100%;
@@ -4867,28 +5067,30 @@ html[data-theme="dark"] .kb-citation-web:hover {
   color: #739ce2;
 }
 
-/* ── 右列表：内容区定高滚动 + 分页绝对定位贴底（对齐 .knowledge-list-panel /
-   .knowledge-content / .knowledge-set-pagniation）── */
+/* ── 右列表：flex 纵向布局 —— 内容区 flex:1 滚动 + 分页底栏常规流贴底
+   （2026-10-21 参考参数管理页：ModoPagination 常驻底栏，不再 absolute 定位/条件出现）── */
 .kb-kbs-list-panel {
-  position: relative;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
+  min-height: 0;
 }
 .kb-kbs-content {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   padding: 0 16px;
   overflow-y: auto;
 }
-/* 卡片行底部留白：分页常驻时 48px、无分页时 16px（对齐 .mt-fourth / .mt-sixteen） */
+/* 卡片行顶部留白（对齐 .mt-sixteen：卡片区与导航条底 border 拉开 16px）；
+   底部留白同款 16px */
 .kb-kbs-rows {
+  padding-top: 16px;
   padding-bottom: 16px;
 }
-.kb-kbs-rows--paged {
-  padding-bottom: 48px;
-}
 
-/* 空态（对齐 arco Empty + modo 主题：插画 1em=148px、文案 12px gray-5，
-   wrapper 相对定位 top:50% -40px） */
+/* 空态（对齐 arco Empty 原生规格：插画 1em=48px、文案 14px gray-5，
+  wrapper 相对定位 top:50% -32px） */
 .kb-kbs-empty {
   width: 100%;
   height: 100%;
@@ -4896,14 +5098,14 @@ html[data-theme="dark"] .kb-citation-web:hover {
 .kb-kbs-empty-wrapper {
   position: relative;
   top: 50%;
-  transform: translateY(-40px);
+  transform: translateY(-32px);
   width: 100%;
   box-sizing: border-box;
   text-align: center;
   color: #95a6ba;
 }
 .kb-kbs-empty-image {
-  font-size: 148px;
+  font-size: 48px;
   line-height: 1;
   margin-bottom: 4px;
 }
@@ -4916,20 +5118,11 @@ html[data-theme="dark"] .kb-citation-web:hover {
 }
 .kb-kbs-empty-description {
   color: #95a6ba;
-  font-size: 12px;
+  font-size: 14px;
 }
 
-/* 分页底栏（对齐 .knowledge-set-pagniation：padding 6px 16px、背景 fill-1） */
-.kb-kbs-pagination-bar {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  box-sizing: border-box;
-  width: 100%;
-  padding: 6px 16px;
-  background: #f9fbfd;
-}
-/* 分页本体（对齐 arco Pagination simple：12px 字、28px 行高、条目 28x28 radius 2） */
+/* 分页几何类（.kb-kbs-pagination* 被文档库 .kb-doc-pagination-bar 复用，保留；
+   kb 页自身分页 2026-10-21 已换 ModoPagination，容器类 kb-kbs-pagination-bar 删除） */
 .kb-kbs-pagination {
   display: flex;
   align-items: center;
@@ -5144,12 +5337,7 @@ html[data-theme="dark"] .kb-citation-web:hover {
 
 /* ── 高频词管理页（kb-wk-*，2026-10-20 迁移自 WeKnora wiki/keywords/overview）── */
 
-/* 知识库卡片（首 tab 列表） */
-.kb-wk-card-icon {
-  font-size: 20px;
-  line-height: 1;
-  color: #3261ce;
-}
+/* 知识库卡片（首 tab 列表，对齐知识库管理页 .kb-kbs-card 三段式） */
 .kb-wk-card-footer-text {
   font-size: 12px;
   color: #4d5e7d;
@@ -5269,4 +5457,20 @@ html[data-theme="dark"] .kb-citation-web:hover {
   font-size: 12px;
   color: #4d5e7d;
   flex-shrink: 0;
+}
+
+/* ── 总览页 · 知识库维度统计表（overview-kb-*，2026-10-21）── */
+.overview-kb-num {
+  font-variant-numeric: tabular-nums;
+}
+.overview-kb-inflight {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #e6f4ff;
+  color: #1677ff;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
 }

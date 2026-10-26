@@ -168,3 +168,35 @@ def test_context_window_compresses_old_tool_messages() -> None:
     # 最终回答到达说明循环没被上下文问题打断
     final = [e for e in out if e.get("type") == "delta" and e.get("text") == "final"]
     assert final
+
+
+def test_tool_result_marks_success() -> None:
+    """2026-10-21 对齐 WeKnora 工具卡失败态：tool 事件的 results 带 success/error。
+
+    执行器正常返回 → success=True、无 error；执行器抛异常 → success=False、带 error，
+    且异常文本回填为工具结果（不阻断整轮循环）。
+    """
+    events = [
+        [{"type": "tool_call", "id": "ok_call", "name": "tool_a", "arguments": "{}"}],
+        [{"type": "tool_call", "id": "bad_call", "name": "tool_b", "arguments": "{}"}],
+        [{"type": "delta", "text": "最终回答"}],
+    ]
+
+    def _exec(tc):
+        if tc.get("name") == "tool_b":
+            raise ValueError("敏感词检查失败")
+        return "正常结果"
+
+    out = _run_agent(events, tool_executor=_exec, max_rounds=5)
+    tool_evs = [e for e in out if e.get("type") == "tool"]
+    assert len(tool_evs) == 2
+    ok_result = tool_evs[0]["results"][0]
+    assert ok_result["success"] is True
+    assert ok_result["error"] == ""
+    bad_result = tool_evs[1]["results"][0]
+    assert bad_result["success"] is False
+    assert "敏感词检查失败" in bad_result["error"]
+    assert "敏感词检查失败" in bad_result["result"]
+    # 失败不阻断：最终回答仍到达
+    final = [e for e in out if e.get("type") == "delta" and e.get("text") == "最终回答"]
+    assert final

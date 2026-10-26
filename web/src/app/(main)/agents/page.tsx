@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { App, Button, Col, Dropdown, Input, Row } from "antd";
+import { App, Button, Col, Dropdown, Input, Row, Spin } from "antd";
 import {
   CopyOutlined,
   DeleteOutlined,
@@ -74,7 +74,7 @@ const AddColorIcon = ({ size = 14 }: { size?: number }) => (
   </svg>
 );
 
-/** arco Empty 默认插画（viewBox 48 / 描边 4）；容器 font-size 148px → 插画 148px */
+/** arco Empty 默认插画（viewBox 48 / 描边 4）；容器 font-size 48px → 插画 48px（对齐 arco Empty 原生规格） */
 const EmptyIllustration = () => (
   <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth={4} aria-hidden>
     <path d="M24 5v6m7 1 4-4m-18 4-4-4m28.5 22H28s-1 3-4 3-4-3-4-3H6.5M40 41H8a2 2 0 0 1-2-2v-8.46a2 2 0 0 1 .272-1.007l6.15-10.54A2 2 0 0 1 14.148 18H33.85a2 2 0 0 1 1.728.992l6.149 10.541A2 2 0 0 1 42 30.541V39a2 2 0 0 1-2 2Z" />
@@ -126,7 +126,7 @@ type AgentTab = { key: string; title: string; children: ReactNode };
 export default function AgentsPage() {
   const { message, modal } = App.useApp();
   const [agents, setAgents] = useState<AgentItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<AgentItem | null>(null);
@@ -241,8 +241,12 @@ export default function AgentsPage() {
   const listPane = (
     <div className="agents-list-page">
       <div className="agents-content">
-        {visible.length === 0 ? (
-          /* 空态（对齐知识库页 arco Empty：148px 插画 + 「暂无数据」） */
+        {loading && visible.length === 0 ? (
+          <div style={{ display: "flex", justifyContent: "center", paddingTop: 96 }}>
+            <Spin size="large" tip="正在加载..." />
+          </div>
+        ) : !loading && visible.length === 0 ? (
+          /* 空态（对齐 arco Empty 原生规格：48px 插画 + 「暂无数据」） */
           <div className="agents-empty">
             <div className="agents-empty-wrapper">
               <div className="agents-empty-image">
@@ -252,6 +256,7 @@ export default function AgentsPage() {
             </div>
           </div>
         ) : (
+          <Spin spinning={loading}>
           <Row gutter={[16, 16]}>
             {visible.map((agent) => {
               const disabled = Boolean(agent.config?.disabled);
@@ -317,6 +322,7 @@ export default function AgentsPage() {
               );
             })}
           </Row>
+          </Spin>
         )}
 
         <AgentEditorModal

@@ -29,6 +29,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.mysql import MEDIUMTEXT
@@ -100,6 +101,18 @@ class KbDatasource(Base):
     # stuff | mapreduce | refine(指定模式强制用该编排)。路由实现见
     # worker/tasks/doc_process.py::_resolve_summary_tape。
     summary_strategy: Mapped[str] = mapped_column(String(16), default="auto")
+    # 知识聚合配置（2026-10-25，迁移 0046）：开启主题聚类（含用户主题列表）
+    # 与按版本聚类后，平台自动创建调用对应编排的每日定时任务。
+    # 结构：{"topic_cluster_enabled": bool, "topic_cluster_topics": [...],
+    #        "version_cluster_enabled": bool, "cron_expression": "0 2 * * *"}
+    aggregation_config: Mapped[dict | None] = mapped_column(JSON, default=dict)
+    # 切片智能增强配置（2026-10-25，迁移 0047）：开启后文档解析切分完成时触发
+    # 「切片智能增强」编排（LLM 逐片提取关键词/问题 + 文档级摘要/关键词），
+    # 产物随向量同介质存储、检索加权命中。结构（对齐 duowen ChunkExtend 参数）：
+    #   {"enabled": bool, "keywords_dividend": 120, "questions_dividend": 180,
+    #    "max_chunks": 500}
+    enhancement_config: Mapped[dict | None] = mapped_column(JSON, default=dict)
+
 
     # ── 代码仓库知识库（2026-10，迁移 0029）────────────────────────────
     # repo_type=""=普通文档库；"git"=代码仓库知识库（创建后由
@@ -172,6 +185,12 @@ class KbDocument(Base):
     # repo 源专属：文件来源 commit（增量同步 diff 判定，2026-10 迁移 0029）
     repo_commit_sha: Mapped[str] = mapped_column(String(64), default="")
 
+    # 异步删除状态（2026-10-23）："" 正常 / DELETING 删除中（级联清理未完成）/
+    # DELETE_FAILED 清理失败（celery 重试耗尽，beat 定时扫描重投）。
+    # 清理任务完成后行物理删除；删除中行保留原数据供前端展示「删除中」。
+    delete_state: Mapped[str] = mapped_column(String(16), default="", index=True)
+    delete_error: Mapped[str | None] = mapped_column(Text)
+
     created_by: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=text("CURRENT_TIMESTAMP")
@@ -242,6 +261,12 @@ class KbEmbedding(KnowledgeBase):
     chunk_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     embedding = mapped_column(_vector_type(), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 切片增强元数据（2026-10-25 对齐 duowen AddVectorDataSchema）：LLM 预加工
+    # 产物（切片关键词/问题/摘要/文档关键词/标题），检索时参与加权命中。
+    # 结构：{"title", "abstract", "doc_keywords": [...], "chunk_keywords": [...],
+    #        "chunk_questions": [...], "pagerank": float}
+    # None/空 dict = 该切片无增强（存量数据 / 未开启增强的库）。
+    enhance_meta: Mapped[dict | None] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=text("CURRENT_TIMESTAMP")
     )
@@ -301,7 +326,13 @@ class WikiPage(Base):
     slug: Mapped[str] = mapped_column(String(255), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     page_type: Mapped[str] = mapped_column(String(32), default="entity")  # entity/concept/summary
-    content: Mapped[str] = mapped_column(Text, default="")
+    # 2026-10-26 扩列：wiki 构建 n14 实体页内容实测 5.2万+ 字符（UTF-8 中文
+    # ≈15万字节）撞 TEXT 64KB 上限 → Data too long 失败；MEDIUMTEXT(16MB)
+    # 对齐 DocChunk.content 的容量兜底（迁移 0049 同步扩列）。
+    content: Mapped[str] = mapped_column(
+        Text().with_variant(MEDIUMTEXT(length=16 * 1024 * 1024), "mysql"),
+        default="",
+    )
     summary: Mapped[str | None] = mapped_column(Text)
     # JSON array of source document ids used to build this page
     source_refs: Mapped[list] = mapped_column(JSON, default=list)
@@ -458,6 +489,8 @@ class QualityRun(Base):
 
     scope=single|multi|all；三维度指标 + 问题清单 + 规则归因，供质量评估页面
     查询/汇总。编排汇总节点落库。
+    dim=all|doc|chunk|graph（2026-10-21）：all=三维度合一旧行为；doc/chunk/graph=
+    单维度评估（独立编排），各自只写对应 metrics 列。
     """
 
     __tablename__ = "kb_quality_run"
@@ -467,6 +500,8 @@ class QualityRun(Base):
     scope: Mapped[str] = mapped_column(String(32), default="single")  # single|multi|all
     doc_ids: Mapped[list | None] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(32), default="queued")  # queued|running|success|failed
+    dim: Mapped[str] = mapped_column(String(32), default="all")  # all|doc|chunk|graph
+    doc_metrics: Mapped[dict | None] = mapped_column(JSON)
     chunk_metrics: Mapped[dict | None] = mapped_column(JSON)
     wiki_metrics: Mapped[dict | None] = mapped_column(JSON)
     graph_metrics: Mapped[dict | None] = mapped_column(JSON)
@@ -475,6 +510,170 @@ class QualityRun(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
+    )
+
+
+class QualityDocEval(Base):
+    """文档转换评估-单文件粒度明细（kb_quality_doc_eval，2026-10-23）。
+
+    每文件一行（kb_id+doc_id 唯一）：文档转换评估每次落库时按 kb 整批
+    DELETE+INSERT 覆盖（文件删除后旧行不残留），run_id 记录最后一次评估来源
+    run（仅信息性，run 删除不级联）。供页面按文件粒度查看当前各文件转换质量。
+    """
+
+    __tablename__ = "kb_quality_doc_eval"
+    __table_args__ = (
+        UniqueConstraint("kb_id", "doc_id", name="uq_quality_doc_eval_kb_doc"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kb_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    doc_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    file_ext: Mapped[str | None] = mapped_column(String(32))
+    file_size: Mapped[int | None] = mapped_column(BigInteger)
+    parse_state: Mapped[str | None] = mapped_column(String(32))
+    parse_error: Mapped[str | None] = mapped_column(Text)
+    parse_engine: Mapped[str | None] = mapped_column(String(64))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    chunk_count: Mapped[int | None] = mapped_column(Integer)
+    md_length: Mapped[int | None] = mapped_column(Integer)
+    garbled: Mapped[bool] = mapped_column(Boolean, default=False)
+    garbled_hits: Mapped[list | None] = mapped_column(JSON)
+    file_name_garbled: Mapped[bool] = mapped_column(Boolean, default=False)
+    content_garbled: Mapped[bool] = mapped_column(Boolean, default=False)
+    score: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
+    )
+
+
+class QualityChunkEval(Base):
+    """切片评估-单文件粒度明细（kb_quality_chunk_eval，2026-10-23）。
+
+    每文件一行（kb_id+doc_id 唯一）：切片评估每次落库时按 kb 整批
+    DELETE+INSERT 覆盖（文件删除后旧行不残留），run_id 记录最后一次评估来源。
+    供页面按文件粒度查看各文件切片/wiki 质量评估结果。
+    """
+
+    __tablename__ = "kb_quality_chunk_eval"
+    __table_args__ = (
+        UniqueConstraint("kb_id", "doc_id", name="uq_quality_chunk_eval_kb_doc"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kb_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    doc_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    chunks: Mapped[int | None] = mapped_column(Integer)
+    avg_len: Mapped[float | None] = mapped_column(Float)
+    # 程序版切片质量计数（2026-10-23 恢复 QC_CODE 后落库）
+    short: Mapped[int | None] = mapped_column(Integer)
+    long: Mapped[int | None] = mapped_column(Integer)
+    truncated: Mapped[int | None] = mapped_column(Integer)
+    dup: Mapped[int | None] = mapped_column(Integer)
+    wiki_pages: Mapped[int | None] = mapped_column(Integer)
+    wiki_start_time: Mapped[datetime | None] = mapped_column(DateTime)
+    wiki_build_sec: Mapped[float | None] = mapped_column(Float)
+    doc_process_sec: Mapped[float | None] = mapped_column(Float)
+    wiki_tape: Mapped[str | None] = mapped_column(String(128))
+    eval_duration_sec: Mapped[float | None] = mapped_column(Float)
+    score: Mapped[int | None] = mapped_column(Integer)
+    conclusion: Mapped[str | None] = mapped_column(String(500))
+    issues: Mapped[list | None] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
+    )
+
+
+class QualityGraphEval(Base):
+    """图数据评估-单文件粒度明细（kb_quality_graph_eval，2026-10-23）。
+
+    每文件一行（kb_id+doc_id 唯一）：图数据评估每次落库时按 kb 整批
+    DELETE+INSERT 覆盖（文件删除后旧行不残留）。图数据本身是库级实体，
+    按文件粒度以「该文档构建出的 wiki 页对应图节点/边」聚合统计。
+    """
+
+    __tablename__ = "kb_quality_graph_eval"
+    __table_args__ = (
+        UniqueConstraint("kb_id", "doc_id", name="uq_quality_graph_eval_kb_doc"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kb_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    doc_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    nodes: Mapped[int | None] = mapped_column(Integer)
+    rels: Mapped[int | None] = mapped_column(Integer)
+    dumb_nodes: Mapped[int | None] = mapped_column(Integer)
+    untraceable_rels: Mapped[int | None] = mapped_column(Integer)
+    wiki_missing: Mapped[int | None] = mapped_column(Integer)
+    score: Mapped[int | None] = mapped_column(Integer)
+    issues: Mapped[list | None] = mapped_column(JSON)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, server_default=text("CURRENT_TIMESTAMP"), onupdate=text("CURRENT_TIMESTAMP")
+    )
+
+
+class QualityWikiEval(Base):
+    """Wiki 评估-单文件粒度明细（kb_quality_wiki_eval，2026-10-23）。
+
+    每文件一行（kb_id+doc_id 唯一）：wiki 评估每次落库时按 kb 整批
+    DELETE+INSERT 覆盖（文件删除后旧行不残留）。程序检查按文件聚合其构建出的
+    wiki 页质量问题（空页/孤立/断链/占位/缺出处/未挂目录）；
+    2026-10-23 迁移后行数据以 LLM 对照原文评估明细（n06 v3 per_doc）为主，
+    chunks/avg_len/wiki_pages/wiki 构建时间/耗时/评估耗时/结论/错误字段对齐
+    kb_quality_chunk_eval（v3 原挂靠表）。
+    """
+
+    __tablename__ = "kb_quality_wiki_eval"
+    __table_args__ = (
+        UniqueConstraint("kb_id", "doc_id", name="uq_quality_wiki_eval_kb_doc"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kb_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    doc_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    pages: Mapped[int | None] = mapped_column(Integer)
+    empty: Mapped[int | None] = mapped_column(Integer)
+    orphan: Mapped[int | None] = mapped_column(Integer)
+    broken_links: Mapped[int | None] = mapped_column(Integer)
+    placeholder: Mapped[int | None] = mapped_column(Integer)
+    missing_source: Mapped[int | None] = mapped_column(Integer)
+    no_folder: Mapped[int | None] = mapped_column(Integer)
+    # LLM 对照原文评估明细（2026-10-23 wiki 评估迁移，对齐 kb_quality_chunk_eval）
+    chunks: Mapped[int | None] = mapped_column(Integer)
+    avg_len: Mapped[float | None] = mapped_column(Float)
+    wiki_pages: Mapped[int | None] = mapped_column(Integer)
+    wiki_start_time: Mapped[datetime | None] = mapped_column(DateTime)
+    wiki_build_sec: Mapped[float | None] = mapped_column(Float)
+    doc_process_sec: Mapped[float | None] = mapped_column(Float)
+    wiki_tape: Mapped[str | None] = mapped_column(String(128))
+    eval_duration_sec: Mapped[float | None] = mapped_column(Float)
+    conclusion: Mapped[str | None] = mapped_column(String(500))
+    error: Mapped[str | None] = mapped_column(String(500))
+    score: Mapped[int | None] = mapped_column(Integer)
+    issues: Mapped[list | None] = mapped_column(JSON)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime, server_default=text("CURRENT_TIMESTAMP")
     )

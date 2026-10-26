@@ -1,0 +1,387 @@
+{
+ "type": "kb.orchestration.draft",
+ "schemaVersion": 1,
+ "exportedAt": "2026-10-25T00:00:00.000000",
+ "draft": {
+  "tapeName": "切片智能增强",
+  "tapeLabel": "切片智能增强（LLM 提取切片关键词/问题/摘要，提升检索命中）",
+  "tapeDescr": "对标 duowen ChunkExtend 的切片入库前 LLM 预加工：文档解析完成后触发，逐切片提取关键词与用户可能提问的问题，并汇总文档级关键词与摘要，产物写入 bindings.enhancement 供入库时随向量同介质存储，检索时参与加权命中。",
+  "tapeType": "chunk_enhance",
+  "category": "知识聚合",
+  "status": "effective",
+  "nodes": [
+   {
+    "id": "n1",
+    "data": {
+     "label": "读取文档切片",
+     "config": {
+      "code": "\nimport json as _json\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st\n\nDOC = str(bindings.get('document_id') or '').strip()\nif not DOC:\n    raise RuntimeError('缺 document_id')\n\ndb = _gsm()()\ntry:\n    doc = db.execute(_st(\n        \"select file_name, coalesce(summary,''), kb_id from kb_document where id=:i\"\n    ), {'i': DOC}).first()\n    if doc is None:\n        raise RuntimeError('文档不存在: ' + DOC)\n    file_name, summary, kb_id = doc[0] or '', doc[1] or '', doc[2] or ''\n    rows = db.execute(_st(\n        \"select seq, content from doc_chunk where document_id=:i order by seq\"\n    ), {'i': DOC}).all()\n    chunks = [{'seq': int(r[0]), 'content': (r[1] or '')} for r in rows]\nfinally:\n    db.close()\n\nif not chunks:\n    raise RuntimeError('文档无切片: ' + DOC)\n\nbindings['doc_title'] = file_name\nbindings['doc_summary'] = summary\nbindings['chunks'] = chunks\nbindings['chunk_count'] = len(chunks)\nprint('[n1] 切片 %d 份, 标题=%s, 摘要 %d 字' % (len(chunks), file_name[:40], len(summary)))\n\n# 文档级提取 prompt（n2 kb_llm_chat 用）：与 kw_prompt/q_prompt 同构，\n# 修复 {{doc_extract_prompt}} 无节点设置 → 模板残留字面量 → 二次执行降级空产物\n_parts = [\n    '你是文档增强提取器。从下面的文档中提取关键信息。',\n    '要求：',\n    '1. keywords：文档核心关键词数组（5-10 个，优先专有名词/技术术语/业务实体）；',\n    '2. summary：80-120 字的文档摘要。',\n    '只输出要求的 JSON 对象，禁止输出思考过程、解释、代码块标记或任何额外文字。',\n    '',\n    '文档标题：' + file_name,\n]\nif summary:\n    _parts.append('文档摘要：' + summary)\n_parts.append('')\n_parts.append('文档内容：')\n_parts.append('\\n'.join(c['content'] for c in chunks)[:12000])\n_parts.append('')\n_parts.append('只输出 JSON 对象：{\"keywords\": [\"关键词1\", ...], \"summary\": \"摘要\"}')\nbindings['doc_extract_prompt'] = '\\n'.join(_parts)\n"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 60,
+     "y": 60
+    }
+   },
+   {
+    "id": "n2",
+    "data": {
+     "label": "LLM 文档级提取",
+     "config": {
+      "model": "{{summary_model_id}}",
+      "prompt": "{{doc_extract_prompt}}",
+      "system": "你是文档增强提取器。只输出要求的 JSON 对象，禁止输出思考过程、解释、代码块标记或任何额外文字。",
+      "thinking": "disabled",
+      "max_tokens": "1024",
+      "output_var": "doc_meta",
+      "json_mode": true,
+      "temperature": "0.2"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 300,
+     "y": 60
+    }
+   },
+   {
+    "id": "n3",
+    "data": {
+     "label": "逐片增强任务组装",
+     "config": {
+      "code": "\nimport math\n\nchunks = bindings.get('chunks') or []\nkw_div = int(bindings.get('keywords_dividend') or 120)\nq_div = int(bindings.get('questions_dividend') or 180)\ndoc_meta = bindings.get('doc_meta') or {}\ndoc_kw = list(doc_meta.get('keywords') or []) if isinstance(doc_meta, dict) else []\n\nitems = []\nfor c in chunks:\n    seq = int(c.get('seq') or 0)\n    content = str(c.get('content') or '')\n    items.append({\n        'seq': seq,\n        'content': content[:4000],\n        'kw_topn': max(math.floor(len(content) / kw_div), 0) if kw_div else 0,\n        'q_topn': max(math.floor(len(content) / q_div), 0) if q_div else 0,\n        'doc_kw': doc_kw,\n    })\n\nbindings['chunk_items'] = items\nbindings['enhance_map'] = {}\nprint('[n3] 待增强切片 %d 份（关键词>0: %d, 问题>0: %d）'\n      % (len(items),\n         sum(1 for i in items if i['kw_topn'] >= 1),\n         sum(1 for i in items if i['q_topn'] >= 1)))\n"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 540,
+     "y": 60
+    }
+   },
+   {
+    "id": "n4",
+    "data": {
+     "label": "逐片增强循环",
+     "config": {
+      "item_var": "chunk_item",
+      "collection": "bindings.get('chunk_items') or []"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 780,
+     "y": 60
+    }
+   },
+   {
+    "id": "n4a",
+    "data": {
+     "label": "拼关键词Prompt",
+     "config": {
+      "code": "\nitem = bindings.get('chunk_item') or {}\nseq = int(item.get('seq') or 0)\ntopn = int(item.get('kw_topn') or 0)\ncontent = str(item.get('content') or '')\ntitle = str(bindings.get('doc_title') or '')\nsummary = str(bindings.get('doc_summary') or '')\ndoc_kw = list(item.get('doc_kw') or [])\n\nbindings['chunk_seq_now'] = seq\n\nif topn < 1:\n    # 短片：不调 LLM，回退文档级关键词（对齐 duowen 降级语义）\n    bindings['kw_prompt'] = ''\nelse:\n    parts = [\n        '你是切片关键词提取器。从下面的文档切片中提取 ' + str(topn) + ' 个最相关的关键词。',\n        '要求：优先提取专有名词、技术术语、业务实体；只输出 JSON 字符串数组，不要解释。',\n        '',\n        '文档标题：' + title,\n    ]\n    if summary:\n        parts.append('文档摘要：' + summary)\n    parts.append('')\n    parts.append('切片内容：')\n    parts.append(content)\n    parts.append('')\n    parts.append('只输出 JSON 数组：[\"关键词1\", \"关键词2\", ...]')\n    bindings['kw_prompt'] = '\\n'.join(parts)\n"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 60,
+     "y": 220
+    }
+   },
+   {
+    "id": "n4b",
+    "data": {
+     "label": "LLM提取切片关键词",
+     "config": {
+      "model": "{{summary_model_id}}",
+      "prompt": "{{kw_prompt}}",
+      "system": "你是切片关键词提取器。只输出要求的 JSON 数组，禁止输出思考过程、解释、代码块标记或任何额外文字。",
+      "thinking": "disabled",
+      "max_tokens": "1024",
+      "output_var": "chunk_kw_llm",
+      "json_mode": true,
+      "temperature": "0.2",
+      "skip_empty": true
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 300,
+     "y": 220
+    }
+   },
+   {
+    "id": "n4c",
+    "data": {
+     "label": "拼问题Prompt",
+     "config": {
+      "code": "\nitem = bindings.get('chunk_item') or {}\nseq = int(item.get('seq') or 0)\ntopn = int(item.get('q_topn') or 0)\ncontent = str(item.get('content') or '')\ntitle = str(bindings.get('doc_title') or '')\nsummary = str(bindings.get('doc_summary') or '')\n\nif topn < 1:\n    bindings['q_prompt'] = ''\nelse:\n    parts = [\n        '你是问题生成器。基于下面的文档切片，生成 ' + str(topn) + ' 个用户可能提出的自然语言问题。',\n        '要求：问题要能通过该切片直接回答；只输出 JSON 字符串数组，不要解释。',\n        '',\n        '文档标题：' + title,\n    ]\n    if summary:\n        parts.append('文档摘要：' + summary)\n    parts.append('')\n    parts.append('切片内容：')\n    parts.append(content)\n    parts.append('')\n    parts.append('只输出 JSON 数组：[\"问题1\", \"问题2\", ...]')\n    bindings['q_prompt'] = '\\n'.join(parts)\n"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 540,
+     "y": 220
+    }
+   },
+   {
+    "id": "n4d",
+    "data": {
+     "label": "LLM生成切片问题",
+     "config": {
+      "model": "{{summary_model_id}}",
+      "prompt": "{{q_prompt}}",
+      "system": "你是问题生成器。只输出要求的 JSON 数组，禁止输出思考过程、解释、代码块标记或任何额外文字。",
+      "thinking": "disabled",
+      "max_tokens": "1024",
+      "output_var": "chunk_q_llm",
+      "json_mode": true,
+      "temperature": "0.2",
+      "skip_empty": true
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 780,
+     "y": 220
+    }
+   },
+   {
+    "id": "n4e",
+    "data": {
+     "label": "收集并汇总",
+     "config": {
+      "code": "\nimport json as _json\n\nseq = int(bindings.get('chunk_seq_now') or 0)\nitem = next((c for c in (bindings.get('chunk_items') or []) if int(c.get('seq') or 0) == seq), None) or {}\nkw_topn = int(item.get('kw_topn') or 0)\nq_topn = int(item.get('q_topn') or 0)\n\nkw = bindings.get('chunk_kw_llm')\nif kw_topn >= 1:\n    if not isinstance(kw, list):\n        kw = list(item.get('doc_kw') or [])\n    kw = [str(k) for k in kw][:kw_topn]\nelse:\n    kw = list(item.get('doc_kw') or [])[:kw_topn] if kw_topn else []\n\nq = bindings.get('chunk_q_llm')\nif q_topn >= 1:\n    if not isinstance(q, list):\n        q = []\n    q = [str(x) for x in q][:q_topn]\nelse:\n    q = []\n\nmap_ = bindings.setdefault('enhance_map', {})\nmap_[str(seq)] = {'keywords': kw, 'questions': q}\n\n# 清空当前片临时变量（防下轮残留）\nfor k in ('kw_prompt', 'q_prompt', 'chunk_kw_llm', 'chunk_q_llm', 'chunk_seq_now'):\n    bindings.pop(k, None)\n\n# 末轮判定：全部切片已收集 → 汇总 enhancement\nitems = bindings.get('chunk_items') or []\ndone = all(str(c.get('seq') or 0) in map_ for c in items)\nif done:\n    doc_meta = bindings.get('doc_meta') or {}\n    chunks_out = []\n    for c in items:\n        s = str(c.get('seq') or 0)\n        e = map_.get(s) or {}\n        chunks_out.append({\n            'seq': int(c.get('seq') or 0),\n            'keywords': e.get('keywords') or [],\n            'questions': e.get('questions') or [],\n        })\n    enhancement = {\n        'title': str(bindings.get('doc_title') or ''),\n        'abstract': str(doc_meta.get('summary') or bindings.get('doc_summary') or ''),\n        'doc_keywords': list(doc_meta.get('keywords') or []),\n        'chunks': chunks_out,\n    }\n    bindings['enhancement'] = enhancement\n    with open('/tmp/chunk_enhance.json', 'w', encoding='utf-8') as f:\n        _json.dump(enhancement, f, ensure_ascii=False, indent=1)\n    print('[n4e] 增强完成: %d 片, 含关键词 %d, 含问题 %d'\n          % (len(chunks_out),\n             sum(1 for c in chunks_out if c['keywords']),\n             sum(1 for c in chunks_out if c['questions'])))\n"
+     }
+    },
+    "type": "custom",
+    "position": {
+     "x": 1020,
+     "y": 220
+    }
+   }
+  ],
+  "edges": [
+   {
+    "id": "n1-n2",
+    "type": "default",
+    "source": "n1",
+    "target": "n2"
+   },
+   {
+    "id": "n2-n3",
+    "type": "default",
+    "source": "n2",
+    "target": "n3"
+   },
+   {
+    "id": "n3-n4",
+    "type": "default",
+    "source": "n3",
+    "target": "n4"
+   },
+   {
+    "id": "n4-n4a",
+    "type": "default",
+    "source": "n4",
+    "target": "n4a"
+   },
+   {
+    "id": "n4a-n4b",
+    "type": "default",
+    "source": "n4a",
+    "target": "n4b"
+   },
+   {
+    "id": "n4b-n4c",
+    "type": "default",
+    "source": "n4b",
+    "target": "n4c"
+   },
+   {
+    "id": "n4c-n4d",
+    "type": "default",
+    "source": "n4c",
+    "target": "n4d"
+   },
+   {
+    "id": "n4d-n4e",
+    "type": "default",
+    "source": "n4d",
+    "target": "n4e"
+   }
+  ],
+  "execParams": {
+   "kb_id": "",
+   "document_id": "",
+   "keywords_dividend": "120",
+   "questions_dividend": "180"
+  },
+  "steps": [
+   {
+    "step_id": "n1",
+    "step_inst": "script",
+    "step_label": "读取文档切片",
+    "step_config": {
+     "code": "\nimport json as _json\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st\n\nDOC = str(bindings.get('document_id') or '').strip()\nif not DOC:\n    raise RuntimeError('缺 document_id')\n\ndb = _gsm()()\ntry:\n    doc = db.execute(_st(\n        \"select file_name, coalesce(summary,''), kb_id from kb_document where id=:i\"\n    ), {'i': DOC}).first()\n    if doc is None:\n        raise RuntimeError('文档不存在: ' + DOC)\n    file_name, summary, kb_id = doc[0] or '', doc[1] or '', doc[2] or ''\n    rows = db.execute(_st(\n        \"select seq, content from doc_chunk where document_id=:i order by seq\"\n    ), {'i': DOC}).all()\n    chunks = [{'seq': int(r[0]), 'content': (r[1] or '')} for r in rows]\nfinally:\n    db.close()\n\nif not chunks:\n    raise RuntimeError('文档无切片: ' + DOC)\n\nbindings['doc_title'] = file_name\nbindings['doc_summary'] = summary\nbindings['chunks'] = chunks\nbindings['chunk_count'] = len(chunks)\nprint('[n1] 切片 %d 份, 标题=%s, 摘要 %d 字' % (len(chunks), file_name[:40], len(summary)))\n\n# 文档级提取 prompt（n2 kb_llm_chat 用）：与 kw_prompt/q_prompt 同构，\n# 修复 {{doc_extract_prompt}} 无节点设置 → 模板残留字面量 → 二次执行降级空产物\n_parts = [\n    '你是文档增强提取器。从下面的文档中提取关键信息。',\n    '要求：',\n    '1. keywords：文档核心关键词数组（5-10 个，优先专有名词/技术术语/业务实体）；',\n    '2. summary：80-120 字的文档摘要。',\n    '只输出要求的 JSON 对象，禁止输出思考过程、解释、代码块标记或任何额外文字。',\n    '',\n    '文档标题：' + file_name,\n]\nif summary:\n    _parts.append('文档摘要：' + summary)\n_parts.append('')\n_parts.append('文档内容：')\n_parts.append('\\n'.join(c['content'] for c in chunks)[:12000])\n_parts.append('')\n_parts.append('只输出 JSON 对象：{\"keywords\": [\"关键词1\", ...], \"summary\": \"摘要\"}')\nbindings['doc_extract_prompt'] = '\\n'.join(_parts)\n"
+    },
+    "step_seq": 0,
+    "pre_step_ids": [],
+    "next_step_ids": [
+     "n2"
+    ],
+    "queue_name": "default"
+   },
+   {
+    "step_id": "n2",
+    "step_inst": "kb_llm_chat",
+    "step_label": "LLM文档级提取",
+    "step_config": {
+     "model": "{{summary_model_id}}",
+     "prompt": "{{doc_extract_prompt}}",
+     "system": "你是文档增强提取器。只输出要求的 JSON 对象，禁止输出思考过程、解释、代码块标记或任何额外文字。",
+     "thinking": "disabled",
+     "max_tokens": "1024",
+     "output_var": "doc_meta",
+     "json_mode": true,
+     "temperature": "0.2"
+    },
+    "step_seq": 1,
+    "pre_step_ids": [
+     "n1"
+    ],
+    "next_step_ids": [
+     "n3"
+    ],
+    "queue_name": "default"
+   },
+   {
+    "step_id": "n3",
+    "step_inst": "script",
+    "step_label": "逐片增强任务组装",
+    "step_config": {
+     "code": "\nimport math\n\nchunks = bindings.get('chunks') or []\nkw_div = int(bindings.get('keywords_dividend') or 120)\nq_div = int(bindings.get('questions_dividend') or 180)\ndoc_meta = bindings.get('doc_meta') or {}\ndoc_kw = list(doc_meta.get('keywords') or []) if isinstance(doc_meta, dict) else []\n\nitems = []\nfor c in chunks:\n    seq = int(c.get('seq') or 0)\n    content = str(c.get('content') or '')\n    items.append({\n        'seq': seq,\n        'content': content[:4000],\n        'kw_topn': max(math.floor(len(content) / kw_div), 0) if kw_div else 0,\n        'q_topn': max(math.floor(len(content) / q_div), 0) if q_div else 0,\n        'doc_kw': doc_kw,\n    })\n\nbindings['chunk_items'] = items\nbindings['enhance_map'] = {}\nprint('[n3] 待增强切片 %d 份（关键词>0: %d, 问题>0: %d）'\n      % (len(items),\n         sum(1 for i in items if i['kw_topn'] >= 1),\n         sum(1 for i in items if i['q_topn'] >= 1)))\n"
+    },
+    "step_seq": 2,
+    "pre_step_ids": [
+     "n2"
+    ],
+    "next_step_ids": [
+     "n4"
+    ],
+    "queue_name": "default"
+   },
+   {
+    "step_id": "n4",
+    "step_inst": "loop",
+    "step_label": "逐片增强循环",
+    "step_config": {
+     "item_var": "chunk_item",
+     "collection": "bindings.get('chunk_items') or []"
+    },
+    "step_seq": 3,
+    "pre_step_ids": [
+     "n3"
+    ],
+    "next_step_ids": [
+     "n4a"
+    ],
+    "queue_name": "default"
+   },
+   {
+    "step_id": "n4a",
+    "step_inst": "script",
+    "step_label": "拼关键词Prompt",
+    "step_config": {
+     "code": "\nitem = bindings.get('chunk_item') or {}\nseq = int(item.get('seq') or 0)\ntopn = int(item.get('kw_topn') or 0)\ncontent = str(item.get('content') or '')\ntitle = str(bindings.get('doc_title') or '')\nsummary = str(bindings.get('doc_summary') or '')\ndoc_kw = list(item.get('doc_kw') or [])\n\nbindings['chunk_seq_now'] = seq\n\nif topn < 1:\n    # 短片：不调 LLM，回退文档级关键词（对齐 duowen 降级语义）\n    bindings['kw_prompt'] = ''\nelse:\n    parts = [\n        '你是切片关键词提取器。从下面的文档切片中提取 ' + str(topn) + ' 个最相关的关键词。',\n        '要求：优先提取专有名词、技术术语、业务实体；只输出 JSON 字符串数组，不要解释。',\n        '',\n        '文档标题：' + title,\n    ]\n    if summary:\n        parts.append('文档摘要：' + summary)\n    parts.append('')\n    parts.append('切片内容：')\n    parts.append(content)\n    parts.append('')\n    parts.append('只输出 JSON 数组：[\"关键词1\", \"关键词2\", ...]')\n    bindings['kw_prompt'] = '\\n'.join(parts)\n"
+    },
+    "step_seq": 4,
+    "pre_step_ids": [
+     "n4"
+    ],
+    "next_step_ids": [
+     "n4b"
+    ],
+    "queue_name": "default"
+   },
+   {
+    "step_id": "n4b",
+    "step_inst": "kb_llm_chat",
+    "step_label": "LLM提取切片关键词",
+    "step_config": {
+     "model": "{{summary_model_id}}",
+     "prompt": "{{kw_prompt}}",
+     "system": "你是切片关键词提取器。只输出要求的 JSON 数组，禁止输出思考过程、解释、代码块标记或任何额外文字。",
+     "thinking": "disabled",
+     "max_tokens": "1024",
+     "output_var": "chunk_kw_llm",
+     "json_mode": true,
+     "temperature": "0.2",
+     "skip_empty": true
+    },
+    "step_seq": 5,
+    "pre_step_ids": [
+     "n4a"
+    ],
+    "next_step_ids": [
+     "n4c"
+    ],
+    "queue_name": "default"
+   },
+   {
+    "step_id": "n4c",
+    "step_inst": "script",
+    "step_label": "拼问题Prompt",
+    "step_config": {
+     "code": "\nitem = bindings.get('chunk_item') or {}\nseq = int(item.get('seq') or 0)\ntopn = int(item.get('q_topn') or 0)\ncontent = str(item.get('content') or '')\ntitle = str(bindings.get('doc_title') or '')\nsummary = str(bindings.get('doc_summary') or '')\n\nif topn < 1:\n    bindings['q_prompt'] = ''\nelse:\n    parts = [\n        '你是问题生成器。基于下面的文档切片，生成 ' + str(topn) + ' 个用户可能提出的自然语言问题。',\n        '要求：问题要能通过该切片直接回答；只输出 JSON 字符串数组，不要解释。',\n        '',\n        '文档标题：' + title,\n    ]\n    if summary:\n        parts.append('文档摘要：' + summary)\n    parts.append('')\n    parts.append('切片内容：')\n    parts.append(content)\n    parts.append('')\n    parts.append('只输出 JSON 数组：[\"问题1\", \"问题2\", ...]')\n    bindings['q_prompt'] = '\\n'.join(parts)\n"
+    },
+    "step_seq": 6,
+    "pre_step_ids": [
+     "n4b"
+    ],
+    "next_step_ids": [
+     "n4d"
+    ],
+    "queue_name": "default"
+   },
+   {
+    "step_id": "n4d",
+    "step_inst": "kb_llm_chat",
+    "step_label": "LLM生成切片问题",
+    "step_config": {
+     "model": "{{summary_model_id}}",
+     "prompt": "{{q_prompt}}",
+     "system": "你是问题生成器。只输出要求的 JSON 数组，禁止输出思考过程、解释、代码块标记或任何额外文字。",
+     "thinking": "disabled",
+     "max_tokens": "1024",
+     "output_var": "chunk_q_llm",
+     "json_mode": true,
+     "temperature": "0.2",
+     "skip_empty": true
+    },
+    "step_seq": 7,
+    "pre_step_ids": [
+     "n4c"
+    ],
+    "next_step_ids": [
+     "n4e"
+    ],
+    "queue_name": "default"
+   },
+   {
+    "step_id": "n4e",
+    "step_inst": "script",
+    "step_label": "收集并汇总",
+    "step_config": {
+     "code": "\nimport json as _json\n\nseq = int(bindings.get('chunk_seq_now') or 0)\nitem = next((c for c in (bindings.get('chunk_items') or []) if int(c.get('seq') or 0) == seq), None) or {}\nkw_topn = int(item.get('kw_topn') or 0)\nq_topn = int(item.get('q_topn') or 0)\n\nkw = bindings.get('chunk_kw_llm')\nif kw_topn >= 1:\n    if not isinstance(kw, list):\n        kw = list(item.get('doc_kw') or [])\n    kw = [str(k) for k in kw][:kw_topn]\nelse:\n    # 短片（<keywords_dividend 字）：不调 LLM，回退文档级关键词\n    # （2026-10-26 修复：此前 [:kw_topn] if kw_topn else [] 在 kw_topn=0 时\n    #  给空，注释声称回退但实际丢弃 → 短片关键词全空）\n    kw = [str(k) for k in (item.get('doc_kw') or [])][:3]\n\nq = bindings.get('chunk_q_llm')\nif q_topn >= 1:\n    if not isinstance(q, list):\n        q = []\n    q = [str(x) for x in q][:q_topn]\nelse:\n    q = []\n\nmap_ = bindings.setdefault('enhance_map', {})\nmap_[str(seq)] = {'keywords': kw, 'questions': q}\n\n# 清空当前片临时变量（防下轮残留）\nfor k in ('kw_prompt', 'q_prompt', 'chunk_kw_llm', 'chunk_q_llm', 'chunk_seq_now'):\n    bindings.pop(k, None)\n\n# 末轮判定：全部切片已收集 → 汇总 enhancement\nitems = bindings.get('chunk_items') or []\ndone = all(str(c.get('seq') or 0) in map_ for c in items)\nif done:\n    doc_meta = bindings.get('doc_meta') or {}\n    chunks_out = []\n    for c in items:\n        s = str(c.get('seq') or 0)\n        e = map_.get(s) or {}\n        chunks_out.append({\n            'seq': int(c.get('seq') or 0),\n            'keywords': e.get('keywords') or [],\n            'questions': e.get('questions') or [],\n        })\n    enhancement = {\n        'title': str(bindings.get('doc_title') or ''),\n        'abstract': str(doc_meta.get('summary') or bindings.get('doc_summary') or ''),\n        'doc_keywords': list(doc_meta.get('keywords') or []),\n        'chunks': chunks_out,\n    }\n    bindings['enhancement'] = enhancement\n    with open('/tmp/chunk_enhance.json', 'w', encoding='utf-8') as f:\n        _json.dump(enhancement, f, ensure_ascii=False, indent=1)\n    print('[n4e] 增强完成: %d 片, 含关键词 %d, 含问题 %d'\n          % (len(chunks_out),\n             sum(1 for c in chunks_out if c['keywords']),\n             sum(1 for c in chunks_out if c['questions'])))\n"
+    },
+    "step_seq": 8,
+    "pre_step_ids": [
+     "n4d"
+    ],
+    "next_step_ids": [],
+    "queue_name": "default"
+   }
+  ]
+ }
+}

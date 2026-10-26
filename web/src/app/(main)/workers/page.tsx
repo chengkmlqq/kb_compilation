@@ -18,6 +18,7 @@ import {
   Input,
   Select,
   Space,
+  Spin,
   Table,
   Tabs,
   Tag,
@@ -553,18 +554,20 @@ export default function WorkersPage() {
         onClose={() => setTaskDrawerOpen(false)}
         destroyOnClose
       >
-        <div style={{ marginBottom: 12, color: "#79879C", fontSize: 13 }}>
-          采集时间：{formatTime(taskOverview?.collectedAt)}
-          <Button
-            type="link"
-            size="small"
-            icon={<ReloadOutlined />}
-            onClick={() => void fetchWorkerTasks(taskWorkerName, { forceRefresh: true })}
-          >
-            刷新
-          </Button>
-        </div>
-        <Tabs items={taskTabItems} />
+        <Spin spinning={taskLoading}>
+          <div style={{ marginBottom: 12, color: "#79879C", fontSize: 13 }}>
+            采集时间：{formatTime(taskOverview?.collectedAt)}
+            <Button
+              type="link"
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={() => void fetchWorkerTasks(taskWorkerName, { forceRefresh: true })}
+            >
+              刷新
+            </Button>
+          </div>
+          <Tabs items={taskTabItems} />
+        </Spin>
       </Drawer>
 
       {/* 注册任务配置抽屉 */}

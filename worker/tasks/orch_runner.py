@@ -20,7 +20,7 @@ import uuid
 
 logger = logging.getLogger("kb.orch.runner")
 
-from api.db import get_sessionmaker
+from api.db import ENV_DEV, env_scope, get_sessionmaker
 from api.models.orchestration import Tape, TapeRun, TapeStep
 from sqlalchemy import select
 from api.services.orchestration_engine import ATOM_MAP, TapeRuntimeContext
@@ -141,25 +141,87 @@ def _append_step_result(run_id: str, result: dict, env: str | None = None) -> No
         db.close()
 
 
+def _mark_summary_failed(inputs: dict, error: str) -> None:
+    """摘要编排 run 失败 → 回写 kb_document.summary_status=FAILED + summary_error。
+
+    仅文档链触发的摘要 run（inputs.purpose == "summary" 且有 document_id）回写；
+    构建编排/题材分析/用户在编排页手动执行的 run 不受影响。幂等：文档已有
+    成功摘要（READY）不被旧失败 run 覆盖。回写失败不阻断编排（尽力而为）。
+    """
+    if (str(inputs.get("purpose") or "") != "summary"):
+        return
+    doc_id = str(inputs.get("document_id") or inputs.get("doc_id") or "")
+    if not doc_id:
+        return
+    try:
+        from api.models.knowledge import KbDocument
+        from api.db import get_sessionmaker  # 函数内取模块属性，测试 monkeypatch 生效
+
+        db = get_sessionmaker()()  # kb_document 在业务库（环境无关），用常规会话
+        try:
+            doc = db.get(KbDocument, doc_id)
+            if not doc:
+                return
+            if doc.summary_status == "READY":
+                return
+            doc.summary_status = "FAILED"
+            doc.summary_error = (error or "摘要编排执行失败")[:500]
+            db.commit()
+            logger.warning(
+                "summary run failed → kb_document %s summary_status=FAILED (%s)",
+                doc_id, (error or "")[:200],
+            )
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 — 回写失败不阻断编排
+        logger.exception("mark summary failed for document %s", doc_id)
+
+
 def _update_run(run_id: str, env: str | None = None, **fields) -> None:
+    db = _run_db(env)
+    run_inputs: dict | None = None
+    try:
+        _lock_run(db, run_id)
+        run = db.get(TapeRun, run_id)
+        if not run:
+            return
+        run_inputs = dict(run.inputs or {})
+        for k, v in fields.items():
+            setattr(run, k, v)
+        db.commit()
+    finally:
+        db.close()
+    # 编排 run 进入 failed 终态 → 摘要 run 回写文档摘要失败状态（2026-10-21）
+    if fields.get("status") == "failed" and run_inputs is not None:
+        _mark_summary_failed(run_inputs, str(fields.get("error") or ""))
+
+
+def _merge_run_bindings(run_id: str, additions: dict, env: str | None = None) -> None:
+    """行锁内合并 bindings（2026-10-22 修复并行节点 lost-update）。
+
+    此前模式：并行节点各自 _bindings_from_run（无锁读）→ merge → _update_run
+    （写时才对整行加锁）。三个 fan-out 并行节点在同毫秒级完成时（小库/快速
+    脚本，实测 电信语义层 dim=all：n02/n03/n04 全部 ~100-250ms 内完成），
+    A 节点读到的旧 bindings 会在 B/C 节点后提交时被整体覆盖——后写者把先写
+    者的 key（如 chunk_r/wiki_r/graph_r）丢掉，汇总节点读到空 → 评估结果全
+    None（该 KB 全部维度失分）。大库单节点耗时数秒自然错开，罕见触发。
+
+    修复：读-改-写全在 `_lock_run`（SELECT FOR UPDATE）内完成，同 run 的
+    并行节点提交串行化，后写者基于最新 bindings 合并，先写者的 key 保留。
+    """
     db = _run_db(env)
     try:
         _lock_run(db, run_id)
         run = db.get(TapeRun, run_id)
         if not run:
             return
-        for k, v in fields.items():
-            setattr(run, k, v)
+        cur = dict(run.bindings or {})
+        merged = {**cur, **(additions or {})}
+        # 2026-10-09 loop 修复：调度中枢的循环迭代状态由中枢独占，节点合并不得覆盖
+        if orch_loop.LOOP_STATE_KEY in cur:
+            merged[orch_loop.LOOP_STATE_KEY] = cur[orch_loop.LOOP_STATE_KEY]
+        run.bindings = merged
         db.commit()
-    finally:
-        db.close()
-
-
-def _bindings_from_run(run_id: str, env: str | None = None) -> dict:
-    db = _run_db(env)
-    try:
-        run = db.get(TapeRun, run_id)
-        return dict(run.bindings or {})
     finally:
         db.close()
 
@@ -286,19 +348,74 @@ def _advance_impl(run_id: str, env: str | None = None) -> None:
     if all_done:
         failed = [r for r in results if r.get("status") == "failed"]
         status = "failed" if failed else "success"
-        _update_run(run_id, env, status=status, bindings=bindings,
-                    error="; ".join(f"{r['step_id']}: {r.get('error','')}" for r in failed) if failed else None)
+        error_text = ("; ".join(f"{r['step_id']}: {r.get('error','')}" for r in failed)
+                      if failed else None)
+        _update_run(run_id, env, status=status, bindings=bindings, error=error_text)
+        # 2026-10-21 任务监控一致性：run 终态回写关联的 ORCH_RUN_* modo_job。
+        # 此前 _handle_run 对 execute_run 异步立即返回 → scheduler 无条件标 SUCCESS，
+        # run 实际 failed 时任务监控仍显示成功（假成功）。按 run 真实终态回写。
+        _sync_orch_job_status(run_id, status, error_text)
         logger.info("编排 run=%s 终态 %s (%d 步)", run_id, status, len(results))
     else:
         # 有未执行但 pre 未完成（依赖等待中）—— 不动作，等节点回调
         logger.info("编排 run=%s 等待依赖完成 (done=%d/%d)", run_id, len(pairs), len(steps))
 
 
+def _sync_orch_job_status(run_id: str, status: str, error_text: str | None) -> None:
+    """run 终态回写 KbOrchestrationRunTask（ORCH_RUN_*）job 状态，任务监控与
+    kb_tape_run 保持一致。找不到 job 行（手动在编排页执行的 run 无承接 job）
+    则跳过——不影响业务，仅同步监控展示。
+    """
+    try:
+        from sqlalchemy import select
+
+        from api.db import get_sessionmaker
+        from api.models.framework import Job
+
+        db = get_sessionmaker()()
+        try:
+            job = db.execute(
+                select(Job).where(Job.run_id == run_id)
+            ).scalars().first()
+            if job is None:
+                # 旧数据 run_id 冗余列可能未回填：按 task_params 里 runId 兜底
+                like = "%" + run_id + "%"
+                job = db.execute(
+                    select(Job).where(Job.task_class == "KbOrchestrationRunTask",
+                                      Job.task_params.like(like))
+                ).scalars().first()
+            if job is None:
+                return
+            if job.state == "STOPPED":
+                return  # 用户手动停止的保持取消态，不覆盖
+            import datetime as _dt
+
+            job.state = "SUCCESS" if status == "success" else "FAILED"
+            if error_text:
+                job.error_message = error_text[:1000]
+            job.end_time = _dt.datetime.now(_dt.timezone.utc)
+            db.commit()
+            logger.info("run=%s 终态 %s 已回写 job=%s", run_id, status, job.id)
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 — 回写失败不影响编排推进
+        logger.warning("sync orch job status failed for run=%s", run_id, exc_info=True)
+
+
 def execute_run(run_id: str, env: str | None = None) -> dict:
     """调度中枢入口（orch 队列）：首次推进 DAG。
 
     env：执行记录所在环境（上传链触发编排传 "prod"；None 沿用历史 dev）。
+    2026-10-20 双表改造：run 的所有读写必须落在执行记录所在表（dev → 测试
+    执行的 _dev 表 / prod → 正式表）。表路由事件读 contextvar（current_env），
+    故入口按 env 包 env_scope，使整条调用链（_get_run/_update_run/_advance_impl
+    及其内部 _append_step_result）的 SQL 都路由到对应表。
     """
+    with env_scope(env or ENV_DEV):
+        return _execute_run_impl(run_id, env)
+
+
+def _execute_run_impl(run_id: str, env: str | None = None) -> dict:
     run = _get_run(run_id, env)
     if not run:
         return {"success": False, "error": f"run not found: {run_id}"}
@@ -308,8 +425,13 @@ def execute_run(run_id: str, env: str | None = None) -> dict:
 
 
 def advance_run(run_id: str, step_id: str, env: str | None = None) -> dict:
-    """节点完成回调（orch 队列）：记录结果后推进 DAG。"""
-    _advance_impl(run_id, env)
+    """节点完成回调（orch 队列）：记录结果后推进 DAG。
+
+    2026-10-20 双表改造：同 execute_run，入口包 env_scope 保证 run 读写
+    路由到执行记录所在表。
+    """
+    with env_scope(env or ENV_DEV):
+        _advance_impl(run_id, env)
     return {"success": True, "run_id": run_id}
 
 
@@ -334,7 +456,16 @@ def run_node(run_id: str, step_id: str, bindings: dict, round_no: int = 0, env: 
     把 run 终态顶成 failed）。同 (step_id, round) 已有终态 → 直接返回不执行；
     已有 running 占位且未超时 → 视为在跑，返回 skip 不重复执行；running 占位
     超时（执行进程可能已消失）→ 放行重跑。
+
+    2026-10-20 双表改造：入口包 env_scope——run 记录读写（_get_run/
+    _append_step_result）与节点业务数据都路由到执行记录所在表。
     """
+    with env_scope(env or ENV_DEV):
+        return _run_node_impl(run_id, step_id, bindings, round_no, env)
+
+
+def _run_node_impl(run_id: str, step_id: str, bindings: dict, round_no: int = 0,
+                   env: str | None = None) -> dict:
     run = _get_run(run_id, env)
     if not run:
         return {"success": False, "error": f"run not found: {run_id}"}
@@ -407,14 +538,11 @@ def run_node(run_id: str, step_id: str, bindings: dict, round_no: int = 0, env: 
     }
     _append_step_result(run_id, result, env)
 
-    # 新 bindings 写回 run（与库里现有值合并，不整体覆盖）。
-    # 2026-10-09 loop 修复：整体覆盖会把调度中枢维护的 loop 迭代状态
-    # (__loop_state__) 冲掉 → 下一轮投不出循环体。loop_state 由调度中枢独占。
-    cur = _bindings_from_run(run_id, env)
-    merged = {**cur, **context.bindings}
-    if orch_loop.LOOP_STATE_KEY in cur:
-        merged[orch_loop.LOOP_STATE_KEY] = cur[orch_loop.LOOP_STATE_KEY]
-    _update_run(run_id, env, bindings=merged)
+    # 新 bindings 写回 run（2026-10-22 改为行锁内合并——并行节点各自
+    # read-merge-write 会 lost-update，后写者覆盖先写者的 key）。
+    # 2026-10-09 loop 修复语义保留：loop 迭代状态由调度中枢独占，_merge_run_bindings
+    # 内部不覆盖 __loop_state__。
+    _merge_run_bindings(run_id, context.bindings, env)
     _send_advance(run_id, step_id, env)
     logger.info("编排节点[%s %s] %s (%.0fms) run=%s", s["inst"], s["label"], status, (time.time() - start) * 1000, run_id)
     return {"success": status == "success", "step_id": step_id}

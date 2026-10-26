@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from api.lib.crypto import aes_decrypt
@@ -154,7 +154,8 @@ def list_datasources(
         stmt = stmt.where(Datasource.label.like(f"%{label.strip()}%"))
     if ds_type:
         stmt = stmt.where(Datasource.ds_type == ds_type)
-    total = len(db.execute(stmt).scalars().all())
+    # 2026-10-21 性能修复：计数走 SQL count（原 len(all()) 物化全表 ORM 对象）
+    total = int(db.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0)
     rows = db.execute(stmt.offset((page - 1) * page_size).limit(page_size)).scalars().all()
     items = [
         {

@@ -20,6 +20,7 @@ import os
 import re
 import uuid
 from pathlib import Path
+from typing import Callable
 
 from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -30,6 +31,7 @@ from sqlalchemy.orm import Session
 from api.config import get_settings
 from api.db import get_db
 from api.models.framework import Job, SysFile
+from api.models.knowledge import KbDatasource, KbDocument
 from api.services.embedding import get_embedding_client
 from api.services.identity import decode_identity_cookie
 from api.routers.files import (
@@ -112,6 +114,11 @@ MAX_UPLOAD_BYTES = 600 * 1024 * 1024  # 600 MB（2026-10-16 心电图 pdf转word
 # 压缩包上传（自动解包）限制：条目数 + 解压后总量（防解压炸弹）
 MAX_ARCHIVE_ENTRIES = 2000
 MAX_ARCHIVE_UNCOMPRESSED_BYTES = 2 * MAX_UPLOAD_BYTES
+# 嵌套压缩包递归解包深度上限（防 zip-of-zip 无限展开；顶层包算第 1 层）
+MAX_ARCHIVE_DEPTH = 5
+# 知识库导入包（zip）上限：条目数 + 总量（对齐 upload-archive 口径，2026-10-21）
+MAX_IMPORT_ENTRIES = 3000
+MAX_IMPORT_UNCOMPRESSED_BYTES = 2 * MAX_UPLOAD_BYTES
 
 
 class KBCreateRequest(BaseModel):
@@ -138,6 +145,13 @@ class KBCreateRequest(BaseModel):
     repo_branch: str = ""
     repo_auth_type: str = "none"  # none/token/ssh_key/user_pass
     repo_auth_secret: str = ""  # 明文凭证（创建时加密落库，读取不回显）
+    # ── 知识聚合配置（2026-10-25）──
+    # {"topic_cluster_enabled": bool, "topic_cluster_topics": [...],
+    #  "version_cluster_enabled": bool, "cron_expression": "0 2 * * *"}
+    aggregation_config: dict | None = None
+    # ── 切片智能增强配置（2026-10-25）──
+    # {"enabled": bool, "keywords_dividend": 120, "questions_dividend": 180, "max_chunks": 0}
+    enhancement_config: dict | None = None
 
 
 class KBUpdateRequest(BaseModel):
@@ -160,6 +174,10 @@ class KBUpdateRequest(BaseModel):
     repo_branch: str | None = None
     repo_auth_type: str | None = None
     repo_auth_secret: str | None = None
+    # ── 知识聚合配置（2026-10-25：配置在 payload 才更新 + 同步定时任务）──
+    aggregation_config: dict | None = None
+    # ── 切片智能增强配置（2026-10-25：配置在 payload 才更新）──
+    enhancement_config: dict | None = None
 
 
 class SearchRequest(BaseModel):
@@ -289,9 +307,12 @@ def build_engines(
     db: Session = Depends(get_db),
     x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
 ) -> dict:
-    """构建引擎下拉数据源：服务编排中已发布的编排程序（status=effective）。
+    """构建引擎下拉数据源：服务编排中已发布的**知识构建**编排程序。
 
-    知识库创建表单「构建引擎」选项；返回简表（id/tape_name/tape_label/tape_descr）。
+    2026-10-21 过滤：知识库「构建引擎」下拉只展示功能标签为知识构建
+    （tape_type=kb_build，2026-10-15 功能标签）的编排；摘要（summary）/
+    其他（general）类型编排不再出现在该下拉。存量 KB 已绑定的
+    build_tape_id（摘要/通用编排）保留原值不受影响（回填走 kb.build_tape_id）。
     """
     identity = decode_identity_cookie(x_next_identity or "")
     if not identity:
@@ -302,7 +323,7 @@ def build_engines(
     rows = (
         db.execute(
             select(Tape)
-            .where(Tape.status == "effective")
+            .where(Tape.status == "effective", Tape.tape_type == "kb_build")
             .order_by(Tape.updated_at.desc())
         )
         .scalars()
@@ -388,6 +409,8 @@ def post_kb(
             repo_branch=req.repo_branch,
             repo_auth_type=req.repo_auth_type,
             repo_auth_secret=req.repo_auth_secret,
+            aggregation_config=req.aggregation_config,
+            enhancement_config=req.enhancement_config,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -400,6 +423,95 @@ def post_kb(
         except Exception as exc:  # noqa: BLE001
             logger.warning("首次代码仓库同步投递失败 kb=%s: %s", kb.id, exc)
     return {"success": True, "data": {"id": kb.id, "name": kb.name, "scope": kb.scope}}
+
+
+@router.post("/sync-agent")
+def post_kb_sync_agent(
+    req: KBCreateRequest,
+    db: Session = Depends(get_db),
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+) -> dict:
+    """建库 + 同步创建智能推理模式智能体（data_supply_shandong 知识集同步专用）。
+
+    与 POST /kbs 相同的鉴权/建库逻辑，建库成功后按知识库名幂等创建（或复用同名
+    智能体并补绑定本库）一个 agent_mode=smart-reasoning、kb_selection_mode=selected
+    的智能体。仅本端点自动建智能体——普通 POST /kbs 建库不建，避免所有建库入口
+    无差别生成（2026-10-24 产品决策）。
+    """
+    identity = decode_identity_cookie(x_next_identity or "")
+    if not identity:
+        raise HTTPException(status_code=401, detail="未登录")
+    caller_user_id = identity.user_id if identity else ""
+    caller_team_name = identity.team_name or "" if identity else ""
+    is_sys_admin = False
+    if caller_user_id:
+        from api.services.scope import is_admin
+
+        is_sys_admin = is_admin(db, caller_user_id)
+    from api.services.scope import validate_scope_request
+
+    try:
+        scope, owner_user_id, owner_team_name = validate_scope_request(
+            req.scope,
+            caller_user_id=caller_user_id,
+            caller_team_name=caller_team_name,
+            is_sys_admin=is_sys_admin,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        kb = create_kb(
+            db,
+            name=req.name,
+            label=req.label,
+            description=req.description,
+            indexing_strategy=req.indexing_strategy,
+            scope=scope,
+            team_name=owner_team_name or None,
+            owner_user_id=owner_user_id or None,
+            created_by=caller_user_id or None,
+            type=req.type,
+            custom_wiki_generation=req.custom_wiki_generation,
+            embedding_model_id=req.embedding_model_id,
+            summary_model_id=req.summary_model_id,
+            storage_backend_id=req.storage_backend_id,
+            vector_store_id=req.vector_store_id,
+            configs=req.configs,
+            ontology_schema_name=req.ontology_schema_name,
+            build_tape_id=req.build_tape_id,
+            summary_strategy=req.summary_strategy,
+            caller_user_id=caller_user_id or None,
+            caller_team_name=caller_team_name or None,
+            is_sys_admin=is_sys_admin,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    from api.services.agents import sync_agent_for_kb
+
+    try:
+        agent = sync_agent_for_kb(
+            db,
+            kb_id=kb.id,
+            kb_name=kb.name,
+            created_by=caller_user_id or None,
+            team_name=caller_team_name or None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("知识库创建成功但智能体同步失败: kb=%s", kb.id)
+        raise HTTPException(
+            status_code=500, detail=f"知识库创建成功但智能体同步失败：{exc}"
+        ) from exc
+    return {
+        "success": True,
+        "data": {
+            "id": kb.id,
+            "name": kb.name,
+            "scope": kb.scope,
+            "agent_id": agent.id,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -520,6 +632,9 @@ def del_kb(
     _kb_manage(kb_id, caller, db)
     result = delete_kb(db, kb_id)
     if not result["success"]:
+        if result.get("code") == "AGENT_BOUND":
+            # 被智能体绑定：业务拒绝（400），与「知识库不存在」(404) 区分
+            raise HTTPException(status_code=400, detail=result["message"])
         raise HTTPException(status_code=404, detail=result["message"])
     return result
 
@@ -648,13 +763,12 @@ def _attach_wiki_build_status(db: Session, kb_id: str, items: list[dict]) -> Non
 
     if not items:
         return
-    # 只取提到本 KB 的任务：kb_id 内嵌在 task_params JSON 文本里，先用 LIKE 粗筛
-    # （下方 json.loads 再精确校验 cfg.kb_id），并加 limit 兜底。
-    # 原实现无条件全表扫 WIKI 任务并逐行 json.loads，随任务累积线性变慢 —— 而本函数
-    # 每次文档列表请求都会执行（文档解析中前端每 3s 轮询一次），是详情页卡顿主因之一。
+    # 只取提到本 KB 的任务：kb_id 冗余列（before_insert/update 自动提取）等值索引直查，
+    # 替代原 `task_params LIKE '%kb_id%'` 全文扫（随任务累积线性变慢）；json.loads
+    # 精确校验保留兜底（防列提取与真实 config 不一致）。
     jobs = db.execute(
         select(Job.id, Job.task_params, Job.state, Job.duration_ms)
-        .where(Job.id.like("WIKI%"), Job.task_params.like(f"%{kb_id}%"))
+        .where(Job.id.like("WIKI%"), Job.kb_id == kb_id)
         .order_by(Job.create_time.desc())
         .limit(3000)
     ).all()
@@ -787,7 +901,11 @@ async def upload_document(
     else:
         if file is None:
             raise HTTPException(status_code=400, detail="请上传文件或提供 url")
-        fname = (file.filename or "untitled").strip()
+        # 剥掉路径只留裸文件名：Chrome 对 <input webkitdirectory> 的文件把
+        # webkitRelativePath 作为 multipart filename 发送（如「制度文件/2024/a.pdf」，File.name
+        # 才是裸名）。前端已显式指定 basename，这里再兜底防御其他客户端带路径上传。
+        raw_name = (file.filename or "untitled").strip()
+        fname = raw_name.replace("\\", "/").rsplit("/", 1)[-1] or raw_name
         if not fname or fname == "untitled":
             raise HTTPException(status_code=400, detail="文件名不能为空")
         content = await file.read()
@@ -878,6 +996,276 @@ def supported_file_types() -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# 预制 markdown + 切片摄取（2026-10-20 方案B）
+# --------------------------------------------------------------------------- #
+
+
+def _parse_prechunked_payload(raw: str) -> list[dict]:
+    """解析预制切片入参。
+
+    接受三种形态（调用方可能是 shandong 侧 Java 或其他外部系统）：
+      - [{"seq": 0, "content": "..."}, ...]
+      - {"chunks": [...]} / {"items": [...]}
+    逐条校验：content 为空的条目剔除；seq 缺失/非法的按序补位。
+    """
+    try:
+        data = json.loads(raw or "")
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if isinstance(data, dict):
+        data = data.get("chunks") or data.get("items") or []
+    if not isinstance(data, list) or not data:
+        return []
+    out: list[dict] = []
+    for it in data:
+        if not isinstance(it, dict):
+            continue
+        content = str(it.get("content") or "").strip()
+        if not content:
+            continue
+        seq = it.get("seq")
+        if seq is None:
+            seq = it.get("chunk_index") or it.get("index")
+        if isinstance(seq, (int, str)):
+            try:
+                seq_int = int(seq)
+            except (TypeError, ValueError):
+                seq_int = len(out)
+        else:
+            seq_int = len(out)
+        out.append({"seq": seq_int, "content": content})
+    return out
+
+
+def _delete_documents_by_name(db: Session, kb_id: str, file_name: str) -> int:
+    """按文件名删除 kb 内已有同名文档（预切上传 replace 模式用）。
+
+    级联随 delete_document：取消关联 wiki 任务、清理专属 wiki 页/目录/链接/
+    向量/图谱。返回删除条数；单条失败仅告警不阻断（下一轮重试再清）。
+    """
+    from api.services.kb_admin import delete_document
+
+    rows = db.execute(
+        select(KbDocument).where(
+            KbDocument.kb_id == kb_id, KbDocument.file_name == file_name
+        )
+    ).scalars().all()
+    removed = 0
+    for doc in rows:
+        try:
+            delete_document(db, kb_id, doc.id)
+            removed += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "pre-chunked replace: delete old doc failed kb=%s doc=%s: %s",
+                kb_id, doc.id, exc,
+            )
+    if removed:
+        db.commit()
+    return removed
+
+
+def _enqueue_prechunked_ingest(
+    kb_id: str,
+    document_id: str,
+    chunks_path: str,
+    caller_identity: str = "",
+) -> None:
+    """建/重置 modo_job 行（KbPreChunkedIngestTask）并投 Celery。
+
+    与 _enqueue_document_process 同契约：Job 行先 commit、再投 broker
+    （否则 worker 空闲时会消费到未提交的 job 报 'job not found'）。
+    job_id = PRECHUNK_{document_id}（文档级唯一，重复入队为重置语义）。
+    """
+    from worker.celery_app import celery_app
+
+    job_id = f"PRECHUNK_{document_id}"
+    task_class = "KbPreChunkedIngestTask"
+    task_params = json.dumps(
+        {
+            "kbId": kb_id,
+            "documentId": document_id,
+            "chunksPath": chunks_path,
+            "cookie": caller_identity,
+        },
+        ensure_ascii=False,
+    )
+
+    from api.db import get_sessionmaker
+
+    framework_db = get_sessionmaker()()
+    try:
+        existing = framework_db.get(Job, job_id)
+        if existing is None:
+            framework_db.add(
+                Job(
+                    id=job_id,
+                    task_id=document_id,
+                    task_class=task_class,
+                    queue_name="default",
+                    task_params=task_params,
+                    trigger_type="API",
+                    state="PENDING",
+                )
+            )
+        else:
+            existing.task_id = document_id
+            existing.task_class = task_class
+            existing.queue_name = "default"
+            existing.task_params = task_params
+            existing.trigger_type = "API"
+            existing.state = "PENDING"
+            existing.start_time = None
+            existing.end_time = None
+            existing.duration_ms = None
+            existing.error_message = None
+            existing.log_path = None
+        framework_db.commit()
+    finally:
+        framework_db.close()
+
+    celery_app.send_task(
+        "worker.tasks.scheduler.execute_modo_job",
+        args=[job_id],
+        task_id=job_id,
+        queue="default",
+    )
+
+
+@router.post("/{kb_id}/documents/pre-chunked")
+async def upload_prechunked_document(
+    kb_id: str,
+    file: UploadFile,
+    chunks: str = Form(...),
+    folder_id: str = Query(default="", max_length=64),
+    build_tape_id: str = Form(default=""),
+    process_config: str = Form(default=""),
+    replace_existing: bool = Query(default=False),
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """预制 markdown + 切片摄取：跳过文档解析与文本切片，直接向量化落库。
+
+    适用场景（2026-10-20 方案B）：调用方本地已完成 doc→md 转换与切片
+    （如 data_supply_shandong 的 duowen 基座管线，产物为 convert md +
+    dasup_corpus_chunks），无需 kb 再跑一遍解析/切片——避免重复重解析
+    （docx/pdf 解析是整条链里最重的一步）与口径分裂。
+
+    入参：
+    - file: md 源文件（multipart）。不参与解析，仅作为文档原文留存
+      （preview / download 走它），文件名即文档名。
+    - chunks: 切片 JSON（multipart form 字段），形态见 _parse_prechunked_payload。
+    - folder_id / build_tape_id / process_config: 与普通上传同义。
+    - replace_existing: true 时按 file_name 先删 kb 内同名旧文档（级联清
+      wiki 页/任务/向量），再建新文档——供「原文件已上传过、切片就绪后
+      升级为预切版」的替换场景，避免同文件双份。
+
+    落库与下游：新建 kb_document（PENDING）→ 入队 KbPreChunkedIngestTask
+    → embed → 写 doc_chunk → READY → 触发摘要/构建引擎/题材分析
+    （与文件解析链同一规则，worker/tasks/prechunk_ingest.py）。
+    """
+    _kb_manage(kb_id, caller, db)
+
+    folder_id = (folder_id or "").strip()
+    if not doc_folder_exists(db, kb_id, folder_id):
+        raise HTTPException(status_code=400, detail=f"目录不存在: {folder_id}")
+
+    if file is None:
+        raise HTTPException(status_code=400, detail="请上传 md 文件")
+    fname = (file.filename or "untitled").strip()
+    if not fname or fname == "untitled":
+        raise HTTPException(status_code=400, detail="文件名不能为空")
+    doc_ext = ext_of(fname)
+    if not is_supported_ext(doc_ext):
+        raise HTTPException(status_code=400, detail=unsupported_type_detail(doc_ext))
+
+    md_bytes = await file.read()
+    if not md_bytes:
+        raise HTTPException(status_code=400, detail="md 文件内容为空")
+    if len(md_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件超过大小限制 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB",
+        )
+
+    parsed_chunks = _parse_prechunked_payload(chunks)
+    if not parsed_chunks:
+        raise HTTPException(
+            status_code=400,
+            detail='chunks 为空或格式非法（应为 [{"seq":0,"content":"..."}]）',
+        )
+
+    # --- persist md + 切片 sidecar（storage 层：本地磁盘或 MinIO）---
+    from api.services import storage as storage_svc
+
+    doc_id = uuid.uuid4().hex
+    ext = Path(fname).suffix or ""
+    md_path = storage_svc.resolve_new_path(f"kb_documents/{kb_id}/{doc_id}{ext}")
+    chunks_path = storage_svc.resolve_new_path(f"kb_documents/{kb_id}/{doc_id}.chunks.json")
+    try:
+        storage_svc.put_bytes(md_path, md_bytes)
+        storage_svc.put_bytes(
+            chunks_path,
+            json.dumps(parsed_chunks, ensure_ascii=False).encode("utf-8"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("failed to persist pre-chunked upload")
+        raise HTTPException(status_code=500, detail=f"文件存储失败: {exc}") from exc
+
+    # --- 替换模式：先清 kb 内同名旧文档（原文件版升级为预切版）---
+    if replace_existing:
+        removed = _delete_documents_by_name(db, kb_id, fname)
+        if removed:
+            logger.info(
+                "pre-chunked upload replaced %d old doc(s) by name in kb=%s name=%s",
+                removed, kb_id, fname,
+            )
+
+    # --- 文件级处理配置归一（非法 JSON 忽略，不阻塞上传）---
+    pc_json = ""
+    if (process_config or "").strip():
+        try:
+            parsed_pc = json.loads(process_config)
+            if isinstance(parsed_pc, dict) and parsed_pc:
+                pc_json = json.dumps(parsed_pc, ensure_ascii=False)
+        except (TypeError, json.JSONDecodeError):
+            logger.warning("pre-chunked upload %s: invalid process_config ignored", kb_id)
+
+    doc = create_document(
+        db,
+        kb_id=kb_id,
+        file_name=fname,
+        file_ext=ext,
+        file_size=len(md_bytes),
+        storage_path=md_path,
+        folder_id=folder_id,
+        process_config=pc_json or None,
+        build_tape_id=build_tape_id.strip() or None,
+    )
+
+    try:
+        _enqueue_prechunked_ingest(
+            kb_id, doc.id, chunks_path, caller_identity=x_next_identity or ""
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "failed to enqueue pre-chunked ingest; document kept as PENDING"
+        )
+
+    return {
+        "success": True,
+        "data": {
+            "id": doc.id,
+            "file_name": doc.file_name,
+            "parse_state": doc.parse_state,
+            "storage_path": doc.storage_path,
+            "chunk_count": len(parsed_chunks),
+        },
+    }
+
+
 @router.post("/{kb_id}/documents/upload-archive")
 async def upload_archive(
     kb_id: str,
@@ -888,14 +1276,19 @@ async def upload_archive(
     caller: dict = Depends(_require_kb_caller),
     db: Session = Depends(get_db),
 ) -> dict:
-    """上传 zip 压缩包并**自动解包**入库（2026-10-20）。
+    """上传压缩包并**自动解包**入库（2026-10-20 zip；2026-10-21 增 rar；2026-10-22 嵌套递归）。
 
     - 包内目录结构 → 知识库文档目录（同级同名复用；keep_structure=false 时全部落到 folder_id）；
+    - 嵌套压缩包（zip/rar 内再嵌 zip/rar）递归解包：子包名（去扩展名）作为一层目录保留完整
+      层级；深度上限 MAX_ARCHIVE_DEPTH，超限/损坏的子包跳过（计入 failed）不阻断整包；
     - 跳过：目录项、隐藏/系统垃圾文件（. 开头 / Thumbs.db 等）、空文件、非白名单格式、超大文件；
     - 每个文件仍走「存储 → kb_document(PENDING) → Celery 解析」同一条链路（与单文件上传一致）；
     - 返回 created + skipped 统计，前端据此提示「已解压上传 N 个、跳过 M 个」。
+
+    解包实现：zip 走内置 zipfile（零依赖）；rar 走系统 bsdtar（libarchive，
+    部署镜像含 libarchive-tools，见 deploy/Dockerfile.api*）——用子进程
+    临时文件而非 Python rarfile，避免引入第三方依赖与 unrar 可执行文件依赖。
     """
-    import zipfile
 
     _kb_manage(kb_id, caller, db)
 
@@ -909,7 +1302,7 @@ async def upload_archive(
         suffix = f"（.{archive_ext}）" if archive_ext else ""
         raise HTTPException(
             status_code=400,
-            detail=f"仅支持 zip 压缩包自动解包；当前文件：{fname or '未命名'}{suffix}",
+            detail=f"仅支持 zip / rar 压缩包自动解包；当前文件：{fname or '未命名'}{suffix}",
         )
 
     content = await file.read()
@@ -921,12 +1314,7 @@ async def upload_archive(
             detail=f"压缩包超过大小限制 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB",
         )
 
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(content))
-    except zipfile.BadZipFile as exc:
-        raise HTTPException(
-            status_code=400, detail="压缩包无法解压（不是有效的 zip 或文件已损坏）"
-        ) from exc
+    entries, _close_archive = _read_archive_entries(content, archive_ext, fname)
 
     from api.services import storage as storage_svc
 
@@ -938,24 +1326,20 @@ async def upload_archive(
     folder_seed_count = 0
 
     try:
-        file_infos = [i for i in zf.infolist() if not (i.filename or "").endswith("/")]
+        file_infos = entries
+        # 顶层条目数预检（原子拒绝，不做部分入库）
         if len(file_infos) > MAX_ARCHIVE_ENTRIES:
             raise HTTPException(
                 status_code=400,
                 detail=f"压缩包内文件过多（{len(file_infos)} 个，上限 {MAX_ARCHIVE_ENTRIES} 个），请拆分后上传",
-            )
-        total_uncompressed = sum(i.file_size for i in file_infos)
-        if total_uncompressed > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"压缩包解压后过大（约 {total_uncompressed // (1024 * 1024)}MB，上限 "
-                f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)}MB），请拆分后上传",
             )
 
         # 目录映射（同级同名复用）："(parent_id)\0(name)" → folder_id
         existing = {f"{f['parent_id']}\0{f['name']}": f["id"] for f in doc_folders(db, kb_id)}
         folder_seed_count = len(existing)
         user_id = str(caller.get("user_id") or "")
+        real_total = 0  # 解压产物总量（逐条累加，防解压炸弹；子包体积保守双计）
+        total_created = 0  # 实际入库文件数（跨嵌套层累计，防 zip-of-zip 规模爆炸）
 
         def _ensure_folder(segments: list[str]) -> str:
             parent = folder_id
@@ -968,62 +1352,152 @@ async def upload_archive(
                 parent = fid
             return parent
 
-        for info in file_infos:
-            raw_name = (info.filename or "").replace("\\", "/")
-            parts = archive_entry_parts(raw_name)
-            if not parts:
-                continue  # 非法路径（含 .. / 全空段）直接丢弃
-            if is_hidden_or_junk(raw_name):
-                skipped["hidden"] += 1
-                continue
-            base_name = parts[-1]
-            entry_ext = ext_of(base_name)
-            if not is_supported_ext(entry_ext):
-                skipped["unsupported"] += 1
-                unsupported_types.add(entry_ext or base_name)
-                continue
-            if info.file_size == 0:
-                skipped["empty"] += 1
-                continue
-            if info.file_size > MAX_UPLOAD_BYTES:
-                skipped["oversize"] += 1
-                continue
+        def _expand(file_infos: list[_ArchiveEntry], prefix: list[str], depth: int) -> None:
+            """展开一层压缩包条目（嵌套压缩包递归调用；prefix 为继承的目录段前缀）。"""
+            nonlocal real_total, total_created
+            # zip 条目带真实大小可预检总量；rar 大小未知，总量在逐条提取时累加校验
+            known_sizes = [e.size for e in file_infos if e.size is not None]
+            if known_sizes and sum(known_sizes) > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"压缩包解压后过大（约 {sum(known_sizes) // (1024 * 1024)}MB，上限 "
+                    f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)}MB），请拆分后上传",
+                )
+            for entry in file_infos:
+                raw_name = (entry.name or "").replace("\\", "/")
+                parts = archive_entry_parts(raw_name)
+                if not parts:
+                    continue  # 非法路径（含 .. / 全空段）直接丢弃
+                if is_hidden_or_junk(raw_name):
+                    skipped["hidden"] += 1
+                    continue
+                base_name = parts[-1]
+                entry_ext = ext_of(base_name)
 
-            target_folder = _ensure_folder(parts[:-1]) if keep_structure else folder_id
-            try:
-                data = zf.read(info)
-            except Exception as exc:  # noqa: BLE001 - 单个坏条目不阻断整包
-                logger.warning("archive entry read failed: %s (%s)", raw_name, exc)
-                skipped["failed"] += 1
-                errors.append(f"{base_name}: 读取失败")
-                continue
+                # ── 嵌套压缩包：递归解包（子包名去扩展名作为一层目录，保留完整层级）──
+                if is_archive_ext(entry_ext):
+                    if entry.size == 0:
+                        skipped["empty"] += 1
+                        continue
+                    if depth >= MAX_ARCHIVE_DEPTH:
+                        skipped["failed"] += 1
+                        errors.append(
+                            f"{base_name}: 嵌套压缩包层级过深（超过 {MAX_ARCHIVE_DEPTH} 层），已跳过"
+                        )
+                        continue
+                    try:
+                        data = entry.read()
+                    except Exception as exc:  # noqa: BLE001 - 单个坏条目不阻断整包
+                        logger.warning("archive entry read failed: %s (%s)", raw_name, exc)
+                        skipped["failed"] += 1
+                        errors.append(f"{base_name}: 读取失败")
+                        continue
+                    if not data:
+                        skipped["empty"] += 1
+                        continue
+                    # 子包体积计入全局总量（其内部文件还会再计一次，保守防炸弹）
+                    real_total += len(data)
+                    if real_total > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"压缩包解压后过大（超过 "
+                            f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)}MB），请拆分后上传",
+                        )
+                    try:
+                        sub_entries, _sub_close = _read_archive_entries(data, entry_ext, base_name)
+                    except HTTPException as exc:
+                        if "无法解压" not in str(exc.detail):
+                            raise  # 条目数/体积超限等：整体失败
+                        skipped["failed"] += 1
+                        errors.append(f"{base_name}: 无法解压（不是有效的压缩包或文件已损坏）")
+                        continue
+                    if len(sub_entries) > MAX_ARCHIVE_ENTRIES:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"压缩包内文件过多（{len(sub_entries)} 个，上限 "
+                            f"{MAX_ARCHIVE_ENTRIES} 个），请拆分后上传",
+                        )
+                    # keep_structure=true：子包名（去扩展名）作为一层目录挂到当前路径下
+                    sub_prefix = (
+                        prefix + parts[:-1] + [base_name[: -(len(entry_ext) + 1)]]
+                        if keep_structure
+                        else []
+                    )
+                    try:
+                        _expand(sub_entries, sub_prefix, depth + 1)
+                    finally:
+                        _sub_close()
+                    continue
 
-            doc_id = uuid.uuid4().hex
-            storage_path = storage_svc.resolve_new_path(f"kb_documents/{kb_id}/{doc_id}.{entry_ext}")
-            try:
-                storage_svc.put_bytes(storage_path, data)
-            except Exception:  # noqa: BLE001
-                logger.exception("archive entry store failed: %s", raw_name)
-                skipped["failed"] += 1
-                errors.append(f"{base_name}: 存储失败")
-                continue
+                if not is_supported_ext(entry_ext):
+                    skipped["unsupported"] += 1
+                    unsupported_types.add(entry_ext or base_name)
+                    continue
+                if entry.size == 0:
+                    skipped["empty"] += 1
+                    continue
+                if entry.size is not None and entry.size > MAX_UPLOAD_BYTES:
+                    skipped["oversize"] += 1
+                    continue
 
-            doc = create_document(
-                db,
-                kb_id=kb_id,
-                file_name=base_name,
-                file_ext=entry_ext,
-                file_size=len(data),
-                storage_path=storage_path,
-                folder_id=target_folder,
-            )
-            try:
-                _enqueue_document_process(kb_id, doc.id, caller_identity=x_next_identity or "")
-            except Exception:  # noqa: BLE001 - 保留 PENDING 行，可手动重试
-                logger.exception("failed to enqueue archived doc %s", doc.id)
-            created.append({"id": doc.id, "file_name": doc.file_name, "folder_id": target_folder})
+                target_folder = _ensure_folder(prefix + parts[:-1]) if keep_structure else folder_id
+                if total_created >= MAX_ARCHIVE_ENTRIES:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"压缩包内文件过多（已超过 {MAX_ARCHIVE_ENTRIES} 个），请拆分后上传",
+                    )
+                try:
+                    data = entry.read()
+                except Exception as exc:  # noqa: BLE001 - 单个坏条目不阻断整包
+                    logger.warning("archive entry read failed: %s (%s)", raw_name, exc)
+                    skipped["failed"] += 1
+                    errors.append(f"{base_name}: 读取失败")
+                    continue
+                # rar 条目大小未知 → 提取后校验空/超大/总量
+                if entry.size is None:
+                    if not data:
+                        skipped["empty"] += 1
+                        continue
+                    if len(data) > MAX_UPLOAD_BYTES:
+                        skipped["oversize"] += 1
+                        continue
+                    real_total += len(data)
+                    if real_total > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"压缩包解压后过大（超过 "
+                            f"{MAX_ARCHIVE_UNCOMPRESSED_BYTES // (1024 * 1024)}MB），请拆分后上传",
+                        )
+
+                doc_id = uuid.uuid4().hex
+                storage_path = storage_svc.resolve_new_path(f"kb_documents/{kb_id}/{doc_id}.{entry_ext}")
+                try:
+                    storage_svc.put_bytes(storage_path, data)
+                except Exception:  # noqa: BLE001
+                    logger.exception("archive entry store failed: %s", raw_name)
+                    skipped["failed"] += 1
+                    errors.append(f"{base_name}: 存储失败")
+                    continue
+
+                doc = create_document(
+                    db,
+                    kb_id=kb_id,
+                    file_name=base_name,
+                    file_ext=entry_ext,
+                    file_size=len(data),
+                    storage_path=storage_path,
+                    folder_id=target_folder,
+                )
+                try:
+                    _enqueue_document_process(kb_id, doc.id, caller_identity=x_next_identity or "")
+                except Exception:  # noqa: BLE001 - 保留 PENDING 行，可手动重试
+                    logger.exception("failed to enqueue archived doc %s", doc.id)
+                created.append({"id": doc.id, "file_name": doc.file_name, "folder_id": target_folder})
+                total_created += 1
+
+        _expand(file_infos, [], 1)
     finally:
-        zf.close()
+        _close_archive()
 
     return {
         "success": True,
@@ -1037,6 +1511,163 @@ async def upload_archive(
             "errors": errors[:5],
         },
     }
+
+
+def _read_archive_entries(
+    content: bytes, archive_ext: str, fname: str
+) -> tuple[list["_ArchiveEntry"], Callable[[], None]]:
+    """按压缩包类型读取条目清单。
+
+    zip → 内置 zipfile（内存，零依赖）；rar → 系统 bsdtar 子进程 + 临时文件
+    （libarchive，部署镜像含 libarchive-tools）。返回 (entries, close)：
+    entries 为统一条目对象（.name=包内路径 / .size=解压大小，rar 未知为 None /
+    .read() 取字节内容），close 用于释放 zip 句柄或清理临时文件。
+
+    坏包统一抛 400（与 zip 分支原「无法解压」文案一致）。
+    """
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    import zipfile
+
+    if archive_ext == "rar":
+        # bsdtar 需真实文件路径（libarchive 解 rar 不支持内存流）
+        tmp = tempfile.NamedTemporaryFile(prefix="kb-upload-", suffix=".rar", delete=False)
+        try:
+            tmp.write(content)
+            tmp.flush()
+        finally:
+            tmp.close()
+        prog = "bsdtar"
+        if not shutil.which(prog):
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+            raise HTTPException(
+                status_code=400,
+                detail="服务器缺少 rar 解包组件（bsdtar），请联系管理员安装 libarchive-tools",
+            )
+
+        def _close() -> None:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+        try:
+            listing = subprocess.run(
+                [prog, "-tf", tmp.name],
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            _close()
+            logger.warning("bsdtar -tf failed(%s=%s): %s", fname, archive_ext, exc)
+            raise HTTPException(
+                status_code=400, detail="压缩包无法解压（不是有效的 rar 或文件已损坏）"
+            ) from exc
+        if listing.returncode != 0:
+            _close()
+            logger.warning("bsdtar -tf non-zero: %s", listing.stderr.decode("utf-8", "replace")[:300])
+            raise HTTPException(
+                status_code=400, detail="压缩包无法解压（不是有效的 rar 或文件已损坏）"
+            )
+        names = [
+            _restore_mojibake_filename(ln)
+            for ln in listing.stdout.decode("utf-8", "replace").splitlines()
+            if ln and not ln.endswith("/")
+        ]
+
+        def _make_read(name: str):
+            def _read() -> bytes:
+                try:
+                    res = subprocess.run(
+                        [prog, "-xOf", tmp.name, name],
+                        capture_output=True,
+                        timeout=120,
+                        check=False,
+                    )
+                except (subprocess.TimeoutExpired, OSError) as exc:
+                    logger.warning("bsdtar -xOf failed(%s): %s", name, exc)
+                    raise RuntimeError(f"rar 条目读取失败: {name}") from exc
+                if res.returncode != 0:
+                    raise RuntimeError(f"rar 条目读取失败: {name}")
+                return res.stdout
+
+            return _read
+
+        entries = [
+            _ArchiveEntry(n, None, _make_read(n))
+            for n in names
+        ]
+        return entries, _close
+
+    # zip：内置 zipfile，内存流
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(
+            status_code=400, detail="压缩包无法解压（不是有效的 zip 或文件已损坏）"
+        ) from exc
+
+    def _close() -> None:
+        zf.close()
+
+    entries = [
+        _ArchiveEntry(_restore_mojibake_filename(i.filename), i.file_size, lambda i=i: zf.read(i))
+        for i in zf.infolist()
+        if not (i.filename or "").endswith("/")
+    ]
+    return entries, _close
+
+
+def _restore_mojibake_filename(name: str) -> str:
+    """还原压缩包内文件名乱码（Windows GBK 编码 + 无 UTF-8 标志的 zip/rar）。
+
+    背景（2026-10-23）：Windows 中文环境打的压缩包，条目名以 GBK 字节写入且
+    未设 zip UTF-8 标志位，Python zipfile 按规范默认 CP437 解码 → 中文变
+    「╓╨╣·」类 box-drawing 乱码；rar 走 bsdtar 输出按 utf-8 解码时 GBK 变
+    「\ufffd」占位。这里做可逆探测：命中 mojibake 特征且 cp437→gbk 可逆
+    还原成功才替换，否则原样返回（避免误伤正常名称）。
+    """
+    if not name:
+        return name
+    # 特征一：CP437 误读 GBK —— 含 box-drawing 区（U+2500–U+257F）等 CP437 图形字符
+    if any("\u2500" <= ch <= "\u257f" for ch in name):
+        try:
+            raw = name.encode("cp437")
+            restored = raw.decode("gbk")
+            # 还原后必须无 \ufffd（gbk 硬解码不会产占位，防御性检查）+ 非空
+            if restored and "\ufffd" not in restored:
+                return restored
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    # 特征二：GBK 被按 utf-8 解码成 \ufffd 占位（rar bsdtar 链路）
+    if "\ufffd" in name:
+        try:
+            restored = name.encode("latin-1", errors="replace").decode("gbk", errors="ignore")
+            if restored and "\ufffd" not in restored and any("\u4e00" <= ch <= "\u9fff" for ch in restored):
+                return restored
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    return name
+
+
+class _ArchiveEntry:
+    """压缩包条目统一抽象（zip / rar 共用循环逻辑）。"""
+
+    __slots__ = ("name", "size", "_read")
+
+    def __init__(self, name: str, size: int | None, read) -> None:
+        self.name = name
+        self.size = size
+        self._read = read
+
+    def read(self) -> bytes:
+        return self._read()
 
 
 def _enqueue_document_process(
@@ -1231,11 +1862,14 @@ def document_processing_timeline(kb_id: str, document_id: str, db: Session = Dep
     ).fetchone()
 
     # ---- wiki 构建任务（WIKI_SKILL_*，task_params.config.knowledge_id 关联） ----
+    # 2026-10-21 性能修复：原 `Job.id.like("WIKI%")` 无 limit 全量拉取全部 WIKI 任务
+    # 逐行 json.loads；改 kb_id 冗余列等值索引收窄（任务量级随 KB 累积而非全局）。
     wiki_state = wiki_job_id = wiki_dur = wiki_err = None
     wiki_jobs = db.execute(
         select(Job.id, Job.task_params, Job.state, Job.duration_ms, Job.error_message)
-        .where(Job.id.like("WIKI%"))
+        .where(Job.id.like("WIKI%"), Job.kb_id == kb_id)
         .order_by(Job.create_time.desc())
+        .limit(2000)
     ).all()
     for jid, tp, st, dur, err in wiki_jobs:
         try:
@@ -1972,6 +2606,85 @@ def download_document(
             },
         )
     raise HTTPException(status_code=404, detail="物理文件缺失")
+
+
+# ---------------------------------------------------------------------------
+# 知识库导出 / 导入（2026-10-21，整库 zip：manifest + 文档原文件）
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{kb_id}/export")
+def export_kb(
+    kb_id: str,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+):
+    """导出整个知识库为 zip（读可见即可；写权限不要求）。
+
+    zip 内容：manifest.json（配置快照 + 文档清单 + 目录树）+ files/（文档原文件，
+    按目录结构摆放）+ wiki/*.md（wiki 页快照，仅供审计参考，导入不恢复——wiki
+    由导入后的构建链重新生成）。切片/向量不携带。
+    """
+    _kb_visible(kb_id, caller, db)
+    from api.services.kb_export import export_kb_zip
+
+    try:
+        data = export_kb_zip(db, kb_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    kb = db.get(KbDatasource, kb_id)
+    fname = f"{kb.name if kb else kb_id}_kb_export.zip"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/zip",
+        headers={"Content-Disposition": _content_disposition(fname)},
+    )
+
+
+@router.post("/import")
+async def import_kb(
+    file: UploadFile,
+    replace: bool = Query(default=False),
+    x_next_identity: str | None = Cookie(default=None, alias="x-next-identity"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """上传知识库导出 zip 并导入（建库 + 文档入上传链）。
+
+    replace=true 覆盖同名库（级联删除旧库内容后按导出配置重建，import 侧不再
+    弹出确认框——前端已做一次确认）。文档解析/摘要/wiki 构建全部走既有链路自动
+    恢复，与上传链路一致。
+    """
+    identity = decode_identity_cookie(x_next_identity or "")
+    if not identity:
+        raise HTTPException(status_code=401, detail="未登录")
+    caller_user_id = identity.user_id if identity else ""
+    caller_team_name = identity.team_name or "" if identity else ""
+    from api.services.scope import is_admin
+
+    is_sys_admin = is_admin(db, caller_user_id) if caller_user_id else False
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="文件内容为空")
+    if len(content) > MAX_IMPORT_UNCOMPRESSED_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"导入包超过大小限制 {MAX_IMPORT_UNCOMPRESSED_BYTES // (1024 * 1024)}MB",
+        )
+    from api.services.kb_export import import_kb_zip
+
+    try:
+        res = import_kb_zip(
+            db,
+            content,
+            caller_user_id=caller_user_id,
+            caller_team_name=caller_team_name,
+            is_sys_admin=is_sys_admin,
+            replace=replace,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "data": res}
 
 
 # 转换后的 DOCX MIME（前端 docx-preview 只认 OOXML）

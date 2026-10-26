@@ -38,6 +38,8 @@ export default function SystemDimsPage() {
   const [pageSize, setPageSize] = useState(20);
   const [filter, setFilter] = useState<{ dimCode?: string; dimGroup?: string }>({});
   const [groupOptions, setGroupOptions] = useState<{ label: string; value: string }[]>([]);
+  // 参数分组下拉选项加载中
+  const [groupOptionsLoading, setGroupOptionsLoading] = useState(false);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState<"create" | "edit">("create");
@@ -82,11 +84,14 @@ export default function SystemDimsPage() {
   }, [load]);
 
   useEffect(() => {
-    void apiListDimGroups().then((res) => {
-      if (res.success) {
-        setGroupOptions((res.data?.items || []).map((g) => ({ label: g, value: g })));
-      }
-    });
+    setGroupOptionsLoading(true);
+    void apiListDimGroups()
+      .then((res) => {
+        if (res.success) {
+          setGroupOptions((res.data?.items || []).map((g) => ({ label: g, value: g })));
+        }
+      })
+      .finally(() => setGroupOptionsLoading(false));
   }, []);
 
   // ---- 筛选（对齐用户管理页：查询/重置仅驱动状态，load 由 effect 触发） ----
@@ -290,6 +295,7 @@ export default function SystemDimsPage() {
               optionFilterProp="label"
               placeholder="请选择参数分组"
               style={{ width: 180 }}
+              loading={groupOptionsLoading}
               options={groupOptions}
             />
           </Form.Item>
@@ -392,7 +398,7 @@ export default function SystemDimsPage() {
           </Form.Item>
 
           <Form.Item name="dim_group" label="参数分组">
-            <ModoSelect placeholder="请选择参数分组" allowClear showSearch optionFilterProp="label" options={groupOptions} />
+            <ModoSelect placeholder="请选择参数分组" allowClear showSearch optionFilterProp="label" loading={groupOptionsLoading} options={groupOptions} />
           </Form.Item>
 
           <Form.Item name="dim_value" label="参数值">
