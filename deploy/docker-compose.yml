@@ -61,6 +61,10 @@ x-api-env: &api-env
     LLM_BASE_URL: ${AI_CHAT_API_ENDPOINT:-}
     LLM_API_KEY: ${AI_CHAT_API_KEY:-}
     LLM_MODEL: ${AI_CHAT_MODEL:-}
+    # 宿主挂载 JWT 换签共享密钥（与 data_supply 的 KB_JWT_SECRET 同值；
+    # 2026-10-26 补注入：此前仅 .env 无此键、容器 env 恒空 → /auth/jwt-exchange
+    # fail-closed「服务端未启用 JWT 认证」→ shandong 302 挂载链路断）
+    JWT_SECRET: ${JWT_SECRET:-}
     # inline=worker 内联 agent（默认）；gateway=回退外部 agent-gateway
     WIKI_AGENT_MODE: ${WIKI_AGENT_MODE:-inline}
     # 技能脚本超时（wiki 构建可能较久）
