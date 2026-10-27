@@ -97,6 +97,15 @@ def main() -> None:
                     db, it["tape_id"], inputs=it["inputs"], env="prod"
                 )
                 rid = created["run_id"]
+                run_env = created.get("run_env") or "prod"
+                # 建行后必须投递 orch 调度中枢（execute_tape 同款），否则 run 永远 queued
+                from worker.celery_app import celery_app
+
+                celery_app.send_task(
+                    "worker.tasks.orch_runner.execute_run",
+                    args=[rid, run_env],
+                    queue="orch",
+                )
                 print(f"[retrigger] 已发起 {label} → new_run={rid[:12]}…")
                 launched += 1
             except ValueError as e:
