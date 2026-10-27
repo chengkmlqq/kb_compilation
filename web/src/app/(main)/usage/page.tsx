@@ -423,10 +423,17 @@ export default function UsagePage() {
               />
             </div>
           </div>
-          {/* 第二行分布：模型 + 操作 */}
+          {/* 第二行分布：模型 + 操作（对齐第一行卡片容器：白底圆角 + 16px padding + 分区标题，
+              与 Token 趋势/知识库消耗分布等宽等高） */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, flexShrink: 0 }}>
-            <DistributionChart title="模型使用分布" data={modelDist} loading={loading} placeholder="暂无分布数据" />
-            <DistributionChart title="操作类型分布" data={operDist} loading={loading} placeholder="暂无分布数据" />
+            <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #E3E9EF", padding: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: "#242E43" }}>模型使用分布</div>
+              <DistributionChart title="" data={modelDist} loading={loading} placeholder="暂无分布数据" />
+            </div>
+            <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #E3E9EF", padding: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: "#242E43" }}>操作类型分布</div>
+              <DistributionChart title="" data={operDist} loading={loading} placeholder="暂无分布数据" />
+            </div>
           </div>
           {/* 明细表（2026-10-21：去掉固定高度限制，表格按内容自然撑开，页面滚动查看） */}
           <div
