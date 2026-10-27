@@ -5321,18 +5321,9 @@ html[data-theme="dark"] .kb-citation-web:hover {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  height: 28px;
-  line-height: 28px;
-  cursor: pointer;
 }
-.kb-kbs-card-footer-right img {
-  width: 18px;
-  height: 18px;
-  cursor: pointer;
-}
-.kb-kbs-card-footer-right img:hover {
-  background: #eff4f9;
-  border-radius: 50%;
+.kb-kbs-card-footer-right .ant-btn-text {
+  color: #4d5e7d;
 }
 
 /* ── 高频词管理页（kb-wk-*，2026-10-20 迁移自 WeKnora wiki/keywords/overview）── */
