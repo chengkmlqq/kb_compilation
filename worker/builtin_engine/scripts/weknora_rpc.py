@@ -147,12 +147,14 @@ DEFAULT_MODEL = _default_model()  # 全技能 LLM 统一默认模型
 
 
 def llm_config():
-    """LLM 统一配置来源：返回 (base_url, api_key)。
+    """LLM 统一配置来源：返回 (base_url, api_key, model_name)。
 
     2026-10-17 改造：**优先使用调用编排时那个知识库绑定的模型**
     （kb_datasource.summary_model_id → kb_model，api_key AES 解密）；
     知识库未绑定则用系统默认 chat 模型（kb_model.is_default=1/state=1）；
     平台不可用才回落 env（历史兜底，不再作为主路径）。
+    2026-10-27 对齐：第三元组 model_name 取 kb_model.name——让 llm_call
+    的请求模型名也跟随知识库绑定模型，与编排 kb_llm_chat 节点行为一致。
     """
     kb = globals().get('KB') or _env('WEKNORA_KB_ID') or ''
     try:
@@ -177,7 +179,8 @@ def llm_config():
                     "select base_url, api_key, name from kb_model where type = 'chat' "
                     "and is_default = 1 and state = '1' order by updated_at desc limit 1")).first()
             if _m and _m[0] and _m[1]:
-                return str(_m[0]).rstrip('/'), decrypt_secret(_m[1])
+                _name = str(_m[2] or '').strip() or DEFAULT_MODEL
+                return str(_m[0]).rstrip('/'), decrypt_secret(_m[1]), _name
         finally:
             _db.close()
     except Exception as _e:  # noqa: BLE001 - 平台模型不可用时回落 env，不中断构建
@@ -199,7 +202,7 @@ def llm_config():
     if '${' in base or '${' in key:
         base = 'https://inferaiapi.com/v1'
         key = ''
-    return base.rstrip('/'), key
+    return base.rstrip('/'), key, DEFAULT_MODEL
 
 
 def api_base_url():
@@ -1530,8 +1533,10 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
     enable_thinking=false 避免 reasoning 耗尽 max_tokens。
     每次调用/重试写入事件 JSONL（WIKI_EVENTS_LOG 或 /tmp/wiki_events_<pid>.jsonl）。
     """
-    base_url, api_key = llm_config()
-    model = model or DEFAULT_MODEL
+    base_url, api_key, kb_model_name = llm_config()
+    # 2026-10-27 对齐：请求模型名跟随知识库绑定模型（kb_model.name），
+    # 未显式指定 model 时不再直接回落 env 的 DEFAULT_MODEL
+    model = model or kb_model_name or DEFAULT_MODEL
 
     # inferaiapi group 限流 ~3 次/分：距上次调用不足 15s 则等待补齐（全局节流，
     # 2026-10-07 25→15s 提速；限流由 llm_call 重试收敛兜底）

@@ -166,7 +166,7 @@ def extract_joint_llm(ls_all, args):
                 raw = wr.llm_call([{'role': 'system', 'content': '你是市场监管法规解析专家，只输出JSON，不要任何思考过程。'},
                                    {'role': 'user', 'content': prompt + '\n\n长句列表：\n' + ls_text},
                                    {'role': 'assistant', 'content': '{"entities": ['}],
-                                  model=args.model or wr.DEFAULT_MODEL, max_tokens=args.max_tokens)
+                                  model=args.model, max_tokens=args.max_tokens)
                 try:
                     obj = json.loads(wr.ensure_full_json('{"entities": [' + raw))
                 except Exception:
@@ -552,7 +552,7 @@ def extract_rules_llm(ls_all, args):
     if args.skip_llm:
         return []
     ls_text = '\n'.join((f"{i + 1}. {item['title']}: {item['text'][:250]}" for i, item in enumerate(ls_all)))
-    result = wr.llm_call([{'role': 'system', 'content': '你是市场监管法规解析专家，只输出JSON。'}, {'role': 'user', 'content': RULE_PROMPT + '\n\n长句列表：\n' + ls_text}], model=args.model or wr.DEFAULT_MODEL, max_tokens=args.max_tokens)
+    result = wr.llm_call([{'role': 'system', 'content': '你是市场监管法规解析专家，只输出JSON。'}, {'role': 'user', 'content': RULE_PROMPT + '\n\n长句列表：\n' + ls_text}], model=args.model, max_tokens=args.max_tokens)
     result = wr.ensure_full_json(result)
     try:
         ents = json.loads(result)
@@ -589,7 +589,7 @@ def extract_biz_llm(ls_all, constraints, args):
             terms_txt = ''
     prompt = BIZ_PROMPT.format(constraints=constraint_text, terms=terms_txt or '- （无）')
     ls_text = '\n'.join((f"{i + 1}. {item['text'][:250]}" for i, item in enumerate(ls_all)))
-    result = wr.llm_call([{'role': 'system', 'content': '你是市场监管法规解析专家，只输出JSON。'}, {'role': 'user', 'content': prompt + '\n\n长句列表：\n' + ls_text}], model=args.model or wr.DEFAULT_MODEL, max_tokens=args.max_tokens)
+    result = wr.llm_call([{'role': 'system', 'content': '你是市场监管法规解析专家，只输出JSON。'}, {'role': 'user', 'content': prompt + '\n\n长句列表：\n' + ls_text}], model=args.model, max_tokens=args.max_tokens)
     result = wr.ensure_full_json(result)
     try:
         ents = json.loads(result)
@@ -619,7 +619,7 @@ def main():
     parser.add_argument('--kb', required=True, help='知识库 ID')
     parser.add_argument('--source-file', default='', help='来源制度原始文件名')
     parser.add_argument('-o', '--output', default='/tmp/entity_slug_map.json', help='entity_slug_map 输出路径')
-    parser.add_argument('--model', default=None, help='LLM 模型名（默认 wr.DEFAULT_MODEL）')
+    parser.add_argument('--model', default=None, help='LLM 模型名（默认取知识库绑定模型，未绑定回落 wr.DEFAULT_MODEL）')
     parser.add_argument('--max-tokens', type=int, default=20000, help='LLM max_tokens')
     parser.add_argument('--terms-file', default=None, help='高频候选术语 JSON（discover_terms.py 输出，注入业务抽取 prompt）')
     parser.add_argument('--skip-llm', action='store_true', help='跳过 LLM 调用（仅建页，需预存 JSON）')

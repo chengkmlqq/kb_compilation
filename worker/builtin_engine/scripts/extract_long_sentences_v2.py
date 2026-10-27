@@ -44,7 +44,7 @@ import time
 # ---- LLM 配置（统一从 weknora_rpc.llm_config() 获取，2026-08-28）----
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import weknora_rpc as wr
-BASE_URL, API_KEY = wr.llm_config()
+BASE_URL, API_KEY, KB_MODEL_NAME = wr.llm_config()
 # relay API flash/pro 默认带 reasoning，必须显式关掉（否则 reasoning 耗尽 max_tokens 致 content 空）
 THINKING_FALSE = {'enable_thinking': False, 'thinking': {'type': 'disabled'}}
 
@@ -279,7 +279,7 @@ def llm_extract_units(sentences, summary, model=None, max_tokens=8000, retries=8
         user_msg += f'【文档摘要】\n{summary}\n\n'
     user_msg += f'【全文句子清单】\n{numbered}'
     payload = {
-        "model": model or wr.DEFAULT_MODEL,
+        "model": model or KB_MODEL_NAME or wr.DEFAULT_MODEL,
         "messages": [{"role": "system", "content": SYSTEM_PROMPT},
                      {"role": "user", "content": user_msg}],
         "temperature": 0.2,
@@ -591,7 +591,7 @@ def main():
     summary_slug = None
     max_full_len = 25000
     max_tokens = 8000
-    model = wr.DEFAULT_MODEL
+    model = KB_MODEL_NAME or wr.DEFAULT_MODEL
     args = sys.argv[2:]
     i = 0
     while i < len(args):
