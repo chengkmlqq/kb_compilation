@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-17T12:00:00.000000",
+ "exportedAt": "2026-10-27T03:46:12.430734",
  "draft": {
   "tapeName": "wiki构建-代码仓库",
   "tapeLabel": "代码仓库 → wiki 构建（代码文件说明/模块索引，2026-10）",
@@ -15,9 +15,9 @@
     "data": {
      "label": "读取代码文件切片",
      "config": {
-      "document_id": "{{document_id}}",
+      "max_chunks": 0,
       "output_var": "chunks",
-      "max_chunks": 0
+      "document_id": "{{document_id}}"
      },
      "stepInst": "kb_read_doc"
     },
@@ -49,10 +49,10 @@
      "config": {
       "prompt": "请阅读下面代码文件的内容，撰写一份面向研发人员的「代码文件说明」，要求：\n1) 该文件的职责与用途；\n2) 关键类、函数、方法及其作用（列出 3-8 个，写清名称与功能）；\n3) 对外依赖与依赖关系（import/require 引用了哪些模块或库）；\n4) 典型用法示例（如适用）；\n5) 注意事项（如适用）。\n输出 markdown 格式，使用小节标题，总篇幅 300-600 字。\n\n文件内容如下：\n\n{{code_md}}",
       "system": "你是一名资深的软件架构师，擅长阅读源代码并撰写清晰的技术文档。直接输出 markdown 说明，不要输出思考过程，不要复述要求，不要输出与你无关的内容。",
-      "output_var": "code_summary",
       "thinking": "disabled",
-      "temperature": 0.2,
-      "max_tokens": 2048
+      "max_tokens": 2048,
+      "output_var": "code_summary",
+      "temperature": 0.2
      },
      "stepInst": "kb_llm_chat"
     },
@@ -82,10 +82,10 @@
     "data": {
      "label": "写代码文件说明Wiki页",
      "config": {
+      "slug": "{{page_slug}}",
       "kb_id": "{{kb_id}}",
       "title": "{{page_title}}",
       "content": "{{page_content}}",
-      "slug": "{{page_slug}}",
       "page_type": "entity"
      },
      "stepInst": "wiki_upsert_page"
@@ -137,6 +137,111 @@
   "execParams": {
    "kb_id": "",
    "document_id": ""
-  }
+  },
+  "steps": [
+   {
+    "step_id": "n1",
+    "step_inst": "kb_read_doc",
+    "step_label": "读取代码文件切片",
+    "step_config": {
+     "max_chunks": 0,
+     "output_var": "chunks",
+     "document_id": "{{document_id}}"
+    },
+    "step_seq": 0,
+    "pre_step_ids": [],
+    "next_step_ids": [
+     "f8a3c0d6ec4e::n2"
+    ],
+    "queue_name": ""
+   },
+   {
+    "step_id": "n2",
+    "step_inst": "script",
+    "step_label": "组装代码上下文",
+    "step_config": {
+     "code": "import re\nchunks = bindings.get('chunks') or []\nsrc = bindings.get('source_file') or bindings.get('doc_name') or ''\nkb_id = bindings.get('kb_id') or ''\nkid = str(bindings.get('kid') or bindings.get('document_id') or '')\next = src.rsplit('.', 1)[-1].lower() if '.' in src else ''\nlang_map = {'py': 'Python', 'java': 'Java', 'js': 'JavaScript', 'ts': 'TypeScript', 'jsx': 'JavaScript', 'tsx': 'TypeScript', 'go': 'Go', 'rs': 'Rust', 'c': 'C', 'h': 'C', 'cpp': 'C++', 'hpp': 'C++', 'cs': 'C#', 'kt': 'Kotlin', 'swift': 'Swift', 'php': 'PHP', 'rb': 'Ruby', 'sh': 'Shell', 'bash': 'Shell', 'zsh': 'Shell', 'sql': 'SQL', 'yaml': 'YAML', 'yml': 'YAML', 'json': 'JSON', 'xml': 'XML', 'html': 'HTML', 'htm': 'HTML', 'css': 'CSS', 'scss': 'SCSS', 'less': 'Less', 'vue': 'Vue', 'proto': 'Protobuf'}\nlang = lang_map.get(ext, ext or '代码')\nlines = ['# 文件 `%s`' % (src or kid), '', '> 语言：%s · 来源：代码仓库' % lang]\nbody = []\nfor c in chunks:\n    t = (c.get('content') or '') if isinstance(c, dict) else str(c or '')\n    if t:\n        body.append(t)\nif body:\n    lines.append('')\n    lines.append('## 源码内容')\n    lines.append('')\n    lines.append('\\n'.join(body))\nbindings['code_md'] = '\\n'.join(lines)\nbindings['code_lang'] = lang"
+    },
+    "step_seq": 1,
+    "pre_step_ids": [
+     "f8a3c0d6ec4e::n1"
+    ],
+    "next_step_ids": [
+     "f8a3c0d6ec4e::n3"
+    ],
+    "queue_name": ""
+   },
+   {
+    "step_id": "n3",
+    "step_inst": "kb_llm_chat",
+    "step_label": "LLM生成代码文件说明",
+    "step_config": {
+     "prompt": "请阅读下面代码文件的内容，撰写一份面向研发人员的「代码文件说明」，要求：\n1) 该文件的职责与用途；\n2) 关键类、函数、方法及其作用（列出 3-8 个，写清名称与功能）；\n3) 对外依赖与依赖关系（import/require 引用了哪些模块或库）；\n4) 典型用法示例（如适用）；\n5) 注意事项（如适用）。\n输出 markdown 格式，使用小节标题，总篇幅 300-600 字。\n\n文件内容如下：\n\n{{code_md}}",
+     "system": "你是一名资深的软件架构师，擅长阅读源代码并撰写清晰的技术文档。直接输出 markdown 说明，不要输出思考过程，不要复述要求，不要输出与你无关的内容。",
+     "thinking": "disabled",
+     "max_tokens": 2048,
+     "output_var": "code_summary",
+     "temperature": 0.2
+    },
+    "step_seq": 2,
+    "pre_step_ids": [
+     "f8a3c0d6ec4e::n2"
+    ],
+    "next_step_ids": [
+     "f8a3c0d6ec4e::n4"
+    ],
+    "queue_name": ""
+   },
+   {
+    "step_id": "n4",
+    "step_inst": "script",
+    "step_label": "拼Wiki正文",
+    "step_config": {
+     "code": "import re\nsrc = bindings.get('source_file') or bindings.get('doc_name') or ''\nkid = str(bindings.get('kid') or bindings.get('document_id') or '')\ntitle = src.rsplit('/', 1)[-1] if src else '代码文件'\nslug = src or kid\nslug = slug.replace('\\\\', '/').replace('/', '-')\nslug = re.sub(r'[^0-9a-zA-Z\\-]', '', slug).strip('-')\nif not slug:\n    slug = 'code-file'\nslug = slug.lower()[:120]\nsummary = bindings.get('code_summary') or ''\nparts = ['# %s' % title, '', '> 文件：`%s` · 语言：%s' % (src or '-', bindings.get('code_lang') or '代码')]\nif summary:\n    parts.append('')\n    parts.append('## 代码说明')\n    parts.append(summary)\nbindings['page_title'] = title\nbindings['page_slug'] = slug\nbindings['page_content'] = '\\n'.join(parts)"
+    },
+    "step_seq": 3,
+    "pre_step_ids": [
+     "f8a3c0d6ec4e::n3"
+    ],
+    "next_step_ids": [
+     "f8a3c0d6ec4e::n5"
+    ],
+    "queue_name": ""
+   },
+   {
+    "step_id": "n5",
+    "step_inst": "wiki_upsert_page",
+    "step_label": "写代码文件说明Wiki页",
+    "step_config": {
+     "slug": "{{page_slug}}",
+     "kb_id": "{{kb_id}}",
+     "title": "{{page_title}}",
+     "content": "{{page_content}}",
+     "page_type": "entity"
+    },
+    "step_seq": 4,
+    "pre_step_ids": [
+     "f8a3c0d6ec4e::n4"
+    ],
+    "next_step_ids": [
+     "f8a3c0d6ec4e::n6"
+    ],
+    "queue_name": ""
+   },
+   {
+    "step_id": "n6",
+    "step_inst": "wiki_rebuild_links",
+    "step_label": "重建互链",
+    "step_config": {
+     "kb_id": "{{kb_id}}"
+    },
+    "step_seq": 5,
+    "pre_step_ids": [
+     "f8a3c0d6ec4e::n5"
+    ],
+    "next_step_ids": [],
+    "queue_name": ""
+   }
+  ]
  }
 }

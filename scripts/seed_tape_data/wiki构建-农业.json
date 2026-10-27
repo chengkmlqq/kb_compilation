@@ -1,6 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
+ "exportedAt": "2026-10-27T03:46:12.467591",
  "draft": {
   "tapeName": "wiki构建-农业",
   "tapeLabel": "农业领域文档转wiki（编排化全链路）",
@@ -503,7 +504,7 @@
     "step_seq": 0,
     "pre_step_ids": [],
     "next_step_ids": [
-     "d16cdba2b8be::n02"
+     "13d223a0f978::n02"
     ],
     "queue_name": "build"
    },
@@ -517,10 +518,10 @@
     },
     "step_seq": 1,
     "pre_step_ids": [
-     "d16cdba2b8be::n01"
+     "13d223a0f978::n01"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n03"
+     "13d223a0f978::n03"
     ],
     "queue_name": "build"
    },
@@ -534,10 +535,10 @@
     },
     "step_seq": 2,
     "pre_step_ids": [
-     "d16cdba2b8be::n02"
+     "13d223a0f978::n02"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n04"
+     "13d223a0f978::n04"
     ],
     "queue_name": "build"
    },
@@ -551,10 +552,10 @@
     },
     "step_seq": 3,
     "pre_step_ids": [
-     "d16cdba2b8be::n03"
+     "13d223a0f978::n03"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n05"
+     "13d223a0f978::n05"
     ],
     "queue_name": "build"
    },
@@ -568,10 +569,10 @@
     },
     "step_seq": 4,
     "pre_step_ids": [
-     "d16cdba2b8be::n04"
+     "13d223a0f978::n04"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n06"
+     "13d223a0f978::n06"
     ],
     "queue_name": "build"
    },
@@ -585,10 +586,10 @@
     },
     "step_seq": 5,
     "pre_step_ids": [
-     "d16cdba2b8be::n05"
+     "13d223a0f978::n05"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n07"
+     "13d223a0f978::n07"
     ],
     "queue_name": "build"
    },
@@ -602,10 +603,10 @@
     },
     "step_seq": 6,
     "pre_step_ids": [
-     "d16cdba2b8be::n06"
+     "13d223a0f978::n06"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n08"
+     "13d223a0f978::n08"
     ],
     "queue_name": "build"
    },
@@ -631,10 +632,10 @@
     },
     "step_seq": 7,
     "pre_step_ids": [
-     "d16cdba2b8be::n07"
+     "13d223a0f978::n07"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n09"
+     "13d223a0f978::n09"
     ],
     "queue_name": "build"
    },
@@ -648,10 +649,10 @@
     },
     "step_seq": 8,
     "pre_step_ids": [
-     "d16cdba2b8be::n08"
+     "13d223a0f978::n08"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n10"
+     "13d223a0f978::n10"
     ],
     "queue_name": "build"
    },
@@ -665,10 +666,10 @@
     },
     "step_seq": 9,
     "pre_step_ids": [
-     "d16cdba2b8be::n09"
+     "13d223a0f978::n09"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n11"
+     "13d223a0f978::n11"
     ],
     "queue_name": "build"
    },
@@ -682,10 +683,10 @@
     },
     "step_seq": 10,
     "pre_step_ids": [
-     "d16cdba2b8be::n10"
+     "13d223a0f978::n10"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n12"
+     "13d223a0f978::n12"
     ],
     "queue_name": "build"
    },
@@ -699,10 +700,10 @@
     },
     "step_seq": 11,
     "pre_step_ids": [
-     "d16cdba2b8be::n11"
+     "13d223a0f978::n11"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n12b"
+     "13d223a0f978::n12b"
     ],
     "queue_name": "build"
    },
@@ -716,10 +717,10 @@
     },
     "step_seq": 12,
     "pre_step_ids": [
-     "d16cdba2b8be::n12"
+     "13d223a0f978::n12"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n13"
+     "13d223a0f978::n13"
     ],
     "queue_name": "build"
    },
@@ -733,10 +734,10 @@
     },
     "step_seq": 13,
     "pre_step_ids": [
-     "d16cdba2b8be::n12b"
+     "13d223a0f978::n12b"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n14"
+     "13d223a0f978::n14"
     ],
     "queue_name": "build"
    },
@@ -750,10 +751,10 @@
     },
     "step_seq": 14,
     "pre_step_ids": [
-     "d16cdba2b8be::n13"
+     "13d223a0f978::n13"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n15"
+     "13d223a0f978::n15"
     ],
     "queue_name": "build"
    },
@@ -767,10 +768,10 @@
     },
     "step_seq": 15,
     "pre_step_ids": [
-     "d16cdba2b8be::n14"
+     "13d223a0f978::n14"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n16"
+     "13d223a0f978::n16"
     ],
     "queue_name": "build"
    },
@@ -784,10 +785,10 @@
     },
     "step_seq": 16,
     "pre_step_ids": [
-     "d16cdba2b8be::n15"
+     "13d223a0f978::n15"
     ],
     "next_step_ids": [
-     "d16cdba2b8be::n17"
+     "13d223a0f978::n17"
     ],
     "queue_name": "build"
    },
@@ -801,7 +802,7 @@
     },
     "step_seq": 17,
     "pre_step_ids": [
-     "d16cdba2b8be::n16"
+     "13d223a0f978::n16"
     ],
     "next_step_ids": [],
     "queue_name": "build"

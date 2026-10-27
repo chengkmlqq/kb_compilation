@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-25T00:00:00.000000",
+ "exportedAt": "2026-10-27T03:46:13.039424",
  "draft": {
   "tapeName": "切片智能增强",
   "tapeLabel": "切片智能增强（LLM 提取切片关键词/问题/摘要，提升检索命中）",
@@ -15,7 +15,7 @@
     "data": {
      "label": "读取文档切片",
      "config": {
-      "code": "\nimport json as _json\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st\n\nDOC = str(bindings.get('document_id') or '').strip()\nif not DOC:\n    raise RuntimeError('缺 document_id')\n\ndb = _gsm()()\ntry:\n    doc = db.execute(_st(\n        \"select file_name, coalesce(summary,''), kb_id from kb_document where id=:i\"\n    ), {'i': DOC}).first()\n    if doc is None:\n        raise RuntimeError('文档不存在: ' + DOC)\n    file_name, summary, kb_id = doc[0] or '', doc[1] or '', doc[2] or ''\n    rows = db.execute(_st(\n        \"select seq, content from doc_chunk where document_id=:i order by seq\"\n    ), {'i': DOC}).all()\n    chunks = [{'seq': int(r[0]), 'content': (r[1] or '')} for r in rows]\nfinally:\n    db.close()\n\nif not chunks:\n    raise RuntimeError('文档无切片: ' + DOC)\n\nbindings['doc_title'] = file_name\nbindings['doc_summary'] = summary\nbindings['chunks'] = chunks\nbindings['chunk_count'] = len(chunks)\nprint('[n1] 切片 %d 份, 标题=%s, 摘要 %d 字' % (len(chunks), file_name[:40], len(summary)))\n\n# 文档级提取 prompt（n2 kb_llm_chat 用）：与 kw_prompt/q_prompt 同构，\n# 修复 {{doc_extract_prompt}} 无节点设置 → 模板残留字面量 → 二次执行降级空产物\n_parts = [\n    '你是文档增强提取器。从下面的文档中提取关键信息。',\n    '要求：',\n    '1. keywords：文档核心关键词数组（5-10 个，优先专有名词/技术术语/业务实体）；',\n    '2. summary：80-120 字的文档摘要。',\n    '只输出要求的 JSON 对象，禁止输出思考过程、解释、代码块标记或任何额外文字。',\n    '',\n    '文档标题：' + file_name,\n]\nif summary:\n    _parts.append('文档摘要：' + summary)\n_parts.append('')\n_parts.append('文档内容：')\n_parts.append('\\n'.join(c['content'] for c in chunks)[:12000])\n_parts.append('')\n_parts.append('只输出 JSON 对象：{\"keywords\": [\"关键词1\", ...], \"summary\": \"摘要\"}')\nbindings['doc_extract_prompt'] = '\\n'.join(_parts)\n"
+      "code": "\nimport json as _json\nfrom api.db import get_sessionmaker as _gsm\nfrom sqlalchemy import text as _st\n\nDOC = str(bindings.get('document_id') or '').strip()\nif not DOC:\n    raise RuntimeError('缺 document_id')\n\ndb = _gsm()()\ntry:\n    doc = db.execute(_st(\n        \"select file_name, coalesce(summary,''), kb_id from kb_document where id=:i\"\n    ), {'i': DOC}).first()\n    if doc is None:\n        raise RuntimeError('文档不存在: ' + DOC)\n    file_name, summary, kb_id = doc[0] or '', doc[1] or '', doc[2] or ''\n    rows = db.execute(_st(\n        \"select seq, content from doc_chunk where document_id=:i order by seq\"\n    ), {'i': DOC}).all()\n    chunks = [{'seq': int(r[0]), 'content': (r[1] or '')} for r in rows]\nfinally:\n    db.close()\n\nif not chunks:\n    raise RuntimeError('文档无切片: ' + DOC)\n\nbindings['doc_title'] = file_name\nbindings['doc_summary'] = summary\nbindings['chunks'] = chunks\nbindings['chunk_count'] = len(chunks)\nprint('[n1] 切片 %d 份, 标题=%s, 摘要 %d 字' % (len(chunks), file_name[:40], len(summary)))\n"
      }
     },
     "type": "custom",
@@ -33,9 +33,9 @@
       "prompt": "{{doc_extract_prompt}}",
       "system": "你是文档增强提取器。只输出要求的 JSON 对象，禁止输出思考过程、解释、代码块标记或任何额外文字。",
       "thinking": "disabled",
+      "json_mode": true,
       "max_tokens": "1024",
       "output_var": "doc_meta",
-      "json_mode": true,
       "temperature": "0.2"
      }
     },
@@ -97,11 +97,11 @@
       "prompt": "{{kw_prompt}}",
       "system": "你是切片关键词提取器。只输出要求的 JSON 数组，禁止输出思考过程、解释、代码块标记或任何额外文字。",
       "thinking": "disabled",
+      "json_mode": true,
       "max_tokens": "1024",
       "output_var": "chunk_kw_llm",
-      "json_mode": true,
-      "temperature": "0.2",
-      "skip_empty": true
+      "skip_empty": true,
+      "temperature": "0.2"
      }
     },
     "type": "custom",
@@ -133,11 +133,11 @@
       "prompt": "{{q_prompt}}",
       "system": "你是问题生成器。只输出要求的 JSON 数组，禁止输出思考过程、解释、代码块标记或任何额外文字。",
       "thinking": "disabled",
+      "json_mode": true,
       "max_tokens": "1024",
       "output_var": "chunk_q_llm",
-      "json_mode": true,
-      "temperature": "0.2",
-      "skip_empty": true
+      "skip_empty": true,
+      "temperature": "0.2"
      }
     },
     "type": "custom",
@@ -228,7 +228,7 @@
     "step_seq": 0,
     "pre_step_ids": [],
     "next_step_ids": [
-     "n2"
+     "2e3d2d5acb8e::n2"
     ],
     "queue_name": "default"
    },
@@ -241,17 +241,17 @@
      "prompt": "{{doc_extract_prompt}}",
      "system": "你是文档增强提取器。只输出要求的 JSON 对象，禁止输出思考过程、解释、代码块标记或任何额外文字。",
      "thinking": "disabled",
+     "json_mode": true,
      "max_tokens": "1024",
      "output_var": "doc_meta",
-     "json_mode": true,
      "temperature": "0.2"
     },
     "step_seq": 1,
     "pre_step_ids": [
-     "n1"
+     "2e3d2d5acb8e::n1"
     ],
     "next_step_ids": [
-     "n3"
+     "2e3d2d5acb8e::n3"
     ],
     "queue_name": "default"
    },
@@ -264,10 +264,10 @@
     },
     "step_seq": 2,
     "pre_step_ids": [
-     "n2"
+     "2e3d2d5acb8e::n2"
     ],
     "next_step_ids": [
-     "n4"
+     "2e3d2d5acb8e::n4"
     ],
     "queue_name": "default"
    },
@@ -281,10 +281,10 @@
     },
     "step_seq": 3,
     "pre_step_ids": [
-     "n3"
+     "2e3d2d5acb8e::n3"
     ],
     "next_step_ids": [
-     "n4a"
+     "2e3d2d5acb8e::n4a"
     ],
     "queue_name": "default"
    },
@@ -297,10 +297,10 @@
     },
     "step_seq": 4,
     "pre_step_ids": [
-     "n4"
+     "2e3d2d5acb8e::n4"
     ],
     "next_step_ids": [
-     "n4b"
+     "2e3d2d5acb8e::n4b"
     ],
     "queue_name": "default"
    },
@@ -313,18 +313,18 @@
      "prompt": "{{kw_prompt}}",
      "system": "你是切片关键词提取器。只输出要求的 JSON 数组，禁止输出思考过程、解释、代码块标记或任何额外文字。",
      "thinking": "disabled",
+     "json_mode": true,
      "max_tokens": "1024",
      "output_var": "chunk_kw_llm",
-     "json_mode": true,
-     "temperature": "0.2",
-     "skip_empty": true
+     "skip_empty": true,
+     "temperature": "0.2"
     },
     "step_seq": 5,
     "pre_step_ids": [
-     "n4a"
+     "2e3d2d5acb8e::n4a"
     ],
     "next_step_ids": [
-     "n4c"
+     "2e3d2d5acb8e::n4c"
     ],
     "queue_name": "default"
    },
@@ -337,10 +337,10 @@
     },
     "step_seq": 6,
     "pre_step_ids": [
-     "n4b"
+     "2e3d2d5acb8e::n4b"
     ],
     "next_step_ids": [
-     "n4d"
+     "2e3d2d5acb8e::n4d"
     ],
     "queue_name": "default"
    },
@@ -353,18 +353,18 @@
      "prompt": "{{q_prompt}}",
      "system": "你是问题生成器。只输出要求的 JSON 数组，禁止输出思考过程、解释、代码块标记或任何额外文字。",
      "thinking": "disabled",
+     "json_mode": true,
      "max_tokens": "1024",
      "output_var": "chunk_q_llm",
-     "json_mode": true,
-     "temperature": "0.2",
-     "skip_empty": true
+     "skip_empty": true,
+     "temperature": "0.2"
     },
     "step_seq": 7,
     "pre_step_ids": [
-     "n4c"
+     "2e3d2d5acb8e::n4c"
     ],
     "next_step_ids": [
-     "n4e"
+     "2e3d2d5acb8e::n4e"
     ],
     "queue_name": "default"
    },
@@ -377,7 +377,7 @@
     },
     "step_seq": 8,
     "pre_step_ids": [
-     "n4d"
+     "2e3d2d5acb8e::n4d"
     ],
     "next_step_ids": [],
     "queue_name": "default"

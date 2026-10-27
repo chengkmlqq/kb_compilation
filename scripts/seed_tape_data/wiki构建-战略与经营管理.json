@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-20T23:15:47.411858",
+ "exportedAt": "2026-10-27T03:46:12.699966",
  "draft": {
   "tapeName": "wiki构建-战略与经营管理",
   "tapeLabel": "战略与经营管理文档转wiki（编排化全链路）",

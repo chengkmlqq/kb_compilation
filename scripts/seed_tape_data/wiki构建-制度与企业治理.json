@@ -1,7 +1,7 @@
 {
  "type": "kb.orchestration.draft",
  "schemaVersion": 1,
- "exportedAt": "2026-10-20T23:15:47.378977",
+ "exportedAt": "2026-10-27T03:46:12.516663",
  "draft": {
   "tapeName": "wiki构建-制度与企业治理",
   "tapeLabel": "制度与企业治理文档转wiki（编排化全链路）",
