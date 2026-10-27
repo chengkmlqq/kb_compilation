@@ -47,6 +47,7 @@ if SD not in sys.path:
     sys.path.insert(0, SD)
 os.environ.setdefault('KB_API_BASE_URL', 'http://api-server:8000')
 import weknora_rpc as wr
+import reg_cache as rc
 G['wr'] = wr
 G['bindings'] = bindings
 G['context'] = context
@@ -69,8 +70,7 @@ G['_src'] = _src
 # n03: 初始化 + 切片拉取清洗
 # ─────────────────────────────────────────────────────────────────────
 CODE_INIT_CHUNKS = WR_HEAD + '''
-DIR = f"/tmp/reg_{_kid[:8]}"
-os.makedirs(DIR, exist_ok=True)
+DIR = f"reg-cache/reg_{_kid[:8]}"
 if not _kid:
     raise ValueError("缺少 kid")
 chunks = []
@@ -93,10 +93,8 @@ for c in chunks:
     cleaned.append('\\n'.join(lines))
 full_text = '\\n\\n'.join(cleaned).strip()
 chunk_count = len(chunks)
-with open(f"{DIR}/chunks.json", 'w', encoding='utf-8') as f:
-    json.dump([{'content': c} for c in cleaned], f, ensure_ascii=False)
-with open(f"{DIR}/fulltext.txt", 'w', encoding='utf-8') as f:
-    f.write(full_text)
+rc.write_json(DIR, 'chunks.json', [{'content': c} for c in cleaned])
+rc.write_text(DIR, 'fulltext.txt', full_text)
 bindings['chunk_count'] = chunk_count
 bindings['full_text_len'] = len(full_text)
 bindings['reg_dir'] = DIR
@@ -107,7 +105,7 @@ print(f"[n03] chunks={chunk_count} full_text={len(full_text)}字 → {DIR}")
 # n04: 门禁
 # ─────────────────────────────────────────────────────────────────────
 CODE_GATE = WR_HEAD + '''
-DIR = bindings.get('reg_dir', f"/tmp/reg_{_kid[:8]}")
+DIR = bindings.get('reg_dir', f"reg-cache/reg_{_kid[:8]}")
 cc = int(bindings.get('chunk_count', 0) or 0)
 if cc <= 0:
     raise RuntimeError(f"切片缺失（chunks={cc}），禁止自行恢复，阻断构建")
@@ -118,8 +116,7 @@ print(f"[n04] 门禁通过：chunks={cc}")
 # n05: 建法规目录树
 # ─────────────────────────────────────────────────────────────────────
 CODE_DIRS = WR_HEAD + '''
-DIR = bindings.get('reg_dir', f"/tmp/reg_{_kid[:8]}")
-os.makedirs(DIR, exist_ok=True)
+DIR = bindings.get('reg_dir', f"reg-cache/reg_{_kid[:8]}")
 
 def _clean(fname):
     fn = re.sub(r'\\.(docx|doc|pdf|xlsx|xls)$', '', fname)
@@ -172,8 +169,7 @@ for oname, out_key, cats in [("业务本体", "biz", biz_cats), ("规则本体",
         cat_ids[out_key][cat] = ensure_folder(cat, onto_id)
 cat_ids["biz_short"] = {c.split('-', 1)[1]: c for c in biz_cats}
 cat_ids["rule_short"] = {c.split('-', 1)[1]: c for c in rule_cats}
-with open(f"{DIR}/catids.json", 'w', encoding='utf-8') as f:
-    json.dump(cat_ids, f, ensure_ascii=False, indent=2)
+rc.write_json(DIR, 'catids.json', cat_ids)
 bindings['root_id'] = root_id
 bindings['leaf'] = leaf
 bindings['cat_ids'] = cat_ids
@@ -202,9 +198,8 @@ except Exception as _e:
 # n06: 摘要生成 + 摘要页
 # ─────────────────────────────────────────────────────────────────────
 CODE_SUMMARY = WR_HEAD + '''
-DIR = bindings.get('reg_dir', f"/tmp/reg_{_kid[:8]}")
-with open(f"{DIR}/fulltext.txt", encoding='utf-8') as f:
-    full_text = f.read()
+DIR = bindings.get('reg_dir', f"reg-cache/reg_{_kid[:8]}")
+full_text = rc.read_text(DIR, 'fulltext.txt')
 md5_kid = hashlib.md5(_kid.encode()).hexdigest()
 slug = f"summary/{md5_kid}"
 title = os.path.splitext(_src or _doc)[0]
@@ -283,9 +278,8 @@ print(f"[n06] 摘要页已建 {slug} ({len(content)}字)")
 # n07: 长句抽取（程序切句 + LLM 归组 + 回填 + 校验 + 渲染 content）
 # ─────────────────────────────────────────────────────────────────────
 CODE_LONGSENT = WR_HEAD + '''
-DIR = bindings.get('reg_dir', f"/tmp/reg_{_kid[:8]}")
-with open(f"{DIR}/chunks.json", encoding='utf-8') as f:
-    chunks = json.load(f)
+DIR = bindings.get('reg_dir', f"reg-cache/reg_{_kid[:8]}")
+chunks = rc.read_json(DIR, 'chunks.json')
 full_text = '\\n'.join(c.get('content', '') for c in chunks)
 
 def norm(t):
@@ -432,8 +426,7 @@ for c in results:
     slug = f"longsentence/{kid_prefix}-{c['md5_text']}"
     ls_all.append({'title': c['title'], 'text': c['text'], 'summary': c['summary'],
                    'slug': slug, 'content': content, 'source_refs': [f"{_kid}|{_src or _doc}"]})
-with open(f"{DIR}/ls_all.json", 'w', encoding='utf-8') as f:
-    json.dump(ls_all, f, ensure_ascii=False, indent=2)
+rc.write_json(DIR, 'ls_all.json', ls_all)
 bindings['ls_count'] = len(ls_all)
 print(f"[n07] 长句抽取完成：{len(ls_all)} 个单元 → {DIR}/ls_all.json")
 '''
@@ -442,9 +435,8 @@ print(f"[n07] 长句抽取完成：{len(ls_all)} 个单元 → {DIR}/ls_all.json
 # n09: 高频词发现（统计层）
 # ─────────────────────────────────────────────────────────────────────
 CODE_TERMS = WR_HEAD + '''
-DIR = bindings.get('reg_dir', f"/tmp/reg_{_kid[:8]}")
-with open(f"{DIR}/ls_all.json", encoding='utf-8') as f:
-    ls_all = json.load(f)
+DIR = bindings.get('reg_dir', f"reg-cache/reg_{_kid[:8]}")
+ls_all = rc.read_json(DIR, 'ls_all.json')
 STOPWORDS = set('的 了 在 是 有 为 与 和 或 及 被 把 从 以 对 于 到 让 由 向 将 并 而 但 可 如 若 且 该 其 这 那 所 各 每 按 应 当 须 需 请 能 要 会 已 正 不 未 非 无 上 下 中 外 内 前 后 之 等 得 进行 相关 按照 根据 通过 以及 或者 应当 必须 不得 可以 用于 包括 属于 低于 高于 超过 以上 以下 法规 法律 行政法规 部门规章 办法 条例 规定 细则 规章 制度 施行 修订 公布 实施 废止 部门 单位 机关 机构 人员 工作 情况 内容 时间 期限 范围 结果 事项 活动 环节 流程 阶段 责任 义务 权利 行为 标准 要求 程序 监督管理 处罚'.split())
 TAIL_STOP = set('的 了 是 在 和 与 及 或 之 所 等 以 于 对 为 从 到 向 将 应 当 须 需 能 要 会 已 未 非')
 HEAD_STOP = set('如 该 此 若 且 其 这 那 所 各 每 按 应 当 须 需 请 能 要 会 已 正 不 未 非 无 上 下 中 外 内 前 后 之 以 为 由 于 而 但 可 将 并 被 把 让 向 从 对 到 是 有 和 与 或 及 也 又 才 就 都 还 再 只 即 则')
@@ -520,8 +512,7 @@ for c in candidates:
     keep.append(c)
 keep.sort(key=lambda x: -x['score'])
 terms = keep[:50]
-with open(f"{DIR}/terms.json", 'w', encoding='utf-8') as f:
-    json.dump(terms, f, ensure_ascii=False, indent=2)
+rc.write_json(DIR, 'terms.json', terms)
 bindings['term_count'] = len(terms)
 print(f"[n09] 新词发现：{len(terms)} 个候选")
 '''
@@ -551,14 +542,11 @@ FILTER_PROMPT = """你是市场监管法规知识库的术语筛选专家。以�
 # n11: 关键词过滤应用 + 关键词页建页（创建即合并）
 # ─────────────────────────────────────────────────────────────────────
 CODE_KW_PAGES = WR_HEAD + '''
-DIR = bindings.get('reg_dir', f"/tmp/reg_{_kid[:8]}")
-with open(f"{DIR}/terms.json", encoding='utf-8') as f:
-    terms = json.load(f)
+DIR = bindings.get('reg_dir', f"reg-cache/reg_{_kid[:8]}")
+terms = rc.read_json(DIR, 'terms.json')
 decisions = {}
-dec_path = f"{DIR}/terms_filtered_decisions.json"
-if os.path.exists(dec_path):
-    with open(dec_path, encoding='utf-8') as f:
-        dec_list = json.load(f)
+if rc.exists(DIR, 'terms_filtered_decisions.json'):
+    dec_list = rc.read_json(DIR, 'terms_filtered_decisions.json')
     for d in dec_list:
         w = (d.get('word') or '').strip()
         if w:
@@ -579,8 +567,7 @@ kept = [t for t in terms
         and not is_junk_word(t.get('word', ''))
         and t.get('word', '') not in COMMON_WORDS]
 top = kept[:15]
-with open(f"{DIR}/terms_filtered.json", 'w', encoding='utf-8') as f:
-    json.dump(top, f, ensure_ascii=False, indent=2)
+rc.write_json(DIR, 'terms_filtered.json', top)
 
 def canonicalize(name):
     name = re.sub('[（(][^）)]*[）)]', '', name or '').strip()
@@ -612,8 +599,7 @@ def _ls_snippet(ls, w, pad=60):
 def bookname(name):
     return name if name.startswith('《') and name.endswith('》') else f"《{name}》"
 
-with open(f"{DIR}/ls_all.json", encoding='utf-8') as f:
-    ls_all = json.load(f)
+ls_all = rc.read_json(DIR, 'ls_all.json')
 # 注册表：全量拉取新规范 frequent_keyword 页
 reg = {}
 page_no = 1
@@ -729,15 +715,12 @@ print(f"[n11] 关键词页：created={kw_created} merged={kw_merged}（候选池
 # n12: 实体+规则联合抽取（LLM 分批 + canonicalize 去重）
 # ─────────────────────────────────────────────────────────────────────
 CODE_JOINT = WR_HEAD + '''
-DIR = bindings.get('reg_dir', f"/tmp/reg_{_kid[:8]}")
-with open(f"{DIR}/ls_all.json", encoding='utf-8') as f:
-    ls_all = json.load(f)
+DIR = bindings.get('reg_dir', f"reg-cache/reg_{_kid[:8]}")
+ls_all = rc.read_json(DIR, 'ls_all.json')
 terms_txt = ''
-tf = f"{DIR}/terms_filtered.json"
-if os.path.exists(tf):
+if rc.exists(DIR, 'terms_filtered.json'):
     try:
-        with open(tf, encoding='utf-8') as f:
-            tlist = json.load(f)
+        tlist = rc.read_json(DIR, 'terms_filtered.json')
         terms_txt = '\\n'.join(f"- {t.get('word', '')}" for t in tlist[:50] if t.get('word'))
     except Exception:
         terms_txt = ''
@@ -830,8 +813,7 @@ biz_entities = [{'name': v['name'], 'category': v['category'],
                 for v in biz_by_canon.values()]
 if failed:
     print(f"  ⚠️ 联合抽取 {len(failed)}/{total_batches} 批失败: {failed}（规则由 n12b 补抽兜底）")
-with open(f"{DIR}/esm.json", 'w', encoding='utf-8') as f:
-    json.dump({'biz': biz_entities, 'rules': rule_entities}, f, ensure_ascii=False, indent=2)
+rc.write_json(DIR, 'esm.json', {'biz': biz_entities, 'rules': rule_entities})
 bindings['biz_count'] = len(biz_entities)
 bindings['rule_count'] = len(rule_entities)
 print(f"[n12] 联合抽取：业务实体 {len(biz_entities)} / 规则 {len(rule_entities)}")
@@ -841,11 +823,9 @@ print(f"[n12] 联合抽取：业务实体 {len(biz_entities)} / 规则 {len(rule
 # n12b: 规则为 0 时补抽（并入 n12 后置判断，若规则=0 单独补抽）
 # ─────────────────────────────────────────────────────────────────────
 CODE_RULES_BACKFILL = WR_HEAD + '''
-DIR = bindings.get('reg_dir', f"/tmp/reg_{_kid[:8]}")
-with open(f"{DIR}/ls_all.json", encoding='utf-8') as f:
-    ls_all = json.load(f)
-with open(f"{DIR}/esm.json", encoding='utf-8') as f:
-    esm = json.load(f)
+DIR = bindings.get('reg_dir', f"reg-cache/reg_{_kid[:8]}")
+ls_all = rc.read_json(DIR, 'ls_all.json')
+esm = rc.read_json(DIR, 'esm.json')
 RULE_CAT_SHORT = {'定义规则': '1-定义规则', '条件规则': '2-条件规则', '约束规则': '3-约束规则',
                   '职责规则': '4-职责规则', '审批规则': '5-审批规则', '流程规则': '6-流程规则',
                   '引用规则': '7-引用规则', '例外规则': '8-例外规则', '处罚规则': '9-处罚规则',
@@ -893,8 +873,7 @@ for batch_start in range(0, len(ls_all), 10):
     except Exception as e:
         print(f"  规则补抽批 {batch_start//10 + 1} 失败: {e}")
 esm['rules'] = rules
-with open(f"{DIR}/esm.json", 'w', encoding='utf-8') as f:
-    json.dump(esm, f, ensure_ascii=False, indent=2)
+rc.write_json(DIR, 'esm.json', esm)
 bindings['rule_count'] = len(rules)
 print(f"[n12b] 规则补抽完成：+{added} → 共 {len(rules)} 条")
 '''
@@ -903,13 +882,10 @@ print(f"[n12b] 规则补抽完成：+{added} → 共 {len(rules)} 条")
 # n13: 规则实体页建页
 # ─────────────────────────────────────────────────────────────────────
 CODE_RULE_PAGES = WR_HEAD + '''
-DIR = bindings.get('reg_dir', f"/tmp/reg_{_kid[:8]}")
-with open(f"{DIR}/ls_all.json", encoding='utf-8') as f:
-    ls_all = json.load(f)
-with open(f"{DIR}/esm.json", encoding='utf-8') as f:
-    esm = json.load(f)
-with open(f"{DIR}/catids.json", encoding='utf-8') as f:
-    cat_data = json.load(f)
+DIR = bindings.get('reg_dir', f"reg-cache/reg_{_kid[:8]}")
+ls_all = rc.read_json(DIR, 'ls_all.json')
+esm = rc.read_json(DIR, 'esm.json')
+cat_data = rc.read_json(DIR, 'catids.json')
 RULE_CAT_SHORT = {'定义规则': '1-定义规则', '条件规则': '2-条件规则', '约束规则': '3-约束规则',
                   '职责规则': '4-职责规则', '审批规则': '5-审批规则', '流程规则': '6-流程规则',
                   '引用规则': '7-引用规则', '例外规则': '8-例外规则', '处罚规则': '9-处罚规则',
@@ -1076,13 +1052,10 @@ print(f"[n13] 规则页：created={created} skipped={skipped} errors={errors}")
 # n14: 业务实体页建页（注册表合并 + 关键规则/关联实体）
 # ─────────────────────────────────────────────────────────────────────
 CODE_BIZ_PAGES = WR_HEAD + '''
-DIR = bindings.get('reg_dir', f"/tmp/reg_{_kid[:8]}")
-with open(f"{DIR}/ls_all.json", encoding='utf-8') as f:
-    ls_all = json.load(f)
-with open(f"{DIR}/esm.json", encoding='utf-8') as f:
-    esm = json.load(f)
-with open(f"{DIR}/catids.json", encoding='utf-8') as f:
-    cat_data = json.load(f)
+DIR = bindings.get('reg_dir', f"reg-cache/reg_{_kid[:8]}")
+ls_all = rc.read_json(DIR, 'ls_all.json')
+esm = rc.read_json(DIR, 'esm.json')
+cat_data = rc.read_json(DIR, 'catids.json')
 BIZ_CAT_SHORT = {'法律法规': '1-法律法规', '监管对象': '2-监管对象', '许可事项': '3-许可事项',
                  '违法行为': '4-违法行为', '行政处罚': '5-行政处罚', '监管职责': '6-监管职责',
                  '标准规范': '7-标准规范', '程序事项': '8-程序事项', '时限要求': '9-时限要求'}
@@ -1387,7 +1360,7 @@ print(f"[n14] 业务实体页：created={created} merged={merged} skipped={skipp
 # n15: 图谱写入（Neo4j，平台无端点则跳过不中断）
 # ─────────────────────────────────────────────────────────────────────
 CODE_GRAPH = WR_HEAD + '''
-DIR = bindings.get('reg_dir', f"/tmp/reg_{_kid[:8]}")
+DIR = bindings.get('reg_dir', f"reg-cache/reg_{_kid[:8]}")
 try:
     import graph_export
     st = graph_export.export_doc(_kid, wr.KB, _src or None, quiet=True)
@@ -1473,7 +1446,7 @@ except Exception as _e2:
 if str(bindings.get('skip_final', 'false')).lower() == 'true':
     print("[n16] skip_final=true，跳过全库合并+链接重建（批次末统一执行）")
     raise SystemExit(0)
-DIR = bindings.get('reg_dir', f"/tmp/reg_{_kid[:8]}")
+DIR = bindings.get('reg_dir', f"reg-cache/reg_{_kid[:8]}")
 try:
     import merge_duplicate_entities as mde
     import importlib

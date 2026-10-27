@@ -2,7 +2,42 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-26（切片智能增强遗留缺陷修复 + 测试补全）
+最后更新：2026-10-27（wiki构建 tape 中间产物迁移 MinIO reg_cache + 失败文档重发准备）
+
+## 51. 当前状态（2026-10-27 wiki构建 中间产物 /tmp → MinIO reg_cache 迁移）
+
+- **问题**：济南市监局知识库（kb_id abbf0b4e…）大量文档构建失败，报
+  `FileNotFoundError: /tmp/reg_<kid8>/fulltext.txt`。根因：wiki构建-* 编排脚本节点
+  用容器本地 /tmp/reg_<kid8>/ 传中间产物（chunks.json/fulltext.txt/ls_all.json/
+  terms.json/terms_filtered*.json/esm.json/catids.json），容器重建即丢失（10-24/25/26
+  三次重启窗口），在途/恢复 run 后续节点读不到前面节点写的产物 → 批量 failed。
+  全库 883 个此类失败 run（该 KB 434 个，去重 461 个文档）；另 10-26 22:00 批次出现
+  独立问题：LLM 403/401（系统默认构建模型 deepseek-v4-pro 的 inferaiapi key 失效，
+  实测 INVALID_API_KEY，用户负责换 key）。
+- **修复（代码层）**：
+  1. `scripts/migrate_wiki_tape_reg_cache.py`（新）：把 22 个 wiki构建 种子 JSON
+     （nodes 设计层 + steps 执行层）+ `scripts/build_regulation_wiki_tape.py` 生成器的
+     内联 code 统一改写：DIR 路径字面量 → `reg-cache/reg_<kid8>`（MinIO 前缀）、
+     本地 open()/os.path.exists → rc.读写/rc.exists、删除 os.makedirs、注入
+     `import reg_cache as rc`。`--check` 只校验不改写；`scripts/_ast_check.py`（新）
+     提供全 code 语法校验。
+  2. 线上 tape 重灌：`scripts/apply_wiki_tape_reg_cache.py`（新，容器内跑）按
+     seed_tape_data/wiki构建-*.json 重建 21 条领域 wiki构建 编排的
+     nodes/edges/exec_params + kb_tape_step（step id 前缀=tape_id[:12] 不变，拓扑
+     pre/next 不变，仅 step_config.code 换新，在途 run 不受影响）；已对线上全部
+     21 条执行（reg_cache=True 确认）。
+- **验证**：worker 容器内用真实 kid 跑迁移后 n03（61 chunks/3970 字写入
+  MinIO reg-cache/reg_ce5d81db/），并在不同容器（kb-celery-worker）用 n06 code 读回
+  成功——即容器重建后中间产物不丢。冒烟产物已清理。test_orch_job_status_sync 5 passed。
+- **重发准备（等 LLM key）**：`scripts/retrigger_wiki_build_failed.py`（新，容器内跑）
+  按失败 run 的 bindings.kid 去重重发 wiki构建（--kb 必填，--include-403 纳入 LLM 类，
+  --dry-run 只统计）；dry-run 已确认 478 个待重发（/tmp 类 461 + 403 类 5 + 孤儿 12）。
+  `scripts/stale_run_cleanup.py`（新）把该 KB 24h+ 未推进的 queued/running 孤儿 run
+  置 failed（已执行，19 个），释放防重 guard。
+- **待办**：① 用户换好 inferaiapi key（当前仍 401）后，在 api-server 容器内跑
+  `python /tmp/retrigger_wiki_build_failed.py --kb abbf0b4e0c3f41faaab8a3dd8180e1fd --include-403`
+  全量重发 478 个文档；② 注意 other 类 175 个失败（n08 wiki_publish 退出码 2、
+  n14 锁超时 1205、HTTP 4/5xx）与本次迁移无关，属另一批并发/资源问题，未处理。
 
 ## 50. 当前状态（2026-10-26 切片增强 seed 遗留缺陷修复 + 测试回归护栏）
 
