@@ -320,6 +320,9 @@ def create_kb(
         vector_store_id=vector_store_id,
         scope=scope or "system",
         team_name=team_name,
+        owner_team_name=team_name,  # 2026-10-28 修复: scope.py 的 can_see/can_manage/visible_clauses
+        # 全部读 owner_team_name 列,此前 create_kb 只写 team_name 列 → team 库校验恒落空
+        # (上传/详情/列表均 404/403)。两列同步写入,数据迁移见 2026-10-28 修复说明。
         owner_user_id=owner_user_id,
         created_by=created_by,
         build_tape_id=build_tape_id,
