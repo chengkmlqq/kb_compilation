@@ -39,6 +39,22 @@
   全量重发 478 个文档；② 注意 other 类 175 个失败（n08 wiki_publish 退出码 2、
   n14 锁超时 1205、HTTP 4/5xx）与本次迁移无关，属另一批并发/资源问题，未处理。
 
+## 51b. 跟进（2026-10-27 同日 11:30）：key 误判澄清 + 478 个重发已发起
+
+- **LLM key 误判澄清**：先前实测 401 是错误方法——直接拿 kb_model.api_key 的
+  **AES 密文**当 key 请求（llm_config() 实际用 decrypt_secret() 解密后才用）。
+  按真实路径（知识库绑定模型 3bc35b89…/deepseek-v4-pro，用户已换 key，
+  updated_at=02:26:52）实测 **LIVE 200**，key 有效，LLM 链路正常。
+- **重发执行**：`retrigger_wiki_build_failed.py --kb abbf0b4e… --include-403` 发起
+  478 个；发现 v1 脚本只建 kb_tape_run 行**漏投 orch 队列** → run 卡 queued，
+  已修复（补 send_task execute_run → orch）+ 新增 `redispatch_queued_runs.py`
+  对已建行未投递的 run 补投（475 个已补，幂等）；commit e9a8580 已推送。
+- **执行中**：478 个全部进入 running（并发 475），样本 n01~n05 跑通（n03 写 MinIO
+  产物验证链路），0 failed。17 节点长流程（多轮 LLM），预计数十分钟~数小时消化，
+  后台 watch 脚本监控（每 5min 打点，终态后汇总失败原因）。
+- **提示**：pytest 全量 939 passed / 12 failed，12 个失败为**既有环境问题**
+  （缺 DATABASE_URL 等变量，stash 对比确认与本次改动无关）。
+
 ## 50. 当前状态（2026-10-26 切片增强 seed 遗留缺陷修复 + 测试回归护栏）
 
 - **修复**：`scripts/seed_tape_data/切片智能增强.json` 的 n1 脚本补 `doc_extract_prompt`
