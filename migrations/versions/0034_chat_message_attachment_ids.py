@@ -13,7 +13,16 @@ branch_labels = None
 depends_on = None
 
 
+def _column_exists(table: str, column: str) -> bool:
+    insp = sa.inspect(op.get_bind())
+    return column in [c["name"] for c in insp.get_columns(table)]
+
+
 def upgrade() -> None:
+    # 2026-10-26 守卫：空库自举时 create_all 已用最新 ORM 模型建表（含 attachment_ids），
+    # 无守卫 add_column 会 1060 Duplicate column → 迁移中断 → 容器重启循环。
+    if _column_exists("chat_message", "attachment_ids"):
+        return
     op.add_column("chat_message", sa.Column("attachment_ids", sa.Text(), nullable=True))
 
 
