@@ -2913,7 +2913,11 @@ def _seed_tapes_from_exports(db) -> None:
     # 2026-10-18：这些种子文件不参与自动播种。
     #   wiki构建-代码仓库：DB 里没有该编排，文件仅供 scripts/apply_code_repo_tape.py
     #   在需要时手动应用（代码仓库知识库专用），播种会自动建出不该有的空壳编排。
-    SKIP_SEED = {"wiki构建-代码仓库"}
+    #   wiki反馈修正：2026-10-25 新增的反馈修正编排，同样按需应用（
+    #   scripts/apply_feedback_fix_tape.py 手动灌 + 建每日 cron）——
+    #   2026-10-27 实测线上库尚无该编排（apply 未执行），自动播种会建出
+    #   线上没有的编排（与库不对齐），故加入跳过列表，与代码仓库编排同机制。
+    SKIP_SEED = {"wiki构建-代码仓库", "wiki反馈修正"}
     created = skipped = 0
     resolve_tape_id = ""
     for fp in files:
