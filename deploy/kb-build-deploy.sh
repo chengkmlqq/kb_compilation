@@ -35,7 +35,6 @@ KB_IMAGE_TAG="${KB_IMAGE_TAG:-local}"
 declare -A SERVICE_IMAGE
 SERVICE_IMAGE[web]="kb-web"
 SERVICE_IMAGE[api-server]="kb-api-server"
-SERVICE_IMAGE[mcp-server]="kb-api-server"
 SERVICE_IMAGE[celery-worker]="kb-worker"
 SERVICE_IMAGE[celery-graph-worker]="kb-worker"
 SERVICE_IMAGE[celery-beat]="kb-worker"
@@ -46,12 +45,12 @@ SERVICE_IMAGE[celery-orch-worker]="kb-agent-worker"
 
 # 镜像 → 构建上下文/方式（context 与 CI workflow build-images.yml 保持一致）
 #   kb-web:         context=web，Dockerfile.web
-#   kb-api-server:  context=仓库根，Dockerfile.api-server（api-server + mcp-server 共用）
+#   kb-api-server:  context=仓库根，Dockerfile.api-server
 #   kb-worker:      context=仓库根，Dockerfile.worker（worker/beat/flower/graph 共用）
 #   kb-agent-worker:context=仓库根，Dockerfile.agent-worker（agent/build/orch 共用）
 
 # 默认全量更新服务列表（顺序即 compose 服务名）
-ALL_SERVICES=(web api-server mcp-server celery-worker celery-beat flower \
+ALL_SERVICES=(web api-server celery-worker celery-beat flower \
               celery-graph-worker celery-agent-worker celery-build-worker celery-orch-worker)
 
 # 2. 解析命令行参数

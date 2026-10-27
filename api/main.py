@@ -13,10 +13,25 @@ from sqlalchemy.orm import Session
 
 from api.config import get_settings
 from api.db import get_db
+from api.mcp_server import create_mcp_server
 from api.middleware import normalize_content_type, rbac_guard
 from api.routers import agents, auth, chat_sessions, chat_traces, chunking, cron, datasources, datagrid, feedback, files, graph, jobs, kb_categories, kbs, mcps, metadata, models, ontology, orchestrations, overview, qa, quality, quality_build_check, skills, system, system_config, usage, websearch, workers
 from api.services.identity import Identity, decode_identity_cookie
 from api.services.migrations import run_migrations_on_startup
+
+# ── MCP：kb-tools 合并进 api-server 同进程（2026-10-27，替代独立 kb-mcp-server 容器）──
+# 用 add_route 直接把 MCP 的 Starlette 子应用挂到 /mcp（不用 app.mount：mount 会
+# 剥掉 /mcp 前缀，子应用内部必须改路由为 "/" 且触发 307 重定向；add_route 不剥
+# 前缀，子应用保留原生 streamable_http_path="/mcp" 精确匹配，无重定向，也不影响
+# FastAPI 其他路径/404 行为）。host 传 0.0.0.0 避免 SDK 默认对 localhost 启用
+# DNS rebinding 保护（外部 agent 需要访问）。
+# 原 api.mcp_http_main 独立入口保留（stdio/独立部署仍可用），compose 不再起独立容器。
+_mcp_app = create_mcp_server().streamable_http_app(
+    host="0.0.0.0",
+    streamable_http_path="/mcp",
+    json_response=True,
+    stateless_http=True,
+)
 
 
 @asynccontextmanager
@@ -29,7 +44,12 @@ async def lifespan(app: FastAPI):
     # 首个页面请求不支付远端库冷缓冲池的秒级聚合（看板/知识库卡片计数），
     # 预热线程在后台跑，失败不影响启动。
     _warm_aggregate_cache()
-    yield
+    # 2026-10-27：MCP 子应用（mount 到 /mcp）的 lifespan 不会由 Starlette 自动
+    # 嵌套执行（Router 只跑自己的 lifespan），须手动进入其 lifespan 上下文，
+    # 否则 StreamableHTTPSessionManager 的 task group 未初始化 → 请求报
+    # "Task group is not initialized"。session manager 生命周期与主应用绑定。
+    async with _mcp_app.router.lifespan_context(_mcp_app):
+        yield
 
 
 def _warm_aggregate_cache() -> None:
@@ -195,6 +215,10 @@ app.include_router(kb_categories.router, prefix="/api/v1")  # 2026-10-19 知识�
 app.include_router(feedback.router, prefix="/api/v1")  # 2026-10-14 问答反馈统计
 app.include_router(usage.router, prefix="/api/v1")  # 2026-10-16 LLM 使用记录与性能监控看板
 app.include_router(overview.router, prefix="/api/v1")  # 2026-10-20 首页总览统计看板
+
+# 挂载 MCP 子应用（_mcp_app 定义见文件头部）。Starlette 子应用作为 Route endpoint：
+# 只接管 /mcp 路径，方法限 GET（SSE）/POST（JSON-RPC），不改变 FastAPI 路由行为。
+app.add_route("/mcp", _mcp_app, methods=["GET", "POST"], include_in_schema=False)  # type: ignore[arg-type]  # Starlette Route 支持 ASGI app 作 endpoint
 
 
 @app.get("/health")

@@ -6,5 +6,5 @@ export KB_IMAGE_TAG=latest
 docker compose up -d --force-recreate \
   api-server web celery-worker celery-beat flower \
   celery-agent-worker celery-build-worker celery-orch-worker \
-  celery-graph-worker mcp-server
+  celery-graph-worker
 echo "UP_EXIT=$?"
