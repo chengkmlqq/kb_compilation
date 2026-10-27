@@ -1,21 +1,18 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Button, Form, Input, Select, Space } from "antd";
 import { SearchOutlined, ReloadOutlined } from "@ant-design/icons";
-import { apiJobQueues, JobQueueOption } from "@/lib/api";
-import { buildJobMonitorQueueOptions } from "./queue-label";
 
 interface JobFilterValues {
   keyWord?: string;
-  queueName?: string;
   state?: string;
 }
 
 interface JobFilterProps {
   onSearch: (values: JobFilterValues) => void;
   onReset: () => void;
-  /** 附加到筛选行右侧的自定义内容（如「主任务/全部任务」视图切换） */
+  /** 附加到筛选行右侧的自定义内容 */
   extra?: React.ReactNode;
 }
 
@@ -29,19 +26,6 @@ const STATE_OPTIONS = [
 
 function JobFilter({ onSearch, onReset, extra }: JobFilterProps) {
   const [form] = Form.useForm<JobFilterValues>();
-  const [queueList, setQueueList] = useState<{ label: string; value: string }[]>([]);
-
-  useEffect(() => {
-    apiJobQueues()
-      .then((res) => {
-        if (res.success && res.data) {
-          setQueueList(buildJobMonitorQueueOptions(res.data as JobQueueOption[]));
-        }
-      })
-      .catch(() => {
-        /* 队列列表加载失败不阻塞页面 */
-      });
-  }, []);
 
   return (
     <div
@@ -64,7 +48,6 @@ function JobFilter({ onSearch, onReset, extra }: JobFilterProps) {
         onFinish={(values: JobFilterValues) => {
           const filters: JobFilterValues = {};
           if (values.keyWord?.trim()) filters.keyWord = values.keyWord.trim();
-          if (values.queueName) filters.queueName = values.queueName;
           if (values.state) filters.state = values.state;
           onSearch(filters);
         }}
@@ -72,14 +55,6 @@ function JobFilter({ onSearch, onReset, extra }: JobFilterProps) {
       >
         <Form.Item name="keyWord" label="关键词" style={{ marginBottom: 0 }}>
           <Input placeholder="任务 ID / Task 类名" allowClear style={{ width: 200 }} />
-        </Form.Item>
-        <Form.Item name="queueName" label="队列" style={{ marginBottom: 0 }}>
-          <Select
-            placeholder="选择队列"
-            allowClear
-            style={{ width: 170 }}
-            options={queueList}
-          />
         </Form.Item>
         <Form.Item name="state" label="状态" style={{ marginBottom: 0 }}>
           <Select

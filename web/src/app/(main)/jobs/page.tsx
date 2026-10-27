@@ -2,21 +2,19 @@
 
 /**
  * 任务监控页 —— 布局对齐 data-synth job-monitor：
- * 顶部统计卡（JobStats）+ 筛选栏（JobFilter）+ 表格（JobTable）+ 日志抽屉。
+ * 顶部统计卡（JobStats）+ 筛选栏（JobFilter）+ 表格（ParentJobTable）+ 日志抽屉。
  * 数据源 modo_job（list/statistics/queues/stop/delete）。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { App, Segmented } from "antd";
+import { App } from "antd";
 import JobStats from "./job-stats";
 import JobFilter from "./job-filter";
-import JobTable from "./job-table";
 import ParentJobTable from "./parent-job-table";
 import JobLogDrawer from "./job-log-drawer";
 import ModoPagination from "@/components/biz/modo-pagination";
 import {
   apiDeleteJob,
   apiJobStatistics,
-  apiListJobs,
   apiListParentJobs,
   apiStopJob,
   JobItem,
@@ -26,7 +24,6 @@ import {
 
 type JobFilterValues = {
   keyWord?: string;
-  queueName?: string;
   state?: string;
 };
 
@@ -41,10 +38,7 @@ const EMPTY_STATS: JobStatistics = {
 
 export default function JobsPage() {
   const { message } = App.useApp();
-  // 2026-10-12 父子任务：首屏默认「主任务」视图（父任务列表+展开子任务），
-  // 可切换「全部任务」退回平铺视图（兼容老习惯）。
-  const [view, setView] = useState<"parents" | "all">("parents");
-  const [items, setItems] = useState<JobItem[]>([]);
+  // 2026-10-27 固定「主任务」视图（父任务列表+展开子任务），去掉主任务/全部任务切换
   const [parentItems, setParentItems] = useState<ParentJobItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -75,44 +69,27 @@ export default function JobsPage() {
   }, []);
 
   const load = useCallback(
-    async (p = page, size = pageSize, f = filters, v = view) => {
+    async (p = page, size = pageSize, f = filters) => {
       setLoading(true);
       try {
-        if (v === "parents") {
-          const res = await apiListParentJobs({
-            page: p,
-            page_size: size,
-            state: f.state,
-            keyword: f.keyWord?.trim() || undefined,
-          });
-          if (res.success && res.data) {
-            setParentItems(res.data.items);
-            setTotal(res.data.total);
-            latestQueryRef.current = { page: p, pageSize: size, filters: f };
-          } else {
-            message.error(res.message || "加载主任务失败");
-          }
+        const res = await apiListParentJobs({
+          page: p,
+          page_size: size,
+          state: f.state,
+          keyword: f.keyWord?.trim() || undefined,
+        });
+        if (res.success && res.data) {
+          setParentItems(res.data.items);
+          setTotal(res.data.total);
+          latestQueryRef.current = { page: p, pageSize: size, filters: f };
         } else {
-          const res = await apiListJobs({
-            page: p,
-            page_size: size,
-            state: f.state,
-            keyword: f.keyWord?.trim() || undefined,
-            queue_name: f.queueName,
-          });
-          if (res.success && res.data) {
-            setItems(res.data.items);
-            setTotal(res.data.total);
-            latestQueryRef.current = { page: p, pageSize: size, filters: f };
-          } else {
-            message.error(res.message || "加载任务失败");
-          }
+          message.error(res.message || "加载主任务失败");
         }
       } finally {
         setLoading(false);
       }
     },
-    [page, pageSize, filters, view, message],
+    [page, pageSize, filters, message],
   );
 
   const loadStats = useCallback(async () => {
@@ -137,10 +114,7 @@ export default function JobsPage() {
   }, [load, loadStats]);
 
   // agent-gateway 长任务可能运行 10-25 分钟：有 RUNNING 任务时自动刷新
-  const hasRunning =
-    (view === "parents"
-      ? parentItems.some((i) => i.state === "RUNNING")
-      : items.some((i) => i.state === "RUNNING"));
+  const hasRunning = parentItems.some((i) => i.state === "RUNNING");
   useEffect(() => {
     if (!hasRunning) return;
     const timer = setInterval(() => refresh(), 8000);
@@ -215,27 +189,9 @@ export default function JobsPage() {
           <JobStats statistics={stats} loading={statsLoading} />
         </div>
 
-        {/* Filter Area：视图切换（主任务/全部任务）作为 extra 放到筛选卡片右侧 */}
+        {/* Filter Area */}
         <div style={{ flexShrink: 0 }}>
-          <JobFilter
-            onSearch={handleSearch}
-            onReset={handleReset}
-            extra={
-              <Segmented
-                size="small"
-                value={view}
-                options={[
-                  { label: "主任务", value: "parents" },
-                  { label: "全部任务", value: "all" },
-                ]}
-                onChange={(v) => {
-                  setView(v as "parents" | "all");
-                  setPage(1);
-                  void load(1, pageSize, filters, v as "parents" | "all");
-                }}
-              />
-            }
-          />
+          <JobFilter onSearch={handleSearch} onReset={handleReset} />
         </div>
 
         {/* Table + Pagination Area */}
@@ -252,25 +208,14 @@ export default function JobsPage() {
           }}
         >
           <div ref={tableBodyRef} style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "0 16px" }}>
-            {view === "parents" ? (
-              <ParentJobTable
-                loading={loading}
-                data={parentItems}
-                scrollY={tableBodyHeight}
-                onViewLog={handleViewLog}
-                onStop={handleStop}
-                onDelete={handleDelete}
-              />
-            ) : (
-              <JobTable
-                loading={loading}
-                data={items}
-                scrollY={tableBodyHeight}
-                onViewLog={handleViewLog}
-                onStop={handleStop}
-                onDelete={handleDelete}
-              />
-            )}
+            <ParentJobTable
+              loading={loading}
+              data={parentItems}
+              scrollY={tableBodyHeight}
+              onViewLog={handleViewLog}
+              onStop={handleStop}
+              onDelete={handleDelete}
+            />
           </div>
           <ModoPagination
             current={page}

@@ -8,16 +8,6 @@ const JOB_MONITOR_QUEUE_LABEL_MAP: Record<string, string> = {
   graph: "图谱队列",
 };
 
-type JobMonitorQueueSource = {
-  queueLabel?: string | null;
-  queueName?: string | null;
-};
-
-type JobMonitorQueueOption = {
-  label: string;
-  value: string;
-};
-
 function normalizeQueueName(queueName?: string | null): string {
   return String(queueName || "").trim();
 }
@@ -39,63 +29,4 @@ export function resolveJobMonitorQueueLabel(
   }
 
   return normalizedQueueLabel || normalizedQueueName || "-";
-}
-
-export function resolveJobMonitorQueueOptionLabel(
-  queueName?: string | null,
-  queueLabel?: string | null,
-  disambiguate = false,
-): string {
-  const resolvedLabel = resolveJobMonitorQueueLabel(queueName, queueLabel);
-  const normalizedQueueName = normalizeQueueName(queueName);
-
-  if (!disambiguate || !normalizedQueueName) {
-    return resolvedLabel;
-  }
-
-  return `${resolvedLabel} (${normalizedQueueName})`;
-}
-
-export function buildJobMonitorQueueOptions(
-  queues: JobMonitorQueueSource[],
-): JobMonitorQueueOption[] {
-  const uniqueQueues: Array<{ queueLabel: string; queueName: string }> = [];
-  const seenQueueNames = new Set<string>();
-
-  for (const queue of queues) {
-    const queueName = normalizeQueueName(queue.queueName);
-
-    if (seenQueueNames.has(queueName)) {
-      continue;
-    }
-
-    seenQueueNames.add(queueName);
-    uniqueQueues.push({
-      queueLabel: normalizeQueueLabel(queue.queueLabel),
-      queueName,
-    });
-  }
-
-  const labelCounts = new Map<string, number>();
-  for (const queue of uniqueQueues) {
-    const label = resolveJobMonitorQueueLabel(queue.queueName, queue.queueLabel);
-    labelCounts.set(label, (labelCounts.get(label) || 0) + 1);
-  }
-
-  return uniqueQueues.map((queue) => {
-    const resolvedLabel = resolveJobMonitorQueueLabel(
-      queue.queueName,
-      queue.queueLabel,
-    );
-    const shouldDisambiguate = (labelCounts.get(resolvedLabel) || 0) > 1;
-
-    return {
-      label: resolveJobMonitorQueueOptionLabel(
-        queue.queueName,
-        queue.queueLabel,
-        shouldDisambiguate,
-      ),
-      value: queue.queueName,
-    };
-  });
 }
