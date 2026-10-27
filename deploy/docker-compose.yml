@@ -69,9 +69,6 @@ x-api-env: &api-env
     WIKI_AGENT_MODE: ${WIKI_AGENT_MODE:-inline}
     # 技能脚本超时（wiki 构建可能较久）
     WORKER_AGENT_SKILL_SCRIPT_TIMEOUT_S: ${WORKER_AGENT_SKILL_SCRIPT_TIMEOUT_S:-1800}
-    # 文档解析服务（MinerU 4.0.9 CPU 推理；2026-10-07 PaddleOCR-VL 已移除）：
-    # parser_registry.mineru_endpoint() 直接读该 env，缺失时 PDF/OCR 解析判定引擎不可用。
-    MINERU_ENDPOINT: ${MINERU_ENDPOINT:-http://mineru:8000}
     # 启动自动迁移开关（默认开）：迁移链 multi-head 等异常时运维可临时关掉
     # 跳过启动迁移（DB 手动推到最新）快速恢复 api-server，修复后恢复开。
     AUTO_MIGRATE_ON_START: ${AUTO_MIGRATE_ON_START:-}
@@ -272,54 +269,6 @@ services:
     networks:
       - kb-net
 
-  # ── 文档解析服务（解析引擎规则 engine=mineru 的落点）────────────────────
-  # 说明见 deploy/README-parsers.md
-  mineru:
-    # 官方 mineruorg/mineru 镜像被本网络 Docker Hub 白名单拦截，故自建：
-    # python:3.11-slim + 官方包 mineru==4.0.9，入口为官方 FastAPI 服务 mineru-api。
-    # CPU 推理路径（onnxruntime + llama.cpp），不装 torch。
-    build:
-      context: ./parsers/mineru_service
-    image: ${MINERU_IMAGE:-kb-mineru:local}
-    container_name: kb-mineru
-    restart: unless-stopped
-    command:
-      # 入口 = 官方 create_app + /file_parse 契约端点（server_shim.app）
-      - uvicorn
-      - server_shim:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-    environment:
-      # HF 直连不可达，权重走 hf-mirror 镜像下载
-      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
-      MINERU_ENDPOINT: ${MINERU_ENDPOINT:-http://mineru:8000}
-    volumes:
-      # 模型权重约 2.1GB（ONNX 小模型 + GGUF VLM），与镜像分离、可单独清理。
-      # 注意路径是 /root/.mineru（mineru 自建目录），不是 /root/.cache/huggingface
-      # —— 实测权重落在 /root/.mineru/models 下，挂错路径会导致每次重建容器重下 2GB。
-      - mineru-models:/root/.mineru
-    ports:
-      # 宿主端口 18000，避开 80/5432/6379/3306 等常用端口
-      - "${MINERU_HOST_PORT:-18000}:8000"
-    healthcheck:
-      # 官方 v1 API 的健康端点。--preload-models 下，200 即代表权重已就绪、
-      # 可真正解析。首次启动要下约 2.1GB 权重（本机实测约 400KB/s，约 70 分钟），
-      # 故 start_period 放宽到 1 小时，避免下载期间被判 unhealthy。
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/v1/health || exit 1"]
-      interval: 60s
-      timeout: 15s
-      retries: 10
-      start_period: 3600s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - kb-net
-
   redis:
     image: redis:7-alpine
     container_name: kb-redis
@@ -417,8 +366,6 @@ volumes:
   redis-data:
   kb-docs:
   minio-data:
-  # MinerU 模型权重（ONNX 小模型 + GGUF VLM，约 2.1GB）
-  mineru-models:
   # Neo4j 知识图谱数据
   neo4j-data:
 
