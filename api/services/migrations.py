@@ -14,6 +14,7 @@ api-server 启动时自动把框架库 schema 升到最新（Alembic upgrade hea
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from alembic import command
@@ -122,9 +123,45 @@ def _ensure_version_table_width(url: str) -> None:
 #: 框架种子 SQL（scripts/framework_seed.sql，由 scripts/export_framework_seed.py
 #: 从 data_supply 导出：用户/角色/菜单/团队/数据源类型等配置型数据；
 #: 不含运行时数据（modo_job/oper_log/sys_file/seq 等））。
+#: 2026-10-27 起空库播种不再直接导入本文件（旧库导出列结构不匹配），
+#: 改走 scripts/seed_framework_db.py 的 ORM 播种（见 ensure_schema_and_seed）。
 SEED_FILE = ROOT / "scripts" / "framework_seed.sql"
 #: 判空用表：modo_user 有行 = 框架种子已灌（空库才播，避免覆盖现有数据）
 SEED_PROBE_TABLE = "modo_user"
+#: seed_framework_db 的默认种子账号（KB_SEED_USER_ID 缺省值）
+SEED_ADMIN_ID = "admin"
+
+
+def _run_seed_framework_db() -> None:
+    """调用 scripts/seed_framework_db.py 的 ORM 播种（admin-only、幂等）。
+
+    与手动 `uv run python scripts/seed_framework_db.py` 同款，只建
+    SEED_USER_ID=admin（密码 KB_SEED_PASSWORD 缺省 sys）+ 默认团队 +
+    kb_role 角色 + KB 菜单树/授权 + 系统参数 + 日志清理 cron + 编排组件/
+    种子编排/本体。用 subprocess 以仓库根 python 执行（脚本内 get_sessionmaker
+    读环境 DATABASE_URL/KB_DATABASE_URL，与 api-server 同库）。失败抛异常，
+    由调用方（ensure_schema_and_seed）捕获告警，不阻断启动。
+    """
+    import subprocess
+    import sys
+
+    seed_script = ROOT / "scripts" / "seed_framework_db.py"
+    if not seed_script.exists():
+        raise FileNotFoundError(f"seed 脚本不存在: {seed_script}")
+    env = dict(os.environ)
+    proc = subprocess.run(
+        [sys.executable, str(seed_script)],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=900,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"seed_framework_db 播种失败 (rc={proc.returncode}): "
+            f"{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}"
+        )
+    logger.info("[migrate] seed_framework_db 播种完成（admin=%s）", SEED_ADMIN_ID)
 
 
 def ensure_schema_and_seed(url: str) -> None:
@@ -136,6 +173,16 @@ def ensure_schema_and_seed(url: str) -> None:
     这里补齐：
       1. Base.metadata.create_all 建全部 ORM 表（已存在则跳过）
       2. 框架表为空时导入 scripts/framework_seed.sql（INSERT IGNORE 幂等）
+
+    2026-10-27 播种改造：framework_seed.sql 是旧远程库 data_supply 的导出，
+    其 modo_user/modo_team/modo_menu 等 INSERT 列结构与当前 ORM 表不一致
+    （acct_type/app_name/lastupd 等列已不存在）、且含 base64 图标导致
+    _split_sql_statements 断句失败——空库播种时 42 条用户/31 条菜单/50 条
+    成员全部 1054/1064 落库失败，默认账号 admin 播不出来。改为调用
+    seed_framework_db.py 的 ORM 播种逻辑（与手动 `uv run python
+    scripts/seed_framework_db.py` 同款）：只建 SEED_USER_ID=admin（密码 seed
+    默认 sys）+ 默认团队 + kb_role 角色 + 菜单树/授权 + 系统参数 + 编排种子，
+    幂等且列结构与 ORM 模型严格一致。
 
     失败只告警不抛出：建表/播种失败不阻断启动（后续 Alembic 仍会跑，
     真实缺表由业务查询暴露），避免因权限不足导致整站无法启动。
@@ -166,7 +213,7 @@ def ensure_schema_and_seed(url: str) -> None:
         except Exception as exc:  # noqa: BLE001
             logger.warning("[migrate] 自动建表失败（继续执行迁移）：%s", exc)
 
-        # 2) 框架种子（仅空表时播）
+        # 2) 框架种子（仅空表时播，2026-10-27 起走 seed_framework_db ORM 逻辑）
         try:
             inspector = inspect(engine)
             if SEED_PROBE_TABLE not in inspector.get_table_names():
@@ -179,17 +226,8 @@ def ensure_schema_and_seed(url: str) -> None:
             if has_rows:
                 logger.info("[migrate] 框架种子已存在（%s 非空），跳过播种", SEED_PROBE_TABLE)
                 return
-            if not SEED_FILE.exists():
-                logger.warning("[migrate] 种子文件不存在：%s（跳过播种）", SEED_FILE)
-                return
-            sql_text = SEED_FILE.read_text(encoding="utf-8")
-            with engine.begin() as conn:
-                for stmt in _split_sql_statements(sql_text):
-                    try:
-                        conn.execute(text(stmt))
-                    except Exception as exc:  # noqa: BLE001 — 单条失败不阻断其余
-                        logger.warning("[migrate] 种子语句失败（跳过该条）：%s", exc)
-            logger.info("[migrate] 框架种子已导入（%s）", SEED_FILE.name)
+            _run_seed_framework_db()
+            logger.info("[migrate] 框架种子已按 seed_framework_db 播种（admin=%s）", SEED_ADMIN_ID)
         except Exception as exc:  # noqa: BLE001
             logger.warning("[migrate] 框架播种失败（继续执行迁移）：%s", exc)
     finally:

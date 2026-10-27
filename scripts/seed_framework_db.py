@@ -47,6 +47,7 @@ from api.models.framework import (
 # 种子账号（README: admin/sys）
 # 2026-10-08: 默认账号由 huqiang 改为 admin（可用 KB_SEED_USER_ID 覆盖）。
 # 注意：已部署环境里的旧账号不会被 seed 改名/删除（会破坏其知识库归属等外键引用）。
+# 2026-10-27: 播种只建 SEED_USER_ID 这一个账号（admin），不创建其他用户。
 SEED_USER_ID = os.getenv("KB_SEED_USER_ID", "admin")
 SEED_PASSWORD = os.getenv("KB_SEED_PASSWORD", "sys")
 SEED_TEAM = os.getenv("KB_SEED_TEAM", "默认团队")
