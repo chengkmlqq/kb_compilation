@@ -964,6 +964,19 @@
 - **测试**：test_jobs_monitor.py 新增 test_parents_attached_run_not_top_level（被承接 run 不进顶层 + children 带 run 节点）；jobs 17 passed；全量 600 passed / 3 failed（3 红仍为 §15 既有基线，无新增回归）；tsc exit 0
 - **部署**：api/routers/jobs.py 改后需 docker cp 热修 kb-api-server + restart（或等 CI 重建）；前端源码改动需重建 kb-web
 
+## 18. 当前状态（2026-10-28 LLM 必配收紧——知识库强制绑定 summary_model_id）
+
+- **背景**：知识库摘要 / 增强 / wiki 合成 / 编排 kb_llm_chat 均依赖 KB 绑定模型（summary_model_id）。旧逻辑在「编排节点未显式配置 model」时回落注册表系统默认或 env（WIKI_LLM_*/AI_CHAT_*/LLM_*）兜底，导致：① 后台任务无用户上下文，personal scope 模型不可见；② system 默认模型常 state=0（禁用）解析返回 None；③ 漏配库悄悄换模型/裸奔失败（重演 d9affbc `WIKI_LLM_API_KEY 未配置`）。用户定为「LLM 必配」：创建/更新强制绑定，运行时解析不再兜底。
+- **改动**：
+  1. `api/services/kb_admin.py`：create_kb 未传 summary_model_id 直接 `ValueError`；update_kb 禁止将 summary_model_id 清空（可更换不可置空）
+  2. `api/services/orchestration_engine.py`：KbLlmChatStep 无 model 时只从 `kb_datasource.summary_model_id` 取；kb_id 缺失 / 库未绑定 → `StepResponse.fail` 明确文案，不再 `except: pass` 静默回落
+  3. `worker/tasks/agent_worker.py`：_resolve_llm_config 删注册表默认 + env 兜底（WIKI_LLM_*/AI_CHAT_*/LLM_*），kb_datasource.summary_model_id 即唯一来源；kb_id 缺失 / 模型不可用抛 `RuntimeError`
+  4. `worker/builtin_engine/{code_rev_src,scripts,tech_spec_src}/weknora_rpc.py`：_resolve_llm_model 同步只从 KB 绑定取，去系统默认/env 阈值
+  5. `web/src/app/(main)/kbs/page.tsx` + `web/src/components/KBConfigModal.tsx`：LLM 表单项改 `required`（去 allowClear、加 rules），提示「摘要 / 增强 / Wiki 合成均使用此模型；创建后不可清空」
+  6. `tests/conftest.py`：fixture 注入 summary_model_id（默认 test-llm）；各用例适配必配语义（test_kb_export / test_kb_admin / test_prechunked_ingest / test_doc_* 等 12 文件）
+- **验证**：任务范围 11 个测试文件 125 passed；3 个目标测试（test_kb_export / test_prechunked_ingest / test_build_engine）全绿
+- **提交**：c822427 推送 dev（fc9c21b..c822427，20 files +301/-184）
+
 ## 17. 当前状态（2026-10-14 摘要编排落点改造：wiki 页 → kb_document.summary）
 
 - **背景**：be65902 移除直连 LLM 摘要链路后，摘要统一由编排生成，但编排产物是 wiki 摘要页（不写 kb_document.summary 字段，直连 LLM 时代的存储位置）。用户要求：三个摘要编排（Stuff ca5f228c / Map-Reduce b5954467 / Refine 103e45f4，线上 effective）的摘要落点改回 kb_document.summary
