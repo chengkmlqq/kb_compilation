@@ -1064,9 +1064,10 @@ export default function KbDocsPane({
                 </button>
               </Tooltip>
             </div>
-            {/* 2026-10-21 对齐参数管理页 UI：按钮去胶囊（ModoButton 默认 shape=round，
-                显式 shape=default 走全局 antd borderRadius=2，与搜索框统一） */}
-            <ModoButton shape="default" icon={<ReloadOutlined />} onClick={() => void load()}>
+            {/* 2026-10-28 与搜索框统一为胶囊（2026-10-21 曾去胶囊改方形，同排搜索框
+                恢复 14px 胶囊后按钮保持方形会再次不一致；ModoButton 默认 round 即胶囊，
+                与知识库管理页新建按钮同形态） */}
+            <ModoButton icon={<ReloadOutlined />} onClick={() => void load()}>
               刷新
             </ModoButton>
             {/* 2026-10-21 上传入口三按钮：选择文件 / 选择文件夹 / 添加表（弃用下拉合并形态）。
@@ -1074,7 +1075,6 @@ export default function KbDocsPane({
                 「选择文件夹」保留完整子目录结构（webkitdirectory），文件夹内的压缩包同样自动解包 */}
             <Space size={8}>
               <ModoButton
-                shape="default"
                 type="primary"
                 icon={<CloudUploadOutlined />}
                 onClick={() => fileInputRef.current?.click()}
@@ -1082,14 +1082,12 @@ export default function KbDocsPane({
                 选择文件
               </ModoButton>
               <ModoButton
-                shape="default"
                 icon={<FolderOutlined />}
                 onClick={() => dirInputRef.current?.click()}
               >
                 选择文件夹
               </ModoButton>
               <ModoButton
-                shape="default"
                 icon={<TableOutlined />}
                 onClick={() => setSelectTableOpen(true)}
               >

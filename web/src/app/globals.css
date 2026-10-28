@@ -2241,8 +2241,9 @@ html[data-theme="dark"] body {
   align-items: center;
 }
 
-/* 搜索框（2026-10-21 对齐参数管理页 UI：去胶囊圆角，与全局 antd token borderRadius=2
-   统一为 2px；此前 14px 胶囊与其他列表页搜索框不一致）。fill-2 底 / 无边框 / 28px 高 */
+/* 搜索框（2026-10-28 修复形态不一致：2026-10-21 曾去胶囊改 2px 方形，与同排过滤下拉
+   （14px 胶囊）及知识库管理页搜索（14px 胶囊，用户 2026-10-20 明确要求圆角）不一致；
+   恢复 14px 胶囊统一）。fill-2 底 / 无边框 / 28px 高 */
 .kb-doc-search-input.ant-input-affix-wrapper,
 .kb-doc-search-input .ant-input-affix-wrapper {
   grid-area: search;
@@ -2252,7 +2253,7 @@ html[data-theme="dark"] body {
   max-width: 100%;
   height: 28px;
   padding: 0 12px;
-  border-radius: 2px;
+  border-radius: 14px;
   background: #eff4f9;
   border-color: transparent;
 }
