@@ -97,11 +97,20 @@ def main():
 
     kbs = [ns.kb] if ns.kb else []
     if not kbs:
-        r = wr.tool_call('list_knowledge_bases', {})
-        for k in (r.get('data') or []):
-            kb_id = k.get('id') or k.get('kb_id')
-            if kb_id:
-                kbs.append(kb_id)
+        # 直连枚举有高频词页的 KB（list_knowledge_bases tool_call 会撞 _kb() 前置检查）
+        from api.db import get_sessionmaker
+        from api.models.knowledge import WikiPage
+        from sqlalchemy import select
+        _db = get_sessionmaker()()
+        try:
+            rows = _db.execute(
+                select(WikiPage.kb_id)
+                .where(WikiPage.page_type == "frequent_keyword", WikiPage.status == "active")
+                .distinct()
+            ).scalars().all()
+            kbs = list(rows)
+        finally:
+            _db.close()
     print(f"待扫描 KB: {len(kbs)} 个")
 
     total_scanned = total_filled = total_skipped = 0
