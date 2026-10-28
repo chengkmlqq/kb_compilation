@@ -939,10 +939,24 @@ class WikiEnsureFolderStep(BaseStep):
             raw_paths.append(single)
         batch = self.config.get("paths")
         if isinstance(batch, str):
+            # 2026-10-28 动态建目录：paths 支持 {{ }} 模板整体渲染
+            # （渲染后为 JSON 数组字符串，如 {{kp_paths}}）——动态 wiki 构建
+            # 编排的目录按知识点运行期决定，先渲染再解析。
+            if "{{" in batch:
+                batch = context.render(batch)
             try:
                 batch = json.loads(batch)
-            except Exception as e:  # noqa: BLE001
-                return StepResponse.fail(f"paths JSON 解析失败: {batch[:80]}（{e}）")
+            except ValueError:
+                # {{ }} 整体渲染走 str() 会产生 Python 字面量（单引号
+                # list，如 "['指标', '出帐']"）而非 JSON —— ast 兜底。
+                import ast
+
+                try:
+                    batch = ast.literal_eval(batch)
+                except (ValueError, SyntaxError) as e:  # noqa: BLE001
+                    return StepResponse.fail(
+                        f"paths JSON 解析失败: {batch[:80]}（{e}）"
+                    )
         if isinstance(batch, list):
             for p in batch:
                 ps = str(context.render(p) if isinstance(p, str) else (p or "")).strip()

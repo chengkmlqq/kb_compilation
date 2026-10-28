@@ -228,11 +228,33 @@ def _trigger_post_ready(kb_id: str, document_id: str, job_id: str, caller_cookie
             logger.warning("failed to trigger build engine task: %s", exc)
             out["build_engine_triggered"] = False
     elif flags["wiki"]:
-        # 2026-10-16 摘要驱动自动领域构建：知识库创建时未选构建引擎、上传
-        # 文件也未选时，构建任务等摘要任务结束，题材分析编排基于摘要 +
-        # 平台已有领域构建编排的划分自动选定编排继续构建；任一环节
-        # 缺失/失败/超时即停止（2026-10-16 起废除技能直跑兜底，摘要失败
-        # 不再用直跑顶替，未构建状态如实反映到任务监控）。
+        # 2026-10-28 方案 B：未绑定构建引擎且自动模式 → 优先动态 wiki 构建
+        # （读文档/摘要 → LLM 判知识点 → 动态生成文档专属编排 → 执行）。
+        # 动态链路未启用/失败时回落「摘要→题材分析→领域编排」旧链路。
+        try:
+            from worker.tasks.dynamic_wiki_build import enqueue_dynamic_wiki_build
+
+            dyn = enqueue_dynamic_wiki_build(
+                kb_id, document_id, parent_job_id=job_id, cookie=caller_cookie,
+                summary_run_id=summary_run_id,
+            )
+            if dyn.get("dynamic_generated"):
+                out["dynamic_wiki_build"] = True
+                out["tape_id"] = dyn.get("tape_id")
+                out["tape_name"] = dyn.get("tape_name")
+                out["run_id"] = dyn.get("run_id")
+                out["kp_count"] = dyn.get("kp_count")
+                return out
+            if dyn.get("dynamic_skipped"):
+                out["dynamic_skipped"] = dyn.get("dynamic_skipped")
+            if dyn.get("error"):
+                out["dynamic_error"] = dyn.get("error")
+        except Exception as exc:  # noqa: BLE001 — 动态链路异常回落题材分析
+            logger.warning("dynamic wiki build failed, fallback domain-guided (kb=%s doc=%s): %s",
+                           kb_id, document_id, exc)
+            out["dynamic_error"] = str(exc)
+        # 回落：摘要→题材分析→领域编排（2026-10-16 起废除技能直跑兜底，
+        # 摘要失败不再用直跑顶替，未构建状态如实反映到任务监控）。
         out.update(_enqueue_domain_guided_build(
             kb_id, document_id, parent_job_id=job_id, cookie=caller_cookie,
             summary_run_id=summary_run_id,
