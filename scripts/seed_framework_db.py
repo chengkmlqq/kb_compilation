@@ -82,12 +82,13 @@ SEED_ROLE = os.getenv("KB_SEED_ROLE", "kb_role")
 #   （解析引擎开关/存储类型/向量库类型/系统信息 页面下架；后端 /api/v1/system/* 接口保留）
 # 2026-10-15 调整：移除「新版问答」页面（/chat-next，assistant-ui 试验页）——页面/组件/依赖
 #   全量删除，恢复方案J 引入前的菜单（chat_next 已从 KB_MENUS 移除，顶级 sort_num 顺延还原）
-# 2026-10-21 调整：新增顶级「语义层」（grp_semantic_layer，目录）——知识库（kbs，sort 2）之后插入，
-#   子级：元数据/文档库/知识本体/知识图谱（/semantic/* 占位页，后续功能填充）；
-#   后续顶级 sort_num 顺延（运维监控 5→6，配置管理 6→7，系统管理 7→8，调试工具 8→9）。
-#   注：menu_id 用 grp_semantic_layer——2026-10-21 实测库内既有「语义资产管理」树占用 grp_semantic，
-#   沿用会 upsert 覆写，故避开；该树（grp_semantic 目录 + 5 子项）无代码页面且非平台功能，
-#   同日随本次调整一并下架（见 REMOVED_MENUS）。
+# 2026-10-21 调整（已回退）：曾新增顶级「语义层」（grp_semantic_layer，目录）与 4 个子菜单
+#   （元数据/文档库/知识本体/知识图谱，/semantic/* 页面），顶级 sort_num 占位 5。
+# 2026-10-28 调整：语义层整体下架——页面目录 web/src/app/(main)/semantic/ 全量删除，
+#   KB_MENUS 移除 5 项并加入 REMOVED_MENUS，顶级 sort_num 顺延还原
+#   （运维监控 6→5，配置管理 7→6，系统管理 8→7，调试工具 9→8，质量评估 10→9）。
+#   注：menu_id 曾用 grp_semantic_layer，避开库内既有「语义资产管理」树占用的 grp_semantic
+#   （该树无代码页面且非平台功能，2026-10-21 随语义层调整一并下架，见 REMOVED_MENUS）。
 # 默认隐藏菜单（state=0，菜单管理页可恢复启用）；chat_next 已随页面删除退出该集合
 HIDDEN_MENUS: set[str] = set()
 # 已下架菜单（2026-10-15 移除「新版问答」/chat-next 页面及其组件；
@@ -105,9 +106,18 @@ REMOVED_MENUS: set[str] = {
     "semantic_assets",
     "version_release",
     "conflict_handling",
+    # 「语义层」树（2026-10-28 下架）：grp_semantic_layer 顶级目录 + 4 个子菜单
+    # sem_metadata/sem_docs/sem_ontology/sem_graph（页面 /semantic/* 全量删除，
+    # 顶级 sort_num 顺延还原：运维监控 6→5，配置管理 7→6，系统管理 8→7，
+    # 调试工具 9→8，质量评估 10→9）
+    "grp_semantic_layer",
+    "sem_metadata",
+    "sem_docs",
+    "sem_ontology",
+    "sem_graph",
 }
-# 结构：Header 顶级 = 总览/智能问答/知识库/智能体/高频词/语义层(目录)/
-#         运维监控(目录)/配置管理(目录)/系统管理/调试工具(目录)。
+# 结构：Header 顶级 = 总览/智能问答/知识库/智能体/高频词/
+#         运维监控(目录)/配置管理(目录)/系统管理/调试工具(目录)/质量评估(目录)。
 #   - route 留空 = 纯目录分组（只展开不跳转）
 #   - route 有值且带子级 = 分组兼页面（点击自身跳该路由）
 KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
@@ -117,16 +127,8 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("kbs", "kbs", "知识库", "/kbs", None, "IconBook1Color", 2),
     ("agents", "agents", "智能体", "/agents", None, "IconSemanticSearchColor", 3),
     ("wiki_keywords", "wiki_keywords", "高频词", "/wiki-keywords", None, "BarChartOutlined", 4),
-    # ---- 语义层（顶级目录：元数据/文档库/知识本体/知识图谱） ----
-    # 注意：menu_id 用 grp_semantic_layer，避开库内既有「语义资产管理」树占用的
-    # grp_semantic（2026-10-21 实测该 id 已被业务菜单占用，沿用会 upsert 覆写）。
-    ("grp_semantic_layer", "grp_semantic_layer", "语义层", None, None, "ApartmentOutlined", 5),
-    ("sem_metadata", "sem_metadata", "元数据", "/semantic/metadata", "grp_semantic_layer", "DatabaseOutlined", 1),
-    ("sem_docs", "sem_docs", "文档库", "/semantic/docs", "grp_semantic_layer", "FileOutlined", 2),
-    ("sem_ontology", "sem_ontology", "知识本体", "/semantic/ontology", "grp_semantic_layer", "ApartmentOutlined", 3),
-    ("sem_graph", "sem_graph", "知识图谱", "/semantic/graph", "grp_semantic_layer", "PartitionOutlined", 4),
     # ---- 运维监控（顶级目录：任务监控/任务管理/主机监控/操作日志/切片核对/元数据采集） ----
-    ("grp_ops", "grp_ops", "运维监控", None, None, "IconTaskMonitorColor", 6),
+    ("grp_ops", "grp_ops", "运维监控", None, None, "IconTaskMonitorColor", 5),
     ("jobs", "jobs", "任务监控", "/jobs", "grp_ops", "IconTaskMonitorColor", 1),
     ("4cd17410ab29495aa131cdf763fc3549", "cron", "任务管理", "/cron", "grp_ops", "ScheduleOutlined", 2),
     ("b2d585de4d824b96bfed2a7798ad6880", "workers", "主机监控", "/workers", "grp_ops", "IconCloudServerColor", 3),
@@ -170,7 +172,7 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
         9,
     ),
     # ---- 配置管理（顶级目录：数据源管理/模型/MCP/技能/参数/联网搜索） ----
-    ("grp_config", "grp_config", "配置管理", None, None, "ToolOutlined", 7),
+    ("grp_config", "grp_config", "配置管理", None, None, "ToolOutlined", 6),
     ("datasources", "datasources", "数据源管理", "/datasources", "grp_config", "IconDatabaseColor", 1),
     ("models", "models", "模型配置", "/models", "grp_config", "CloudServerOutlined", 2),
     ("8829900dd6be4c45bc584df804ba0d4a", "mcps", "MCP 管理", "/mcps", "grp_config", "ApiOutlined", 3),
@@ -178,13 +180,13 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("sys_dims", "sys_dims", "参数管理", "/system/dims", "grp_config", "DatabaseOutlined", 5),
     ("d83aee0d1d8a4fce8a6bd121b6efc5fa", "websearch", "联网搜索", "/websearch", "grp_config", "SearchOutlined", 6),
     # ---- 系统管理（分组兼页面，顶级：点击自身跳 /system → 重定向到 /system/users） ----
-    ("system", "system", "系统管理", "/system", None, "IconSystemMgrColor", 8),
+    ("system", "system", "系统管理", "/system", None, "IconSystemMgrColor", 7),
     ("sys_users", "sys_users", "用户管理", "/system/users", "system", "TeamOutlined", 1),
     ("sys_roles", "sys_roles", "角色管理", "/system/roles", "system", "SafetyOutlined", 2),
     ("sys_teams", "sys_teams", "团队管理", "/system/teams", "system", "PartitionOutlined", 3),
     ("sys_menus", "sys_menus", "菜单管理", "/system/menus", "system", "MenuOutlined", 4),
     # ---- 调试工具（顶级目录：本体Schema/编排管理/编排模板/编排组件/文件管理/数据查询） ----
-    ("grp_debug", "grp_debug", "调试工具", None, None, "BugOutlined", 9),
+    ("grp_debug", "grp_debug", "调试工具", None, None, "BugOutlined", 8),
     (
         "ont_schemas",
         "ont_schemas",
@@ -201,7 +203,7 @@ KB_MENUS: list[tuple[str, str, str, str | None, str | None, str, int]] = [
     ("ac9b271c90b6450c92bd14e9681da520", "files", "文件管理", "/files", "grp_debug", "IconCloudServerColor", 6),
     ("datagrid", "datagrid", "数据查询", "/datagrid", "grp_debug", "TableOutlined", 7),
     # 2026-10-21 调整：质量评估（wiki评估）从「调试工具」提为顶级目录，业务功能归位
-    ("grp_quality", "grp_quality", "质量评估", None, None, "CheckCircleOutlined", 10),
+    ("grp_quality", "grp_quality", "质量评估", None, None, "CheckCircleOutlined", 9),
     ("quality", "quality", "wiki评估", "/quality", "grp_quality", "CheckCircleOutlined", 1),
     # 2026-10-21 质量评估拆分：单维度评估（文档转换/切片/图数据），走独立编排
     ("quality_doc", "quality_doc", "文档转换评估", "/quality-doc", "grp_quality", "SwapOutlined", 2),
