@@ -125,6 +125,9 @@ export default function JobsPage() {
     void loadStats();
   }, [load, loadStats]);
 
+  // agent-gateway 长任务可能运行 10-25 分钟：有 RUNNING 任务时自动刷新
+  const hasRunning = parentItems.some((i) => i.state === "RUNNING");
+
   // 自动刷新：任务监控页统计卡需保持较新——有 RUNNING 任务时 8s 全刷
   // （表格+统计，运行时状态变化肉眼可见）；无 RUNNING 时 15s 只刷统计卡
   // （2026-10-28 修复：此前无 running 时彻底不刷，卡数陈旧到后端 10s TTL）。

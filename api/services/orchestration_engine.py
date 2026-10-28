@@ -544,6 +544,7 @@ class KbLlmChatStep(BaseStep):
             return StepResponse.fail(f"LLM 调用失败: {last_exc}")
         if json_mode:
             import json as _json
+            import re as _re
 
             text = (raw or "").strip()
             if text.startswith("```"):
@@ -552,8 +553,44 @@ class KbLlmChatStep(BaseStep):
                     text = text[4:].strip()
             try:
                 parsed = _json.loads(text)
-            except Exception as e:  # noqa: BLE001
-                return StepResponse.fail(f"LLM 输出非 JSON: {e}，原文: {raw[:200]}")
+            except Exception:  # noqa: BLE001
+                # 2026-10-28 兜底：deepseek-v4-pro 偶发把推理草稿拼在 content
+                # 开头（enable_thinking/thinking 双参数已下发仍见「首先，我需要
+                # 分析…」），提取首个 JSON 对象/数组子串再解析，避免整轮 failed。
+                _m = _re.search(r"[{\[]", text)
+                parsed = None
+                if _m:
+                    _cands = []
+                    _depth = 0
+                    _in_str = False
+                    _esc = False
+                    _start = _m.start()
+                    for _i, _ch in enumerate(text[_start:], _start):
+                        if _in_str:
+                            if _esc:
+                                _esc = False
+                            elif _ch == "\\":
+                                _esc = True
+                            elif _ch == '"':
+                                _in_str = False
+                            continue
+                        if _ch == '"':
+                            _in_str = True
+                        elif _ch in "[{":
+                            _depth += 1
+                        elif _ch in "]}":
+                            _depth -= 1
+                            if _depth == 0:
+                                _cands.append(text[_start:_i + 1])
+                                break
+                    for _cand in _cands:
+                        try:
+                            parsed = _json.loads(_cand)
+                            break
+                        except Exception:  # noqa: BLE001
+                            continue
+                if parsed is None:
+                    return StepResponse.fail(f"LLM 输出非 JSON: {raw[:200]}")
             context.bindings[output_var] = parsed
             return StepResponse.success({f"set:{output_var}": parsed})
         context.bindings[output_var] = raw or ""

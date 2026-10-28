@@ -168,3 +168,16 @@ def agg_cache_clear() -> None:
     """清空全部缓存（测试用 / 手动刷新）。"""
     with _lock:
         _cache.clear()
+    _persist()
+
+
+def agg_cache_invalidate(key: str) -> None:
+    """删除单个缓存项（写操作后即时失效，避免统计卡陈旧到 TTL 才刷新）。
+
+    任务监控页 stop/delete 改变任务状态后调用，使下次 statistics 请求
+    走同步重算（agg_cached_swr TTL 内本应返旧值）——配合前端常驻轮询，
+    手动操作即时反映到顶部统计卡。仅清指定 key，不影响其他聚合缓存。
+    """
+    with _lock:
+        _cache.pop(key, None)
+    _persist()
