@@ -7,7 +7,7 @@ import { SearchOutlined, SortAscendingOutlined } from "@ant-design/icons";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import KbsSimplePagination from "@/components/kb/KbsSimplePagination";
+import { ModoPagination } from "@/components/biz/modo-pagination";
 import {
   apiListWikiKeywords,
   apiMarkWikiKeyword,
@@ -149,7 +149,7 @@ export default function WikiKeywordsPane({ kbId, kbName }: WikiKeywordsPaneProps
       {
         title: "排名",
         width: 64,
-        render: (_v, _r, idx) => <span className="kb-wk-rank">{((page - 1) * PAGE_SIZE) + idx + 1}</span>,
+        render: (_v, _r, idx) => <span className="kb-wk-rank">{((page - 1) * pageSize) + idx + 1}</span>,
       },
       {
         title: "关键词",
@@ -255,23 +255,30 @@ export default function WikiKeywordsPane({ kbId, kbName }: WikiKeywordsPaneProps
         columns={columns}
         dataSource={items}
         pagination={false}
-        scroll={{ x: 1000, y: "calc(100vh - 216px)" }}
+        scroll={{ x: 1000 }}
         locale={{ emptyText: "暂无高频词，上传文档并启用 Wiki 后将自动生成高频词页面" }}
       />
 
-      {/* 分页条：对齐知识库详情 · 文档列表（KbsSimplePagination + kb-doc-pagination-bar）——
-          共 N 个高频词 + 页码输入 + 条/页下拉；仅当总数超过一页时渲染 */}
-      <KbsSimplePagination
-        containerClassName="kb-doc-pagination-bar"
-        current={page}
-        pageSize={pageSize}
-        total={total}
-        showTotal={(t) => `共 ${t} 个高频词`}
-        onChange={(p, ps) => {
-          setPage(p);
-          setPageSize(ps);
-        }}
-      />
+      {/* 分页底栏（2026-10-28 对齐知识库管理页：ModoPagination 常驻底栏，
+          不再 total<=pageSize 条件渲染；表格改外层滚动，分页条不被裁出可视区） */}
+      <div className="kb-wk-pagination-bar">
+        <ModoPagination
+          current={page}
+          pageSize={pageSize}
+          total={total}
+          showSizeChanger
+          showQuickJumper
+          showTotal={(t) => `共 ${t} 个高频词`}
+          pageSizeOptions={[10, 20, 30, 40, 50]}
+          onChange={(p, ps) => {
+            setPage(p);
+            if (ps && ps !== pageSize) {
+              setPageSize(ps);
+              setPage(1);
+            }
+          }}
+        />
+      </div>
 
       {/* 详情抽屉：展示该高频词 wiki 页面内容 */}
       <Drawer

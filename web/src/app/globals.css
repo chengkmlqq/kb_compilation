@@ -5358,9 +5358,14 @@ html[data-theme="dark"] .kb-citation-web:hover {
 .kb-wk-table {
   flex: 1;
   min-height: 0;
+  overflow: auto;
 }
 .kb-wk-table .ant-table {
   font-size: 12px;
+}
+.kb-wk-pagination-bar {
+  flex-shrink: 0;
+  margin-top: auto;
 }
 .kb-wk-rank {
   color: #79879c;
