@@ -12,6 +12,7 @@ import {
   App,
   Button,
   Card,
+  Dropdown,
   Input,
   Modal,
   Select,
@@ -25,6 +26,7 @@ import {
   AppstoreOutlined,
   CloudUploadOutlined,
   DeleteOutlined,
+  DownOutlined,
   DownloadOutlined,
   EditOutlined,
   FolderAddOutlined,
@@ -32,7 +34,6 @@ import {
   PlusOutlined,
   ProfileOutlined,
   RedoOutlined,
-  ReloadOutlined,
   TableOutlined,
   UnorderedListOutlined,
 } from "@ant-design/icons";
@@ -1064,36 +1065,38 @@ export default function KbDocsPane({
                 </button>
               </Tooltip>
             </div>
-            {/* 2026-10-28 与搜索框统一为胶囊（2026-10-21 曾去胶囊改方形，同排搜索框
-                恢复 14px 胶囊后按钮保持方形会再次不一致；ModoButton 默认 round 即胶囊，
-                与知识库管理页新建按钮同形态） */}
-            <ModoButton icon={<ReloadOutlined />} onClick={() => void load()}>
-              刷新
-            </ModoButton>
-            {/* 2026-10-21 上传入口三按钮：选择文件 / 选择文件夹 / 添加表（弃用下拉合并形态）。
+            {/* 2026-10-28 上传入口合并为单个下拉按钮（选择文件 / 选择文件夹 / 添加表）。
                 「选择文件」支持普通文件 + zip / rar（自动解包，保留包内子孙目录）；
                 「选择文件夹」保留完整子目录结构（webkitdirectory），文件夹内的压缩包同样自动解包 */}
-            <Space size={8}>
-              <ModoButton
-                type="primary"
-                icon={<CloudUploadOutlined />}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                选择文件
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: "upload-files",
+                    icon: <CloudUploadOutlined />,
+                    label: "选择文件",
+                    onClick: () => fileInputRef.current?.click(),
+                  },
+                  {
+                    key: "upload-folder",
+                    icon: <FolderOutlined />,
+                    label: "选择文件夹",
+                    onClick: () => dirInputRef.current?.click(),
+                  },
+                  {
+                    key: "add-table",
+                    icon: <TableOutlined />,
+                    label: "添加表",
+                    onClick: () => setSelectTableOpen(true),
+                  },
+                ],
+              }}
+            >
+              <ModoButton type="primary" icon={<CloudUploadOutlined />}>
+                添加知识
+                <DownOutlined style={{ fontSize: 10, marginLeft: 2 }} />
               </ModoButton>
-              <ModoButton
-                icon={<FolderOutlined />}
-                onClick={() => dirInputRef.current?.click()}
-              >
-                选择文件夹
-              </ModoButton>
-              <ModoButton
-                icon={<TableOutlined />}
-                onClick={() => setSelectTableOpen(true)}
-              >
-                添加表
-              </ModoButton>
-            </Space>
+            </Dropdown>
             {/* 隐藏的文件选择触发器（本地上传）：accept 只列系统可解析的格式 + zip / rar
                 （压缩包自动解包，2026-10-21 起并入「选择文件」，不再单列压缩包入口） */}
             <input
