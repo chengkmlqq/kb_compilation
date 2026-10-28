@@ -2,7 +2,41 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-27（wiki构建 tape 中间产物迁移 MinIO reg_cache + 失败文档重发准备）
+最后更新：2026-10-28（高频词页样式修复 + test_agents 用例对齐 visible_clauses 语义）
+
+## 52. 当前状态（2026-10-28 高频词页样式修复——卡片列表溢出/空态遮挡/分页缺失 + 详情面板分页常驻）
+
+- **需求**：「高频词页面卡片多了后溢出页面，卡片没有时暂无数据被顶部遮挡，页面也没有分页
+  组件，参考知识库页面修复」；随后补充「高频词详情中也没有分页组件」。
+- **卡片列表页**（`web/src/app/(main)/wiki-keywords/page.tsx`，commit 8acbd16）：
+  根容器 `.kb-kbs-list-panel`（flex:1 依赖 flex 父容器，高度链断裂）→ `.kb-kbs-page`
+  （height:100% flex 列），与知识库管理页三层结构一致——修复卡片溢出/空态 top:50% 被顶
+  部遮挡；手写分页条（ChevronIcon+跳页 Input+Select，total>30 才显示且容器类已从
+  globals.css 删除无样式）→ `ModoPagination` 常驻底栏，与 kbs/page.tsx 用法逐字段一致。
+- **详情面板**（`web/src/components/kb/WikiKeywordsPane.tsx`，commit 967d3ab）：
+  分页 KbsSimplePagination → ModoPagination 常驻。根因①：KbsSimplePagination 有
+  `if (total <= pageSize) return null`——高频词 ≤20 条时整个分页条不渲染（用户以为没有
+  分页组件）；根因②：表格 `scroll={{ y: "calc(100vh - 216px)" }}` 固定高度，tab 面板内
+  实际可用高度不足，分页条被底栏 overflow 裁剪。修复：去 scroll.y、表格外层容器
+  `overflow:auto`、分页底栏 `.kb-wk-pagination-bar`（flex-shrink:0 + margin-top:auto）。
+  顺带修排名列 `(page-1)*PAGE_SIZE+idx+1` 用常量 20——改每页条数后排名错位，改可变
+  pageSize。
+- **验证**：web tsc --noEmit 0 错误；next build 编译成功；两个提交均已本地构建部署
+  （deploy/kb-update.sh -s web -n）kb-web 容器已重建生效。
+- **测试修复**（commit eb6a217）：全量 pytest 首见 test_agents 失败
+  `test_resolve_kb_scope_all_for_team`（Extra items: kb3）——**10-25 既有回归与本次无关**：
+  0bdd367 给 resolve_kb_scope 的 all 模式从「按 agent.team_name 过滤」改为「按 caller 可见
+  性过滤（visible_clauses）」，但 fixture 库不设 scope → 模型默认 "system" → visible_clauses
+  无条件含 `scope=="system"` 全匹配 → 3 库全返回。修复：fixture 补 scope="team"+
+  owner_team_name，all/selected/sync 用例传 caller 上下文模拟生产调用（api/routers/agents.py
+  即如此调用；裸调 caller 全空时 visible_clauses 只匹配 system 库，会从「3 库全返回」变
+  「0 库返回」仍失败）。test_agents 22 passed。
+- **坑位**：① 测试直接构造 KbDatasource 不设 scope 会吃到模型默认 "system"（平台预置资源
+  全可见语义），断言可见性前必须显式 scope；② resolve_kb_scope 裸调（无 caller）只见
+  system 库，断言 team 库必须传 caller_user_id/caller_team_name；③ KbsSimplePagination
+  是「仅超一页才渲染」形态（DSB 对齐，知识库详情文档列表 KbDocsPane 仍用），常驻分页
+  一律用 ModoPagination。
+- **遗留**：docs/PROGRESS.md §51b 的 478 个 wiki构建重发结果未回写本文档（上次记录执行中）。
 
 ## 51. 当前状态（2026-10-27 wiki构建 中间产物 /tmp → MinIO reg_cache 迁移）
 
