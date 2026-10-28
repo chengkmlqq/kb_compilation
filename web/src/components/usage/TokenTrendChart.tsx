@@ -70,7 +70,9 @@ export default function TokenTrendChart({
         itemHeight: 8,
         textStyle: { fontSize: 12 },
       },
-      grid: { left: 64, right: 56, top: 24, bottom: 34 },
+      // top 留出双 Y 轴轴名（Token / 命中率）空间：轴名默认位于轴上端上方
+      // （nameGap 15），top 过小会把轴名顶出容器被裁剪
+      grid: { left: 64, right: 56, top: 40, bottom: 34 },
       xAxis: {
         type: "category" as const,
         boundaryGap: false,
