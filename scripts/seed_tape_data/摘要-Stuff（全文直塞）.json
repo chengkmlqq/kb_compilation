@@ -209,7 +209,7 @@
    {
     "step_id": "n5",
     "step_inst": "kb_write_doc_summary",
-    "step_label": "写摘要页",
+    "step_label": "写文档摘要",
     "step_config": {
      "status": "READY",
      "skip_empty": true,
