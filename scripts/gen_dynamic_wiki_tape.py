@@ -412,6 +412,8 @@ def build_dynamic_tape_payload(
     ])
     n02 = _def_node("n02", "派生变量", [
         {"variable": "kid8", "expression": "bindings.get('kid', '')[:8]"},
+        {"variable": "kp_paths",
+         "expression": "[(k.get('path') or k.get('name') or '未分类').strip('/') for k in ((bindings.get('kp_tree') or {}).get('knowledge_points') or [])]"},
         {"variable": "kp_count", "expression": "len((bindings.get('kp_tree') or {}).get('knowledge_points') or [])"},
     ])
     n03 = _script_node("n03", "初始化+切片拉取清洗", CODE_INIT_CHUNKS)
@@ -430,6 +432,11 @@ def build_dynamic_tape_payload(
     # item.idx 判定末轮才重建互链；body 终点 = n07e（其后不再连线，
     # 否则被 collect_body_ids 卷进 body 每轮执行）。
     nodes = [n01, n02, n03, n04, n05, n06, n07, n07a, n07b, n07c, n07d, n07e]
+    # 依赖顺序（2026-10-28 修复 kp_paths 缺失导致的建目录节点失败）：
+    #   n02 派生 kp_paths → n05 建目录消费 kp_paths/产出 folder_ids
+    #   → n06 组装消费 folder_ids/重写 kp_paths → n07 loop
+    # 旧版 n02 漏派生 kp_paths，n05 拿到未渲染 {{kp_paths}} 解析炸
+    # （2026-10-28「附件1：行业短彩端口收入效益评估报表需求.xlsx」构建失败）。
     edges = [
         _edge("e01", "n01", "n02"),
         _edge("e02", "n02", "n03"),

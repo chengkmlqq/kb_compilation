@@ -87,6 +87,43 @@ def test_input_def_bindings() -> None:
     assert vars_["kp_tree"] == "bindings.get('kp_tree', {})"
 
 
+def test_n02_derives_kp_paths() -> None:
+    """n02 派生变量必须产出 kp_paths（n05 建目录节点消费），防拓扑回归。
+
+    2026-10-28 线上事故：n02 漏派生 kp_paths，n05 wiki_ensure_folder 的
+    paths=\"{{kp_paths}}\" 未渲染 → ast.literal_eval 炸 → 整条 run failed
+    （附件1：行业短彩端口收入效益评估报表需求.xlsx）。此处断言 n02 派生 + 
+    n02 执行后 n05 模板能渲染成合法 JSON 数组。
+    """
+    from scripts.gen_dynamic_wiki_tape import build_dynamic_tape_payload
+    from api.services.orchestration_engine import DefStep
+
+    p = build_dynamic_tape_payload("wiki构建-动态-测试")
+    by_id = {n["id"]: n for n in p["nodes"]}
+    assignments = json.loads((by_id["n02"]["data"]["config"])["assignments"])
+    vars_ = {a["variable"]: a["expression"] for a in assignments}
+    assert "kp_paths" in vars_, "n02 必须派生 kp_paths，否则 n05 建目录节点拿未渲染模板失败"
+
+    ctx = TapeRuntimeContext({"kp_tree": {"knowledge_points": [
+        {"name": "出帐金额", "path": "收入指标/出帐金额", "extract_hint": "含税"},
+        {"name": "结算对象", "path": "维度/结算对象", "extract_hint": "类型"},
+    ]}})
+    step = DefStep("n02", "派生变量", "def", {"assignments": assignments})
+    resp = step.handle(ctx)
+    assert resp.success is True
+    assert ctx.bindings["kp_paths"] == ["收入指标/出帐金额", "维度/结算对象"]
+
+    # 模拟 n05 建目录节点对 paths 模板的整体渲染（与线上失败路径一致）：
+    # _template_replace 用 str(list) 产 Python 字面量（单引号）→ json 失败后 ast 兜底
+    cfg = by_id["n05"]["data"]["config"]
+    assert cfg["paths"] == "{{kp_paths}}"
+    rendered = ctx.render(cfg["paths"])
+    assert rendered.startswith("['收入指标/出帐金额'")  # str(list) 字面量
+    import ast
+
+    assert ast.literal_eval(rendered) == ["收入指标/出帐金额", "维度/结算对象"]
+
+
 # ─────────────────────────────────────────────────────────────────────
 # 知识点判定解析
 # ─────────────────────────────────────────────────────────────────────
