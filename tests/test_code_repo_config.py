@@ -22,7 +22,7 @@ from api.lib.crypto import aes_decrypt
 from api.main import app
 from api.models.knowledge import KbDatasource
 from api.services.identity import Identity, encode_identity_cookie
-from api.services.kb_admin import create_kb
+from conftest import create_test_kb as create_kb, seed_llm_model
 import api.middleware as mw
 import api.routers.kbs as kbs_router
 
@@ -43,6 +43,7 @@ def kb_db():
 
 @pytest.fixture()
 def kb_client(kb_db, monkeypatch):
+    seed_llm_model(kb_db)
     app.dependency_overrides[get_db] = lambda: kb_db
     monkeypatch.setattr(
         kbs_router,
@@ -73,6 +74,7 @@ def test_create_repo_kb_encrypts_secret(kb_db, kb_client):
     res = kb_client.post("/api/v1/kbs", json={
         "name": "代码库A",
         "scope": "personal",
+        "summary_model_id": "test-llm",
         "repo_type": "git",
         "repo_url": "https://git.example.com/team/a.git",
         "repo_branch": "main",
@@ -104,6 +106,7 @@ def test_create_repo_kb_missing_url_rejected(kb_client):
     res = kb_client.post("/api/v1/kbs", json={
         "name": "代码库B",
         "scope": "personal",
+        "summary_model_id": "test-llm",
         "repo_type": "git",
         "repo_url": "",
         "repo_auth_type": "none",
@@ -116,6 +119,7 @@ def test_create_repo_kb_auth_requires_secret(kb_client):
     res = kb_client.post("/api/v1/kbs", json={
         "name": "代码库C",
         "scope": "personal",
+        "summary_model_id": "test-llm",
         "repo_type": "git",
         "repo_url": "https://git.example.com/team/c.git",
         "repo_auth_type": "token",
@@ -126,7 +130,7 @@ def test_create_repo_kb_auth_requires_secret(kb_client):
 
 
 def test_create_normal_kb_ignores_repo(kb_db, kb_client):
-    res = kb_client.post("/api/v1/kbs", json={"name": "普通库", "scope": "personal"})
+    res = kb_client.post("/api/v1/kbs", json={"name": "普通库", "scope": "personal", "summary_model_id": "test-llm"})
     assert res.status_code == 200
     kb = kb_db.execute(select(KbDatasource)).scalars().first()
     assert kb.repo_type == ""
@@ -144,6 +148,7 @@ def test_create_repo_kb_triggers_pull(kb_client, monkeypatch):
     res = kb_client.post("/api/v1/kbs", json={
         "name": "代码库D",
         "scope": "personal",
+        "summary_model_id": "test-llm",
         "repo_type": "git",
         "repo_url": "https://git.example.com/team/d.git",
     })

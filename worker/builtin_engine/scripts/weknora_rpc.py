@@ -155,54 +155,47 @@ def llm_config():
     平台不可用才回落 env（历史兜底，不再作为主路径）。
     2026-10-27 对齐：第三元组 model_name 取 kb_model.name——让 llm_call
     的请求模型名也跟随知识库绑定模型，与编排 kb_llm_chat 节点行为一致。
+    2026-10-28 收紧：**只从知识库绑定取模型，去掉系统默认/env 兜底**——
+    知识库创建时强制绑定 summary_model_id，summary_model_id 指向的模型即
+    该库唯一模型来源；未绑定/绑定模型不可用直接抛错，不再静默回落
+    is_default/env（否则库配置漏配时 wiki 构建悄悄用错模型/裸奔）。
     """
     kb = globals().get('KB') or _env('WEKNORA_KB_ID') or ''
+    if not kb:
+        raise RuntimeError(
+            '未指定目标知识库（WEKNORA_KB_ID 缺失），无法解析 LLM 模型——'
+            '知识库模型从 kb_datasource.summary_model_id 绑定获取，请先在知识库配置中设置'
+        )
+    from api.db import get_sessionmaker
+    from sqlalchemy import text as _sql_text
+    from api.services.models import decrypt_secret
+    _db = get_sessionmaker()()
     try:
-        from api.db import get_sessionmaker
-        from sqlalchemy import text as _sql_text
-        from api.services.models import decrypt_secret
-        _db = get_sessionmaker()()
-        try:
-            _mid = None
-            if kb:
-                _row = _db.execute(_sql_text(
-                    "select summary_model_id from kb_datasource where id = :k"), {"k": kb}).first()
-                if _row and _row[0]:
-                    _mid = _row[0]
-            _m = None
-            if _mid:
-                _m = _db.execute(_sql_text(
-                    "select base_url, api_key, name from kb_model where id = :i and state = '1'"),
-                    {"i": _mid}).first()
-            if not _m:
-                _m = _db.execute(_sql_text(
-                    "select base_url, api_key, name from kb_model where type = 'chat' "
-                    "and is_default = 1 and state = '1' order by updated_at desc limit 1")).first()
-            if _m and _m[0] and _m[1]:
-                _name = str(_m[2] or '').strip() or DEFAULT_MODEL
-                return str(_m[0]).rstrip('/'), decrypt_secret(_m[1]), _name
-        finally:
-            _db.close()
-    except Exception as _e:  # noqa: BLE001 - 平台模型不可用时回落 env，不中断构建
-        print('[llm_config] platform model unavailable, fallback to env: %s' % _e, flush=True)
-
-    # ---------- 历史 env 兜底 ----------
-    cfg = _skill_config().get('model', {}) or {}
-    base = (_env('WEKNORA_LLM_BASE_URL') or _env('WIKI_LLM_BASE_URL') or _env('LLM_BASE_URL')
-            or _env('AI_CHAT_API_ENDPOINT') or str(cfg.get('base_url') or '').strip()
-            or 'https://inferaiapi.com/v1')
-    key = (_env('WEKNORA_LLM_API_KEY') or _env('WIKI_LLM_API_KEY') or _env('LLM_API_KEY')
-           or _env('AI_CHAT_API_KEY')
-           or os.path.expandvars(str(cfg.get('api_key') or '')).strip())
-    if not key or '${' in key:
-        key = (_env_file('/home/ctyun/kb_compilation/deploy/.env', 'AI_CHAT_API_KEY')
-               or _env_file(os.path.expanduser('~/kb_compilation/deploy/.env'), 'AI_CHAT_API_KEY')
-               or _env('WIKI_LLM_API_KEY')
-               or _env('HERMES_CUSTOM_AIAAA_CC_API_KEY') or '')
-    if '${' in base or '${' in key:
-        base = 'https://inferaiapi.com/v1'
-        key = ''
-    return base.rstrip('/'), key, DEFAULT_MODEL
+        _mid = None
+        _row = _db.execute(_sql_text(
+            "select summary_model_id from kb_datasource where id = :k"), {"k": kb}).first()
+        if _row and _row[0]:
+            _mid = _row[0]
+        if not _mid:
+            raise RuntimeError(
+                f'知识库 {kb} 未配置大语言模型（summary_model_id 为空）——'
+                '请到知识库配置中绑定 LLM 模型'
+            )
+        _m = _db.execute(_sql_text(
+            "select base_url, api_key, name from kb_model where id = :i and state = '1'"),
+            {"i": _mid}).first()
+        if not _m:
+            raise RuntimeError(
+                f'知识库 {kb} 绑定的模型 {_mid} 不存在或已禁用（state!=1）——请更换绑定'
+            )
+        if not _m[0] or not _m[1]:
+            raise RuntimeError(
+                f'知识库 {kb} 绑定的模型 {_mid} 缺少 base_url/api_key——请检查模型配置'
+            )
+        _name = str(_m[2] or '').strip() or DEFAULT_MODEL
+        return str(_m[0]).rstrip('/'), decrypt_secret(_m[1]), _name
+    finally:
+        _db.close()
 
 
 def api_base_url():

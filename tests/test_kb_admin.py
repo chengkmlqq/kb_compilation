@@ -17,7 +17,6 @@ from api.models.knowledge import (
 )
 from api.services.kb_admin import (
     create_document,
-    create_kb,
     delete_document,
     delete_kb,
     get_kb,
@@ -28,6 +27,7 @@ from api.services.kb_admin import (
     update_kb,
     wiki_tree,
 )
+from conftest import create_test_kb as create_kb
 
 
 @pytest.fixture()

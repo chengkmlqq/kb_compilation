@@ -442,22 +442,31 @@ class KbLlmChatStep(BaseStep):
             model = model_raw
         if not model:
             # 2026-10-17 改造：未显式指定模型时，优先用知识库绑定的摘要/对话模型
+            # 2026-10-28 收紧：**不再回落系统默认/env**——知识库创建时强制绑定
+            # summary_model_id，该模型即唯一来源；bindings.summary_model_id 为空
+            # （编排节点未配置 model={{summary_model_id}}）或知识库未绑定 → 显式失败。
+            _kb_id = str(context.bindings.get("kb_id") or "").strip()
+            if not _kb_id:
+                return StepResponse.fail(
+                    "kb_llm_chat 缺少模型：编排节点未配置 model 且运行时无 kb_id——"
+                    "请在编排节点配置 model={{summary_model_id}} 或传入知识库上下文"
+                )
+            from api.db import get_sessionmaker as _gsm2
+            from sqlalchemy import text as _sqlt2
+            _dbm = _gsm2()()
             try:
-                _kb_id = str(context.bindings.get("kb_id") or "").strip()
-                if _kb_id:
-                    from api.db import get_sessionmaker as _gsm2
-                    from sqlalchemy import text as _sqlt2
-                    _dbm = _gsm2()()
-                    try:
-                        _mr = _dbm.execute(_sqlt2(
-                            "select summary_model_id from kb_datasource where id = :k"),
-                            {"k": _kb_id}).first()
-                        if _mr and _mr[0]:
-                            model = _mr[0]
-                    finally:
-                        _dbm.close()
-            except Exception:
-                pass
+                _mr = _dbm.execute(_sqlt2(
+                    "select summary_model_id from kb_datasource where id = :k"),
+                    {"k": _kb_id}).first()
+            finally:
+                _dbm.close()
+            if _mr and _mr[0]:
+                model = _mr[0]
+            if not model:
+                return StepResponse.fail(
+                    f"kb_llm_chat 缺少模型：知识库 {_kb_id} 未配置大语言模型"
+                    "（summary_model_id 为空）——请到知识库配置中绑定 LLM 模型"
+                )
         temperature = float(self.config.get("temperature") or 0.2)
         max_tokens = int(self.config.get("max_tokens") or 2048)
         json_mode = bool(self.config.get("json_mode"))

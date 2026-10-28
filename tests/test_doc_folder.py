@@ -12,7 +12,6 @@ from sqlalchemy.orm import sessionmaker
 from api.db import Base
 from api.services.kb_admin import (
     create_document,
-    create_kb,
     doc_branch,
     doc_create_folder,
     doc_delete_folder,
@@ -21,6 +20,7 @@ from api.services.kb_admin import (
     doc_update_folder,
     list_documents,
 )
+from conftest import create_test_kb as create_kb
 
 
 @pytest.fixture()

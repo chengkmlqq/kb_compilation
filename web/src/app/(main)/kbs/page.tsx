@@ -1213,9 +1213,11 @@ export default function KbsPage() {
                     <Form.Item
                       name="summary_model_id"
                       label="大语言模型（LLM）"
-                      extra="Wiki 合成/文档理解用；留空 = 系统默认"
+                      required
+                      rules={[{ required: true, message: "大语言模型（LLM）为必配项，请选择" }]}
+                      extra="摘要 / 增强 / Wiki 合成均使用此模型；创建后不可清空"
                     >
-                      <Select allowClear showSearch optionFilterProp="label" options={chatOptions} placeholder="选择大语言模型" />
+                      <Select showSearch optionFilterProp="label" options={chatOptions} placeholder="请选择 LLM 模型" />
                     </Form.Item>
                   </>
                 )}

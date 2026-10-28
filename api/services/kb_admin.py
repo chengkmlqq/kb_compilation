@@ -277,6 +277,11 @@ def create_kb(
     strategy = str(summary_strategy or "auto").strip() or "auto"
     if strategy not in SUMMARY_STRATEGIES:
         raise ValueError(f"摘要策略不合法: {strategy}（可选 off/auto/stuff/mapreduce/refine）")
+    # 2026-10-28：LLM 必须配置——知识库创建时强制绑定（摘要/增强/wiki 合成
+    # 都从知识库 summary_model_id 取模型，不再回落注册表系统默认/env；未配置则
+    # 运行时 LLM 全断）。
+    if not summary_model_id:
+        raise ValueError("创建知识库必须配置「大语言模型（LLM）」（summary_model_id）")
     _validate_bound_model(
         db, embedding_model_id, "向量化", caller_user_id, caller_team_name, is_sys_admin
     )
@@ -452,6 +457,13 @@ def update_kb(
         if strategy not in SUMMARY_STRATEGIES:
             raise ValueError(f"摘要策略不合法: {strategy}（可选 off/auto/stuff/mapreduce/refine）")
         kb.summary_strategy = strategy
+    if "summary_model_id" in fields:
+        # 2026-10-28：LLM 绑定不可清空——摘要/增强/wiki 合成都依赖知识库模型，
+        # 无绑定时运行时 LLM 全断（不回落系统默认/env）。允许更换，禁止置空。
+        new_model = str(fields.get("summary_model_id") or "").strip() or ""
+        if not new_model:
+            raise ValueError("大语言模型（LLM）为必配项，不能清空；如要更换请选择其他模型")
+        fields["summary_model_id"] = new_model
     for f in ("embedding_model_id", "summary_model_id", "storage_backend_id"):
         if f in fields:
             setattr(kb, f, str(fields.get(f) or "") or None)

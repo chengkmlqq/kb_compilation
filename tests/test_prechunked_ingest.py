@@ -28,7 +28,7 @@ from api.db import Base, get_db
 from api.main import app
 from api.models.knowledge import DocChunk, KbDocument
 from api.services.identity import Identity, encode_identity_cookie
-from api.services.kb_admin import create_kb
+from conftest import create_test_kb as create_kb
 import api.middleware as mw
 import api.routers.kbs as kbs_router
 from worker.tasks import prechunk_ingest as pci
@@ -210,14 +210,18 @@ def test_prechunked_upload_replace_existing(pc_client, pc_db) -> None:
         )
     )
     pc_db.commit()
-    # replace 模式预切上传：旧文档被级联删除
+    # replace 模式预切上传：旧文档标记 DELETING 入队异步清理（2026-10-23
+    # 删除异步化改造后行不立即删），新文档归位 PENDING
     r = _prechunked_upload(pc_client, kb.id, chunks=None, replace=True)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["chunk_count"] == 2
     docs = _docs(pc_db, kb.id)
-    assert len(docs) == 1
-    assert docs[0].id != "doc-old-001"
-    assert docs[0].file_name == "制度.md"
+    assert len(docs) == 2
+    old = next(d for d in docs if d.id == "doc-old-001")
+    assert old.delete_state == "DELETING"
+    new = next(d for d in docs if d.id != "doc-old-001")
+    assert new.file_name == "制度.md"
+    assert new.parse_state == "PENDING"
 
 
 # --------------------------------------------------------------------------- #

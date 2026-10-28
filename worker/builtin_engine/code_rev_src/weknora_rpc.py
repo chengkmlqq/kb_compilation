@@ -147,27 +147,46 @@ DEFAULT_MODEL = _default_model()  # 全技能 LLM 统一默认模型
 
 
 def llm_config():
-    """LLM 统一配置来源：返回 (base_url, api_key)。
-    优先级：任务级 WEKNORA_LLM_BASE_URL/WEKNORA_LLM_API_KEY > 容器 LLM_*/AI_CHAT_*
-    > 技能 config.yaml model 段 > 默认 https://inferaiapi.com/v1（key 兜底
-    /home/ctyun/kb_compilation/deploy/.env 的 AI_CHAT_API_KEY）。"""
-    cfg = _skill_config().get('model', {}) or {}
-    base = (_env('WEKNORA_LLM_BASE_URL') or _env('WIKI_LLM_BASE_URL') or _env('LLM_BASE_URL')
-            or _env('AI_CHAT_API_ENDPOINT') or str(cfg.get('base_url') or '').strip()
-            or 'https://inferaiapi.com/v1')
-    key = (_env('WEKNORA_LLM_API_KEY') or _env('WIKI_LLM_API_KEY') or _env('LLM_API_KEY')
-           or _env('AI_CHAT_API_KEY')
-           or os.path.expandvars(str(cfg.get('api_key') or '')).strip())
-    if not key or '${' in key:
-        # 平台部署 .env（宿主机路径；容器内不存在时静默跳过）+ WIKI_LLM_API_KEY 兜底
-        key = (_env_file('/home/ctyun/kb_compilation/deploy/.env', 'AI_CHAT_API_KEY')
-               or _env_file(os.path.expanduser('~/kb_compilation/deploy/.env'), 'AI_CHAT_API_KEY')
-               or _env('WIKI_LLM_API_KEY')
-               or _env('HERMES_CUSTOM_AIAAA_CC_API_KEY') or '')
-    if '${' in base or '${' in key:
-        base = 'https://inferaiapi.com/v1'
-        key = ''
-    return base.rstrip('/'), key
+    """LLM 统一配置来源：返回 (base_url, api_key, model_name)。
+
+    2026-10-28 收紧：**只从知识库绑定取模型，去掉 env 兜底**——知识库创建时
+    强制绑定 summary_model_id，summary_model_id 指向的模型即该库唯一模型来源；
+    未绑定/绑定模型不可用直接抛错（库配置漏配时显式失败，不悄悄用默认模型）。
+    """
+    kb = globals().get('KB') or _env('WEKNORA_KB_ID') or ''
+    if not kb:
+        raise RuntimeError(
+            '未指定目标知识库（WEKNORA_KB_ID 缺失），无法解析 LLM 模型——'
+            '知识库模型从 kb_datasource.summary_model_id 绑定获取，请先在知识库配置中设置'
+        )
+    from api.db import get_sessionmaker
+    from sqlalchemy import text as _sql_text
+    from api.services.models import decrypt_secret
+    _db = get_sessionmaker()()
+    try:
+        _row = _db.execute(_sql_text(
+            "select summary_model_id from kb_datasource where id = :k"), {"k": kb}).first()
+        _mid = (_row[0] if _row and _row[0] else '') or ''
+        if not _mid:
+            raise RuntimeError(
+                f'知识库 {kb} 未配置大语言模型（summary_model_id 为空）——'
+                '请到知识库配置中绑定 LLM 模型'
+            )
+        _m = _db.execute(_sql_text(
+            "select base_url, api_key, name from kb_model where id = :i and state = '1'"),
+            {"i": _mid}).first()
+        if not _m:
+            raise RuntimeError(
+                f'知识库 {kb} 绑定的模型 {_mid} 不存在或已禁用（state!=1）——请更换绑定'
+            )
+        if not _m[0] or not _m[1]:
+            raise RuntimeError(
+                f'知识库 {kb} 绑定的模型 {_mid} 缺少 base_url/api_key——请检查模型配置'
+            )
+        _name = str(_m[2] or '').strip() or DEFAULT_MODEL
+        return str(_m[0]).rstrip('/'), decrypt_secret(_m[1]), _name
+    finally:
+        _db.close()
 
 
 def api_base_url():
@@ -1438,8 +1457,10 @@ def llm_call(messages, model=None, max_tokens=2048, temperature=0.1,
     enable_thinking=false 避免 reasoning 耗尽 max_tokens。
     每次调用/重试写入事件 JSONL（WIKI_EVENTS_LOG 或 /tmp/wiki_events_<pid>.jsonl）。
     """
-    base_url, api_key = llm_config()
-    model = model or DEFAULT_MODEL
+    base_url, api_key, kb_model_name = llm_config()
+    # 2026-10-28 对齐：请求模型名跟随知识库绑定模型（kb_model.name），
+    # 与 scripts 版行为一致；未显式指定 model 时不再用 DEFAULT_MODEL
+    model = model or kb_model_name or DEFAULT_MODEL
 
     # inferaiapi group 限流 ~3 次/分：距上次调用不足 15s 则等待补齐（全局节流，
     # 2026-10-07 25→15s 提速；限流由 llm_call 重试收敛兜底）

@@ -32,7 +32,8 @@ from api.models.framework import CronTask
 from api.models.orchestration import Tape, TapeStep
 from api.services import aggregation as agg
 from api.services.identity import Identity, encode_identity_cookie
-from api.services.kb_admin import create_kb, delete_kb, update_kb
+from api.services.kb_admin import delete_kb, update_kb
+from conftest import create_test_kb as create_kb
 
 
 @pytest.fixture()

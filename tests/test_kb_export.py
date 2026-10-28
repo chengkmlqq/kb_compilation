@@ -17,7 +17,8 @@ from sqlalchemy.orm import sessionmaker
 from api.db import Base
 from api.models.knowledge import DocFolder, KbDatasource, KbDocument, WikiPage
 from api.services import storage as storage_svc
-from api.services.kb_admin import create_kb, create_document, doc_create_folder
+from api.services.kb_admin import create_document, doc_create_folder
+from conftest import create_test_kb as create_kb, seed_llm_model
 from api.services.kb_export import export_kb_zip, import_kb_zip
 
 
@@ -27,6 +28,8 @@ def kb_db(tmp_path):
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False)
     db = Session()
+    # create_kb 强制绑定摘要模型：手工构造 manifest 的导入测试也要有模型行
+    seed_llm_model(db)
     yield db
     db.close()
 
@@ -196,7 +199,7 @@ def test_import_same_name_replace_overwrites(kb_db, monkeypatch) -> None:
             json.dumps(
                 {
                     "format_version": 1,
-                    "kb": {"name": "覆盖库"},
+                    "kb": {"name": "覆盖库", "summary_model_id": "test-llm"},
                     "documents": [{"file_name": "new.md", "folder_path": ""}],
                 }
             ),
@@ -250,7 +253,7 @@ def test_import_skips_missing_file_bytes(kb_db, monkeypatch) -> None:
             json.dumps(
                 {
                     "format_version": 1,
-                    "kb": {"name": "缺字节库"},
+                    "kb": {"name": "缺字节库", "summary_model_id": "test-llm"},
                     "documents": [{"file_name": "ghost.pdf", "folder_path": ""}],
                 }
             ),

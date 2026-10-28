@@ -21,7 +21,8 @@ from sqlalchemy.pool import StaticPool
 from api.db import Base
 from api.models.knowledge import DocFolder, KbDatasource, KbDocument
 from api.services import storage as storage_svc
-from api.services.kb_admin import create_kb, doc_create_folder
+from api.services.kb_admin import doc_create_folder
+from conftest import create_test_kb as create_kb
 from worker.tasks import code_repo as cr
 
 

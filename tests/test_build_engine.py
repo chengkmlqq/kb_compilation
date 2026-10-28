@@ -21,7 +21,8 @@ from sqlalchemy.orm import sessionmaker
 from api.db import Base, get_db
 from api.models.framework import Job
 from api.models.orchestration import Tape, TapeStep
-from api.services.kb_admin import create_kb, get_kb, update_kb
+from api.services.kb_admin import get_kb, update_kb
+from conftest import create_test_kb as create_kb
 from api.main import app
 import api.routers.kbs as kbs_router
 import worker.tasks.doc_process as dp
@@ -262,7 +263,7 @@ def test_upload_accepts_doc_build_engine(be_client, be_db, monkeypatch) -> None:
     """上传端点带 build_tape_id → kb_document.build_tape_id 落库。"""
     _seed_tape(be_db, "tape-up", "上传引擎", status="effective")
 
-    from api.services.kb_admin import create_kb
+    from conftest import create_test_kb as create_kb
 
     # personal 归属 + admin 属主，绕开 system 库的管理员角色门槛（测试库无角色数据）
     kb = create_kb(be_db, "构建库", scope="personal", owner_user_id="admin", created_by="admin", build_tape_id=None)

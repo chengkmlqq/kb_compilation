@@ -729,8 +729,14 @@ export default function KBConfigModal({ kb, open, onClose }: Props) {
                       )}
                     />
                   </Form.Item>
-                  <Form.Item name="summary_model_id" label="Wiki 合成模型（LLM）">
-                    <Select allowClear showSearch optionFilterProp="label" placeholder="留空 = 系统默认" options={modelOptions("chat")} />
+                  <Form.Item
+                    name="summary_model_id"
+                    label="大语言模型（LLM）"
+                    required
+                    rules={[{ required: true, message: "大语言模型（LLM）为必配项，请选择" }]}
+                    extra="摘要 / 增强 / Wiki 合成均使用此模型；创建后不可清空"
+                  >
+                    <Select showSearch optionFilterProp="label" placeholder="请选择 LLM 模型" options={modelOptions("chat")} />
                   </Form.Item>
                 </>
               )}

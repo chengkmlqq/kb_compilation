@@ -22,7 +22,8 @@ from api.db import Base, get_db
 from api.main import app
 from api.models.knowledge import KbDocument
 from api.services.identity import Identity, encode_identity_cookie
-from api.services.kb_admin import create_kb, doc_create_folder
+from api.services.kb_admin import doc_create_folder
+from conftest import create_test_kb as create_kb
 import api.middleware as mw
 import api.routers.kbs as kbs_router
 

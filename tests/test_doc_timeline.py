@@ -16,7 +16,8 @@ from api.models.framework import Job
 from api.models.knowledge import KbDocument
 from api.models.orchestration import TapeRun
 from api.routers.kbs import document_processing_timeline
-from api.services.kb_admin import create_document, create_kb
+from api.services.kb_admin import create_document
+from conftest import create_test_kb as create_kb
 
 
 @pytest.fixture()

@@ -215,13 +215,12 @@ def _resolve_llm_config(config: dict[str, Any], kb_id: str = "") -> None:
     """补齐 LLM 配置（model/base_url/api_key），优先级：
 
     1. 任务已带（_enqueue_wiki_skill_task 从 WIKI_LLM_* 注入）→ 不动
-    2. **KB 级绑定**（WeKnora wiki_config.synthesis_model_id）
-    3. 模型注册表默认 chat 模型（resolve_model_config）
-    4. env 兜底：WIKI_LLM_* → AI_CHAT_* → LLM_*
+    2. **KB 级绑定**（kb_datasource.summary_model_id，WeKnora 对齐）
 
-    第 4 步不可省：后台任务无用户上下文，personal scope 的模型不可见；而
-    system 默认模型常处于 state=0（禁用），此时注册表解析返回 None —— 没有 env
-    兜底就会重演 d9affbc 的 `WIKI_LLM_API_KEY 未配置`（agent 拿不到凭证直接失败）。
+    2026-10-28 收紧：**去掉注册表默认/env 兜底**——知识库创建时强制绑定
+    summary_model_id，该模型即知识库唯一 LLM 来源；worker 后台任务无用户
+    上下文，注册表 personal 模型本就不可见，继续兜底只会让漏配的库悄悄
+    换模型/失败更难查。未绑定/绑定模型不可用 → 明确抛错，不再静默回落。
     """
     if config.get("model") and config.get("base_url") and config.get("api_key"):
         return
@@ -234,61 +233,48 @@ def _resolve_llm_config(config: dict[str, Any], kb_id: str = "") -> None:
             return True
         return False
 
-    # 2) KB 级绑定模型
-    if kb_id:
-        try:
-            from sqlalchemy import select as _select
-
-            from api.models.knowledge import KbDatasource
-
-            db = get_sessionmaker()()
-            try:
-                kb = db.execute(_select(KbDatasource).where(KbDatasource.id == kb_id)).scalars().first()
-            finally:
-                db.close()
-            bound = ((getattr(kb, "wiki_config", None) or {}).get("synthesis_model_id") or "") if kb else ""
-            if bound:
-                from api.services.models import resolve_model_config
-
-                db = get_sessionmaker()()
-                try:
-                    r = resolve_model_config(db, "chat", model_id=bound)
-                finally:
-                    db.close()
-                if r and _set(r.get("base_url", ""), r.get("model", ""), r.get("api_key", "")):
-                    logger.info("agent llm from kb binding kb=%s model=%s", kb_id, bound)
-                    return
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("kb-level model binding failed kb=%s: %s", kb_id, exc)
-
-    # 3) 模型注册表默认（后台任务无用户上下文，可能解析不到 → 落到 env）
-    try:
-        from api.services.models import resolve_model_config
-
-        db = get_sessionmaker()()
-        try:
-            resolved = resolve_model_config(db, "chat", is_sys_admin=True)
-        finally:
-            db.close()
-        if resolved and _set(
-            resolved.get("base_url") or "", resolved.get("model") or "", resolved.get("api_key") or ""
-        ):
-            return
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("failed to resolve chat model for agent: %s", exc)
-
-    # 4) env 兜底
-    import os
-
-    base = (os.getenv("WIKI_LLM_BASE_URL") or os.getenv("AI_CHAT_API_ENDPOINT") or os.getenv("LLM_BASE_URL") or "").strip()
-    model = (os.getenv("WIKI_LLM_MODEL") or os.getenv("AI_CHAT_MODEL") or os.getenv("LLM_MODEL") or "").strip()
-    key = (os.getenv("WIKI_LLM_API_KEY") or os.getenv("AI_CHAT_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
-    if _set(base, model, key):
-        logger.info("agent llm from env fallback model=%s", model)
-    else:
-        logger.error(
-            "agent LLM 未配置：注册表无 system 默认 chat 模型且 env(WIKI_LLM_*/AI_CHAT_*/LLM_*) 为空"
+    # 2) KB 级绑定模型（唯一来源，2026-10-28 起不再有 3)/4) 兜底）
+    if not kb_id:
+        raise RuntimeError(
+            "agent LLM 未配置：任务未携带且未指定知识库（kb_id 缺失），"
+            "无法从 kb_datasource.summary_model_id 解析模型"
         )
+    from sqlalchemy import select as _select
+
+    from api.models.knowledge import KbDatasource
+
+    db = get_sessionmaker()()
+    try:
+        kb = db.execute(_select(KbDatasource).where(KbDatasource.id == kb_id)).scalars().first()
+    finally:
+        db.close()
+    bound = (
+        (getattr(kb, "summary_model_id", None) or "")
+        if kb else ""
+    )
+    if not bound:
+        raise RuntimeError(
+            f"agent LLM 未配置：知识库 {kb_id} 未绑定大语言模型"
+            "（summary_model_id 为空）——请到知识库配置中绑定 LLM 模型"
+        )
+    from api.services.models import resolve_model_config
+
+    db = get_sessionmaker()()
+    try:
+        r = resolve_model_config(db, "chat", model_id=bound)
+    finally:
+        db.close()
+    if not r:
+        raise RuntimeError(
+            f"agent LLM 未配置：知识库 {kb_id} 绑定的模型 {bound} 不存在或不可用"
+            "——请检查模型配置或更换绑定"
+        )
+    if not _set(r.get("base_url", ""), r.get("model", ""), r.get("api_key", "")):
+        raise RuntimeError(
+            f"agent LLM 未配置：知识库 {kb_id} 绑定的模型 {bound} 缺少"
+            "base_url/api_key——请检查模型配置"
+        )
+    logger.info("agent llm from kb binding kb=%s model=%s", kb_id, bound)
 
 
 def _handle_agent_wiki_build(job_id: str, task_params: str | None) -> dict[str, Any]:
