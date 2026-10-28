@@ -357,8 +357,55 @@ def _advance_impl(run_id: str, env: str | None = None) -> None:
         _sync_orch_job_status(run_id, status, error_text)
         logger.info("编排 run=%s 终态 %s (%d 步)", run_id, status, len(results))
     else:
-        # 有未执行但 pre 未完成（依赖等待中）—— 不动作，等节点回调
-        logger.info("编排 run=%s 等待依赖完成 (done=%d/%d)", run_id, len(pairs), len(steps))
+        # 2026-10-28 失败收敛（修复 loop 内步骤失败 run 永卡 running）：
+        # 失败传播是 step_id 级（不带 round），loop 循环体步骤只要某一轮成功过，
+        # step_id 就进 done，同步骤其他轮的失败后继不会被标 skipped；而
+        # dispatch_next_round 要求本轮 body 全完成才开下一轮、ready 判定又把
+        # pre 失败的节点挡掉 → 被失败阻断的轮次永远缺失 → expected_rounds
+        # 永远无法满足 → all_done 恒 False → run 卡 running（任务监控显示
+        # "运行中"，实际已失败）。
+        # 收敛条件：存在 failed 步骤 + 无 running 占位（无节点在执行，
+        # 不会再有回调）+ 无就绪节点可投 + loop 无新轮可开（前面 dispatch 未投）。
+        # 满足即把缺失轮次补标 skipped 并收敛 run 为 failed 终态。
+        has_failed = any(r.get("status") == "failed" for r in results)
+        has_running_placeholder = any(r.get("status") == "running" for r in results)
+        if has_failed and not has_running_placeholder and not ready:
+            expected = orch_loop.expected_rounds(steps, loop_state)
+            pairs_now = orch_loop.done_pairs(results)
+            missing: list[tuple[str, int]] = []
+            for sid in steps:
+                expected_rounds_sid = expected.get(sid, {0})
+                have = {rnd for s2, rnd in pairs_now if s2 == sid}
+                for rnd in sorted(expected_rounds_sid - have):
+                    missing.append((sid, rnd))
+            for sid, rnd in missing:
+                logger.warning(
+                    "编排 run=%s 失败收敛：补标 skipped step=%s round=%d",
+                    run_id, sid, rnd,
+                )
+                _append_step_result(run_id, {
+                    "step_id": sid, "step_inst": steps[sid]["inst"],
+                    "step_label": steps[sid]["label"],
+                    "queue": _step_queue(steps, sid), "status": "skipped",
+                    "error": None, "duration_ms": 0, "round": rnd,
+                    "body": None,
+                }, env)
+            if missing:
+                run = _get_run(run_id, env)
+                results = list(run.step_results or [])
+            failed = [r for r in results if r.get("status") == "failed"]
+            error_text = ("; ".join(
+                f"{r['step_id']}(round {r.get('round','?')}): {r.get('error','')}"
+                for r in failed) if failed else None)
+            _update_run(run_id, env, status="failed", bindings=bindings, error=error_text)
+            _sync_orch_job_status(run_id, "failed", error_text)
+            logger.info(
+                "编排 run=%s 失败收敛 failed：%d 个失败步骤，补标 %d 个缺失轮次",
+                run_id, len(failed), len(missing),
+            )
+        else:
+            # 有未执行但 pre 未完成（依赖等待中）—— 不动作，等节点回调
+            logger.info("编排 run=%s 等待依赖完成 (done=%d/%d)", run_id, len(pairs), len(steps))
 
 
 def _sync_orch_job_status(run_id: str, status: str, error_text: str | None) -> None:
