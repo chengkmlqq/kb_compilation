@@ -160,9 +160,9 @@ def agent_db():
     db = Session()
     db.add_all(
         [
-            KbDatasource(id="kb1", name="制度库", team_name="T1", state="1"),
-            KbDatasource(id="kb2", name="技术库", team_name="T1", state="1"),
-            KbDatasource(id="kb3", name="其他团队库", team_name="T2", state="1"),
+            KbDatasource(id="kb1", name="制度库", team_name="T1", owner_team_name="T1", scope="team", state="1"),
+            KbDatasource(id="kb2", name="技术库", team_name="T1", owner_team_name="T1", scope="team", state="1"),
+            KbDatasource(id="kb3", name="其他团队库", team_name="T2", owner_team_name="T2", scope="team", state="1"),
         ]
     )
     db.commit()
@@ -197,7 +197,9 @@ def test_delete_soft(agent_db) -> None:
 
 def test_resolve_kb_scope_all_for_team(agent_db) -> None:
     agent = create_agent(agent_db, "助手", team_name="T1", created_by="admin")
-    kbs = resolve_kb_scope(agent_db, agent)
+    # 2026-10-25 语义变更：all 模式按调用者可见性过滤（visible_clauses），
+    # 测试模拟生产调用（api/routers/agents.py）传 caller 上下文
+    kbs = resolve_kb_scope(agent_db, agent, caller_user_id="u1", caller_team_name="T1")
     assert {kb.id for kb in kbs} == {"kb1", "kb2"}  # team T1 only
 
 
@@ -205,7 +207,7 @@ def test_resolve_kb_scope_selected(agent_db) -> None:
     agent = create_agent(agent_db, "助手", team_name="T1", created_by="admin")
     update_agent(agent_db, agent.id, {"config": {"kb_selection_mode": "selected", "knowledge_bases": ["kb2"]}})
     agent = agent_db.get(KbAgent, agent.id)
-    kbs = resolve_kb_scope(agent_db, agent)
+    kbs = resolve_kb_scope(agent_db, agent, caller_user_id="u1", caller_team_name="T1")
     assert {kb.id for kb in kbs} == {"kb2"}
 
 
@@ -253,7 +255,7 @@ def test_sync_agent_for_kb_creates_smart_reasoning_agent(agent_db) -> None:
     assert cfg.agent_mode == "smart-reasoning"  # 智能推理模式
     assert cfg.kb_selection_mode == "selected"
     assert cfg.knowledge_bases == ["kb1"]
-    assert resolve_kb_scope(agent_db, agent_db.get(KbAgent, agent.id))  # 绑定库可直接检索
+    assert resolve_kb_scope(agent_db, agent_db.get(KbAgent, agent.id), caller_user_id="u1", caller_team_name="T1")  # 绑定库可直接检索
 
 
 def test_sync_agent_for_kb_reuses_same_name_and_binds_new_kb(agent_db) -> None:
