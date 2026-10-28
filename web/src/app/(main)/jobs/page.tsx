@@ -61,10 +61,22 @@ export default function JobsPage() {
   useEffect(() => {
     const el = tableBodyRef.current;
     if (!el) return;
-    const update = () => setTableBodyHeight(el.clientHeight);
+    const update = () => {
+      // 2026-10-28: rc-table(v7)/antd(v6) 里 scroll.y 的 maxHeight 只约束表体
+      // (.ant-table-body)，表头 (.ant-table-thead) 是流内独立块（FixedHolder）。
+      // 直接量容器高度会令表格总高 = 容器高 + 表头高，底部最后一行被分页容器
+      // 遮挡/裁切——先减去表头实测高度再传给 scroll.y。
+      const thead = el.querySelector<HTMLElement>(".ant-table-thead");
+      const headerH = thead ? thead.getBoundingClientRect().height : 0;
+      setTableBodyHeight(Math.max(40, Math.round(el.clientHeight - headerH)));
+    };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
+    // scroll.y 从 undefined 变为数字时，rc-table 由「合并表格」切「独立表头」结构，
+    // 表头元素尺寸变化会触发重算，保证减去的是最终形态的表头高度
+    const tableEl = el.querySelector<HTMLElement>(".ant-table");
+    if (tableEl) ro.observe(tableEl);
     return () => ro.disconnect();
   }, []);
 
@@ -113,13 +125,18 @@ export default function JobsPage() {
     void loadStats();
   }, [load, loadStats]);
 
-  // agent-gateway 长任务可能运行 10-25 分钟：有 RUNNING 任务时自动刷新
-  const hasRunning = parentItems.some((i) => i.state === "RUNNING");
+  // 自动刷新：任务监控页统计卡需保持较新——有 RUNNING 任务时 8s 全刷
+  // （表格+统计，运行时状态变化肉眼可见）；无 RUNNING 时 15s 只刷统计卡
+  // （2026-10-28 修复：此前无 running 时彻底不刷，卡数陈旧到后端 10s TTL）。
+  // 后台刷新 + 手动操作(stop/delete)后端即时失效缓存兜底，手动变更即时反映。
   useEffect(() => {
-    if (!hasRunning) return;
-    const timer = setInterval(() => refresh(), 8000);
+    if (hasRunning) {
+      const timer = setInterval(() => refresh(), 8000);
+      return () => clearInterval(timer);
+    }
+    const timer = setInterval(() => void loadStats(), 15000);
     return () => clearInterval(timer);
-  }, [hasRunning, refresh]);
+  }, [hasRunning, refresh, loadStats]);
 
   const handleSearch = (values: JobFilterValues) => {
     setFilters(values);

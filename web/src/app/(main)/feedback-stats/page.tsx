@@ -41,10 +41,18 @@ export default function FeedbackStatsPage() {
   useEffect(() => {
     const el = tableBodyRef.current;
     if (!el) return;
-    const update = () => setTableBodyHeight(el.clientHeight);
+    const update = () => {
+      // 2026-10-28: scroll.y 的 maxHeight 只约束表体，表头 (.ant-table-thead) 是流内
+      // 独立块。直接量容器高度会令表格总高 = 容器高 + 表头高，底部行被分页遮挡——先减表头高。
+      const thead = el.querySelector<HTMLElement>(".ant-table-thead");
+      const headerH = thead ? thead.getBoundingClientRect().height : 0;
+      setTableBodyHeight(Math.max(40, Math.round(el.clientHeight - headerH)));
+    };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
+    const tableEl = el.querySelector<HTMLElement>(".ant-table");
+    if (tableEl) ro.observe(tableEl);
     return () => ro.disconnect();
   }, []);
 
