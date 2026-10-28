@@ -132,16 +132,21 @@ def parse_groups(content: str) -> dict:
     return groups or None
 
 
-def render_page_v2(title, groups_with_freq, total_docs, bookname_fn=None):
+def render_page_v2(title, groups_with_freq, total_docs, bookname_fn=None, meaning=''):
     """组装多文档分组页面（分组带频次）。
 
     groups_with_freq: {文档名: (freq, [(ls_slug, 片段), ...])}（有序）
+    meaning: 业务释义（2026-10-28 起由 LLM 生成，filter_terms_llm 保留词带 'meaning' 字段）；
+             非空时页面在开头句前插入 **释义** 行（对齐 code_rev 域模板）。
     """
     bn = bookname_fn or (lambda x: x)
     freq_total = sum(f for f, _ in groups_with_freq.values())
-    lines = [f'# {title}', '',
-             f'本关键词在 {total_docs} 篇文档中高频出现（总频次：{freq_total}）。',
-             '', '## 原文出现位置', '']
+    lines = [f'# {title}', '']
+    if meaning:
+        lines.append(f'**释义**：{meaning}')
+        lines.append('')
+    lines += [f'本关键词在 {total_docs} 篇文档中高频出现（总频次：{freq_total}）。',
+              '', '## 原文出现位置', '']
     for doc, (freq, links) in groups_with_freq.items():
         lines.append(f'**{bn(doc)}**（频次：{freq}）')
         lines.append('')

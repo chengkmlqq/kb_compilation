@@ -145,6 +145,22 @@ def test_keyword_overview_feedback_counts(db: Session) -> None:
     assert "kw_mis_extracted" not in counts
 
 
+def test_keyword_overview_meaning_parse(db: Session) -> None:
+    """释义段（`**释义**：xxx`，LLM 生成）解析进 meaning；无释义行恒空。"""
+    _make_kw_page(
+        db,
+        "keyword/with-meaning",
+        "进口药材",
+        "# 进口药材\n\n**释义**：对进口药品实施许可管理的制度术语\n\n本关键词在 1 篇文档中高频出现（总频次：8）。",
+    )
+    _make_kw_page(db, "keyword/plain", "普通词", "本关键词在 1 篇文档中高频出现（总频次：2）。")
+
+    res = kb_admin.wiki_keyword_overview(db, "kb1", sort_by="keyword", order="asc")
+    items = {i["keyword"]: i for i in res["items"]}
+    assert items["进口药材"]["meaning"] == "对进口药品实施许可管理的制度术语"
+    assert items["普通词"]["meaning"] == ""
+
+
 def test_keyword_overview_pagination(db: Session) -> None:
     """分页：page_size 生效，total 为过滤后总数。"""
     for i in range(5):

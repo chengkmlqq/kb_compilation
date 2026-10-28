@@ -364,7 +364,13 @@ def build(kid, family, version, source_file, file_format=None, skip_final=False,
                             refs.append(sref)
                         groups = kr.parse_groups_v2(r.get('content') or '')
                         groups[source_file] = (t['freq'], links)
-                        content = kr.render_page_v2(w, groups, len(groups), bookname_fn=wr.bookname)
+                        # 释义：新 LLM 产物优先，无则保留旧页面释义（存量兼容，对齐 code_rev 版）
+                        old_meaning = ''
+                        m = re.search(r'\*\*释义\*\*[：:]\s*(.+)', r.get('content') or '')
+                        if m:
+                            old_meaning = m.group(1).strip()
+                        content = kr.render_page_v2(w, groups, len(groups), bookname_fn=wr.bookname,
+                                                    meaning=t.get('meaning', '') or old_meaning)
                         rr = tool('update_wiki_page', slug=hit['slug'], title=w, content=content,
                                   folder_id=fids[0] if fids else '', folder_ids=fids,
                                   page_type='frequent_keyword', status=r.get('status') or 'published',
@@ -375,7 +381,8 @@ def build(kid, family, version, source_file, file_format=None, skip_final=False,
                         hit['source_refs'] = refs
                 else:
                     groups = {source_file: (t['freq'], links)}
-                    content = kr.render_page_v2(w, groups, 1, bookname_fn=wr.bookname)
+                    content = kr.render_page_v2(w, groups, 1, bookname_fn=wr.bookname,
+                                                meaning=t.get('meaning', ''))
                     r = tool('wiki_read_page', slug=slug)
                     if 'error' not in r:
                         continue

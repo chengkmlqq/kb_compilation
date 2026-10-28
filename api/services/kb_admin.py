@@ -2185,6 +2185,8 @@ def wiki_submit_feedback(
 # 分组标题：「**《来源文件名》**（频次：a）」。两条正则与 WeKnora wiki_page.go 逐字兼容。
 _FREQ_HEAD_RE = re.compile(r"在\s*(\d+)\s*篇文档中高频出现（总频次：\s*(\d+)\s*）")
 _FREQ_GROUP_RE = re.compile(r"（频次：(\d+)）")
+# 释义段（2026-10-28 起模板支持）：`**释义**：xxx` / `**释义**: xxx`，LLM 生成的业务释义
+_MEANING_RE = re.compile(r"\*\*释义\*\*[：:]\s*(.+?)(?:\n|$)")
 
 
 def _parse_keyword_head(head: str) -> tuple[int, int]:
@@ -2255,11 +2257,17 @@ def wiki_keyword_overview(
         if search and search not in keyword:
             continue
         docs, freq = _parse_keyword_head(head or "")
+        # 释义段解析（2026-10-28：市场域/code_rev 域模板均可能在开头句前
+        # 插入 `**释义**：xxx` 行——LLM 生成的业务释义，供前端「含义」列展示；
+        # 无释义行的存量页面为空串，前端显示占位符）
+        meaning = ""
+        if m := _MEANING_RE.search(head or ""):
+            meaning = m.group(1).strip()
         stats.append(
             {
                 "slug": slug,
                 "keyword": keyword,
-                "meaning": "",  # kb 模板不含释义段（市场域 filter_terms_llm 无 meaning 字段）
+                "meaning": meaning,
                 "total_freq": freq,
                 "doc_count": docs,
                 "feedback_counts": feedback_counts.get(slug, {}),

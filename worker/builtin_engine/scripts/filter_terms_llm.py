@@ -87,8 +87,8 @@ def apply_hard_filter(terms):
 FILTER_PROMPT = """你是市场监管法规知识库的术语筛选专家。以下是文档中通过统计方法（频次/凝固度）发现的候选高频词，请判断每个词是否**具有业务含义**，值得作为关键词/术语保留。
 
 【判断标准】
-- 保留（keep=true）：具有业务含义的制度术语、业务对象、业务事件、业务概念（如"行政处罚""药品经营许可""进口药材""医疗器械网络销售""食品生产许可"）
-- 剔除（keep=false）：**纯通用词**——没有业务含义、可出现在任何文档中的通用动词/修饰词（如"确定""完善""规范""加强""开展""落实""相关""主要""重要""明确""部分""遵照""印发""纳入""引入"），以及无业务含义的功能词（如"特此""年月日"）；泛化名词/单字动词/通知套语/公司泛称/年份数字若无制度专指义也剔除
+- 保留（keep=true）：具有业务含义的制度术语、业务对象、业务事件、业务概念（如"行政处罚""药品经营许可""进口药材""医疗器械网络销售""食品生产许可"）——保留时必须同时给出**业务释义**（meaning：一句话，≤30字，说明该词在制度中的业务含义，如"行政处罚：对违反行政法律法规的相对人给予的制裁行为"）
+- 剔除（keep=false）：**纯通用词**——没有业务含义、可出现在任何文档中的通用动词/修饰词（如"确定""完善""规范""加强""开展""落实""相关""主要""重要""明确""部分""遵照""印发""纳入""引入"），以及无业务含义的功能词（如"特此""年月日"）；泛化名词/单字动词/通知套语/公司泛称/年份数字若无制度专指义也剔除（剔除词 meaning 留空字符串）
 - **剔除以下高频统计碎片（即使频次/凝固度很高——它们只是统计噪音，不是术语）**：
   ① **跨词切碎残片**：原文中从不以该词独立成词、只出现在更长词/搭配内部的片段（如"理办"来自"管理办法"、"一部门"来自"同一部门"、"公司部"来自"公司部室"、"关业务"来自"相关业务"、"部决策"来自"部门决策"、"领导审"来自"领导审批"）——结合原文片段判断该词是否有独立成词出现；
   ② **纯数字/文号/年份**（如"25""2025年"）；
@@ -99,7 +99,7 @@ FILTER_PROMPT = """你是市场监管法规知识库的术语筛选专家。以�
 每个词附其在原文中的出现片段（上下文），请结合上下文判断该词在本文档中是否承载业务含义。
 注意：只剔除纯通用词/统计碎片；部门/单位/公司等泛化名词若在本制度语境中指代特定业务实体（如"供应链管理部"）可保留；公司泛称/年份/单字动词优先剔除。
 
-只输出JSON数组，格式：[{{"word":"词","keep":true,"reason":"一句话理由"}}]，不要输出任何其他文字。
+只输出JSON数组，格式：[{{"word":"词","keep":true,"meaning":"一句话业务释义（≤30字，keep=false 时填空字符串）","reason":"一句话理由"}}]，不要输出任何其他文字。
 
 候选词及上下文：
 {items}
@@ -142,22 +142,27 @@ def filter_terms_llm(terms, ls_all, model=None, batch_size=15, max_tokens=3000):
                 model=model, max_tokens=max_tokens, temperature=0.0)
             result = wr.ensure_full_json(result)
             parsed = json.loads(result)
-            # 归一化（防嵌套结构，坑 83）
+            # 归一化（防嵌套结构，坑 83）：{word: (keep, meaning)}，对齐 code_rev 版
             decisions = {}
             def _collect(x):
                 if isinstance(x, dict):
                     w = (x.get('word') or '').strip()
                     if w:
-                        decisions[w] = x.get('keep', True)
+                        decisions[w] = (bool(x.get('keep', True)), (x.get('meaning') or '').strip())
                 elif isinstance(x, list):
                     for y in x:
                         _collect(y)
             _collect(parsed)
             for t in batch:
                 w = t.get('word', '')
-                if w and decisions.get(w, True):
+                if not w:
+                    continue
+                keep, meaning = decisions.get(w, (True, ''))
+                if keep:
+                    if meaning:
+                        t['meaning'] = meaning
                     kept.append(t)
-            print(f"  [批 {i//batch_size+1}] {len(batch)} 词 → 保留 {sum(1 for t in batch if decisions.get(t.get('word',''), True))}")
+            print(f"  [批 {i//batch_size+1}] {len(batch)} 词 → 保留 {sum(1 for t in batch if decisions.get(t.get('word',''), (True,''))[0])}")
         except Exception as e:
             print(f"  ⚠️ 批 {i//batch_size+1} LLM 过滤失败（{e}），该批全部保留（fail-safe）")
             kept.extend(batch)
@@ -176,12 +181,12 @@ def filter_terms_llm(terms, ls_all, model=None, batch_size=15, max_tokens=3000):
 GLOBAL_FILTER_PROMPT = """你是市场监管法规知识库的术语筛选专家。以下候选高频词出现在**多篇市场监管法规文档**中，请判断该词是否**具有特殊业务含义**，值得作为跨文档关键词保留。
 
 【判断标准】
-- 保留（keep=true）：在至少一篇文档中承载明确业务含义——制度术语、业务对象、业务事件、业务概念（如"行政处罚""药品经营许可""进口药材""医疗器械网络销售""食品生产许可"）；或虽为泛化名词但在本领域语境下指代特定业务实体（如"部门"在该库指药品监管部门）
-- 剔除（keep=false）：**放哪都有、无特殊业务含义的纯通用词**——在所有出现文档中都不指向特定业务概念（如"管理""工作""要求""相关""主要""内容""情况""事项""进行""有关"），只作一般性表述
+- 保留（keep=true）：在至少一篇文档中承载明确业务含义——制度术语、业务对象、业务事件、业务概念（如"行政处罚""药品经营许可""进口药材""医疗器械网络销售""食品生产许可"）；或虽为泛化名词但在本领域语境下指代特定业务实体（如"部门"在该库指药品监管部门）——保留时必须同时给出**业务释义**（meaning：一句话，≤30字，说明该词在制度中的业务含义）
+- 剔除（keep=false）：**放哪都有、无特殊业务含义的纯通用词**——在所有出现文档中都不指向特定业务概念（如"管理""工作""要求""相关""主要""内容""情况""事项""进行""有关"），只作一般性表述（剔除词 meaning 留空字符串）
 
 每个词附其在各篇文档中的出现片段（多个上下文），请综合判断：只要有任何一篇文档的语境赋予它明确业务含义就保留；全部文档都是通用用法才剔除。
 
-只输出JSON数组，格式：[{{"word":"词","keep":true,"reason":"一句话理由"}}]，不要输出任何其他文字。
+只输出JSON数组，格式：[{{"word":"词","keep":true,"meaning":"一句话业务释义（≤30字，keep=false 时填空字符串）","reason":"一句话理由"}}]，不要输出任何其他文字。
 
 候选词及多文档上下文：
 {items}
@@ -241,21 +246,27 @@ def filter_terms_global(terms, ls_all, extra_ctx=None, model=None, batch_size=10
                 model=model, max_tokens=max_tokens, temperature=0.0)
             result = wr.ensure_full_json(result)
             parsed = json.loads(result)
+            # 归一化（防嵌套结构，坑 83）：{word: (keep, meaning)}，对齐 code_rev 版
             decisions = {}
             def _collect(x):
                 if isinstance(x, dict):
                     w = (x.get('word') or '').strip()
                     if w:
-                        decisions[w] = x.get('keep', True)
+                        decisions[w] = (bool(x.get('keep', True)), (x.get('meaning') or '').strip())
                 elif isinstance(x, list):
                     for y in x:
                         _collect(y)
             _collect(parsed)
             for t in batch:
                 w = t.get('word', '')
-                if w and decisions.get(w, True):
+                if not w:
+                    continue
+                keep, meaning = decisions.get(w, (True, ''))
+                if keep:
+                    if meaning:
+                        t['meaning'] = meaning
                     kept.append(t)
-            print(f"  [全局批 {i//batch_size+1}] {len(batch)} 词 → 保留 {sum(1 for t in batch if decisions.get(t.get('word',''), True))}")
+            print(f"  [全局批 {i//batch_size+1}] {len(batch)} 词 → 保留 {sum(1 for t in batch if decisions.get(t.get('word',''), (True,''))[0])}")
         except Exception as e:
             print(f"  ⚠️ 全局批 {i//batch_size+1} LLM 过滤失败（{e}），该批全部保留（fail-safe）")
             kept.extend(batch)

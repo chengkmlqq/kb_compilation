@@ -944,7 +944,7 @@ export interface WikiFeedbackListParams {
 export interface WikiKeywordStat {
   slug: string;
   keyword: string;
-  /** 业务含义；kb 模板不含释义段，恒空，前端显示 — */
+  /** 业务含义；模板释义段（`**释义**：xxx`，LLM 生成）解析而来，无释义行时为空 */
   meaning: string;
   total_freq: number;
   doc_count: number;
