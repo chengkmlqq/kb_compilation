@@ -223,6 +223,27 @@ def build_tape_name(document_id: str, doc_name: str = "") -> str:
     return f"wiki构建-动态-{suffix or document_id[:8]}"
 
 
+def doc_root_name(doc_name: str = "") -> str:
+    """清洗文档名 → wiki 根目录名（去扩展名/非法路径字符，防目录串级）。
+
+    2026-10-28 文档根目录：每个文档构建时建「以文件名命名的根目录」，
+    知识点多级目录统一挂在该根下，多文档不再在 KB 根下混叠。
+    - 去扩展名：多模态数据管理平台方案V111452-d.docx → 多模态数据管理平台方案V111452-d
+    - 替换 / \\ : * ? " < > | 与空白 → 连字符，防目录路径串级/注入
+    - 空名/纯标点名兜底「未命名文档」
+    """
+    name = str(doc_name or "").strip()
+    if not name:
+        return "未命名文档"
+    # 去扩展名（最后一个 . 之后无 / 的部分视为扩展名）
+    base = name
+    stem = base.rsplit(".", 1)
+    if len(stem) == 2 and stem[1] and "/" not in stem[1] and "\\" not in stem[1] and len(stem[1]) <= 12:
+        base = stem[0]
+    cleaned = re.sub(r'[\\/:*?"<>|\s]+', "-", base).strip("-")[:80]
+    return cleaned or "未命名文档"
+
+
 def _create_dynamic_tape(db, payload: dict, user_id: str = "system") -> str:
     """create_tape + save_tape_design（幂等：同名 tape 先更新）。
 
@@ -361,23 +382,26 @@ def enqueue_dynamic_wiki_build(
         db = _gsm()()
         try:
             created = _create_tape_run(
-                db, tape_id,
-                inputs={
-                    "kb_id": kb_id,
-                    "document_id": document_id,
-                    "doc_id": document_id,
-                    "kid": document_id,
-                    "doc_name": doc_name,
-                    "source_file": doc_name,
-                    "x_next_identity": cookie,
-                    "kp_tree": {"knowledge_points": kps},
-                    "limit": "",
-                    "only_codes": "",
-                    "build_summary": "",
-                    "language": "中文",
-                },
-                env="prod",
-            )
+                            db, tape_id,
+                            inputs={
+                                "kb_id": kb_id,
+                                "document_id": document_id,
+                                "doc_id": document_id,
+                                "kid": document_id,
+                                "doc_name": doc_name,
+                                # 2026-10-28 文档根目录：预置清洗后的文档名，编排 n02 的
+                                # doc_root 消费；知识点目录统一挂在「文档名/」根下
+                                "doc_root": doc_root_name(doc_name),
+                                "source_file": doc_name,
+                                "x_next_identity": cookie,
+                                "kp_tree": {"knowledge_points": kps},
+                                "limit": "",
+                                "only_codes": "",
+                                "build_summary": "",
+                                "language": "中文",
+                            },
+                            env="prod",
+                        )
         except Exception as exc:  # noqa: BLE001
             out["error"] = f"动态编排 run 创建失败: {exc}"
             return out

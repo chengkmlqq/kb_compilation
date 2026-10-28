@@ -91,9 +91,10 @@ def test_n02_derives_kp_paths() -> None:
     """n02 派生变量必须产出 kp_paths（n05 建目录节点消费），防拓扑回归。
 
     2026-10-28 线上事故：n02 漏派生 kp_paths，n05 wiki_ensure_folder 的
-    paths=\"{{kp_paths}}\" 未渲染 → ast.literal_eval 炸 → 整条 run failed
-    （附件1：行业短彩端口收入效益评估报表需求.xlsx）。此处断言 n02 派生 + 
+    paths="{{kp_paths}}" 未渲染 → ast.literal_eval 炸 → 整条 run failed
+    （附件1：行业短彩端口收入效益评估报表需求.xlsx）。此处断言 n02 派生 +
     n02 执行后 n05 模板能渲染成合法 JSON 数组。
+    2026-10-28 文档根目录：kp_paths 统一挂「文档名/」根下（doc_root 前缀）。
     """
     from scripts.gen_dynamic_wiki_tape import build_dynamic_tape_payload
     from api.services.orchestration_engine import DefStep
@@ -103,25 +104,64 @@ def test_n02_derives_kp_paths() -> None:
     assignments = json.loads((by_id["n02"]["data"]["config"])["assignments"])
     vars_ = {a["variable"]: a["expression"] for a in assignments}
     assert "kp_paths" in vars_, "n02 必须派生 kp_paths，否则 n05 建目录节点拿未渲染模板失败"
+    assert "doc_root" in vars_, "n02 必须派生 doc_root（文档名根目录）"
 
     ctx = TapeRuntimeContext({"kp_tree": {"knowledge_points": [
         {"name": "出帐金额", "path": "收入指标/出帐金额", "extract_hint": "含税"},
         {"name": "结算对象", "path": "维度/结算对象", "extract_hint": "类型"},
-    ]}})
+    ]}, "doc_root": "行业短彩端口收入效益评估报表需求"})
     step = DefStep("n02", "派生变量", "def", {"assignments": assignments})
     resp = step.handle(ctx)
     assert resp.success is True
-    assert ctx.bindings["kp_paths"] == ["收入指标/出帐金额", "维度/结算对象"]
+    # 知识点目录统一挂在「文档名/」根目录下
+    assert ctx.bindings["kp_paths"] == [
+        "行业短彩端口收入效益评估报表需求/收入指标/出帐金额",
+        "行业短彩端口收入效益评估报表需求/维度/结算对象",
+    ]
 
     # 模拟 n05 建目录节点对 paths 模板的整体渲染（与线上失败路径一致）：
     # _template_replace 用 str(list) 产 Python 字面量（单引号）→ json 失败后 ast 兜底
     cfg = by_id["n05"]["data"]["config"]
     assert cfg["paths"] == "{{kp_paths}}"
     rendered = ctx.render(cfg["paths"])
-    assert rendered.startswith("['收入指标/出帐金额'")  # str(list) 字面量
+    assert rendered.startswith("['行业短彩端口收入效益评估报表需求/收入指标/出帐金额'")  # str(list) 字面量
     import ast
 
-    assert ast.literal_eval(rendered) == ["收入指标/出帐金额", "维度/结算对象"]
+    assert ast.literal_eval(rendered) == [
+        "行业短彩端口收入效益评估报表需求/收入指标/出帐金额",
+        "行业短彩端口收入效益评估报表需求/维度/结算对象",
+    ]
+
+
+def test_n07d_upsert_has_doc_ownership() -> None:
+    """n07d 挂页节点必须携带 source_refs（文档归属），删文档级联清理可命中。"""
+    from scripts.gen_dynamic_wiki_tape import build_dynamic_tape_payload
+    p = build_dynamic_tape_payload("wiki构建-动态-测试")
+    by_id = {n["id"]: n for n in p["nodes"]}
+    upsert_cfg = by_id["n07d"]["data"]["config"]
+    assert upsert_cfg["source_refs"] == "[\"{{doc_ref}}\"]",         "挂页必须带 source_refs（{document_id}|{file_name}），否则删文档时 wiki 页成孤儿"
+
+    # 渲染后必须是合法 JSON 数组（引号内置，{{doc_ref}} 只替换值）
+    from api.services.orchestration_engine import TapeRuntimeContext
+
+    ctx = TapeRuntimeContext({"doc_ref": "doc-abc|行业短彩端口收入效益评估报表需求.xlsx"})
+    rendered = ctx.render(upsert_cfg["source_refs"])
+    assert json.loads(rendered) == ["doc-abc|行业短彩端口收入效益评估报表需求.xlsx"]
+
+    # n02 必须派生 doc_ref
+    assignments = json.loads((by_id["n02"]["data"]["config"])["assignments"])
+    vars_ = {a["variable"]: a["expression"] for a in assignments}
+    assert "doc_ref" in vars_
+
+
+def test_doc_root_name_cleanup() -> None:
+    """文档名 → 根目录名清洗：去扩展名、替换非法字符、兜底。"""
+    from worker.tasks.dynamic_wiki_build import doc_root_name
+
+    assert doc_root_name("多模态数据管理平台方案V111452-d.docx") == "多模态数据管理平台方案V111452-d"
+    assert doc_root_name("报表/预算:2024?.xlsx") == "报表-预算-2024"
+    assert doc_root_name("") == "未命名文档"
+    assert doc_root_name("a.tar.gz") == "a.tar"  # 只去最后一个扩展名
 
 
 # ─────────────────────────────────────────────────────────────────────

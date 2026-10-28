@@ -717,6 +717,25 @@ class WikiUpsertPageStep(BaseStep):
         page_type = str(self.config.get("page_type") or "summary")
         skip_empty = bool(self.config.get("skip_empty"))
         output_var = str(self.config.get("output_var") or "page_slug")
+        # 2026-10-28 文档归属：source_refs 支持 {{ doc_ref }}（{document_id}|{file_name}）；
+        # 缺省不传时保持历史行为（不写归属）。渲染后为 JSON 数组字符串，解析后用。
+        raw_refs = self.config.get("source_refs")
+        source_refs: list = []
+        if isinstance(raw_refs, str) and raw_refs.strip():
+            rendered = context.render(raw_refs)
+            try:
+                parsed = json.loads(rendered)
+            except ValueError:
+                import ast
+
+                try:
+                    parsed = ast.literal_eval(rendered)
+                except (ValueError, SyntaxError):
+                    parsed = []
+            if isinstance(parsed, list):
+                source_refs = [str(r) for r in parsed if str(r).strip()]
+        elif isinstance(raw_refs, list):
+            source_refs = [str(r) for r in raw_refs if str(r).strip()]
         if not kb_id:
             return StepResponse.fail(f"wiki_upsert_page 缺 kb_id（got {kb_id}）")
         if (not title or not slug) and skip_empty:
@@ -729,13 +748,18 @@ class WikiUpsertPageStep(BaseStep):
             try:
                 wiki_create_page(
                     db, kb_id,
-                    {"title": title, "content": content, "slug": slug, "page_type": page_type},
+                    {"title": title, "content": content, "slug": slug,
+                     "page_type": page_type, "source_refs": source_refs},
                     user_id="system",
                 )
                 created = True
             except ValueError as e:
                 if "已存在" in str(e) or "exists" in str(e).lower():
-                    wiki_update_page(db, kb_id, slug, {"title": title, "content": content, "status": "active"})
+                    upd: dict = {"title": title, "content": content, "status": "active"}
+                    # 已有页补充文档归属（首次构建未带归属的旧页，重建时补齐）
+                    if source_refs:
+                        upd["source_refs"] = source_refs
+                    wiki_update_page(db, kb_id, slug, upd)
                     created = False
                 else:
                     raise

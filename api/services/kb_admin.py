@@ -2628,6 +2628,16 @@ def wiki_update_page(db: Session, kb_id: str, slug: str, data: dict) -> dict:
         page.folder_id = str(data["folder_id"] or "")
     if "folder_ids" in data:
         _sync_page_folders(db, kb_id, page, data["folder_ids"] or [])
+    if "source_refs" in data:
+        # 合并式更新：保留既有引用 + 补齐新引用（多文档共享页不丢其他文档归属；
+        # 单文档页首次补归属也不覆盖已有的同文档引用重复）。
+        cur = page.source_refs if isinstance(page.source_refs, list) else []
+        new = [str(r) for r in (data["source_refs"] or []) if str(r).strip()]
+        merged = list(cur)
+        for r in new:
+            if r not in merged:
+                merged.append(r)
+        page.source_refs = merged
     if "status" in data:
         page.status = str(data["status"] or "active")
     wiki_log_action(

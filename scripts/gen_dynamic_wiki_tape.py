@@ -150,8 +150,10 @@ folder_ids = bindings.get('folder_ids') or []
 # 兜底：LLM 判定失败/空 → 建单一「文档要点」页，保证构建不空转
 if not kps:
     kps = [{"name": _doc or "文档要点", "path": "文档要点", "extract_hint": "全文要点"}]
-# path 列表（wiki_ensure_folder 的 paths 入参）——按知识点顺序
-paths = [str(k.get('path') or k.get('name') or '未分类').strip('/') for k in kps]
+# path 列表（wiki_ensure_folder 的 paths 入参）——按知识点顺序，
+# 统一挂「文档名/」根目录下（doc_root 由输入侧清洗预置）
+_doc_root = str(bindings.get('doc_root') or (bindings.get('doc_name') or '未命名文档')).strip() or '未命名文档'
+paths = [(_doc_root + '/' + str(k.get('path') or k.get('name') or '未分类')).strip('/') for k in kps]
 bindings['kp_paths'] = paths
 bindings['kp_count'] = len(kps)
 # folder_ids 与 paths 同序（wiki_ensure_folder 批量输出），绑定到每个知识点
@@ -170,13 +172,14 @@ for i, k in enumerate(kps):
         n += 1
     seen_slugs.add(slug)
     items.append({
-        "name": name,
-        "path": str(k.get('path') or name),
-        "hint": str(k.get('extract_hint') or ''),
-        "folder_id": fid,
-        "slug": slug,
-        "idx": i,
-    })
+            "name": name,
+            "path": str(k.get('path') or name),
+            "full_path": f"{_doc_root}/{str(k.get('path') or name).strip('/')}",
+            "hint": str(k.get('extract_hint') or ''),
+            "folder_id": fid,
+            "slug": slug,
+            "idx": i,
+        })
 bindings['kp_items'] = items
 print(f"[n07] 知识点 {len(items)} 个，目录 {len(set(paths))} 条 → {json.dumps(paths, ensure_ascii=False)}")
 '''
@@ -351,6 +354,8 @@ def _upsert_node(nid: str, label: str) -> dict:
 
     注意：loop 的 item_var 是 dict，节点 config 模板必须经 eval 取值 →
     用 {{kp['name']}} 等 dict 下标语法（不能用属性访问，dict 无该属性）。
+    2026-10-28 文档归属：source_refs 写 {document_id}|{file_name}，
+    删文档时 wiki 页级联清理按文档前缀命中（见 kb_admin 删文档清理）。
     """
     cfg = {
         "kb_id": "{{kb_id}}",
@@ -360,8 +365,11 @@ def _upsert_node(nid: str, label: str) -> dict:
         "folder_id": "{{kp['folder_id']}}",
         "page_type": "entity",
         "skip_empty": True,
-        "output_var": "page_slug",
-        "queue": "build",
+                # 2026-10-28 文档归属：渲染后为合法 JSON 数组 ["doc123|文件名.docx"]；
+                # 引号内置在模板里（{{doc_ref}} 只替换值），json.loads 可直接解析。
+                "source_refs": "[\"{{doc_ref}}\"]",
+                "output_var": "page_slug",
+                "queue": "build",
     }
     return {
         "id": nid,
@@ -416,11 +424,21 @@ def build_dynamic_tape_payload(
         {"variable": "kp_tree", "expression": "bindings.get('kp_tree', {})"},
     ])
     n02 = _def_node("n02", "派生变量", [
-        {"variable": "kid8", "expression": "bindings.get('kid', '')[:8]"},
-        {"variable": "kp_paths",
-         "expression": "[(k.get('path') or k.get('name') or '未分类').strip('/') for k in ((bindings.get('kp_tree') or {}).get('knowledge_points') or [])]"},
-        {"variable": "kp_count", "expression": "len((bindings.get('kp_tree') or {}).get('knowledge_points') or [])"},
-    ])
+            {"variable": "kid8", "expression": "bindings.get('kid', '')[:8]"},
+            # 2026-10-28 文档根目录：doc_root = 清洗后的文档名（去扩展名/非法路径
+            # 字符），知识点的多级目录统一挂在「文档名/」根下——多文档构建不再
+            # 在 KB 根下相互混叠。清洗在输入侧（enqueue_dynamic_wiki_build）已
+            # 预置 doc_root 字段；这里兜底（无预置时用文件名）。
+            {"variable": "doc_root",
+             "expression": "str(bindings.get('doc_root') or (bindings.get('doc_name') or '未命名文档')).strip() or '未命名文档'"},
+            {"variable": "kp_paths",
+             "expression": "[(str(bindings.get('doc_root') or (bindings.get('doc_name') or '未命名文档')).strip() or '未命名文档') + '/' + (k.get('path') or k.get('name') or '未分类').strip('/') for k in ((bindings.get('kp_tree') or {}).get('knowledge_points') or [])]"},
+            {"variable": "kp_count", "expression": "len((bindings.get('kp_tree') or {}).get('knowledge_points') or [])"},
+                    # 2026-10-28 文档归属引用：{document_id}|{file_name}（对齐平台
+                    # source_refs 契约，删文档级联清理按此前缀命中 wiki 页）。
+                    {"variable": "doc_ref",
+                     "expression": "(str(bindings.get('document_id') or bindings.get('doc_id') or bindings.get('kid') or '') + '|' + str(bindings.get('doc_name') or bindings.get('source_file') or ''))"},
+                ])
     n03 = _script_node("n03", "初始化+切片拉取清洗", CODE_INIT_CHUNKS)
     n04 = _script_node("n04", "切片门禁", CODE_GATE)
     n05 = _folder_node("n05", "按知识点建目录树")
