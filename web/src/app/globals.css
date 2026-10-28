@@ -2414,14 +2414,27 @@ html[data-theme="dark"] body {
 }
 
 /* ── 空态（表格占位行等不具备固定高度的容器：不撑满居中，随内容自然排布） ── */
+.kb-kbs-empty--inline {
+  display: block;
+  min-height: 0;
+}
 .kb-kbs-empty--inline .kb-kbs-empty-wrapper {
-  position: static;
-  top: 0;
-  transform: none;
   padding: 20px 0;
 }
 .kb-kbs-empty--inline .kb-kbs-empty-image {
   font-size: 48px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   文档卡片视图空态高度链：KbDocsPane 里 <Spin> 包裹 DocCardView 空态时，
+   antd Spin 的 .ant-spin/.ant-spin-container 默认高度 auto，会打断
+   .kb-kbs-empty 的 height:100%，空态容器塌缩为内容高度、flex 居中落到
+   顶部而非区域中部（2026-10-28 实测）。给卡片视图专用 Spin 补高度链，
+   height:100% 只影响空态/加载态（卡片网格场景容器高度仍由内容撑起）。
+   ═══════════════════════════════════════════════════════════════ */
+.kb-doc-cards-spin,
+.kb-doc-cards-spin > .ant-spin-container {
+  height: 100%;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -5102,16 +5115,20 @@ html[data-theme="dark"] .kb-citation-web:hover {
   padding-bottom: 16px;
 }
 
-/* 空态（对齐 arco Empty 原生规格：插画 1em=48px、文案 14px gray-5，
-  wrapper 相对定位 top:50% -32px） */
+/* 空态（对齐 arco Empty 原生规格：插画 1em=48px、文案 14px gray-5）。
+   fill 变体用 flex 居中，不依赖「父容器高度确定」——详情页/卡片空态常被
+   antd Spin 包裹（.ant-spin/.ant-spin-container 高度 auto），height:100%
+   会塌缩为内容高度，旧 top:50%+translateY(-32px) 公式在塌缩容器上把插画
+   顶出上边界 32px（2026-10-28 实测）；min-height 兜底保证矮容器不溢出 */
 .kb-kbs-empty {
   width: 100%;
   height: 100%;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .kb-kbs-empty-wrapper {
-  position: relative;
-  top: 50%;
-  transform: translateY(-32px);
   width: 100%;
   box-sizing: border-box;
   text-align: center;

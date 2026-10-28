@@ -664,16 +664,19 @@ def job_statistics(
       3. run 双表（正式 + _dev）统计，与列表同口径。
     统计卡与「主任务」表格合计可对上（此前统计含全部子任务导致卡数 > 列表行数）。
 
-    2026-10-23 性能：语法主体拆入 _job_statistics_data，端点走 30s
+    2026-10-23 性能：语法主体拆入 _job_statistics_data，端点走 10s
     stale-while-revalidate 缓存——远端库缓冲池小，kb_tape_run 低频索引页
     冷读秒级；统计卡容忍短时陈旧，过期先返回旧值后台刷新。
+    2026-10-28 实时性修复：TTL 30s→10s（统计查询已为覆盖索引扫描，频率无害），
+    且 stop/delete 改变状态成功后立即失效该缓存（agg_cache_invalidate），
+    使手动操作即时反映到顶部统计卡（此前卡数最多陈旧 30s 才刷新）。
     """
     from api.services.agg_cache import agg_cached_swr
 
     def _load(s) -> dict:
         return _job_statistics_data(s)
 
-    data = agg_cached_swr("jobs_statistics", 30.0, _load, db=db)
+    data = agg_cached_swr("jobs_statistics", 10.0, _load, db=db)
     return {"success": True, "data": data}
 
 
@@ -768,6 +771,7 @@ def stop_job(
     （status not in (queued, running) 即不再推进）保证不再执行后续节点。
     """
     from api.models.orchestration import TapeRun
+    from api.services.agg_cache import agg_cache_invalidate
 
     # 2026-10-20 双表改造：正式 + _dev 双查（测试执行的 run 在 dev 表）；
     # 记录 run_env 使状态回写落到同一张表（atomic flush 走对应表路由）。
@@ -790,6 +794,7 @@ def stop_job(
         with env_scope(run_env or ENV_PROD):
             db.add(run)
             db.commit()
+        agg_cache_invalidate("jobs_statistics")
         return {
             "success": True,
             "data": {"id": job_id, "state": "STOPPED", "kind": "orchestration"},
@@ -804,6 +809,7 @@ def stop_job(
     job.end_time = func.now()
     db.add(job)
     db.commit()
+    agg_cache_invalidate("jobs_statistics")
     return {"success": True, "data": {"id": job_id, "state": "STOPPED"}}
 
 
@@ -873,6 +879,7 @@ def delete_job(
     删除前先 revoke celery（terminate），真正取消执行。
     """
     from api.models.orchestration import TapeRun
+    from api.services.agg_cache import agg_cache_invalidate
 
     # 2026-10-20 双表改造：正式 + _dev 双查，删除在对应表执行
     run_env: str | None = None
@@ -888,6 +895,7 @@ def delete_job(
         with env_scope(run_env or ENV_PROD):
             db.delete(run)
             db.commit()
+        agg_cache_invalidate("jobs_statistics")
         return {"success": True, "data": {"id": job_id, "deleted": True, "kind": "orchestration"}}
 
     job = db.execute(select(Job).where(Job.id == job_id)).scalars().first()
@@ -902,6 +910,7 @@ def delete_job(
             logger.warning("revoke job %s failed: %s", job_id, exc)
     db.delete(job)
     db.commit()
+    agg_cache_invalidate("jobs_statistics")
     return {"success": True, "data": {"id": job_id, "deleted": True}}
 
 

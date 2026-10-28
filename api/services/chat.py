@@ -483,6 +483,11 @@ class ChatClient:
             payload["top_p"] = top_p
         if thinking is not None:
             payload["thinking"] = {"type": "enabled" if thinking else "disabled"}
+            # 2026-10-28 对齐 weknora_rpc.llm_call 双参数：inferaiapi 的
+            # deepseek-v4-pro 仅 thinking.type=disabled 会被忽略时输出仍带
+            # 推理过程（n07b 生成知识点wiki 实测 JSON 解析失败的根因之一），
+            # enable_thinking 与 thinking 成对下发才稳定关闭思考。
+            payload["enable_thinking"] = thinking
         headers = {"Content-Type": "application/json"}
         if self.cfg.api_key:
             headers["Authorization"] = f"Bearer {self.cfg.api_key}"

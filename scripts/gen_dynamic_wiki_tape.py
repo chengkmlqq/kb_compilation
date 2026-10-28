@@ -306,6 +306,11 @@ def _llm_node(nid: str, label: str, prompt: str, output_var: str,
     }
     if json_mode:
         cfg["json_mode"] = True
+        # 2026-10-28：json_mode 必须禁 thinking——deepseek-v4-pro 默认
+        # thinking 开启会把推理过程写进 content（实测 n07b 输出
+        # 「首先，我需要分析…」而非 JSON）；与 weknora_rpc.llm_call
+        # 的 enable_thinking=False + thinking.type=disabled 同款语义。
+        cfg["thinking"] = "disabled"
     return {
         "id": nid,
         "data": {"icon": None, "group": None, "label": label, "config": cfg, "stepInst": "kb_llm_chat"},

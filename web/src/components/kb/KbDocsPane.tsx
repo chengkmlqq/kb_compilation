@@ -1173,7 +1173,7 @@ export default function KbDocsPane({
               </div>
             ) : (
               <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-                <Spin spinning={docsLoading}>
+                <Spin spinning={docsLoading} className="kb-doc-cards-spin">
                   <DocCardView
                     items={docs}
                     onOpen={onOpenDoc}
