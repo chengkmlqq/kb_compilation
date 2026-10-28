@@ -1953,12 +1953,17 @@ html[data-theme="dark"] body {
   gap: 8px;
 }
 
-/* 内容区：定高滚动 + 卡片网格 */
+/* 内容区：定高滚动 + 卡片网格（对齐知识库页 .kb-kbs-content：左右 16px，上下留白交给 .agents-rows） */
 .agents-content {
   flex: 1;
   min-height: 0;
-  padding: 0 16px 16px;
+  padding: 0 16px;
   overflow-y: auto;
+}
+/* 卡片行顶部留白（对齐知识库页 .kb-kbs-rows：卡片区与导航条底 border 拉开 16px，底部同款 16px） */
+.agents-rows {
+  padding-top: 16px;
+  padding-bottom: 16px;
 }
 
 /* 空态（对齐 arco Empty 原生规格：插画 1em=48px、文案 14px gray-5） */
@@ -2319,25 +2324,32 @@ html[data-theme="dark"] body {
 }
 
 /* 过滤下拉（对齐 modo filled 控件：28px 高 / 12px 字 / fill-2 底 / 14px 胶囊，
-   与同排搜索框同一形态；antd v6 的文案节点为 .ant-select-content，v5 为 selection-item/placeholder，两代都覆盖） */
-.kb-doc-filter-control {
-  width: 100%;
-}
-.kb-doc-filter-control.ant-select .ant-select-selector,
-.kb-doc-filter-control .ant-select-selector {
+   与同排搜索框同一形态）。
+   2026-10-28 修复：antd v6 起 Select 的边框/圆角/背景/高度从 .ant-select-selector
+   上移到根节点 .ant-select（经 CSS 变量 --ant-select-* 生效），旧的 .ant-select-selector
+   规则已失配 → 圆角回落主题默认 2px 方形，与 14px 胶囊搜索框不一致。
+   ModoSelect 的 className 落在根 .ant-select 上：同时覆写根变量（cssVar 模式）与
+   字面属性（hashed 模式），两种模式都命中。 */
+.kb-doc-filter-field .kb-doc-filter-control.ant-select {
+  --ant-select-height: 28px;
+  --ant-select-border-radius: 14px;
+  --ant-select-border-color: transparent;
+  --ant-select-background-color: #eff4f9;
+  --ant-select-font-size: 12px;
   height: 28px;
   border-radius: 14px;
-  background: #eff4f9;
   border-color: transparent;
+  background: #eff4f9;
 }
-.kb-doc-filter-control.ant-select .ant-select-content,
-.kb-doc-filter-control.ant-select .ant-select-selection-item,
-.kb-doc-filter-control.ant-select .ant-select-selection-placeholder {
+.kb-doc-filter-control .ant-select-content,
+.kb-doc-filter-control .ant-select-selection-item,
+.kb-doc-filter-control .ant-select-selection-placeholder {
   font-size: 12px;
-  line-height: 26px;
 }
-.kb-doc-filter-control.ant-select .ant-select-arrow,
-.kb-doc-filter-control.ant-select .ant-select-clear {
+/* antd v6 箭头图标改由后缀容器承载（.ant-select-suffix），v5 为 .ant-select-arrow，两代都覆盖 */
+.kb-doc-filter-control .ant-select-arrow,
+.kb-doc-filter-control .ant-select-suffix,
+.kb-doc-filter-control .ant-select-clear {
   color: #79879c;
   font-size: 12px;
 }

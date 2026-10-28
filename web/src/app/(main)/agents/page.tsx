@@ -257,7 +257,8 @@ export default function AgentsPage() {
           </div>
         ) : (
           <Spin spinning={loading}>
-          <Row gutter={[16, 16]}>
+          {/* 卡片行顶部留白（对齐知识库页 .kb-kbs-rows：卡片区与导航条底 border 拉开 16px，底部同款 16px） */}
+          <Row className="agents-rows" gutter={[16, 16]}>
             {visible.map((agent) => {
               const disabled = Boolean(agent.config?.disabled);
               return (
