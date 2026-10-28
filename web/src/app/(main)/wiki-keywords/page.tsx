@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Input, Row, Col, Select, Spin } from "antd";
+import { Input, Row, Col, Spin } from "antd";
 import { apiListKbs, type KbItem } from "@/lib/api";
+import { ModoPagination } from "@/components/biz/modo-pagination";
 import { ModoTabs } from "@/components/biz/modo-tabs";
 import WikiKeywordsPane from "@/components/kb/WikiKeywordsPane";
 import { EmptyIllustration } from "@/components/kb/KbsIcons";
@@ -14,8 +15,14 @@ import { EmptyIllustration } from "@/components/kb/KbsIcons";
  *
  * 2026-10-21 对齐知识库管理页（kbs/page.tsx）范式：白底定高不滚动 /
  * 顶栏标题图标 + 搜索（按库名/描述过滤）/ 卡片网格布局 / 48px 空态插画 /
- * 服务端分页（30 条/页，total > 30 显示分页条）——不再一次性拉全部可见库
- * （原 page_size=1000 全量拉取，接口慢且页面无分页组件）。
+ * 服务端分页（30 条/页）——不再一次性拉全部可见库。
+ *
+ * 2026-10-28 修复样式问题：卡片列表根容器改用 .kb-kbs-page（height:100%
+ * flex 列），与知识库管理页完全一致——此前根容器是 .kb-kbs-list-panel
+ * （flex:1 依赖 flex 父容器），高度链断裂导致卡片多时溢出页面、无卡片时
+ * 空态 top:50% 相对塌缩容器 → 被顶部遮挡；分页改用 ModoPagination 常驻
+ * 底栏（旧分页条容器类 kb-kbs-pagination-bar 已于 2026-10-21 随 KB 页
+ * 换 ModoPagination 一并从 globals.css 删除，旧实现无样式且 total>30 才出现）。
  */
 type KeywordSectionTab = {
   key: string;
@@ -52,19 +59,6 @@ const SearchColorIcon = ({ size = 14 }: { size?: number }) => (
   </svg>
 );
 
-/** arco IconLeft / IconRight（分页上一页 / 下一页：viewBox 48 / 描边 4，对齐知识库管理页） */
-const ChevronLeftIcon = () => (
-  <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth={4} aria-hidden>
-    <path d="M32 8.4 16.444 23.956 32 39.513" />
-  </svg>
-);
-
-const ChevronRightIcon = () => (
-  <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth={4} aria-hidden>
-    <path d="m16 39.513 15.556-15.557L16 8.4" />
-  </svg>
-);
-
 export default function WikiKeywordsPage() {
   const [kbs, setKbs] = useState<KbItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,7 +69,6 @@ export default function WikiKeywordsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
   const [total, setTotal] = useState(0);
-  const [jumpText, setJumpText] = useState("1");
 
   const loadKbs = useCallback(async () => {
     setLoading(true);
@@ -94,19 +87,6 @@ export default function WikiKeywordsPage() {
   useEffect(() => {
     void loadKbs();
   }, [loadKbs]);
-
-  // 分页（DSB 同款：total > 页容量时才出现分页条，页码输入框可跳页）
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const commitJump = useCallback(() => {
-    const n = Number.parseInt(jumpText, 10);
-    const next = Number.isNaN(n) ? page : Math.min(Math.max(n, 1), pageCount);
-    setJumpText(String(next));
-    if (next !== page) setPage(next);
-  }, [jumpText, page, pageCount]);
-
-  useEffect(() => {
-    setJumpText(String(page));
-  }, [page]);
 
   const openKeywords = useCallback((kb: KbItem) => {
     const key = `kw-${kb.id}`;
@@ -135,125 +115,92 @@ export default function WikiKeywordsPage() {
 
   const listPane = useMemo(
     () => (
-      <div className="kb-kbs-list-panel">
-        <div className="kb-kbs-content">
-          {loading && visibleKbs.length === 0 ? (
-            /* 首载/查询加载中（对齐知识库管理页 kbs/page.tsx 惯例：
-               loading 期间不显示空态，居中 Spin 反馈） */
-            <div style={{ display: "flex", justifyContent: "center", paddingTop: 96 }}>
-              <Spin size="large" tip="正在加载知识库..." />
-            </div>
-          ) : visibleKbs.length === 0 ? (
-            /* 空态（对齐知识库管理页 arco Empty 原生规格：48px 插画 + 「暂无数据」） */
-            <div className="kb-kbs-empty">
-              <div className="kb-kbs-empty-wrapper">
-                <div className="kb-kbs-empty-image">
-                  <EmptyIllustration />
-                </div>
-                <div className="kb-kbs-empty-description">
-                  {kbs.length === 0 ? "暂无知识库" : "未找到匹配的知识库"}
+      // 对齐知识库管理页（kbs/page.tsx）三层结构：
+      // kb-kbs-page（height:100% flex 列，定高不滚动）→
+      // kb-kbs-list-panel（flex:1 列）→ kb-kbs-content（flex:1 滚动区）+
+      // ModoPagination 常驻底栏。根容器必须是 .kb-kbs-page：只有它带
+      // height:100%，能撑起卡片区高度链（见 2026-10-28 修复说明）。
+      <div className="kb-kbs-page">
+        <div className="kb-kbs-list-panel">
+          <div className="kb-kbs-content">
+            {loading && visibleKbs.length === 0 ? (
+              /* 首载/查询加载中（对齐知识库管理页 kbs/page.tsx 惯例：
+                 loading 期间不显示空态，居中 Spin 反馈） */
+              <div style={{ display: "flex", justifyContent: "center", paddingTop: 96 }}>
+                <Spin size="large" tip="正在加载知识库..." />
+              </div>
+            ) : visibleKbs.length === 0 ? (
+              /* 空态（对齐知识库管理页 arco Empty 原生规格：48px 插画 + 「暂无数据」） */
+              <div className="kb-kbs-empty">
+                <div className="kb-kbs-empty-wrapper">
+                  <div className="kb-kbs-empty-image">
+                    <EmptyIllustration />
+                  </div>
+                  <div className="kb-kbs-empty-description">
+                    {kbs.length === 0 ? "暂无知识库" : "未找到匹配的知识库"}
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : (
-            <Spin spinning={loading}>
-            <Row
-              className={`kb-kbs-rows${total > 30 ? " kb-kbs-rows--paged" : ""}`}
-              gutter={[16, 16]}
-            >
-              {visibleKbs.map((kb) => (
-                <Col key={kb.id} span={6}>
-                  <div className="kb-kbs-card" onClick={() => openKeywords(kb)}>
-                    <div className="kb-kbs-card-header">
-                      <div className="kb-kbs-card-icon">
-                        <img src={cardTitleIcon} alt="" />
-                      </div>
-                      <div className="kb-kbs-card-detail">
-                        <div className="kb-kbs-card-title-row">
-                          <div className="kb-kbs-card-title-name" title={kb.name}>
-                            {kb.name}
+            ) : (
+              <Spin spinning={loading}>
+                <Row className="kb-kbs-rows" gutter={[16, 16]}>
+                  {visibleKbs.map((kb) => (
+                    <Col key={kb.id} span={6}>
+                      <div className="kb-kbs-card" onClick={() => openKeywords(kb)}>
+                        <div className="kb-kbs-card-header">
+                          <div className="kb-kbs-card-icon">
+                            <img src={cardTitleIcon} alt="" />
+                          </div>
+                          <div className="kb-kbs-card-detail">
+                            <div className="kb-kbs-card-title-row">
+                              <div className="kb-kbs-card-title-name" title={kb.name}>
+                                {kb.name}
+                              </div>
+                            </div>
+                            <div className="kb-kbs-card-meta">
+                              {kb.keyword_count ?? 0} 个高频词
+                            </div>
                           </div>
                         </div>
-                        <div className="kb-kbs-card-meta">
-                          {kb.keyword_count ?? 0} 个高频词
+                        <div className="kb-kbs-card-description">{kb.description}</div>
+                        <div className="kb-kbs-card-footer">
+                          <div className="kb-kbs-card-footer-left" title="点击查看该库高频词列表与业务标注">
+                            <span className="kb-wk-card-footer-text">
+                              点击查看该库高频词列表与业务标注
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="kb-kbs-card-description">{kb.description}</div>
-                    <div className="kb-kbs-card-footer">
-                      <div className="kb-kbs-card-footer-left" title="点击查看该库高频词列表与业务标注">
-                        <span className="kb-wk-card-footer-text">
-                          点击查看该库高频词列表与业务标注
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </Col>
-              ))}
-            </Row>
-            </Spin>
-          )}
-        </div>
-
-        {/* 分页条（对齐知识库管理页 .kb-kbs-pagination-bar：total > 30 才出现） */}
-        {total > 30 && (
-          <div className="kb-kbs-pagination-bar">
-            <div className="kb-kbs-pagination">
-              <div className="kb-kbs-pagination-total">共 {total} 条</div>
-              <ul className="kb-kbs-pagination-list">
-                <li
-                  className={`kb-kbs-pagination-item kb-kbs-pagination-item-prev${
-                    page <= 1 ? " kb-kbs-pagination-item-disabled" : ""
-                  }`}
-                  onClick={() => {
-                    if (page > 1) setPage(page - 1);
-                  }}
-                >
-                  <ChevronLeftIcon />
-                </li>
-                <li className="kb-kbs-pagination-item-simple-pager">
-                  <Input
-                    className="kb-kbs-pagination-jumper-input"
-                    value={jumpText}
-                    onChange={(e) => setJumpText(e.target.value)}
-                    onBlur={commitJump}
-                    onPressEnter={commitJump}
-                    disabled={pageCount <= 1}
-                  />
-                  <span className="kb-kbs-pagination-separator">/</span>
-                  <span>{pageCount}</span>
-                </li>
-                <li
-                  className={`kb-kbs-pagination-item kb-kbs-pagination-item-next${
-                    page >= pageCount ? " kb-kbs-pagination-item-disabled" : ""
-                  }`}
-                  onClick={() => {
-                    if (page < pageCount) setPage(page + 1);
-                  }}
-                >
-                  <ChevronRightIcon />
-                </li>
-              </ul>
-              <div className="kb-kbs-pagination-option">
-                <Select
-                  value={pageSize}
-                  style={{ width: 96 }}
-                  options={[10, 20, 30, 40, 50].map((n) => ({
-                    label: `${n} 条/页`,
-                    value: n,
-                  }))}
-                  onChange={(v) => {
-                    setPageSize(v);
-                    setPage(1);
-                  }}
-                />
-              </div>
-            </div>
+                    </Col>
+                  ))}
+                </Row>
+              </Spin>
+            )}
           </div>
-        )}
+
+          {/* 分页底栏（对齐知识库管理页：ModoPagination 常驻底栏，不再 total>30 才出现） */}
+          <div style={{ flexShrink: 0, marginTop: "auto" }}>
+            <ModoPagination
+              current={page}
+              pageSize={pageSize}
+              total={total}
+              showSizeChanger
+              showQuickJumper
+              showTotal={(t) => `共 ${t} 条`}
+              pageSizeOptions={[10, 20, 30, 40, 50]}
+              onChange={(p, ps) => {
+                setPage(p);
+                if (ps && ps !== pageSize) {
+                  setPageSize(ps);
+                  setPage(1);
+                }
+              }}
+            />
+          </div>
+        </div>
       </div>
     ),
-    [kbs, loading, visibleKbs, openKeywords, total, page, pageSize, jumpText, pageCount, commitJump]
+    [kbs, loading, visibleKbs, openKeywords, total, page, pageSize]
   );
 
   return (
