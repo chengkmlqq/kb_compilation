@@ -388,8 +388,11 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
       onClose={onClose}
       open={visible}
       destroyOnClose
+      // 2026-10-28：抽屉 body 变 flex column 高度链——去掉基本信息/执行统计后
+      // 日志区要占满剩余高度，body 溢出交给内部日志框滚动，不做整体滚动
+      styles={{ body: { display: "flex", flexDirection: "column", overflow: "hidden" } }}
     >
-      <Spin spinning={loading}>
+      <Spin spinning={loading} className="kb-job-log-spin">
         {/* 2026-10-12 父子钻取：activeJobId ≠ 打开的 jobId 时显示「返回父任务」 */}
         {activeJobId !== jobId ? (
           <div style={{ marginBottom: 12 }}>
@@ -402,7 +405,9 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
           </div>
         ) : null}
         {activeJobId === jobId && children.length > 0 ? (
-          <div style={{ marginBottom: 24 }}>
+          // 2026-10-28：抽屉 body 不再整体滚动（日志区 flex:1 吃满剩余高度），
+          // 子任务步骤流若很多会挤占日志区——限高 35vh 独立滚动
+          <div style={{ marginBottom: 24, maxHeight: "35vh", overflow: "auto" }}>
             <div
               style={{
                 fontWeight: 500,
@@ -533,11 +538,30 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
           </div>
         ) : null}
         {job ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 20,
+              // 2026-10-28：去掉基本信息/执行统计后日志区要占满剩余高度——
+              // job 容器吃满 Spin 剩余空间，内部各区块由 flex 链撑开
+              flex: 1,
+              minHeight: 0,
+              overflow: "hidden",
+            }}
+          >
             {/* 2026-10-28：作业详情抽屉去掉「基本信息」「执行统计」两段 Descriptions——
                 主任务与子任务均不再展示，列表行已含状态/进度/时间，抽屉以执行日志为主体。 */}
 
-            <div>
+            <div
+              style={{
+                // 日志区占满剩余高度：flex column，代码框 flex:1 内部滚动
+                flex: 1,
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
               <div
                 style={{
                   fontWeight: 500,
@@ -569,7 +593,9 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
                     padding: 12,
                     borderRadius: 6,
                     border: "1px solid #2e3a4a",
-                    maxHeight: 320,
+                    // 2026-10-28：去掉固定 maxHeight 320——flex:1 占满日志区剩余高度
+                    flex: 1,
+                    minHeight: 0,
                     overflow: "auto",
                     fontFamily: "monospace",
                     fontSize: 12,

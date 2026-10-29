@@ -2438,6 +2438,20 @@ html[data-theme="dark"] body {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   任务监控日志抽屉高度链（2026-10-28）：去掉「基本信息/执行统计」后
+   日志区要占满剩余高度——抽屉 body 已是 flex column，这里把 Spin 的
+   .ant-spin-nested-loading / .ant-spin-container 两级容器补成 flex 链，
+   job 内容容器 flex:1 才能吃到剩余高度（与 .kb-doc-cards-spin 同款手法）。
+   ═══════════════════════════════════════════════════════════════ */
+.kb-job-log-spin,
+.kb-job-log-spin > .ant-spin-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ═══════════════════════════════════════════════════════════════
    文档卡片（对齐知识库卡片 .kb-kbs-card 三段式：header 44px 图标+标题+meta /
    两行摘要 / footer 28px 状态文本 + 操作下拉）
    ═══════════════════════════════════════════════════════════════ */
