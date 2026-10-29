@@ -719,6 +719,7 @@ class WikiUpsertPageStep(BaseStep):
         title = _v("title")
         content = _v("content")
         slug = _v("slug")
+        folder_id = _v("folder_id")
         page_type = str(self.config.get("page_type") or "summary")
         skip_empty = bool(self.config.get("skip_empty"))
         output_var = str(self.config.get("output_var") or "page_slug")
@@ -751,10 +752,13 @@ class WikiUpsertPageStep(BaseStep):
         db = get_sessionmaker()()
         try:
             try:
+                page_data: dict = {"title": title, "content": content, "slug": slug,
+                                   "page_type": page_type, "source_refs": source_refs}
+                # 2026-10-29 目录归属：folder_id 非空才挂目录（历史节点无此配置时保持根目录）
+                if folder_id:
+                    page_data["folder_id"] = folder_id
                 wiki_create_page(
-                    db, kb_id,
-                    {"title": title, "content": content, "slug": slug,
-                     "page_type": page_type, "source_refs": source_refs},
+                    db, kb_id, page_data,
                     user_id="system",
                 )
                 created = True
@@ -764,6 +768,8 @@ class WikiUpsertPageStep(BaseStep):
                     # 已有页补充文档归属（首次构建未带归属的旧页，重建时补齐）
                     if source_refs:
                         upd["source_refs"] = source_refs
+                    if folder_id:
+                        upd["folder_id"] = folder_id
                     wiki_update_page(db, kb_id, slug, upd)
                     created = False
                 else:

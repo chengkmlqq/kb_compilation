@@ -471,3 +471,52 @@ def test_ensure_folder_paths_json_literal() -> None:
     batch = raw.get("paths")
     assert isinstance(batch, str)
     assert json.loads(batch) == ["A/B", "C"]
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 2026-10-29 关联改造：知识点互链 + 文档索引页
+# ─────────────────────────────────────────────────────────────────────
+def test_n02_derives_doc_index_slug() -> None:
+    """n02 必须派生 doc_index_slug（文档索引页 slug），供 n07c 来源链接与 n07e 写索引页。"""
+    from scripts.gen_dynamic_wiki_tape import build_dynamic_tape_payload
+    from api.services.orchestration_engine import DefStep
+
+    p = build_dynamic_tape_payload("wiki构建-动态-测试")
+    by_id = {n["id"]: n for n in p["nodes"]}
+    assignments = json.loads((by_id["n02"]["data"]["config"])["assignments"])
+    vars_ = {a["variable"]: a["expression"] for a in assignments}
+    assert "doc_index_slug" in vars_
+
+    ctx = TapeRuntimeContext({"doc_root": "行业短彩端口收入效益评估报表需求",
+                              "kp_tree": {"knowledge_points": []}})
+    resp = DefStep("n02", "派生变量", "def", {"assignments": assignments}).handle(ctx)
+    assert resp.success is True
+    assert ctx.bindings["doc_index_slug"] == "行业短彩端口收入效益评估报表需求-索引"
+
+
+def test_n07_related_links_and_index_page() -> None:
+    """关联改造：n06 组装全量知识点清单（kp_all_desc）、n07b prompt 注入文档全貌、
+    n07c 程序化追加来源文档+相关知识点互链、n07e 末轮写文档索引页。"""
+    from scripts.gen_dynamic_wiki_tape import build_dynamic_tape_payload
+
+    p = build_dynamic_tape_payload("wiki构建-动态-测试")
+    by_id = {n["id"]: n for n in p["nodes"]}
+
+    n06_code = by_id["n06"]["data"]["config"]["code"]
+    assert "kp_all_desc" in n06_code, "n06 必须产出全量知识点清单供互链"
+    assert "kp_all_names" in n06_code
+
+    n07b_prompt = by_id["n07b"]["data"]["config"]["prompt"]
+    assert "kp_all_names" in n07b_prompt, "n07b prompt 必须注入文档全貌（知识点关联上下文）"
+    assert "doc_name" in n07b_prompt
+
+    n07c_code = by_id["n07c"]["data"]["config"]["code"]
+    assert "## 来源文档" in n07c_code, "n07c 必须追加来源文档段（链向索引页）"
+    assert "相关知识点" in n07c_code, "n07c 必须追加相关知识点互链段"
+    assert "doc_index_slug" in n07c_code
+
+    n07e_code = by_id["n07e"]["data"]["config"]["code"]
+    assert "文档索引" in n07e_code, "n07e 末轮必须生成文档索引页"
+    assert "wiki_create_page" in n07e_code and "wiki_update_page" in n07e_code
+    assert "本文档可解答的问题" in n07e_code, "索引页必须给出 Agent 检索引导（知识范围/能解决的问题）"
+    assert "doc_root" in n07e_code, "索引页必须挂 doc_root 文档根目录（需求1）"

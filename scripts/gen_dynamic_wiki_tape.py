@@ -181,6 +181,12 @@ for i, k in enumerate(kps):
             "idx": i,
         })
 bindings['kp_items'] = items
+# 2026-10-29 需求2：全量知识点清单（name+path+slug），供 n07b 生成内容时
+# 知道文档全貌（相关知识点上下文）、n07c 程序化互链（不依赖 LLM 编 slug）。
+bindings['kp_all_desc'] = [
+    {"name": it["name"], "path": it["path"], "slug": it["slug"]} for it in items
+]
+bindings['kp_all_names'] = '、'.join(it["name"] for it in items)
 print(f"[n07] 知识点 {len(items)} 个，目录 {len(set(paths))} 条 → {json.dumps(paths, ensure_ascii=False)}")
 '''
 
@@ -207,15 +213,22 @@ print(f"[n07a] 知识点「{kp.get('name')}」抽取源 {len(src)} 字")
 # ─────────────────────────────────────────────────────────────────────
 KP_CONTENT_PROMPT = """你是知识库 wiki 编写专家。基于给定文档片段，为一个知识点生成 wiki 页面内容。
 
+【文档名】{{doc_name}}
 【知识点】{{kp['name']}}
+【该知识点在文档中的定位】{{kp['path']}}
+【本知识点聚焦线索】{{kp['hint']}}
+
+【文档全貌——本知识库该文档共判定出以下知识点（你写的内容需体现与它们的关联，而非孤立叙述）】
+{{kp_all_names}}
+
 【文档片段】
 {{kp_src}}
 
 【输出要求——严格 JSON，禁止任何其他文字】
-{{
+{
   "title": "页面标题（= 知识点名）",
-  "content": "markdown 格式的 wiki 正文：先一句话定位，再分小节（## 小节）展开，基于片段事实，不编造；无相关片段时 content 输出空字符串"
-}}
+  "content": "markdown 格式的 wiki 正文，遵循以下结构：先一句话定位本知识点是什么；再用 ## 小节展开（定义/口径/与其他知识点的关系/在文档中的出处）。必须做到：1) 开篇点明该知识点隶属哪个文档、属于哪一类（如收入指标/维度）；2) 在『与其他知识点的关系』小节中，说明它和文档中其他哪些知识点有前后依赖、父子、并列或计算关联（只写文档片段事实能支撑的，不要编造；确实无关联就写『本知识点相对独立』）；3) 基于片段事实，不编造；无相关片段时 content 输出空字符串"
+}
 """
 
 
@@ -232,6 +245,73 @@ if is_last:
     try:
         from api.db import get_sessionmaker as _gsm
         from api.services.kb_admin import wiki_rebuild_links as _wrl
+        from api.services.kb_admin import wiki_create_page, wiki_update_page
+        # 2026-10-29 需求3：写文档索引页（挂在 doc_root 文档根目录下）。
+        # 聚合本文档全部知识点 → 双向链接页，供 Agent 查阅文档知识范围/能解决的问题。
+        _doc_root = str(bindings.get('doc_root') or (bindings.get('doc_name') or '未命名文档')).strip() or '未命名文档'
+        _index_slug = str(bindings.get('doc_index_slug') or f"{_doc_root}-索引")
+        _doc_ref = str(bindings.get('doc_ref') or '')
+        _kps = bindings.get('kp_all_desc') or [{"name": it.get('name'), "slug": it.get('slug'), "path": it.get('path')} for it in items]
+        _db = _gsm()()
+        try:
+            # 2026-10-29 需求1：索引页挂在「文档根目录」(doc_root) 下，与知识点平级。
+            # n05 已建好 doc_root 根目录（kp_paths 均带该前缀）；此处查根目录 id，
+            # 查不到再建（wiki_create_folder 非幂等，必须查了才建）。
+            from api.models.knowledge import WikiFolder
+            from sqlalchemy import select as _sq_sel
+            _root_id = ''
+            try:
+                _row = _db.execute(_sq_sel(WikiFolder.id).where(
+                    WikiFolder.kb_id == wr.KB, WikiFolder.name == _doc_root,
+                    WikiFolder.parent_id == '',
+                )).scalars().first()
+                _root_id = str(_row or '')
+            except Exception as _fe:
+                print(f"[n07e] 查文档根目录失败（索引页挂 KB 根）: {_fe}")
+            if not _root_id:
+                try:
+                    from api.services.kb_admin import wiki_create_folder as _wcf
+                    _r = _wcf(_db, wr.KB, {"name": _doc_root, "parent_id": ""}, user_id="system")
+                    _root_id = str(_r.get("id") or '')
+                except Exception as _fe:
+                    print(f"[n07e] 建文档根目录失败（索引页挂 KB 根）: {_fe}")
+            # 按一级目录分组，便于 Agent 快速判断文档结构
+            _groups = {}
+            for _it in _kps:
+                _top = str(_it.get('path') or _it.get('name') or '').split('/')[0].strip() or '其他'
+                _groups.setdefault(_top, []).append(_it)
+            _lines = [f"# {_doc_root} · 文档索引", "",
+                      f"> 本文档由系统动态构建知识图谱，共 {len(_kps)} 个知识点。下方为分类索引与双向链接，点击可跳转各知识点详情页。", ""]
+            for _g, _members in _groups.items():
+                _lines.append(f"## {_g}")
+                for _m in _members:
+                    _lines.append(f"- [[{_m.get('slug')}|{_m.get('name')}]]")
+                _lines.append("")
+            # 文档可解决问题（给 Agent 的检索引导）：列出知识点即文档覆盖主题
+            _lines.append("## 本文档可解答的问题")
+            for _m in _kps:
+                _lines.append(f"- 关于「{_m.get('name')}」的定义、口径与关联（见 [[{_m.get('slug')}|{_m.get('name')}]]）")
+            _index_content = "\\n".join(_lines)
+            try:
+                wiki_create_page(_db, wr.KB, {
+                    "title": f"{_doc_root} · 文档索引", "content": _index_content,
+                    "slug": _index_slug, "page_type": "summary",
+                    "folder_id": _root_id, "source_refs": [_doc_ref] if _doc_ref else [],
+                }, user_id="system")
+            except ValueError as _ve:
+                if "已存在" in str(_ve) or "exists" in str(_ve).lower():
+                    _upd: dict = {"title": f"{_doc_root} · 文档索引", "content": _index_content, "status": "active",
+                                  "source_refs": [_doc_ref] if _doc_ref else []}
+                    if _root_id:
+                        _upd["folder_id"] = _root_id
+                    wiki_update_page(_db, wr.KB, _index_slug, _upd)
+                else:
+                    raise
+            _db.commit()
+            print(f"[n07e] 文档索引页已写（{_index_slug}，{len(_kps)} 个知识点分组，folder={_root_id}）")
+        finally:
+            _db.close()
+        # 全库互链重建（含索引页↔知识点↔来源文档的多向链接）
         _db = _gsm()()
         try:
             _wrl(_db, wr.KB)
@@ -239,9 +319,9 @@ if is_last:
             _db.close()
         print(f"[n07e] 末轮收尾：全库互链重建完成（{len(items)} 个知识点）")
     except Exception as _e:
-        print(f"[n07e] 互链重建失败（不阻断）: {_e}")
+        print(f"[n07e] 索引页/互链重建失败（不阻断）: {_e}")
 else:
-    print(f"[n07e] 第 {int(kp.get('idx') or 0) + 1}/{len(items)} 轮，跳过互链重建")
+    print(f"[n07e] 第 {int(kp.get('idx') or 0) + 1}/{len(items)} 轮，跳过收尾")
 '''
 
 # ─────────────────────────────────────────────────────────────────────
@@ -260,9 +340,25 @@ else:
     title, content = str(kp.get('name') or ''), ''
 if not content:
     print(f"[n07c] 知识点「{kp.get('name')}」无内容，跳过（skip_empty）")
+# 2026-10-29 需求2：程序化追加「来源文档 / 相关知识点」段——
+# 与文档索引页双向链（来源）+ 与该文档其他知识点 [[slug]] 互链。
+_me = str(kp.get('slug') or '')
+_items = bindings.get('kp_items') or []
+_ctx_items = bindings.get('kp_all_desc') or []
+_link = (_ctx_items or [{"name": it.get('name'), "slug": it.get('slug')} for it in _items])
+_rel = [f"- [[{x.get('slug')}|{x.get('name')}]]" for x in _link
+        if str(x.get('slug') or '') and str(x.get('slug')) != _me]
+_doc_root = str(bindings.get('doc_root') or (bindings.get('doc_name') or '未命名文档')).strip() or '未命名文档'
+_index_slug = str(bindings.get('doc_index_slug') or f"{_doc_root}-索引")
+if content:
+    _sec = []
+    _sec.append(f"## 来源文档\\n本文档：[[{_index_slug}|{_doc_root}]]")
+    if _rel:
+        _sec.append("## 相关知识点\\n" + "\\n".join(_rel))
+    content = content + "\\n\\n" + "\\n\\n".join(_sec)
 bindings['kp_content'] = content
 bindings['kp_title'] = title
-print(f"[n07c] 知识点「{kp.get('name')}」内容 {len(content)} 字")
+print(f"[n07c] 知识点「{kp.get('name')}」内容 {len(content)} 字（互链 {len(_rel)} 条）")
 '''
 
 
@@ -438,6 +534,10 @@ def build_dynamic_tape_payload(
                     # source_refs 契约，删文档级联清理按此前缀命中 wiki 页）。
                     {"variable": "doc_ref",
                      "expression": "(str(bindings.get('document_id') or bindings.get('doc_id') or bindings.get('kid') or '') + '|' + str(bindings.get('doc_name') or bindings.get('source_file') or ''))"},
+                    # 2026-10-29 文档索引页 slug：固定派生（doc_root 清洗名 + 后缀），
+                    # 与知识点 slug 天然隔离；n07e 末轮写索引页 + 知识点页反向链时复用。
+                    {"variable": "doc_index_slug",
+                     "expression": "(str(bindings.get('doc_root') or '未命名文档').strip() or '未命名文档') + '-索引'"},
                 ])
     n03 = _script_node("n03", "初始化+切片拉取清洗", CODE_INIT_CHUNKS)
     n04 = _script_node("n04", "切片门禁", CODE_GATE)
