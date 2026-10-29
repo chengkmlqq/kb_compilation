@@ -193,6 +193,70 @@ def test_kb_llm_chat_skip_empty(monkeypatch) -> None:
     assert not resp3.success
 
 
+def test_kb_llm_chat_invalid_json_retry_then_skip(monkeypatch) -> None:
+    """内容级容错：json_mode 非 JSON 按 invalid_retries 重试，耗尽后 skip_on_invalid
+    跳过（success+skipped）且清空 output_var，不拖垮整条 run（2026-10-29）。"""
+    from api.services.orchestration_engine import KbLlmChatStep
+
+    import api.services.chat as chat_mod
+
+    responses = [
+        "我们被要求以知识库wiki编写专家……（prompt 回显）",
+        "还是非 JSON 的废话",
+        "{\"title\": \"结算指标\", \"content\": \"结算指标是……\"}",
+    ]
+    called = []
+
+    def fake_chat(cfg, messages, temperature=None, max_tokens=None, thinking=None):
+        called.append(messages[-1].content)
+        return responses.pop(0)
+
+    chat_mod.ChatClient = lambda cfg: type("FC", (), {"chat": lambda self, m, **k: fake_chat(cfg, m, **k)})()
+    chat_mod.load_chat_config = lambda db=None, model_id=None: {"base_url": "http://f", "api_key": "k", "model": "m"}
+
+    # 第 3 次才成功：invalid_retries=2 → 前两次非 JSON 重试，第 3 次成功
+    step = KbLlmChatStep("n7", "生成wiki", "kb_llm_chat",
+                         {"prompt": "{{kp_prompt}}", "output_var": "out",
+                          "json_mode": True, "invalid_retries": 2, "model": "test-model"})
+    ctx = TapeRuntimeContext({"kp_prompt": "写页面", "summary_model_id": "m"})
+    resp = step.handle(ctx)
+    assert resp.success is True
+    assert ctx.bindings["out"]["title"] == "结算指标"
+    assert len(called) == 3, "非 JSON 前两次应重试"
+
+    # 重试耗尽仍非 JSON + skip_on_invalid → 跳过且 output_var 清空
+    responses2 = ["垃圾1", "垃圾2", "垃圾3"]
+    called2 = []
+
+    def fake_chat2(cfg, messages, temperature=None, max_tokens=None, thinking=None):
+        called2.append(1)
+        return responses2.pop(0)
+
+    chat_mod.ChatClient = lambda cfg: type("FC", (), {"chat": lambda self, m, **k: fake_chat2(cfg, m, **k)})()
+    chat_mod.load_chat_config = lambda db=None, model_id=None: {"base_url": "http://f", "api_key": "k", "model": "m"}
+
+    ctx2 = TapeRuntimeContext({"kp_prompt": "写页面", "summary_model_id": "m", "out": "旧的上轮残留"})
+    step2 = KbLlmChatStep("n7", "生成wiki", "kb_llm_chat",
+                          {"prompt": "{{kp_prompt}}", "output_var": "out",
+                           "json_mode": True, "invalid_retries": 2, "skip_on_invalid": True,
+                           "model": "test-model"})
+    resp2 = step2.handle(ctx2)
+    assert resp2.success is True and resp2.body.get("skipped") is True
+    assert ctx2.bindings["out"] is None, "跳过必须清空 output_var，防 loop 复用上轮内容"
+    assert len(called2) == 3, "invalid_retries=2 + 首试 = 3 次调用后才跳过"
+
+    # 无 skip_on_invalid → 非 JSON 仍失败（历史行为不回归）
+    responses3 = ["垃圾A", "垃圾B", "垃圾C"]
+    chat_mod.ChatClient = lambda cfg: type("FC", (), {"chat": lambda self, m, **k: "垃圾C"})()
+    chat_mod.load_chat_config = lambda db=None, model_id=None: {"base_url": "http://f", "api_key": "k", "model": "m"}
+
+    step3 = KbLlmChatStep("n7", "生成wiki", "kb_llm_chat",
+                          {"prompt": "{{kp_prompt}}", "output_var": "out",
+                           "json_mode": True, "invalid_retries": 2, "model": "test-model"})
+    resp3 = step3.handle(TapeRuntimeContext({"kp_prompt": "写页面", "summary_model_id": "m"}))
+    assert resp3.success is False and "非 JSON" in resp3.error
+
+
 def test_wiki_upsert_page_skip_empty() -> None:
     # page_title 为空字符串（script 节点准备了空变量）→ skip_empty 跳过成功
     step = WikiUpsertPageStep("n8", "写实体页", "wiki_upsert_page",

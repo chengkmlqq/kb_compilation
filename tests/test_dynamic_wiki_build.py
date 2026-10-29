@@ -510,6 +510,11 @@ def test_n07_related_links_and_index_page() -> None:
     assert "kp_all_names" in n07b_prompt, "n07b prompt 必须注入文档全貌（知识点关联上下文）"
     assert "doc_name" in n07b_prompt
 
+    # 2026-10-29 内容级容错：n07b 必须开启非 JSON 重试 + 跳过（单知识点坏输出不拖垮整条 run）
+    n07b_cfg = by_id["n07b"]["data"]["config"]
+    assert n07b_cfg.get("invalid_retries") == 2, "n07b 必须配置非 JSON 重试 2 次"
+    assert n07b_cfg.get("skip_on_invalid") is True, "n07b 必须配置重试耗尽后跳过"
+
     n07c_code = by_id["n07c"]["data"]["config"]["code"]
     assert "## 来源文档" in n07c_code, "n07c 必须追加来源文档段（链向索引页）"
     assert "相关知识点" in n07c_code, "n07c 必须追加相关知识点互链段"

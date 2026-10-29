@@ -254,11 +254,24 @@ if is_last:
         _kps = bindings.get('kp_all_desc') or [{"name": it.get('name'), "slug": it.get('slug'), "path": it.get('path')} for it in items]
         _db = _gsm()()
         try:
+            # 2026-10-29 容错：n07b 内容级失败跳过（skip_on_invalid）的知识点没有
+            # 写入页，索引页只列实际存在（status=active）的知识点，避免死链。
+            from api.models.knowledge import WikiPage
+            from sqlalchemy import select as _sq_sel
+            try:
+                _alive = set(_db.execute(
+                    _sq_sel(WikiPage.slug).where(
+                        WikiPage.kb_id == wr.KB, WikiPage.status == "active",
+                    )
+                ).scalars().all())
+            except Exception as _ae:
+                print(f"[n07e] 查已写页失败（索引页列全量）: {_ae}")
+                _alive = {str(x.get('slug') or '') for x in _kps}
+            _kps = [x for x in _kps if str(x.get('slug') or '') in _alive]
             # 2026-10-29 需求1：索引页挂在「文档根目录」(doc_root) 下，与知识点平级。
             # n05 已建好 doc_root 根目录（kp_paths 均带该前缀）；此处查根目录 id，
             # 查不到再建（wiki_create_folder 非幂等，必须查了才建）。
             from api.models.knowledge import WikiFolder
-            from sqlalchemy import select as _sq_sel
             _root_id = ''
             try:
                 _row = _db.execute(_sq_sel(WikiFolder.id).where(
@@ -397,12 +410,20 @@ def _script_node(nid: str, label: str, code: str, queue: str = "build") -> dict:
 
 def _llm_node(nid: str, label: str, prompt: str, output_var: str,
               json_mode: bool = False, model: str = "{{summary_model_id}}",
-              system: str = "你只输出符合要求的 JSON，禁止任何思考过程或多余文字。") -> dict:
+              system: str = "你只输出符合要求的 JSON，禁止任何思考过程或多余文字。",
+              invalid_retries: int = 0, skip_on_invalid: bool = False) -> dict:
     cfg = {
         "prompt": prompt, "output_var": output_var, "model": model,
         "temperature": 0.2, "max_tokens": 3000,
         "system": system, "queue": "build", "max_attempts": 5,
     }
+    # 2026-10-29 内容级容错：非 JSON（deepseek-v4-pro 偶发回显 prompt/推理草稿）
+    # 按 invalid_retries 重试，耗尽后 skip_on_invalid=True 时跳过该节点（success+skipped）
+    # 而非失败——动态 wiki 构建单知识点坏输出不再拖垮整条 run。仅 n07b 开启。
+    if invalid_retries:
+        cfg["invalid_retries"] = invalid_retries
+    if skip_on_invalid:
+        cfg["skip_on_invalid"] = True
     if json_mode:
         cfg["json_mode"] = True
         # 2026-10-28：json_mode 必须禁 thinking——deepseek-v4-pro 默认
@@ -546,7 +567,8 @@ def build_dynamic_tape_payload(
     n07 = _loop_node("n07", "逐知识点循环", "{{kp_items}}", "kp")
     n07a = _script_node("n07a", "抽取知识点原文", CODE_EXTRACT_SRC)
     n07b = _llm_node("n07b", "生成知识点wiki",
-                     KP_CONTENT_PROMPT, "kp_content_raw", json_mode=True)
+                     KP_CONTENT_PROMPT, "kp_content_raw", json_mode=True,
+                     invalid_retries=2, skip_on_invalid=True)
     n07c = _content_wrap_node("n07c", "内容组装")
     n07d = _upsert_node("n07d", "写入知识点页")
     n07e = _finale_node("n07e", "末轮收尾-互链重建")

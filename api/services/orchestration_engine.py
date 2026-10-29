@@ -29,6 +29,59 @@ logger = logging.getLogger("kb.orchestration.engine")
 from api.models.orchestration import StepDefine, Tape, TapeStep
 
 
+def _extract_json_value(text: str):
+    """从 LLM 输出提取 JSON 值；失败返回 None（含 markdown 围栏/推理草稿前缀）。
+
+    2026-10-29 提取为独立函数供 KbLlmChatStep 循环内复用（内容级重试判定）。
+    """
+    import json as _json
+    import re as _re
+
+    text = (text or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.startswith("json"):
+            text = text[4:].strip()
+    try:
+        return _json.loads(text)
+    except Exception:  # noqa: BLE001
+        pass
+    # 2026-10-28 兜底：deepseek-v4-pro 偶发把推理草稿拼在 content 开头，
+    # 提取首个 JSON 对象/数组子串再解析，避免整轮 failed。
+    _m = _re.search(r"[{\[]", text)
+    if not _m:
+        return None
+    _cands = []
+    _depth = 0
+    _in_str = False
+    _esc = False
+    _start = _m.start()
+    for _i, _ch in enumerate(text[_start:], _start):
+        if _in_str:
+            if _esc:
+                _esc = False
+            elif _ch == "\\":
+                _esc = True
+            elif _ch == '"':
+                _in_str = False
+            continue
+        if _ch == '"':
+            _in_str = True
+        elif _ch in "[{":
+            _depth += 1
+        elif _ch in "]}":
+            _depth -= 1
+            if _depth == 0:
+                _cands.append(text[_start:_i + 1])
+                break
+    for _cand in _cands:
+        try:
+            return _json.loads(_cand)
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
 # ───────────────────────── 运行时上下文 ─────────────────────────
 
 class StepResponse:
@@ -515,6 +568,13 @@ class KbLlmChatStep(BaseStep):
                 max_attempts = max(1, int(self.config.get("max_attempts") or 5))
                 last_exc: Exception | None = None
                 raw = ""
+                # 2026-10-29 内容级重试配置：invalid_retries=非 JSON 重试次数
+                # （默认 0 保持历史行为：非 JSON 只试一次即失败/跳过）；
+                # skip_on_invalid=重试耗尽后跳过（success+skipped）而非失败。
+                invalid_retries = max(0, int(self.config.get("invalid_retries") or 0))
+                skip_on_invalid = bool(self.config.get("skip_on_invalid"))
+                parsed = None
+                json_failed = False
                 # 2026-10-13 质量修复：config.thinking 透传（"disabled" 常见）——
                 # inferai 网关的 deepseek-v4-pro 默认 thinking 开启，会习惯性把
                 # 思考过程写进 content（实测摘要输出英文推理+字数统计+草稿），
@@ -531,7 +591,6 @@ class KbLlmChatStep(BaseStep):
                             msgs, temperature=temperature, max_tokens=max_tokens, thinking=thinking
                         )
                         last_exc = None
-                        break
                     except Exception as e:  # noqa: BLE001
                         last_exc = e
                         resp = getattr(e, "response", None)
@@ -541,6 +600,23 @@ class KbLlmChatStep(BaseStep):
                             break
                         base = 15 if code == 429 else 3
                         _time.sleep(min(base * (attempt + 1), 45))
+                        continue
+                    # 2026-10-29 内容级重试：json_mode 下拿到文本后立即尝试解析，
+                    # 非 JSON（deepseek-v4-pro 偶发把 prompt 回显/推理草稿当正文）
+                    # 按 invalid_retries 重试，耗尽后按 skip_on_invalid 决定跳过或失败——
+                    # 单知识点坏输出不再拖垮整条动态 wiki 构建 run。
+                    if json_mode:
+                        parsed = _extract_json_value(raw)
+                        if parsed is not None:
+                            break
+                        # 非 JSON 重试上限：attempt 从 0 起，非 JSON 出现次数
+                        # 达到 invalid_retries 即停（保留 max_attempts 总调用上限）。
+                        if attempt >= invalid_retries or attempt + 1 >= max_attempts:
+                            json_failed = True
+                            break
+                        _time.sleep(min(2 * (attempt + 1), 15))
+                    else:
+                        break
             finally:
                 _db.close()
         except Exception as e:  # noqa: BLE001
@@ -548,56 +624,20 @@ class KbLlmChatStep(BaseStep):
         if last_exc is not None:
             return StepResponse.fail(f"LLM 调用失败: {last_exc}")
         if json_mode:
-            import json as _json
-            import re as _re
-
-            text = (raw or "").strip()
-            if text.startswith("```"):
-                text = text.strip("`")
-                if text.startswith("json"):
-                    text = text[4:].strip()
-            try:
-                parsed = _json.loads(text)
-            except Exception:  # noqa: BLE001
-                # 2026-10-28 兜底：deepseek-v4-pro 偶发把推理草稿拼在 content
-                # 开头（enable_thinking/thinking 双参数已下发仍见「首先，我需要
-                # 分析…」），提取首个 JSON 对象/数组子串再解析，避免整轮 failed。
-                _m = _re.search(r"[{\[]", text)
-                parsed = None
-                if _m:
-                    _cands = []
-                    _depth = 0
-                    _in_str = False
-                    _esc = False
-                    _start = _m.start()
-                    for _i, _ch in enumerate(text[_start:], _start):
-                        if _in_str:
-                            if _esc:
-                                _esc = False
-                            elif _ch == "\\":
-                                _esc = True
-                            elif _ch == '"':
-                                _in_str = False
-                            continue
-                        if _ch == '"':
-                            _in_str = True
-                        elif _ch in "[{":
-                            _depth += 1
-                        elif _ch in "]}":
-                            _depth -= 1
-                            if _depth == 0:
-                                _cands.append(text[_start:_i + 1])
-                                break
-                    for _cand in _cands:
-                        try:
-                            parsed = _json.loads(_cand)
-                            break
-                        except Exception:  # noqa: BLE001
-                            continue
-                if parsed is None:
-                    return StepResponse.fail(f"LLM 输出非 JSON: {raw[:200]}")
-            context.bindings[output_var] = parsed
-            return StepResponse.success({f"set:{output_var}": parsed})
+            if not json_failed and parsed is not None:
+                context.bindings[output_var] = parsed
+                return StepResponse.success({f"set:{output_var}": parsed})
+            if skip_on_invalid:
+                # 重试耗尽仍非 JSON → 按配置跳过该节点（success + skipped），
+                # 下游 skip_empty 兜底（如 n07d 挂页空内容跳过），run 继续。
+                # ⚠️ 必须清空 output_var：loop 多轮复用 bindings，不清会把
+                # 上一轮的内容挂到当前知识点页上（n07c 读 kp_content_raw 组装）。
+                context.bindings[output_var] = None
+                return StepResponse.success(
+                    {"skipped": True, "reason": f"LLM 输出非 JSON（重试 {invalid_retries} 次后跳过）",
+                     "raw_head": (raw or "")[:200]}
+                )
+            return StepResponse.fail(f"LLM 输出非 JSON: {(raw or '')[:200]}")
         context.bindings[output_var] = raw or ""
         return StepResponse.success({f"set:{output_var}": raw or ""})
 
