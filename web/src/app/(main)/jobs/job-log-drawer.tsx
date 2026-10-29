@@ -538,79 +538,86 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
         ) : null}
         {job ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            <Descriptions
-              title="基本信息"
-              column={1}
-              bordered
-              size="small"
-              styles={{ label: { width: 110 } }}
-            >
-              <Descriptions.Item label="作业ID">
-                <Text copyable style={{ fontFamily: "monospace", fontSize: 12 }}>
-                  {job.id}
-                </Text>
-              </Descriptions.Item>
-              <Descriptions.Item label="任务类">
-                <Tooltip title={job.task_class || "-"}>
-                  <Text style={{ wordBreak: "break-all" }}>
-                    {taskClassLabel(job.task_class)}
-                  </Text>
-                </Tooltip>
-              </Descriptions.Item>
-              {/* 2026-10-21：编排子任务（KbOrchestrationRunTask）后端附带 tape_name
-                  （编排名，如「摘要-Map-Reduce（分块合并）」）——摘要任务日志抽屉
-                  直接显示编排名，而非笼统的「编排执行」 */}
-              {(job as { tape_name?: string }).tape_name ? (
-                <Descriptions.Item label="编排名称">
-                  <Text style={{ wordBreak: "break-all" }}>
-                    {(job as { tape_name?: string }).tape_name}
-                  </Text>
-                </Descriptions.Item>
-              ) : null}
-              <Descriptions.Item label="队列">
-                {resolveJobMonitorQueueLabel(job.queue_name, "")}
-              </Descriptions.Item>
-              <Descriptions.Item label="触发方式">
-                {job.trigger_type === "CRON" ? (
-                  <Tag color="green">定时</Tag>
-                ) : job.trigger_type === "EVENT" ? (
-                  <Tag color="purple">事件</Tag>
-                ) : (
-                  <Tag color="blue">手动</Tag>
-                )}
-              </Descriptions.Item>
-              <Descriptions.Item label="状态">
-                {getStateTag(job.state || null)}
-              </Descriptions.Item>
-              <Descriptions.Item label="Celery 任务ID">
-                <Text style={{ fontFamily: "monospace", fontSize: 12 }}>
-                  {job.task_id || "-"}
-                </Text>
-              </Descriptions.Item>
-            </Descriptions>
+            {/* 2026-10-28：主任务（抽屉以 jobId 打开的链头/编排虚拟父任务）不再展示
+                「基本信息」「执行统计」两段 Descriptions——列表行已含状态/进度/时间，
+                抽屉直接以日志为主体，去掉冗余堆头。子任务点进去仍按原样展示。 */}
+            {activeJobId !== jobId ? (
+              <>
+                <Descriptions
+                  title="基本信息"
+                  column={1}
+                  bordered
+                  size="small"
+                  styles={{ label: { width: 110 } }}
+                >
+                  <Descriptions.Item label="作业ID">
+                    <Text copyable style={{ fontFamily: "monospace", fontSize: 12 }}>
+                      {job.id}
+                    </Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="任务类">
+                    <Tooltip title={job.task_class || "-"}>
+                      <Text style={{ wordBreak: "break-all" }}>
+                        {taskClassLabel(job.task_class)}
+                      </Text>
+                    </Tooltip>
+                  </Descriptions.Item>
+                  {/* 2026-10-21：编排子任务（KbOrchestrationRunTask）后端附带 tape_name
+                      （编排名，如「摘要-Map-Reduce（分块合并）」）——摘要任务日志抽屉
+                      直接显示编排名，而非笼统的「编排执行」 */}
+                  {(job as { tape_name?: string }).tape_name ? (
+                    <Descriptions.Item label="编排名称">
+                      <Text style={{ wordBreak: "break-all" }}>
+                        {(job as { tape_name?: string }).tape_name}
+                      </Text>
+                    </Descriptions.Item>
+                  ) : null}
+                  <Descriptions.Item label="队列">
+                    {resolveJobMonitorQueueLabel(job.queue_name, "")}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="触发方式">
+                    {job.trigger_type === "CRON" ? (
+                      <Tag color="green">定时</Tag>
+                    ) : job.trigger_type === "EVENT" ? (
+                      <Tag color="purple">事件</Tag>
+                    ) : (
+                      <Tag color="blue">手动</Tag>
+                    )}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="状态">
+                    {getStateTag(job.state || null)}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="Celery 任务ID">
+                    <Text style={{ fontFamily: "monospace", fontSize: 12 }}>
+                      {job.task_id || "-"}
+                    </Text>
+                  </Descriptions.Item>
+                </Descriptions>
 
-            <Descriptions
-              title="执行统计"
-              column={1}
-              bordered
-              size="small"
-              styles={{ label: { width: 110 } }}
-            >
-              <Descriptions.Item label="开始时间">
-                {fmtTime(job.start_time)}
-              </Descriptions.Item>
-              <Descriptions.Item label="结束时间">
-                {fmtTime(job.end_time)}
-              </Descriptions.Item>
-              <Descriptions.Item label="耗时">
-                {fmtDur(job.duration_ms)}
-              </Descriptions.Item>
-              <Descriptions.Item label="日志路径">
-                <Text style={{ fontSize: 12, wordBreak: "break-all" }}>
-                  {job.log_path || "-"}
-                </Text>
-              </Descriptions.Item>
-            </Descriptions>
+                <Descriptions
+                  title="执行统计"
+                  column={1}
+                  bordered
+                  size="small"
+                  styles={{ label: { width: 110 } }}
+                >
+                  <Descriptions.Item label="开始时间">
+                    {fmtTime(job.start_time)}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="结束时间">
+                    {fmtTime(job.end_time)}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="耗时">
+                    {fmtDur(job.duration_ms)}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="日志路径">
+                    <Text style={{ fontSize: 12, wordBreak: "break-all" }}>
+                      {job.log_path || "-"}
+                    </Text>
+                  </Descriptions.Item>
+                </Descriptions>
+              </>
+            ) : null}
 
             <div>
               <div
