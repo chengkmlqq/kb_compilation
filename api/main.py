@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from api.config import get_settings
 from api.db import get_db
 from api.mcp_server import create_mcp_server
-from api.middleware import normalize_content_type, rbac_guard
+from api.middleware import bearer_identity, normalize_content_type, rbac_guard
 from api.routers import agents, auth, chat_sessions, chat_traces, chunking, cron, datasources, datagrid, feedback, files, graph, jobs, kb_categories, kbs, mcps, metadata, models, ontology, orchestrations, overview, qa, quality, quality_build_check, skills, system, system_config, usage, websearch, workers
 from api.services.identity import Identity, decode_identity_cookie
 from api.services.migrations import run_migrations_on_startup
@@ -183,6 +183,10 @@ app = FastAPI(
 app.middleware("http")(rbac_guard)
 # content-type 归一化（逗号拼接重复值 → 单值），注册在 rbac_guard 之后使其最先执行
 app.middleware("http")(normalize_content_type)
+# 2026-10-29 Bearer JWT 直调：注册在最外层（最后注册 → 最先执行），先于 rbac_guard
+# 把 Authorization: Bearer 归一化为 x-next-identity cookie，所有接口免换签直调。
+# 验签失败原样放行，受控路径仍由 rbac_guard 401（fail-closed 不变）。
+app.middleware("http")(bearer_identity)
 
 _settings = get_settings()
 

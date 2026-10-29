@@ -111,36 +111,25 @@ def jwt_exchange(req: JwtExchangeRequest, db: Session = Depends(get_db)) -> JwtE
     - 可选 iss 白名单（JWT_ISSUER）校验签发方；
     - 换签后只认 resolve_active_user_identity 查库结果：用户不存在/停用 → 拒绝。
     """
-    settings = get_settings()
-    secret = settings.JWT_SECRET.strip()
-    if not secret:
+    # 2026-10-29：验签复用 services.identity.verify_bearer_jwt（与中间件
+    # Bearer 直调同一规则），按 reason 映射差异化响应文案（保持既有语义）。
+    from api.services.identity import verify_bearer_jwt
+
+    identity, reason = verify_bearer_jwt(req.token, db)
+    if reason == "no_secret":
         return JwtExchangeResponse(success=False, message="服务端未启用 JWT 认证")
-    import jwt as pyjwt
-
-    try:
-        payload = pyjwt.decode(
-            req.token,
-            secret,
-            algorithms=["HS256"],
-            options={"require": ["exp"]},
-        )
-    except pyjwt.ExpiredSignatureError:
+    if reason == "expired":
         return JwtExchangeResponse(success=False, message="登录凭证已过期，请重新进入")
-    except pyjwt.InvalidTokenError:
+    if reason == "invalid":
         return JwtExchangeResponse(success=False, message="登录凭证无效")
-
-    issuer = settings.JWT_ISSUER.strip()
-    if issuer and (payload.get("iss") or "") != issuer:
+    if reason == "issuer":
         return JwtExchangeResponse(success=False, message="登录凭证签发方不匹配")
-
-    user_id = str(payload.get("sub") or payload.get("userId") or "").strip()
-    if not user_id:
+    if reason == "no_user_id":
         return JwtExchangeResponse(success=False, message="登录凭证缺少用户标识")
-
-    identity = resolve_active_user_identity(db, user_id)
-    if not identity:
+    if reason == "no_user":
         return JwtExchangeResponse(success=False, message="用户不存在或未启用")
-
+    # reason == "" → identity 有效
+    assert identity is not None
     return JwtExchangeResponse(
         success=True,
         message="登录成功",

@@ -267,3 +267,51 @@ def check_path_permission(db: Session, user_id: str, pathname: str) -> tuple[boo
     if not matched:
         return False, "无菜单权限"
     return True, ""
+
+
+def verify_bearer_jwt(token: str, db: Session) -> tuple[Identity | None, str]:
+    """验签宿主 HS256 JWT → 解析真实身份（Bearer 直调模式）。
+
+    与 /api/v1/auth/jwt-exchange 共用同一验签规则（2026-10-29），保证
+    Bearer 直调与换签两条通道语义一致：
+    - HS256 共享密钥（settings.JWT_SECRET），未配置 → ("", "no_secret")；
+    - exp 必带且未过期 → ("", "expired")；签名/格式错 → ("", "invalid")；
+    - 可选 iss 白名单（settings.JWT_ISSUER）不匹配 → ("", "issuer")；
+    - 缺少 sub/userId → ("", "no_user_id")；
+    - 用户不存在或未启用 → ("", "no_user")；
+    - 成功 → (identity, "")。
+
+    中间件只用 identity 判空决定是否注入 cookie；jwt_exchange 用 reason
+    映射差异化响应文案。
+    """
+    from api.config import get_settings
+
+    settings = get_settings()
+    secret = (settings.JWT_SECRET or "").strip()
+    if not secret:
+        return None, "no_secret"
+    import jwt as pyjwt
+
+    try:
+        payload = pyjwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            options={"require": ["exp"]},
+        )
+    except pyjwt.ExpiredSignatureError:
+        return None, "expired"
+    except pyjwt.InvalidTokenError:
+        return None, "invalid"
+
+    issuer = (settings.JWT_ISSUER or "").strip()
+    if issuer and (payload.get("iss") or "") != issuer:
+        return None, "issuer"
+
+    user_id = str(payload.get("sub") or payload.get("userId") or "").strip()
+    if not user_id:
+        return None, "no_user_id"
+    identity = resolve_active_user_identity(db, user_id)
+    if not identity:
+        return None, "no_user"
+    return identity, ""

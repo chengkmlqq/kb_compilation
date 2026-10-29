@@ -230,4 +230,74 @@ async def rbac_guard(request: Request, call_next):
         reset_request_db()
 
 
-__all__ = ["rbac_guard", "is_whitelisted", "resolve_page_route"]
+# ═══════════════════════════════════════════════════════════════════
+# Bearer JWT 直调（2026-10-29）：Authorization: Bearer <JWT> → 归一化为
+# x-next-identity cookie，所有既有 router 的 _require_* / rbac_guard
+# 零改动直接生效（写操作按 JWT 用户的真实身份正常授权）。
+#
+# 注册顺序：必须在 rbac_guard 之后注册（FastAPI 中间件 LIFO，后注册先执行），
+# 保证本中间件先于 rbac_guard 注入 cookie，避免 Bearer 请求在受控路径被
+# rbac_guard 以「无 cookie」拦截 401。见 api/main.py。
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _inject_identity_cookie(request: Request, cookie_value: str) -> None:
+    """把 x-next-identity 写入请求 scope 的 Cookie 头（normalize_content_type 同款手法）。
+
+    已有 Cookie 头 → 替换/追加 x-next-identity 键；无 Cookie 头 → 新建。
+    仅修改内存中的 scope headers，不改浏览器实际 cookie，Bearer 请求无副作用。
+    """
+    pair = f"x-next-identity={cookie_value}"
+    raw = request.scope.get("headers", [])
+    new_headers: list[tuple[bytes, bytes]] = []
+    found = False
+    for key, value in raw:
+        if key.lower() == b"cookie":
+            text = value.decode("latin-1")
+            parts = [p.strip() for p in text.split(";") if p.strip()]
+            kept = [p for p in parts if not p.lower().startswith("x-next-identity=")]
+            kept.append(pair)
+            new_headers.append((key, "; ".join(kept).encode("latin-1")))
+            found = True
+            continue
+        new_headers.append((key, value))
+    if not found:
+        new_headers.append((b"cookie", pair.encode("latin-1")))
+    request.scope["headers"] = new_headers
+
+
+def bearer_identity(request: Request, call_next):
+    """Authorization: Bearer <JWT> → 注入 x-next-identity cookie 后放行。
+
+    - 无 Authorization / 非 Bearer → 原样放行（cookie 链路不受影响）；
+    - Bearer 验签失败（密钥未配置/过期/无效/iss 不匹配/用户不存在）→ 原样放行，
+      由 rbac_guard 对受控路径 401（fail-closed 不变），白名单路径（/health、
+      /api/v1/open/* 等）不受影响；
+    - 验签成功 → 把身份编码成 cookie 注入 scope，下游按既有身份链路处理
+      （rbac_guard 菜单 RBAC + 各 router _require_* 的 can_see/can_manage）。
+    """
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return call_next(request)
+
+    token = auth[len("Bearer "):].strip()
+    if not token:
+        return call_next(request)
+
+    db = get_sessionmaker()()
+    set_request_db(db)
+    try:
+        from api.services.identity import encode_identity_cookie, verify_bearer_jwt
+
+        identity, reason = verify_bearer_jwt(token, db)
+        if not identity:
+            # 验签失败：不注入，原样放行（受控路径由 rbac_guard 401）
+            return call_next(request)
+        _inject_identity_cookie(request, encode_identity_cookie(identity))
+        return call_next(request)
+    finally:
+        db.close()
+        reset_request_db()
+
+
+__all__ = ["rbac_guard", "bearer_identity", "is_whitelisted", "resolve_page_route"]

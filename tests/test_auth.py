@@ -165,12 +165,17 @@ def _exchange(db, token: str) -> tuple[bool, str, str | None]:
 
 
 def _patch_settings(monkeypatch, *, secret: str = JWT_TEST_SECRET, issuer: str = "") -> None:
-    """get_settings is lru_cached — env patching won't reach it; replace the accessor."""
-    monkeypatch.setattr(
-        auth_mod,
-        "get_settings",
-        lambda: SimpleNamespace(JWT_SECRET=secret, JWT_ISSUER=issuer, JWT_MAX_AGE=900),
-    )
+    """get_settings is lru_cached — env patching won't reach it; replace the accessor.
+
+    2026-10-29：验签逻辑迁到 services.identity.verify_bearer_jwt（函数内
+    `from api.config import get_settings`），其消费点是 api.config.get_settings，
+    故除 auth 模块命名空间外需一并 patch api.config，否则验签取到真实
+    lru_cached settings（JWT_SECRET 为空）→ no_secret。"""
+    fake = lambda: SimpleNamespace(JWT_SECRET=secret, JWT_ISSUER=issuer, JWT_MAX_AGE=900)  # noqa: E731
+    monkeypatch.setattr(auth_mod, "get_settings", fake)
+    import api.config as config_mod
+
+    monkeypatch.setattr(config_mod, "get_settings", fake)
 
 
 def test_jwt_exchange_success(rbac_db, monkeypatch) -> None:
