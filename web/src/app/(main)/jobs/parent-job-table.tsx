@@ -184,7 +184,10 @@ function ChildTable({
   // 编排自身一行概要（不再返回 step_results 节点）——统一用 jobCols 渲染，
   // 子任务粒度只到「编排 run」这一级。
   const jobCols: ColumnsType<Record<string, unknown>> = [
-    { title: "子任务ID", dataIndex: "id", ellipsis: true, render: (v) => <Tooltip title={String(v)}><Text style={{ fontFamily: "monospace", fontSize: 12 }}>{String(v).slice(0, 12)}</Text></Tooltip> },
+    // 2026-10-29: 子任务ID 列宽已够，截断来自 .slice(0,12) 在落格前硬切——
+    // 与列宽无关，宽度再大也回不来。去掉切片，完整 ID 直接渲染；
+    // 极端窄列时 ellipsis 兜底省略，Tooltip 保留 hover 全值。
+    { title: "子任务ID", dataIndex: "id", ellipsis: true, render: (v) => <Tooltip title={String(v)}><Text style={{ fontFamily: "monospace", fontSize: 12 }}>{String(v)}</Text></Tooltip> },
     // 2026-10-21：编排子任务（KbOrchestrationRunTask）后端附带 tape_name（编排名，
     // 如「摘要-Map-Reduce（分块合并）」）——优先展示编排名，让用户一眼看出是
     // 摘要/构建哪一个编排，而非笼统的「编排执行」；tooltip 展示完整名。
