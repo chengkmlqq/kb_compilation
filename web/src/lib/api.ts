@@ -1007,6 +1007,19 @@ export function apiWikiListAllFeedback(kbId: string, params: WikiFeedbackListPar
   );
 }
 
+export interface WikiFeedbackStats {
+  total: number;
+  pending: number;
+  resolved: number;
+  ignored: number;
+  comment: number;
+  question: number;
+}
+
+export function apiWikiFeedbackStats(kbId: string) {
+  return request<WikiFeedbackStats>(`/api/v1/kbs/${kbId}/wiki/feedback/stats`);
+}
+
 export function apiWikiUpdateFeedbackStatus(kbId: string, feedbackId: string, status: string) {
   return request<{ id: string; status: string }>(
     `/api/v1/kbs/${kbId}/wiki/feedback/${feedbackId}/status`,

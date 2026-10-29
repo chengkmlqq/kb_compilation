@@ -2394,6 +2394,31 @@ def wiki_list_feedback(
     }
 
 
+def wiki_feedback_stats(db: Session, kb_id: str) -> dict:
+    """维护中心统计卡：按状态与类型聚合未软删反馈（一次条件聚合，避免多次全扫）。"""
+    row = db.execute(
+        select(
+            func.count(),
+            func.coalesce(func.sum(case((WikiFeedback.status == "pending", 1), else_=0)), 0),
+            func.coalesce(func.sum(case((WikiFeedback.status == "resolved", 1), else_=0)), 0),
+            func.coalesce(func.sum(case((WikiFeedback.status == "ignored", 1), else_=0)), 0),
+            func.coalesce(func.sum(case((WikiFeedback.feedback_type == "comment", 1), else_=0)), 0),
+            func.coalesce(
+                func.sum(case((WikiFeedback.feedback_type.in_(("question", "issue")), 1), else_=0)), 0
+            ),
+        ).where(WikiFeedback.kb_id == kb_id, WikiFeedback.deleted_at.is_(None))
+    ).one()
+    total, pending, resolved, ignored, comment, question = row
+    return {
+        "total": int(total or 0),
+        "pending": int(pending or 0),
+        "resolved": int(resolved or 0),
+        "ignored": int(ignored or 0),
+        "comment": int(comment or 0),
+        "question": int(question or 0),
+    }
+
+
 def wiki_update_feedback_status(
     db: Session, kb_id: str, feedback_id: str, status: str
 ) -> dict:
