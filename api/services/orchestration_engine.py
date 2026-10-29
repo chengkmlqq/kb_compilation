@@ -59,7 +59,10 @@ def _template_replace(text: str, bindings: Dict[str, Any]) -> str:
         try:
             scope = dict(bindings)
             scope["bindings"] = bindings
-            return str(eval(expr, {}, scope))
+            # bindings 同时进 globals：推导式/生成器表达式有独立作用域，
+            # 内部引用 bindings 走 LOAD_GLOBAL 只查 globals，否则 NameError
+            # （n02 kp_paths 列表推导式线上炸：name 'bindings' is not defined）。
+            return str(eval(expr, scope, scope))
         except Exception as e:  # noqa: BLE001
             logger.warning("模板表达式求值失败 %r: %s", expr, e)
             return m.group(0)
@@ -87,8 +90,10 @@ class TapeRuntimeContext:
         rendered = self.render(expression)
         scope = dict(self.bindings)
         scope["bindings"] = self.bindings
+        # bindings 同时进 globals：推导式/生成器有独立作用域，内部引用
+        # bindings 走 LOAD_GLOBAL 只查 globals，否则 NameError（见 _template_replace）。
         try:
-            return eval(rendered, {}, scope)
+            return eval(rendered, scope, scope)
         except Exception as e:  # noqa: BLE001
             raise ValueError(f"表达式求值失败: {e}，表达式: {expression}") from e
 
