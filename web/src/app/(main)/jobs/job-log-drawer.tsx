@@ -129,6 +129,12 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
   const onStateChangeRef = useRef(onStateChange);
   onStateChangeRef.current = onStateChange;
 
+  // 2026-10-29：activeJobId 最新值 ref——父子钻取反复点击时，异步详情响应
+  // 返回的闭包捕获的是「发起时的 activeJobId」，必须与当前值比对，过期
+  // 响应直接丢弃，否则旧任务的日志流会串进当前任务的日志区
+  const activeJobIdRef = useRef<string | null>(null);
+  activeJobIdRef.current = activeJobId;
+
   const fetchDetail = useCallback(
     async (silent = false): Promise<JobItem | null> => {
       if (!activeJobId) return null;
@@ -284,17 +290,23 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
 
   useEffect(() => {
     if (visible && activeJobId) {
+      // 2026-10-29：切换任务（含反复点子任务）先关旧流，避免多条 SSE
+      // 并发 append 进同一 logContent 导致日志串台
+      closeStream();
+      const targetId = activeJobId;
       setJob(null);
       setLogContent("");
       void fetchDetail().then((detail) => {
-        if (!detail || !activeJobId) return;
+        // 过期响应守卫：详情返回时若已切到别的任务，丢弃（不建流、不置 job）
+        if (activeJobIdRef.current !== targetId) return;
+        if (!detail) return;
         // 2026-10-21 全量日志：不再用 error_message 预填 + 以其长度做 offset
         // （旧逻辑只能看到 error_message 槽位增量，历史日志全丢）。现在
         // SSE 从 offset=0 开始拉，服务端合并 local 日志文件 / events jsonl /
         // MinIO / error_message 全量推送（modo_job 增量 chunk / 编排 run 快照）。
         streamFinishedRef.current = false;
         const es = new EventSource(
-          `/api/v1/jobs/${encodeURIComponent(activeJobId)}/log-stream`,
+          `/api/v1/jobs/${encodeURIComponent(targetId)}/log-stream`,
         );
         eventSourceRef.current = es;
         es.onopen = () => {
@@ -337,7 +349,10 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
           closeStream();
         };
       });
-      return;
+      return () => {
+        // 任务切换/抽屉关闭：关当前流，避免旧流继续写入
+        closeStream();
+      };
     }
     closeStream();
     setJob(null);
@@ -354,6 +369,9 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
   const handleRefresh = () => {
     if (!activeJobId) return;
     void fetchDetail().then(() => {
+      // 2026-10-29：刷新期间若已切到别的任务，丢弃（startLogStream 的
+      // 闭包捕获的是发起时的 activeJobId，过期回流会串台）
+      if (activeJobIdRef.current !== activeJobId) return;
       setLogContent("");
       startLogStream(activeJobId);
     });
