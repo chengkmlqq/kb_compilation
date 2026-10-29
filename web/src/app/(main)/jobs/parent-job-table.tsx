@@ -75,10 +75,14 @@ function fmtDur(ms?: number | null): string {
 }
 
 /** 单行耗时：运行中 → 按本地时钟实时累加；已结束 → 后端 duration_ms，
- *  缺失时（如编排 run 的 duration_ms 恒为 null）用「结束时间 - 开始时间」兜底。 */
+ *  缺失时（如编排 run 的 duration_ms 恒为 null）用「结束时间 - 开始时间」兜底。
+ *  2026-10-29：运行判定走 effectiveState（与状态/结束时间列同口径）——链头任务
+ *  「投递即成功」（自身 SUCCESS 而子任务仍在跑）时，若只看自身 record.state 会
+ *  回落到后端 duration_ms 快照：该值仅统计到「第一个已结束子任务」的 run_span，
+ *  后续子任务继续跑也不累加，耗时列看起来就停住了。 */
 function rowDurationMs(record: ParentJobItem, now: number): number | null {
   const start = record.start_time ? parseIsoUtc(record.start_time).getTime() : NaN;
-  const running = record.state === "RUNNING" || record.state === "running";
+  const running = effectiveState(record) === "RUNNING";
   // 负值钳 0：后台标签页定时器被节流或浏览器/服务器时钟偏斜时会短暂为负
   if (running && !Number.isNaN(start)) return Math.max(0, now - start);
   if (record.duration_ms != null) return record.duration_ms;
