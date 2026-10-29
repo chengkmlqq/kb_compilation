@@ -839,6 +839,52 @@ def _attach_wiki_build_status(db: Session, kb_id: str, items: list[dict]) -> Non
         if b:
             it["wiki_build"] = b
 
+    # 2026-10-29: 摘要 run 状态反查（SUMMARY_RUN_* job → kb_tape_run.inputs.document_id）。
+    # summary_status 字段在摘要 run 跑完才回写 READY/FAILED，运行期间为空——
+    # 前端无法区分「待摘要」与「摘要中」。这里附 summary_run.state（PENDING/RUNNING
+    # = 摘要中），让文档列表实时展示摘要编排进度。与 wiki_build 同源反查模式。
+    summary_jobs = db.execute(
+        select(Job.id, Job.task_params, Job.state)
+        .where(Job.id.like("SUMMARY_RUN%"), Job.kb_id == kb_id)
+        .order_by(Job.create_time.desc())
+        .limit(2000)
+    ).all()
+    if summary_jobs:
+        sum_job_by_run: dict[str, tuple[str, str]] = {}  # runId -> (job_id, job_state)
+        for sjid, stp, sstate in summary_jobs:
+            try:
+                srid = str(json.loads(stp or "{}").get("runId") or "").strip()
+            except Exception:  # noqa: BLE001
+                srid = ""
+            if srid and srid not in sum_job_by_run:
+                sum_job_by_run[srid] = (str(sjid), str(sstate or ""))
+        sum_run_inputs: dict[str, dict] = {}
+        if sum_job_by_run:
+            for srun in db.execute(
+                select(TapeRun.id, TapeRun.inputs).where(
+                    TapeRun.id.in_(list(sum_job_by_run.keys()))
+                )
+            ).all():
+                sin = srun.inputs or {}
+                if str(sin.get("purpose") or "") != "summary":
+                    continue  # 只认 summary 编排 run
+                sum_run_inputs[str(srun.id)] = sin
+        sum_by_doc: dict[str, dict] = {}
+        for srid, (sjid, sstate) in sum_job_by_run.items():
+            sin = sum_run_inputs.get(srid)
+            if not sin:
+                continue
+            skid = str(sin.get("document_id") or sin.get("doc_id") or "")
+            if not skid or skid in sum_by_doc:
+                continue  # summary_jobs 已按 create_time desc，先到即最新
+            # job.state 比 run.status 更及时（job 投递即 PENDING，run 创建稍滞后）
+            sum_by_doc[skid] = {"state": sstate.upper(), "job_id": sjid}
+        # 「摘要中」仅需非终态：终态（SUCCESS/FAILED/STOPPED）前端走 summary_status
+        for it in items:
+            sb = sum_by_doc.get(str(it.get("id") or ""))
+            if sb:
+                it["summary_run"] = sb
+
 
 @router.post("/{kb_id}/documents/upload")
 async def upload_document(

@@ -402,6 +402,9 @@ export interface DocItem {
   summary_error?: string | null;
   created_at?: string | null;
   wiki_build?: { state: string; duration_ms: number | null; job_id: string } | null;
+  /** 2026-10-29: 摘要编排 run 实时状态（SUMMARY_RUN_* job 反查）。运行中=PENDING/RUNNING，
+   *  终态不挂（走 summary_status）。用于区分「待摘要」与「摘要中」。 */
+  summary_run?: { state: string; job_id: string } | null;
   /** 文档目录（doc_folder.id，"" = KB 根层级） */
   folder_id?: string;
   /** 知识源类型：file=文件 / table=数据源维度表（表→wiki） */

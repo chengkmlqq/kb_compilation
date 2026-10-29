@@ -34,35 +34,16 @@ export const STATE_LABEL: Record<string, string> = {
   FAILED: "失败",
 };
 
-/** 摘要阶段标签（kb_document.summary_status："" 未生成 / READY / FAILED） */
-export const SUMMARY_STAGE_LABEL: Record<string, { text: string; color: string }> = {
-  READY: { text: "摘要完成", color: "success" },
-  FAILED: { text: "摘要失败", color: "error" },
-  "": { text: "摘要未生成", color: "default" },
-};
-
-/**
- * wiki 构建阶段标签（doc.wiki_build.state：WIKI 任务 Job.state 大写，或
- * 编排 ORCH_RUN run.status 转大写）。SUCCESS=完成 / FAILED|STOPPED|CANCELLED=失败 /
- * PENDING|RUNNING|QUEUED=构建中 / 无 wiki_build=未生成（未配置构建引擎或未触发）。
- */
-export const WIKI_STAGE_LABEL: Record<string, { text: string; color: string }> = {
-  SUCCESS: { text: "构建完成", color: "success" },
-  FAILED: { text: "构建失败", color: "error" },
-  STOPPED: { text: "构建失败", color: "error" },
-  CANCELLED: { text: "构建失败", color: "error" },
-  PENDING: { text: "构建中", color: "processing" },
-  RUNNING: { text: "构建中", color: "processing" },
-  QUEUED: { text: "构建中", color: "processing" },
-};
-
 const IN_FLIGHT = new Set(["PENDING", "PARSING", "EMBEDDING"]);
 
 /**
  * 卡片右上角状态标签（2026-10-20：原 footer 左侧的三段状态文本合并为单个标签，
  * 移到标题行右侧；2026-10-19 再归一为单一状态词——解析/摘要/构建三段只取一个
  * 整体状态展示：失败 > 处理中 > 已就绪，三段详情放 title 悬浮提示）。
- * 解析未就绪 → 单解析标签；READY → 按摘要/构建进度归一为一个状态。
+ * 解析未就绪 → 单解析标签；READY → 按摘要/构建进度线性流转：
+ *   待摘要 → 摘要中 → 摘要失败 | 待构建 → 构建中 → 构建失败 | 已就绪
+ * （2026-10-29 重构：原「已就绪·待生成/无摘要/未构建」灰色细分改为明确节点词，
+ *  摘要进度由 summary_run（SUMMARY_RUN_* job 反查）实时驱动）
  */
 export function docStageTag(d: DocItem): ReactNode {
   if (IN_FLIGHT.has(d.parse_state)) {
@@ -75,35 +56,44 @@ export function docStageTag(d: DocItem): ReactNode {
   if (d.parse_state === "FAILED") {
     return <Tag color="error">失败</Tag>;
   }
-  // READY：把摘要/构建两段归一成单一状态词（失败优先，其次处理中，最后已就绪）
-  const sum = SUMMARY_STAGE_LABEL[d.summary_status || ""] || SUMMARY_STAGE_LABEL[""];
-  const wiki = WIKI_STAGE_LABEL[d.wiki_build?.state || ""] || { text: "构建未生成", color: "default" };
-  const summaryDetail = sum.text; // 摘要完成/摘要失败/摘要未生成
-  const wikiDetail = wiki.text; // 构建完成/构建失败/构建中/构建未生成
-  const detail = `已就绪 · ${summaryDetail} · ${wikiDetail}`;
-  // 失败细分（2026-10-21）：摘要编排失败（summary_status=FAILED，编排 run 失败
-  // 回写）与构建失败分开标注，不再笼统显示「处理失败」
-  const sumFailed = sum.color === "error";
-  const wikiFailed = wiki.color === "error";
-  if (sumFailed || wikiFailed) {
-    const text = sumFailed && wikiFailed ? "摘要/构建失败" : sumFailed ? "摘要失败" : "构建失败";
-    return <Tag color="error" title={detail}>{text}</Tag>;
+  // 2026-10-29: 解析已就绪，进入 摘要 → 构建 线性流程。
+  // 摘要中：SUMMARY_RUN_* job 非终态（PENDING/RUNNING）
+  const sumRunning = ["PENDING", "RUNNING", "QUEUED"].includes(
+    String(d.summary_run?.state || ""),
+  );
+  if (sumRunning) {
+    return <Tag color="processing" title="摘要编排执行中">摘要中</Tag>;
   }
-  const anyRunning = sum.color === "processing" || wiki.color === "processing";
-  if (anyRunning) {
-    return <Tag color="processing" title={detail}>处理中</Tag>;
+  // 摘要失败（summary_status=FAILED，编排 run 失败回写）——保留失败细分
+  if (d.summary_status === "FAILED") {
+    const wikiFailed = ["FAILED", "STOPPED", "CANCELLED"].includes(
+      String(d.wiki_build?.state || ""),
+    );
+    return (
+      <Tag color="error" title={`摘要失败${wikiFailed ? " · 构建已失败" : ""}`}>
+        {wikiFailed ? "摘要/构建失败" : "摘要失败"}
+      </Tag>
+    );
   }
-  const bothDone = sum.color === "success" && wiki.color === "success";
-  if (bothDone) {
-    return <Tag color="success" title={detail}>已就绪</Tag>;
+  // 摘要未开始（summary_status 空）→ 待摘要
+  if (!d.summary_status || d.summary_status === "") {
+    return <Tag color="default" title="解析完成，等待摘要编排">待摘要</Tag>;
   }
-  // 灰色「已就绪」按缺项细分（2026-10-21）：解析完成但摘要/构建至少一段未生成
-  const sumMissing = sum.color === "default"; // 摘要未生成（未配置摘要或编排失败未回写）
-  const wikiMissing = wiki.color === "default"; // 构建未生成（未配构建引擎/手动模式/未触发）
-  const text = !sumMissing && wikiMissing ? "已就绪·未构建"
-    : sumMissing && !wikiMissing ? "已就绪·无摘要"
-    : "已就绪·待生成";
-  return <Tag color="default" title={detail}>{text}</Tag>;
+  // 摘要已完成（summary_status=READY）→ 进入构建阶段
+  const wikiState = String(d.wiki_build?.state || "");
+  const wikiRunning = ["PENDING", "RUNNING", "QUEUED"].includes(wikiState);
+  if (wikiRunning) {
+    return <Tag color="processing" title="Wiki 构建编排执行中">构建中</Tag>;
+  }
+  const wikiFailed = ["FAILED", "STOPPED", "CANCELLED"].includes(wikiState);
+  if (wikiFailed) {
+    return <Tag color="error" title="Wiki 构建失败">构建失败</Tag>;
+  }
+  if (wikiState === "SUCCESS") {
+    return <Tag color="success" title="摘要完成 · 构建完成">已就绪</Tag>;
+  }
+  // 摘要完成但构建未/未完成（无 wiki_build，或 state 未知）
+  return <Tag color="default" title="摘要完成，等待构建编排">待构建</Tag>;
 }
 
 /**
