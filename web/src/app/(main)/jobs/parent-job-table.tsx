@@ -198,7 +198,14 @@ function ChildTable({
       } },
     { title: "状态", dataIndex: "state", width: 110, render: (v) => renderStateTag(String(v || "")) },
     { title: "开始时间", dataIndex: "start_time", width: 150, render: (v) => fmtTime(String(v || "")) },
-    { title: "结束时间", dataIndex: "end_time", width: 150, render: (v) => fmtTime(String(v || "")) },
+    { title: "结束时间", dataIndex: "end_time", width: 150, render: (v, row) => {
+        // 2026-10-29: 运行中（含编排 run 非终态）强制显示「—」，不展示任何时间——
+        // 后端已对 RUNNING 的 end_time 置空，这里双保险，杜绝任何来源的脏数据
+        // （如历史缓存/其他视图传来的 heartbeat 时间）渲染成「结束时间」。
+        const running = ["RUNNING", "running"].includes(String((row as Record<string, unknown>)?.state || ""));
+        if (running) return <Text type="secondary">—</Text>;
+        return fmtTime(String(v || ""));
+      } },
     { title: "耗时", dataIndex: "duration_ms", width: 90, render: (v) => fmtDur(v as number | null) },
     {
       title: "操作",
@@ -314,7 +321,15 @@ const ParentJobTable: React.FC<ParentJobTableProps> = ({
       dataIndex: "end_time",
       key: "end_time",
       width: 175,
-      render: (val) => fmtTime(val),
+      render: (val, record) => {
+        // 2026-10-29: 运行中（含子任务未完成合成态）不展示结束时间——
+        // 与「耗时」列同口径，避免还在跑的任务显示陈旧/心跳时间
+        return effectiveState(record as ParentJobItem) === "RUNNING" ? (
+          <Text type="secondary">—</Text>
+        ) : (
+          fmtTime(val)
+        );
+      },
     },
     {
       title: "耗时",

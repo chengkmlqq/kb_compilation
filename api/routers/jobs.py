@@ -183,7 +183,9 @@ def _child_agg(db: Session, parent_ids: list[str]) -> dict[str, dict]:
                         c = _naive(run_created)
                         if cur_start is None or c < cur_start:
                             cur_start = c
-                    if run_updated:
+                    # 2026-10-29: 运行中 run 的 updated_at 是心跳时间，不能抬高 span_end，
+                    # 否则主任务（链头）还在跑就显示 end_time。仅非 running run 参与 end 端。
+                    if st not in ("RUNNING", "running") and run_updated:
                         u = _naive(run_updated)
                         if cur_end is None or u > cur_end:
                             cur_end = u
@@ -433,7 +435,13 @@ def list_job_children(
                         d["job_end_time"] = d["end_time"]
                         d["job_duration_ms"] = d["duration_ms"]
                         d["start_time"] = run.created_at.isoformat() if run.created_at else None
-                        d["end_time"] = run.updated_at.isoformat() if run.updated_at else None
+                        # 2026-10-29: RUNNING 时 updated_at 是心跳时间（持续刷新），
+                        # 不能当 end_time——子任务还在跑就显示「结束时间」。终态才用。
+                        d["end_time"] = (
+                            None
+                            if _run_state_to_job(run.status) in ("RUNNING", "running")
+                            else (run.updated_at.isoformat() if run.updated_at else None)
+                        )
                         d["duration_ms"] = _run_duration_ms(run)
             except (TypeError, json.JSONDecodeError):
                 pass
@@ -516,7 +524,14 @@ def _run_to_job_dict(run: TapeRun) -> dict:
         "trigger_type": "API",
         "state": _run_state_to_job(run.status),
         "start_time": (run.created_at.isoformat() if run.created_at else None),
-        "end_time": (run.updated_at.isoformat() if run.updated_at else None),
+        # 2026-10-29: RUNNING 状态下 updated_at 是心跳时间（持续刷新），
+        # 不能当 end_time——否则子任务还在跑就显示「结束时间」。终态才用
+        # updated_at 兜底（编排 run 无独立 end_time 字段）。
+        "end_time": (
+            None
+            if _run_state_to_job(run.status) in ("RUNNING", "running")
+            else (run.updated_at.isoformat() if run.updated_at else None)
+        ),
         "duration_ms": None,
         "error_message": run.error,
         "log_path": None,
