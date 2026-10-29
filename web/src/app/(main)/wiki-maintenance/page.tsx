@@ -3,16 +3,14 @@
 /** 维护中心（Wiki 页面反馈处理）：独立页面。
  *
  * 入口：知识库管理卡片「反馈 N」点击进入（带 ?kb_id= 预选）；侧栏菜单直达。
- * 数据源：/api/v1/kbs/{kb_id}/wiki/feedback（过滤+分页）+ 状态流转 + 软删。
- * 布局对齐操作日志（system/logs）：ModoTabs 首 tab（页面标题+列表）+ Card 包裹
- * （body padding "12px 16px 0"）+ 表格 scroll y + 钉底分页；知识库选择与刷新放
- * tabBarExtraContent（对齐 agents/kbs 页范式）。
+ * 数据源：/api/v1/kbs/{kb_id}/wiki/feedback（过滤+分页）+ /feedback/stats（统计卡）
+ * + 状态流转 + 软删。
+ * 布局对齐任务监控页（jobs/page.tsx）：统计卡（modo-stat-card）+ 筛选栏 + 表格 + 钉底分页。
  */
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Button,
-  Card,
   Empty,
   Input,
   Popconfirm,
@@ -24,10 +22,14 @@ import {
   message,
 } from "antd";
 import {
+  CheckCircleOutlined,
   CheckOutlined,
+  ClockCircleOutlined,
   CommentOutlined,
   DeleteOutlined,
+  FileDoneOutlined,
   LinkOutlined,
+  QuestionCircleOutlined,
   ReloadOutlined,
   RollbackOutlined,
   SearchOutlined,
@@ -37,13 +39,14 @@ import type { ColumnsType } from "antd/es/table";
 import {
   apiListKbs,
   apiWikiDeleteFeedback,
+  apiWikiFeedbackStats,
   apiWikiListAllFeedback,
   apiWikiUpdateFeedbackStatus,
   KbItem,
   WikiFeedbackItem,
+  WikiFeedbackStats,
 } from "@/lib/api";
 import ModoPagination from "@/components/biz/modo-pagination";
-import { ModoTabs } from "@/components/biz/modo-tabs";
 import { PRESET_LABELS, TYPE_OPTIONS } from "@/lib/wikiFeedback";
 
 const PAGE_SIZE = 20;
@@ -67,8 +70,14 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
   ignored: { label: "已忽略", color: "default" },
 };
 
-/** 动态选项卡条目（复用操作日志页 ModoTabs 模式）：首个 tab 固定为「页面标题 + 列表」 */
-type MaintTab = { key: string; title: string; children: ReactNode };
+const EMPTY_STATS: WikiFeedbackStats = {
+  total: 0,
+  pending: 0,
+  resolved: 0,
+  ignored: 0,
+  comment: 0,
+  question: 0,
+};
 
 export default function WikiMaintenancePage() {
   const router = useRouter();
@@ -85,18 +94,30 @@ export default function WikiMaintenancePage() {
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [keyword, setKeyword] = useState("");
   const [keywordInput, setKeywordInput] = useState("");
-  const [pendingCount, setPendingCount] = useState(0);
+  const [stats, setStats] = useState<WikiFeedbackStats>(EMPTY_STATS);
+  const [statsLoading, setStatsLoading] = useState(false);
 
-  // ---- 动态选项卡（对齐操作日志页：容器 + 开关 tab 机制就位）----
-  const [tabs, setTabs] = useState<MaintTab[]>([]);
-  const [activeTab, setActiveTab] = useState("home");
+  // 表格可用高度实测（对齐任务监控页）：写死 vh 偏移易失准，这里量容器实际高度传给 scroll.y
+  const [tableBodyHeight, setTableBodyHeight] = useState<number>();
+  const tableBodyRef = useRef<HTMLDivElement | null>(null);
 
-  const closeTab = (key: string) => {
-    setTabs((prev) => prev.filter((t) => t.key !== key));
-    if (activeTab === key) setActiveTab("home");
-  };
-
-  const selectedKb = useMemo(() => kbs.find((k) => k.id === kbId) || null, [kbs, kbId]);
+  useEffect(() => {
+    const el = tableBodyRef.current;
+    if (!el) return;
+    const update = () => {
+      // scroll.y 的 maxHeight 只约束表体，表头 (.ant-table-thead) 是流内独立块。
+      // 直接量容器高度会令表格总高 = 容器高 + 表头高，底部行被分页遮挡——先减表头高。
+      const thead = el.querySelector<HTMLElement>(".ant-table-thead");
+      const headerH = thead ? thead.getBoundingClientRect().height : 0;
+      setTableBodyHeight(Math.max(40, Math.round(el.clientHeight - headerH)));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    const tableEl = el.querySelector<HTMLElement>(".ant-table");
+    if (tableEl) ro.observe(tableEl);
+    return () => ro.disconnect();
+  }, []);
 
   // 知识库列表（选择器 + 卡片统计已由 /api/v1/kbs feedback_count 提供）
   const loadKbs = useCallback(async () => {
@@ -108,11 +129,26 @@ export default function WikiMaintenancePage() {
     }
   }, []);
 
+  const loadStats = useCallback(async () => {
+    if (!kbId) {
+      setStats(EMPTY_STATS);
+      return;
+    }
+    setStatsLoading(true);
+    try {
+      const res = await apiWikiFeedbackStats(kbId);
+      if (res.success && res.data) setStats(res.data);
+    } catch {
+      /* 统计卡失败不阻断列表 */
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [kbId]);
+
   const loadList = useCallback(async () => {
     if (!kbId) {
       setItems([]);
       setTotal(0);
-      setPendingCount(0);
       return;
     }
     setLoading(true);
@@ -127,8 +163,6 @@ export default function WikiMaintenancePage() {
       const data = res?.data;
       setItems(data?.items || []);
       setTotal(data?.total || 0);
-      // 待处理数（当前页统计；与筛选解耦时语义为「当前筛选页内的待处理」）
-      setPendingCount((data?.items || []).filter((i) => i.status === "pending").length);
     } catch {
       message.error("加载反馈失败");
       setItems([]);
@@ -146,6 +180,10 @@ export default function WikiMaintenancePage() {
     void loadList();
   }, [loadList]);
 
+  useEffect(() => {
+    void loadStats();
+  }, [loadStats]);
+
   // 从知识库卡片进入时同步 URL 的 kb_id
   useEffect(() => {
     setKbId(urlKbId);
@@ -156,12 +194,20 @@ export default function WikiMaintenancePage() {
     setPage(1);
   };
 
+  const resetFilters = () => {
+    setTypeFilter(undefined);
+    setStatusFilter(undefined);
+    setKeyword("");
+    setKeywordInput("");
+    setPage(1);
+  };
+
   const setStatus = async (item: WikiFeedbackItem, status: string) => {
     if (!kbId) return;
     try {
       await apiWikiUpdateFeedbackStatus(kbId, item.id, status);
       message.success(status === "resolved" ? "已标记解决" : status === "pending" ? "已重新打开" : "已忽略");
-      await loadList();
+      await Promise.all([loadList(), loadStats()]);
     } catch {
       message.error("状态更新失败（可能无操作权限）");
     }
@@ -172,7 +218,7 @@ export default function WikiMaintenancePage() {
     try {
       await apiWikiDeleteFeedback(kbId, item.id);
       message.success("已删除");
-      await loadList();
+      await Promise.all([loadList(), loadStats()]);
     } catch {
       message.error("删除失败（可能无操作权限）");
     }
@@ -278,129 +324,174 @@ export default function WikiMaintenancePage() {
     },
   ];
 
-  // 列表区（首个选项卡内容）：汇总徽标 + 筛选行 + 表格 + 钉底分页
-  const listPane = (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      <Card
-        style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
-        styles={{
-          body: {
-            flex: 1,
-            minHeight: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            padding: "12px 16px 0",
-          },
-        }}
-      >
-        {/* 汇总徽标（未选知识库时不展示） */}
-        {kbId && selectedKb && pendingCount > 0 && (
-          <div style={{ display: "flex", gap: 8, marginBottom: 12, flexShrink: 0 }}>
-            <Tag color="blue" style={{ padding: "2px 10px", borderRadius: 999 }}>
-              共 {total} 条
-            </Tag>
-            <Tag color="orange" style={{ padding: "2px 10px", borderRadius: 999 }}>
-              待处理 {pendingCount} 条
-            </Tag>
-          </div>
-        )}
-
-        {/* 筛选行（对齐操作日志页：内联筛选 + 顶边距） */}
-        <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap", flexShrink: 0 }}>
-          <Select
-            placeholder="类型"
-            style={{ width: 130 }}
-            allowClear
-            value={typeFilter}
-            onChange={(v) => {
-              setTypeFilter(v);
-              setPage(1);
-            }}
-            options={TYPE_OPTIONS}
-          />
-          <Select
-            placeholder="状态"
-            style={{ width: 130 }}
-            allowClear
-            value={statusFilter}
-            onChange={(v) => {
-              setStatusFilter(v);
-              setPage(1);
-            }}
-            options={STATUS_OPTIONS}
-          />
-          <Input
-            placeholder="按页面标题或 slug 搜索…"
-            style={{ width: 260 }}
-            prefix={<SearchOutlined style={{ color: "#79879c" }} />}
-            allowClear
-            value={keywordInput}
-            onChange={(e) => setKeywordInput(e.target.value)}
-            onPressEnter={applyKeyword}
-            onClear={applyKeyword}
-          />
-          <Button type="primary" onClick={applyKeyword}>
-            筛选
-          </Button>
-        </div>
-
-        <Table<WikiFeedbackItem>
-          rowKey="id"
-          size="small"
-          columns={columns}
-          dataSource={items}
-          loading={loading}
-          pagination={false}
-          scroll={{ x: 1200, y: "calc(100vh - 264px)" }}
-          locale={{
-            emptyText: (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description={kbId ? "暂无维护反馈" : "请先选择知识库"}
-              />
-            ),
-          }}
-        />
-        <div style={{ flexShrink: 0, marginTop: "auto" }}>
-          {total > 0 && (
-            <ModoPagination
-              current={page}
-              pageSize={PAGE_SIZE}
-              total={total}
-              onChange={(p) => setPage(p)}
-            />
-          )}
-        </div>
-      </Card>
-    </div>
-  );
+  // 统计卡（对齐任务监控页 JobStats：6 列 grid / 48px 圆角图标底 / 26px 数值）
+  const statCards: Array<{
+    key: string;
+    label: string;
+    value: number;
+    icon: ReactNode;
+    color: string;
+    bg: string;
+  }> = [
+    {
+      key: "total",
+      label: "总数",
+      value: stats.total,
+      icon: <FileDoneOutlined style={{ fontSize: 22 }} />,
+      color: "#242E43",
+      bg: "#F0F2F5",
+    },
+    {
+      key: "pending",
+      label: "待处理",
+      value: stats.pending,
+      icon: <ClockCircleOutlined style={{ fontSize: 22 }} />,
+      color: "#d48806",
+      bg: "#FFFBE6",
+    },
+    {
+      key: "resolved",
+      label: "已解决",
+      value: stats.resolved,
+      icon: <CheckCircleOutlined style={{ fontSize: 22 }} />,
+      color: "#389e0d",
+      bg: "#F6FFED",
+    },
+    {
+      key: "ignored",
+      label: "已忽略",
+      value: stats.ignored,
+      icon: <StopOutlined style={{ fontSize: 22 }} />,
+      color: "#79879C",
+      bg: "#F0F2F5",
+    },
+    {
+      key: "comment",
+      label: "评论",
+      value: stats.comment,
+      icon: <CommentOutlined style={{ fontSize: 22 }} />,
+      color: "#1677ff",
+      bg: "#E6F4FF",
+    },
+    {
+      key: "question",
+      label: "问题",
+      value: stats.question,
+      icon: <QuestionCircleOutlined style={{ fontSize: 22 }} />,
+      color: "#722ed1",
+      bg: "#F9F0FF",
+    },
+  ];
 
   return (
-    // 2026-10-21 对齐操作日志页范式：外层固定视口高度不滚动，
-    // 顶部「动态选项卡」——首 tab「维护中心」= 页面标题 + 列表（不可关闭），
-    // 知识库选择与刷新放 tabBarExtraContent（对齐 agents/kbs 页）。
+    // 对齐任务监控页：外层锁 视口 − 顶栏，统计卡/筛选栏定高、表格区吃满剩余空间
     <div
       className="wiki-maintenance-page"
       style={{
-        padding: 10,
-        height: "calc(100vh - var(--app-header-h, 48px))",
         display: "flex",
         flexDirection: "column",
-        overflow: "hidden",
+        height: "calc(100vh - var(--app-header-h, 48px))",
         minHeight: 0,
+        background: "#EFF4F9",
+        padding: 10,
+        overflow: "hidden",
       }}
     >
-      <ModoTabs
-        type="editable-card"
-        hideAdd
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        onEdit={(key, action) => {
-          if (action === "remove") closeTab(String(key));
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          flex: 1,
+          minHeight: 0,
+          overflow: "hidden",
+          background: "#F5F7FA",
         }}
-        tabBarExtraContent={
-          <Space>
+      >
+        {/* Stats Area */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(6, 1fr)",
+            gap: 16,
+            marginBottom: 16,
+            flexShrink: 0,
+          }}
+        >
+          {statCards.map((stat) => (
+            <div
+              key={stat.key}
+              className="modo-stat-card"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: 18,
+                background: "#fff",
+                borderRadius: 8,
+                border: "1px solid #E3E9EF",
+                transition: "box-shadow 0.25s",
+              }}
+            >
+              <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                <span
+                  style={{
+                    color: "#79879C",
+                    fontSize: 13,
+                    marginBottom: 8,
+                    fontWeight: 500,
+                  }}
+                >
+                  {stat.label}
+                </span>
+                <span
+                  style={{
+                    fontSize: 26,
+                    fontWeight: 700,
+                    lineHeight: "26px",
+                    color: stat.color,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {statsLoading ? "-" : stat.value}
+                </span>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 48,
+                  height: 48,
+                  borderRadius: 12,
+                  background: stat.bg,
+                  color: stat.color,
+                  opacity: 0.75,
+                  flexShrink: 0,
+                }}
+              >
+                {stat.icon}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Filter Area */}
+        <div
+          style={{
+            background: "#fff",
+            borderRadius: 8,
+            border: "1px solid #E3E9EF",
+            padding: "14px 16px",
+            marginBottom: 16,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 16,
+            flexWrap: "wrap",
+            flexShrink: 0,
+          }}
+        >
+          <Space size={12} wrap>
             <Select
               placeholder="选择知识库"
               style={{ width: 300 }}
@@ -417,25 +508,90 @@ export default function WikiMaintenancePage() {
                 label: `${k.name}${(k.feedback_count ?? 0) > 0 ? `（反馈 ${k.feedback_count}）` : ""}`,
               }))}
             />
-            <Button icon={<ReloadOutlined />} onClick={() => void loadList()}>
-              刷新
+            <Select
+              placeholder="类型"
+              style={{ width: 130 }}
+              allowClear
+              value={typeFilter}
+              onChange={(v) => {
+                setTypeFilter(v);
+                setPage(1);
+              }}
+              options={TYPE_OPTIONS}
+            />
+            <Select
+              placeholder="状态"
+              style={{ width: 130 }}
+              allowClear
+              value={statusFilter}
+              onChange={(v) => {
+                setStatusFilter(v);
+                setPage(1);
+              }}
+              options={STATUS_OPTIONS}
+            />
+            <Input
+              placeholder="按页面标题或 slug 搜索…"
+              style={{ width: 260 }}
+              prefix={<SearchOutlined style={{ color: "#79879c" }} />}
+              allowClear
+              value={keywordInput}
+              onChange={(e) => setKeywordInput(e.target.value)}
+              onPressEnter={applyKeyword}
+              onClear={applyKeyword}
+            />
+          </Space>
+          <Space>
+            <Button type="primary" icon={<SearchOutlined />} onClick={applyKeyword}>
+              查询
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={resetFilters}>
+              重置
             </Button>
           </Space>
-        }
-        items={[
-          {
-            key: "home",
-            label: (
-              <span style={{ display: "inline-flex", alignItems: "center" }}>
-                <CommentOutlined style={{ color: "#3261ce", marginRight: 6 }} />
-                维护中心
-              </span>
-            ),
-            children: listPane,
-          },
-          ...tabs.map((t) => ({ key: t.key, label: t.title, closable: true, children: t.children })),
-        ]}
-      />
+        </div>
+
+        {/* Table + Pagination Area */}
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+            overflow: "hidden",
+            background: "#fff",
+            borderRadius: 8,
+            border: "1px solid #E3E9EF",
+          }}
+        >
+          <div ref={tableBodyRef} style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: "0 16px" }}>
+            <Table<WikiFeedbackItem>
+              rowKey="id"
+              size="small"
+              columns={columns}
+              dataSource={items}
+              loading={loading}
+              pagination={false}
+              scroll={{ x: 1200, y: tableBodyHeight }}
+              locale={{
+                emptyText: (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description={kbId ? "暂无维护反馈" : "请先选择知识库"}
+                  />
+                ),
+              }}
+            />
+          </div>
+          <ModoPagination
+            current={page}
+            pageSize={PAGE_SIZE}
+            total={total}
+            showTotal={(t) => `共 ${t} 条`}
+            onChange={(p) => setPage(p)}
+          />
+        </div>
+      </div>
     </div>
   );
 }

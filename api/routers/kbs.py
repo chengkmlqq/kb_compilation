@@ -66,6 +66,7 @@ from api.services.kb_admin import (
     wiki_index,
     wiki_lint,
     wiki_list_feedback,
+    wiki_feedback_stats,
     wiki_list_logs,
     wiki_rebuild_links,
     wiki_search,
@@ -2404,6 +2405,17 @@ def list_all_wiki_feedback(
         page_size=page_size,
     )
     return {"success": True, "data": data}
+
+
+@router.get("/{kb_id}/wiki/feedback/stats")
+def get_wiki_feedback_stats(
+    kb_id: str,
+    caller: dict = Depends(_require_kb_caller),
+    db: Session = Depends(get_db),
+) -> dict:
+    """维护中心统计卡：按状态/类型聚合未软删反馈。"""
+    _kb_visible(kb_id, caller, db)
+    return {"success": True, "data": wiki_feedback_stats(db, kb_id)}
 
 
 @router.post("/{kb_id}/wiki/pages/{slug}/feedback")

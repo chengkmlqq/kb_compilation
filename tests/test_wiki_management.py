@@ -249,6 +249,14 @@ def test_wiki_logs_and_feedback(db: Session) -> None:
     fblist2 = kb_admin.wiki_list_feedback(db, kb, slug="日志页")
     assert fblist2["items"][0]["status"] == "resolved"
 
+    # 统计卡聚合（按状态/类型）
+    stats = kb_admin.wiki_feedback_stats(db, kb)
+    assert stats["total"] == 1
+    assert stats["resolved"] == 1
+    assert stats["pending"] == 0
+    assert stats["question"] == 1  # issue 归入问题类
+    assert stats["comment"] == 0
+
 
 def test_wiki_index(db: Session) -> None:
     kb = "kb-index"
