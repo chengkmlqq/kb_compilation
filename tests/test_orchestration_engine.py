@@ -176,7 +176,8 @@ def test_kb_llm_chat_skip_empty(monkeypatch) -> None:
 
     # skip_empty=True + 空 prompt → 跳过不调 LLM
     step = KbLlmChatStep("n7", "合并", "kb_llm_chat",
-                         {"prompt": "{{reduce_prompt}}", "output_var": "out", "skip_empty": True})
+                         {"prompt": "{{reduce_prompt}}", "output_var": "out",
+                          "skip_empty": True, "model": "test-model"})
     resp = step.handle(TapeRuntimeContext({"reduce_prompt": ""}))
     assert resp.success and resp.body.get("skipped") is True
     assert len(called) == 0, "空 prompt + skip_empty 不应调 LLM"

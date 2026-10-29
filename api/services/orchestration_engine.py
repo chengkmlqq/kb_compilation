@@ -490,6 +490,15 @@ class KbLlmChatStep(BaseStep):
 
         prompt = str(context.render(self.config.get("prompt") or "")).strip()
         output_var = str(self.config.get("output_var") or "llm_out")
+        skip_empty = bool(self.config.get("skip_empty"))
+        # 2026-10-29 顺序修复：空 prompt + skip_empty 必须先跳过——此前该检查
+        # 排在模型解析之后，loop 内空合并轮（skip_empty 语义）会先被"缺少模型"
+        # 拦截失败，与 wiki_upsert_page 的 skip_empty 语义不对称（预存红
+        # test_kb_llm_chat_skip_empty 根因）。
+        if not prompt:
+            if skip_empty:
+                return StepResponse.success({"skipped": True, "reason": "empty prompt (skip_empty)"})
+            return StepResponse.fail("kb_llm_chat 缺 prompt")
         # 2026-10-14：编排节点可配 model={{summary_model_id}} 引用知识库配置的
         # 摘要模型（文档链路 KbReadDocStep 注入 bindings）。模板渲染失败会残留
         # {{...}} 字面量（bindings 缺键时 _template_replace 原样返回）——此时
@@ -528,14 +537,6 @@ class KbLlmChatStep(BaseStep):
         temperature = float(self.config.get("temperature") or 0.2)
         max_tokens = int(self.config.get("max_tokens") or 2048)
         json_mode = bool(self.config.get("json_mode"))
-        # 2026-10-12 摘要三模式模板：loop 内条件触发合并 LLM——非最后一轮
-        # prompt 渲染为空时跳过（空合并）而不失败，与 wiki_upsert_page 的
-        # skip_empty 语义对称（loop 下游节点每轮都跑，靠它只让最后一轮真合并）。
-        skip_empty = bool(self.config.get("skip_empty"))
-        if not prompt:
-            if skip_empty:
-                return StepResponse.success({"skipped": True, "reason": "empty prompt (skip_empty)"})
-            return StepResponse.fail("kb_llm_chat 缺 prompt")
 
         try:
             # 2026-10-12 修复：db 必须传——load_chat_config(None) 走 legacy env，

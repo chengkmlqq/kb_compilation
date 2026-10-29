@@ -2,7 +2,37 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-28（高频词页样式修复 + test_agents 用例对齐 visible_clauses 语义）
+最后更新：2026-10-29（方案C改造已落地提交 70b2051，测试全绿；工作区留 3 个未提交改动待归置）
+
+## 53. 当前状态（2026-10-29 动态wiki构建 round3 LLM 回显失败诊断 + 方案C 改造，已完成代码层）
+
+- **坏状态已解除**：此前 `_extract_json_value` 被错位塞入的方案C补丁已还原为干净函数，
+  方案C逻辑落在 KbLlmChatStep 的 `if json_mode:` 分支（原位置），py_compile 通过。
+- **方案C已提交推送**：commit 70b2051（14:27）含 orchestration_engine.py（142 行改动）
+  + gen_dynamic_wiki_tape.py（n07b `invalid_retries=2, skip_on_invalid=True`）
+  + test_dynamic_wiki_build.py + test_orchestration_engine.py。
+  实现命名（与 PROGRESS 早期草案不同）：`invalid_retries`（非 JSON 重试次数，默认 0=历史
+  行为不变）+ `skip_on_invalid`（耗尽后 success+skipped 清空 output_var），与 HTTP 级
+  max_attempts 解耦。
+- **pytest 全绿（2026-10-29 17:40 实测，宿主 .venv 3.11）**：
+  test_orchestration_engine.py + test_kb_llm_chat_content_retry.py = 32 passed；
+  test_dynamic_wiki_build.py = 17 passed。skip_empty 预存红已随顺序修复转绿。
+- **工作区未提交改动（待归置，勿盲目提交）**：
+  1. `api/services/orchestration_engine.py`（M，17 行）——并行会话的 skip_empty 空 prompt
+     检查提前到模型解析之前（顺序修复，与 wiki_upsert_page 语义对称），代码已在上述
+     pytest 覆盖中转绿，属可提交状态；
+  2. `tests/test_orchestration_engine.py`（M，3 行）——test_kb_llm_chat_skip_empty 补
+     model 参数适配新顺序，与 1 配套；
+  3. `tests/test_kb_llm_chat_content_retry.py`（??，17:29 新建）——方案C内容级重试独立
+     测试文件（70b2051 提交时未含，需确认后补交）；
+  4. `web/src/app/(main)/jobs/parent-job-table.tsx`（M）——任务监控耗时列改走
+     effectiveState 判定（链头"投递即成功"时耗时列不再停住），**独立修复，非方案C范围，
+     归属需确认**。
+- **剩余步骤（代码层完成，等部署验证）**：
+  1. 【待确认】选择性提交：skip_empty 修复 + content_retry 测试（勿碰 parent-job-table
+     除非确认归属）
+  2. 部署重建 api-server+worker（deploy/kb-build-deploy.sh -s api-server）
+  3. 重触发附件1 run 验证（已建 3 页幂等覆盖；再遇 LLM 回显只跳过单页不拖垮全 run）
 
 ## 52. 当前状态（2026-10-28 高频词页样式修复——卡片列表溢出/空态遮挡/分页缺失 + 详情面板分页常驻）
 
