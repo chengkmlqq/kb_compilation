@@ -2,7 +2,44 @@
 
 > 本文档用于跨会话续接工作。每次工作结束更新「当前状态」；新会话开始先读本文档。
 
-最后更新：2026-10-29（方案C改造已落地提交 70b2051，测试全绿；工作区留 3 个未提交改动待归置）
+最后更新：2026-10-30（框架同步管理页落地 commit b956e2b，已本地构建部署 api-server+web，E2E 鉴权通过）
+
+## 54. 当前状态（2026-10-30 同步管理页——从 data_supply_shandong 同步团队/用户/角色）
+
+- **需求**：同步管理页面——数据源管理配置 shandong 业务库 → 同步页选数据源 → 点同步对
+  团队/用户/角色表数据同步（admin 除外）→ 页面看结果 → 同步完成后 shandong 用户调 kb 鉴权自动通过。
+- **已提交推送**：commit b956e2b（dev）。
+  - 后端 `api/services/framework_sync.py`：跨库连源库（复用数据源管理 mysql 类型，解密/URL
+    解析走 datasource 服务）+ 5 张框架表 upsert（modo_team/modo_user/modo_team_member/
+    modo_user_role/modo_user_role_rela），admin 用户及其关系行除外；列映射取「源列∩本库列」
+    交集（源库有 lastupd/version/acct_type/logo 等，本库有 mcp_token_hash 等，交集避免 1054）；
+    角色保底：无授权角色的同步用户补挂 normal_user；结果落 modo_sync_log（response_data=JSON）。
+  - 后端 `api/routers/sync_framework.py`：POST /sync/framework/run、GET /status、GET /history，
+    强制登录（401）；middleware API_ROUTE_MAP 加 `/api/v1/sync → /system/sync`（受控菜单 RBAC）。
+  - 前端 `web/src/app/(main)/system/sync/page.tsx`：数据源下拉（mysql 类型）+ 测试连接 + 开始同步
+    + 各表统计表（源行数/新增/更新/跳过/失败）+ 同步历史表；AppSider 补 SyncOutlined 图标。
+  - 菜单（库内数据）：modo_menu 插 sys_sync（route=/system/sync，parent=system，sort=7，
+    icon=SyncOutlined，state=1）+ modo_role_menu_rela 授权 normal_user/plat-mgr/两个 kb_role uuid。
+- **E2E 实测（真实数据，非 mock）**：容器内 run_framework_sync 跑通——modo_team 20 行、
+  modo_user 43 行（admin 除外）、modo_team_member 35、modo_user_role 10、modo_user_role_rela 33
+  全部插入；随后真实 HTTP 链验证（nginx 80）：shandong 风格 JWT（sub=chengkai3）→
+  /api/v1/auth/jwt-exchange 换签成功（identity_cookie）→ 带 cookie GET /api/v1/sync/framework/status 200
+  + /api/v1/system/users 200（RBAC 通过）。**「同步后 shandong 用户鉴权自动通过」成立**。
+- **库内数据（联调产物，保留）**：kb 库已有 modo_user 44（非 admin）+ modo_team 21 +
+  modo_team_member 36 + user_role_rela 78（含 normal_user 保底）；modo_datasource 留有联调数据源
+  `shandong_frame_sync`（id=shandong_frame_sync_e2e，mysql→10.1.215.50:3309/data_supply_neo，
+  root/r1o2o3t4，**可直接在同步页选用**，无需重建）。
+- **验证/部署**：web tsc --noEmit 0 错误；pytest 173 passed（1 failed = test_chunk_enhance_tape_executes，
+  **既有失败，与本次无关**，a95b464 引入）；deploy/kb-build-deploy.sh -s api-server,web -n 已重建
+  kb-api-server/kb-web 容器并启动（health 200、sync 端点 401→200 生效）。
+- **坑位（踩过，勿重复）**：① modo_datasource 真实列是 ds_name/ds_label（非 name/label）；② SyncLog
+  sync_status 列 NOT NULL 无默认值，建行必须给初值（RUNNING）；③ text() 参数勿用 %s（会 1064），
+  用 `:col` 命名占位符传 dict；④ upsert rowcount 1=insert/2=update/0=无变化；⑤ 源库列与本库列
+  不一致（源库 lastupd/version/acct_type/logo/update_user 等本库没有，本库 mcp_token_hash 源库没有），
+  必须交集映射；⑥ 换签 identity_cookie 在响应 body（非 Set-Cookie），HTTP 验证要手动带
+  `Cookie: x-next-identity=<cookie>` 头。
+- **剩余工作（可选）**：同步页前端交互联调（浏览器验证页面渲染）；若 shandong 新增用户，
+  重跑同步即可（幂等 upsert）。
 
 ## 53. 当前状态（2026-10-29 动态wiki构建 round3 LLM 回显失败诊断 + 方案C 改造，已完成代码层）
 
