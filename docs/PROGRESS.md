@@ -29,8 +29,9 @@
   modo_team_member 36 + user_role_rela 78（含 normal_user 保底）；modo_datasource 留有联调数据源
   `shandong_frame_sync`（id=shandong_frame_sync_e2e，mysql→10.1.215.50:3309/data_supply_neo，
   root/r1o2o3t4，**可直接在同步页选用**，无需重建）。
-- **验证/部署**：web tsc --noEmit 0 错误；pytest 173 passed（1 failed = test_chunk_enhance_tape_executes，
-  **既有失败，与本次无关**，a95b464 引入）；deploy/kb-build-deploy.sh -s api-server,web -n 已重建
+- **验证/部署**：web tsc --noEmit 0 错误；全量 pytest 978 passed + 9 failed（test_chunk_enhance_tape_executes
+  1 个 + test_doc_download_fallback 6 个 + test_engine_admin 1 个，**全部既有失败**——在 b956e2b^ 检出
+  重跑 1:1 复现，均与本次改动无引用关系）；deploy/kb-build-deploy.sh -s api-server,web -n 已重建
   kb-api-server/kb-web 容器并启动（health 200、sync 端点 401→200 生效）。
 - **坑位（踩过，勿重复）**：① modo_datasource 真实列是 ds_name/ds_label（非 name/label）；② SyncLog
   sync_status 列 NOT NULL 无默认值，建行必须给初值（RUNNING）；③ text() 参数勿用 %s（会 1064），
