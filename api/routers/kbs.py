@@ -1806,6 +1806,17 @@ def _enqueue_document_process(
     finally:
         framework_db.close()
 
+    # 2026-10-30：新链头已落库 → 立即失效任务统计缓存，使提交任务后顶部
+    # 卡片（/jobs/statistics 走 10s SWR）不再持有旧值——否则恰在 TTL 窗口内
+    # 提交时卡片显示旧状态（如 running=0）而列表实时已见新任务（用户反馈
+    # 「刚提交任务时卡片是 0，列表有 1 条运行中」）。与 stop/delete 的
+    # agg_cache_invalidate 同款即时性约定。注意 agg_cache 是 api-server
+    # 进程内缓存：本函数在 API 进程执行有效；worker 进程内创建的编排 run
+    # 无法经此失效（见 _create_tape_run 注释，靠 TTL 过期自刷新兜底）。
+    from api.services.agg_cache import agg_cache_invalidate
+
+    agg_cache_invalidate("jobs_statistics")
+
     celery_app.send_task(
         "worker.tasks.scheduler.execute_modo_job",
         args=[job_id],

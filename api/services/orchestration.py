@@ -536,6 +536,16 @@ def execute_tape(db, tape_id: str, inputs: dict | None = None, env: str | None =
     created = _create_tape_run(db, tape_id, inputs, env=env)
     run_id, run_env = created["run_id"], created["run_env"]
 
+    # 2026-10-30：新编排 run 已落库 → 立即失效任务统计缓存（与 stop/delete
+    # 同款即时性约定），使任务监控页顶部卡片在「手动执行编排/质量评估」后
+    # 立即反映新 run，而非等 10s SWR TTL 过期。注意 agg_cache 是 api-server
+    # 进程内缓存——本函数由 API 进程调用（编排页/质量评估手动触发）才有效；
+    # worker 上传链直调 _create_tape_run（doc_process/dynamic_wiki_build）属
+    # worker 进程，此处不经过，靠 TTL 过期自刷新兜底。
+    from api.services.agg_cache import agg_cache_invalidate
+
+    agg_cache_invalidate("jobs_statistics")
+
     # 投递调度中枢（orch 队列）
     try:
         from worker.celery_app import celery_app
