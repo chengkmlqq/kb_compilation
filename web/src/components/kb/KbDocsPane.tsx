@@ -50,7 +50,7 @@ import KbsEmpty from "@/components/kb/KbsEmpty";
 import { CaretDownIcon, CaretRightIcon, FolderIcon, SearchColorIcon } from "@/components/kb/KbsIcons";
 import UploadConfirmDialog, { UploadProcessConfig } from "@/components/UploadConfirmDialog";
 import SelectTableDialog from "@/components/SelectTableDialog";
-import DocBuildProcessDrawer from "@/components/DocBuildProcessDrawer";
+import JobLogDrawer from "@/components/JobLogDrawer";
 import ReparseConfigDialog from "@/components/ReparseConfigDialog";
 import {
   apiCreateDocFolder,
@@ -1363,13 +1363,16 @@ export default function KbDocsPane({
         }}
       />
 
-      {/* 构建过程抽屉：文档列表就地查看 wiki 构建执行轨迹/LLM 明细/日志 */}
-      <DocBuildProcessDrawer
+      {/* 构建过程抽屉：复用任务监控页主任务日志抽屉（子任务步骤流 + 全量日志 +
+          步骤时间线 + LLM 明细），传文档处理链头 job id 定位 */}
+      <JobLogDrawer
         visible={!!buildDoc}
         jobId={
-          buildDoc?.wiki_build?.job_id || (buildDoc ? `DOC_${buildDoc.id}` : null)
+          buildDoc?.chain_job_id ||
+          buildDoc?.wiki_build?.job_id ||
+          (buildDoc ? `DOC_${buildDoc.id}` : null)
         }
-        docTitle={buildDoc?.file_name}
+        title="构建过程"
         onClose={() => setBuildDoc(null)}
       />
 

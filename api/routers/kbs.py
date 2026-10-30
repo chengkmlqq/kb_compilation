@@ -840,6 +840,26 @@ def _attach_wiki_build_status(db: Session, kb_id: str, items: list[dict]) -> Non
         if b:
             it["wiki_build"] = b
 
+    # 2026-10-29: 文档处理链头 job id（最新 DOC_{docId}[_R{n}]）——文档「构建过程」
+    # 复用任务监控页主任务日志抽屉（子任务步骤流 + 全量日志），需链头 job id 定位。
+    # 重解析会新建轮次链头（DOC_{id}_R2/_R3...），取 create_time 最新一条。
+    doc_ids = [str(it.get("id") or "") for it in items if it.get("id")]
+    if doc_ids:
+        chain_rows = db.execute(
+            select(Job.id, Job.doc_id, Job.create_time)
+            .where(Job.id.like("DOC_%"), Job.doc_id.in_(doc_ids))
+            .order_by(Job.create_time.desc())
+        ).all()
+        chain_by_doc: dict[str, str] = {}
+        for jid, jdoc, _ct in chain_rows:
+            jd = str(jdoc or "")
+            if jd and jd not in chain_by_doc:
+                chain_by_doc[jd] = str(jid)
+        for it in items:
+            cid = chain_by_doc.get(str(it.get("id") or ""))
+            if cid:
+                it["chain_job_id"] = cid
+
     # 2026-10-29: 摘要 run 状态反查（SUMMARY_RUN_* job → kb_tape_run.inputs.document_id）。
     # summary_status 字段在摘要 run 跑完才回写 READY/FAILED，运行期间为空——
     # 前端无法区分「待摘要」与「摘要中」。这里附 summary_run.state（PENDING/RUNNING

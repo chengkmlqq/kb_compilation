@@ -10,7 +10,7 @@ import { App } from "antd";
 import JobStats from "./job-stats";
 import JobFilter from "./job-filter";
 import ParentJobTable from "./parent-job-table";
-import JobLogDrawer from "./job-log-drawer";
+import JobLogDrawer from "@/components/JobLogDrawer";
 import ModoPagination from "@/components/biz/modo-pagination";
 import {
   apiDeleteJob,

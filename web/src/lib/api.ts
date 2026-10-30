@@ -402,6 +402,9 @@ export interface DocItem {
   summary_error?: string | null;
   created_at?: string | null;
   wiki_build?: { state: string; duration_ms: number | null; job_id: string } | null;
+  /** 2026-10-29: 文档处理链头 job id（最新 DOC_{docId}[_R{n}]）——「构建过程」复用
+   *  任务监控页主任务日志抽屉（子任务步骤流 + 全量日志）定位用。 */
+  chain_job_id?: string | null;
   /** 2026-10-29: 摘要编排 run 实时状态（SUMMARY_RUN_* job 反查）。运行中=PENDING/RUNNING，
    *  终态不挂（走 summary_status）。用于区分「待摘要」与「摘要中」。 */
   summary_run?: { state: string; job_id: string } | null;

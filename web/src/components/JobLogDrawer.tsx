@@ -1,5 +1,11 @@
 "use client";
 
+/** 作业详情与日志抽屉（任务监控页主任务日志查看方式）。
+ *
+ * 内容 = 子任务执行步骤流（Timeline，可钻取子任务日志）+ 执行日志（全量，SSE 实时流）
+ * + 构建步骤时间线（flat 列表）+ LLM 调用明细。
+ * 任务监控页与知识库文档「构建过程」共用（2026-10-29 抽取为共享组件）。
+ */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Button,
@@ -25,6 +31,8 @@ interface JobLogDrawerProps {
   jobId: string | null;
   onClose: () => void;
   onStateChange?: (job: JobItem) => void;
+  /** 抽屉标题（默认「作业详情与日志」；文档构建过程传「构建过程」） */
+  title?: string;
 }
 
 const { Text } = Typography;
@@ -73,6 +81,7 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
   jobId,
   onClose,
   onStateChange,
+  title = "作业详情与日志",
 }) => {
   const [loading, setLoading] = useState(false);
   const [job, setJob] = useState<JobItem | null>(null);
@@ -381,7 +390,7 @@ const JobLogDrawer: React.FC<JobLogDrawerProps> = ({
     <Drawer
       title={
         <Space size={8}>
-          <span>作业详情与日志</span>
+          <span>{title}</span>
           {job && getStateTag(job.state || null)}
           {streamError ? (
             <Tag color="error">日志流异常</Tag>
