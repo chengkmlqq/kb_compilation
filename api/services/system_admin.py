@@ -15,7 +15,7 @@ import logging
 import uuid
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, select
 from sqlalchemy.orm import Session
 
 from api.lib.crypto import aes_encrypt
@@ -495,14 +495,25 @@ def my_menus(db: Session, user_id: str, is_admin: bool = False) -> dict:
 
 
 def is_platform_admin(db: Session, user_id: str, admin_users: list[str] | None = None) -> bool:
-    """True when the user is an explicit platform admin.
+    """True when the user is a platform admin.
 
-    Mirrors the source proxy's ADMIN_USERS bypass (env AUTH_ADMIN_USERS),
-    NOT the role_type column — the shared seed data marks several non-admin
-    roles with role_type='plat-mgr', so a role-type check would silently
-    bypass the guard for ordinary users. `db` is kept for call-site symmetry.
+    对齐 data_supply 山东 (DasupPermissionExec.getUserRole):
+    平台管理员 = modo_user_role_rela 直绑 role_id='plat-mgr'。
+    AUTH_ADMIN_USERS 环境变量仅作兜底白名单，不替代角色判定。
     """
-    return bool(admin_users and user_id in admin_users)
+    user_id = (user_id or "").strip()
+    if not user_id:
+        return False
+    # 兜底：环境变量白名单（与 ds 不冲突）
+    if admin_users and user_id in admin_users:
+        return True
+    # 主判定：角色表直绑 plat-mgr 即为平台管理员（ds 唯一口径）
+    bound = db.execute(
+        select(UserRoleRela.rela_id)
+        .where(and_(UserRoleRela.user_id == user_id, UserRoleRela.role_id == "plat-mgr"))
+        .limit(1)
+    ).scalars().first()
+    return bool(bound)
 
 
 # ============================================================================

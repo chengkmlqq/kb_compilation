@@ -53,14 +53,11 @@ class ResourceRow:
 
 
 def is_admin(db: Session, user_id: str) -> bool:
-    """A user is an administrator if any bound role is named 'admin' or has
-    role_type 'system' (modo_user_role_rela), or their team membership
-    carries an 'admin' role_name (modo_team_member).
+    """管理员判定，对齐 data_supply 山东 (DasupPermissionExec.getUserRole)。
 
-    Also honored: AUTH_ADMIN_USERS env (comma-separated user ids) — the same
-    bypass used by is_platform_admin (system_admin). The shared seed data
-    marks EVERY role role_type='plat-mgr', so role_type must NOT be used
-    directly; explicit admin-user listing is the reliable signal.
+    平台管理员 = modo_user_role_rela 直绑 role_id='plat-mgr'（ds 唯一口径）。
+    role_name=='admin' / role_type=='system' / 团队 admin 角色名 /
+    AUTH_ADMIN_USERS 环境变量均作为兼容判定保留，plat-mgr 直绑为权威。
     """
     user_id = (user_id or "").strip()
     if not user_id:
@@ -78,6 +75,9 @@ def is_admin(db: Session, user_id: str) -> bool:
         db.execute(select(UserRoleRela.role_id).where(UserRoleRela.user_id == user_id)).scalars()
     )
     if role_ids:
+        # 主判定：plat-mgr 直绑即平台管理员（ds 口径，权威）
+        if "plat-mgr" in {str(r).strip() for r in role_ids}:
+            return True
         rows = db.execute(
             select(UserRole.role_name, UserRole.role_type).where(UserRole.role_id.in_(role_ids))
         ).all()
