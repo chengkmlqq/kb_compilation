@@ -695,16 +695,55 @@ def job_statistics(
     return {"success": True, "data": data}
 
 
+def _job_effective_state(own: str, child_states: dict[str, int]) -> str:
+    """主任务展示状态合成——与前端 parent-job-table.tsx `effectiveState` 完全同规则。
+
+    列表状态列不是裸用链头 job.state：链头是「投递即成功」语义（解析完成即
+    SUCCESS，不等编排子任务），子任务未终态时主任务仍应显示「运行中」；
+    子任务存在失败时显示「失败」（失败优先）。统计卡必须用同一套合成规则
+    计数，否则「链头终态 + 子任务还在跑」的任务在列表显运行中、卡片却计入
+    成功/失败，两处数量对不上（2026-10-30 用户反馈）。
+    """
+    if own in ("RUNNING", "running"):
+        return "RUNNING"
+    failed = (
+        child_states.get("FAILED", 0)
+        + child_states.get("failed", 0)
+        + child_states.get("cancelled", 0)
+    )
+    if failed > 0:
+        return "FAILED"
+    pending = (
+        child_states.get("RUNNING", 0)
+        + child_states.get("PENDING", 0)
+        + child_states.get("running", 0)
+        + child_states.get("queued", 0)
+    )
+    return "RUNNING" if pending > 0 else own
+
+
 def _job_statistics_data(db) -> dict:
     from api.models.orchestration import TapeRun
 
-    # ── modo_job：链头 + 非系统周期任务（与 list_parent_jobs 同款筛选）──
-    job_stmt = select(Job.state, func.count()).where(Job.parent_id.is_(None))
+    # ── modo_job 链头：按「主任务展示状态」合成计数（与列表 /parents 同口径）──
+    # 2026-10-30：不再裸按 Job.state 分组——链头 job 是投递即成功语义，自身
+    # 终态而子任务（编排 run 等）未终态时，列表 effectiveState 显示运行中，
+    # 卡片却计入 success/failed，两处数量对不上。这里对每个链头聚合子任务
+    # 状态（复用 _child_agg 的 child_states，编排子任务已按 run 真实状态归一），
+    # 再走 _job_effective_state 合成计数。
+    job_stmt = select(Job.id, Job.state).where(Job.parent_id.is_(None))
     job_stmt = job_stmt.where(Job.task_class.not_in(SYSTEM_TASK_CLASSES))
-    rows = db.execute(job_stmt.group_by(Job.state)).all()
+    head_rows = db.execute(job_stmt).all()  # [(id, state)]
     counts: dict[str, int] = {}
-    for state, count in rows:
-        counts[str(state or "")] = int(count)
+    if head_rows:
+        head_ids = [jid for jid, _st in head_rows]
+        agg = _child_agg(db, head_ids)
+        for jid, own_state in head_rows:
+            key = _job_effective_state(
+                str(own_state or ""),
+                agg.get(jid, {}).get("states", {}),
+            )
+            counts[key] = counts.get(key, 0) + 1
 
     # ── 编排 run：双表统计 + 排除被链头承接的（与 list_parent_jobs 同款）──
     # 2026-10-23 性能修复：select(id, status) 全表扫聚簇索引时 step_results/

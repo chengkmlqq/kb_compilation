@@ -432,3 +432,83 @@ def test_run_log_snapshot_text() -> None:
     assert "错误: LLM 调用失败" in text
     assert "[1] 节点 解析 success，耗时1200ms" in text
     assert "[2] 节点 摘要生成 failed，耗时800ms，错误: 超时" in text
+
+
+def test_job_effective_state_rules() -> None:
+    """_job_effective_state 与前端 effectiveState 同规则（2026-10-30）。
+
+    列表状态列按合成态展示：链头「投递即成功」终态 + 子任务未终态 →
+    显示运行中；子任务有失败 → 失败优先。卡片统计必须走同一套规则，
+    否则与列表数量对不上。断言即前端 parent-job-table.tsx effectiveState
+    的逐分支映射。
+    """
+    import api.routers.jobs as jobs_mod
+
+    f = jobs_mod._job_effective_state
+    # 自身 RUNNING → 运行中（哪怕子任务全终态）
+    assert f("RUNNING", {"SUCCESS": 2}) == "RUNNING"
+    assert f("running", {}) == "RUNNING"
+    # 子任务失败优先（自身终态 + 子任务 FAILED → FAILED）
+    assert f("SUCCESS", {"FAILED": 1}) == "FAILED"
+    assert f("SUCCESS", {"failed": 1}) == "FAILED"
+    assert f("SUCCESS", {"cancelled": 1}) == "FAILED"
+    # 子任务运行/排队中 → 合成运行中（链头终态但子任务还在跑 = 本次修复主场景）
+    assert f("SUCCESS", {"RUNNING": 1}) == "RUNNING"
+    assert f("SUCCESS", {"running": 1, "SUCCESS": 1}) == "RUNNING"
+    assert f("SUCCESS", {"PENDING": 1}) == "RUNNING"
+    assert f("SUCCESS", {"queued": 1}) == "RUNNING"
+    # 全终态无失败 → 自身状态
+    assert f("SUCCESS", {"SUCCESS": 2, "STOPPED": 1}) == "SUCCESS"
+    assert f("FAILED", {}) == "FAILED"
+    assert f("STOPPED", {}) == "STOPPED"
+    assert f("PENDING", {}) == "PENDING"
+
+
+def test_statistics_uses_effective_state(monkeypatch) -> None:
+    """统计卡片按主任务展示状态（effectiveState）计数，与列表同口径。
+
+    2026-10-30 用户反馈：顶部「运行中」卡片与列表运行中主任务数量对不上。
+    根因：卡片按 Job.state 硬计数，链头「投递即成功」终态（SUCCESS）而
+    子任务还在 RUNNING 时，列表显示运行中、卡片却计入成功。修复后
+    _job_statistics_data 对链头聚合子任务状态再合成计数。
+    """
+    from api.services.agg_cache import agg_cache_invalidate
+    from api.routers.jobs import _job_statistics_data
+
+    db = _make_session()
+    db.query(Job).delete()
+    db.query(JobQueue).delete()
+    db.commit()
+
+    # 链头 A：自身 SUCCESS（投递即成功）+ 子任务 RUNNING（编排/解析还在跑）
+    db.add(Job(id="MIS_A", task_id="a", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"documentId": "doc-a"}),
+               trigger_type="API", state="SUCCESS"))
+    db.add(Job(id="MIS_A_c1", task_id="c1", task_class="KbDocumentParseTask",
+               queue_name="default", task_params="{}", trigger_type="API",
+               state="RUNNING", parent_id="MIS_A"))
+    # 链头 B：自身 RUNNING
+    db.add(Job(id="MIS_B", task_id="b", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"documentId": "doc-b"}),
+               trigger_type="API", state="RUNNING"))
+    # 链头 C：自身 SUCCESS 无子任务
+    db.add(Job(id="MIS_C", task_id="c", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"documentId": "doc-c"}),
+               trigger_type="API", state="SUCCESS"))
+    # 链头 D：自身 SUCCESS + 子任务 FAILED → 失败优先计入 failed
+    db.add(Job(id="MIS_D", task_id="d", task_class="KbDocumentProcessTask",
+               queue_name="default", task_params=json.dumps({"documentId": "doc-d"}),
+               trigger_type="API", state="SUCCESS"))
+    db.add(Job(id="MIS_D_c1", task_id="c1", task_class="KbDocumentParseTask",
+               queue_name="default", task_params="{}", trigger_type="API",
+               state="FAILED", parent_id="MIS_D"))
+    db.commit()
+
+    agg_cache_invalidate("jobs_statistics")
+    stats = _job_statistics_data(db)
+    assert stats["total"] == 4
+    # A 合成运行中（修复点，旧实现计入 success）+ B 自身运行中
+    assert stats["running"] == 2, f"running 应含合成态链头 A: {stats}"
+    assert stats["success"] == 1, f"仅 C 计入成功: {stats}"
+    assert stats["failed"] == 1, f"D 失败优先计入 failed: {stats}"
+    assert stats["stopped"] == 0 and stats["queued"] == 0
