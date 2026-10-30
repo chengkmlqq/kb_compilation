@@ -4766,3 +4766,69 @@ export function apiDeleteKbCategory(name: string) {
     { method: "DELETE" },
   );
 }
+
+// ---- 框架表同步（团队/用户/角色，2026-10-30） ----
+
+export interface FrameworkSyncTableResult {
+  source: number;
+  inserted: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  error?: string | null;
+}
+
+export interface FrameworkSyncResult {
+  syncId?: string;
+  success?: boolean;
+  error?: string;
+  /** run 端点直接返回的统计 */
+  tables?: Record<string, FrameworkSyncTableResult>;
+  fallback?: { users: number; normal_user_added: number };
+  /** status 端点：responseData 里解析出的统计 */
+  responseData?: {
+    tables?: Record<string, FrameworkSyncTableResult>;
+    dsId?: string;
+    dsName?: string;
+    started_at?: string;
+    finished_at?: string;
+  };
+  syncStatus?: string;
+  errorMessage?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  durationMs?: number | null;
+  successCount?: number | null;
+  failedCount?: number | null;
+  createUser?: string | null;
+}
+
+export interface FrameworkSyncHistoryItem {
+  syncId: string;
+  syncStatus: string;
+  errorMessage?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  durationMs?: number | null;
+  successCount?: number | null;
+  failedCount?: number | null;
+  createUser?: string | null;
+}
+
+export function apiRunFrameworkSync(dsId: string) {
+  return request<FrameworkSyncResult>("/api/v1/sync/framework/run", {
+    method: "POST",
+    body: JSON.stringify({ dsId }),
+  });
+}
+
+export function apiFrameworkSyncStatus() {
+  return request<FrameworkSyncResult | null>("/api/v1/sync/framework/status");
+}
+
+export function apiFrameworkSyncHistory(page = 1, pageSize = 10) {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  return request<{ items: FrameworkSyncHistoryItem[]; total: number; page: number; pageSize: number }>(
+    `/api/v1/sync/framework/history?${params.toString()}`,
+  );
+}

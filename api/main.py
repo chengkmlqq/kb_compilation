@@ -15,7 +15,7 @@ from api.config import get_settings
 from api.db import get_db
 from api.mcp_server import create_mcp_server
 from api.middleware import bearer_identity, normalize_content_type, rbac_guard
-from api.routers import agents, auth, chat_sessions, chat_traces, chunking, cron, datasources, datagrid, feedback, files, graph, jobs, kb_categories, kbs, mcps, metadata, models, ontology, orchestrations, overview, qa, quality, quality_build_check, skills, system, system_config, usage, websearch, workers
+from api.routers import agents, auth, chat_sessions, chat_traces, chunking, cron, datasources, datagrid, feedback, files, graph, jobs, kb_categories, kbs, mcps, metadata, models, ontology, orchestrations, overview, qa, quality, quality_build_check, skills, system, system_config, sync_framework, usage, websearch, workers
 from api.services.identity import Identity, decode_identity_cookie
 from api.services.migrations import run_migrations_on_startup
 
@@ -219,6 +219,7 @@ app.include_router(kb_categories.router, prefix="/api/v1")  # 2026-10-19 知识�
 app.include_router(feedback.router, prefix="/api/v1")  # 2026-10-14 问答反馈统计
 app.include_router(usage.router, prefix="/api/v1")  # 2026-10-16 LLM 使用记录与性能监控看板
 app.include_router(overview.router, prefix="/api/v1")  # 2026-10-20 首页总览统计看板
+app.include_router(sync_framework.router, prefix="/api/v1")  # 2026-10-30 框架表同步（团队/用户/角色）
 
 # 挂载 MCP 子应用（_mcp_app 定义见文件头部）。Starlette 子应用作为 Route endpoint：
 # 只接管 /mcp 路径，方法限 GET（SSE）/POST（JSON-RPC），不改变 FastAPI 路由行为。

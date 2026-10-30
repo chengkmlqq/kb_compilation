@@ -84,6 +84,7 @@ API_ROUTE_MAP: tuple[tuple[str, str], ...] = (
     ("/api/v1/datagrid", "/datagrid"),
     ("/api/v1/feedback", "/feedback-stats"),
     ("/api/v1/usage", "/usage"),  # 2026-10-16 LLM 使用看板
+    ("/api/v1/sync", "/system/sync"),  # 2026-10-30 框架表同步（团队/用户/角色）
 )
 
 
