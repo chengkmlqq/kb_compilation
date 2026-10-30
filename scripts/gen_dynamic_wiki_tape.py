@@ -107,6 +107,100 @@ bindings['reg_dir'] = DIR
 print(f"[n03] chunks={chunk_count} full_text={len(full_text)}字 → {DIR}")
 '''
 
+# n04a: 构建前清理本文档专属旧 wiki 页（2026-10-30 修复重新触发残留）
+# 放在门禁之后、知识点判定之前：先按 source_refs 前缀 + doc_root 子树删掉本文档
+# 上一轮的专属页，再重新构建（upsert 只更新同名 slug、不删旧页 → 旧知识点/旧
+# 目录残留；跨文档同名也互相覆盖）。best-effort：异常仅告警不阻断。
+CODE_CLEANUP_OLD_PAGES = WR_HEAD + '''
+import re as _re
+from sqlalchemy import select as _sq_sel, delete as _sq_del, cast as _sq_cast, String as _sq_String
+_kb = wr.KB
+_kid = str(bindings.get('kid', '') or bindings.get('document_id', '') or bindings.get('doc_id', '') or '')
+_doc_root_raw = str(bindings.get('doc_root') or bindings.get('doc_name') or '未命名文档').strip() or '未命名文档'
+_doc_root_slug = _re.sub(r'[^\\w\\u4e00-\\u9fff-]', '-', _doc_root_raw).strip('-') or '文档'
+if not _kid:
+    print("[n04a] 缺 kid，跳过清理")
+else:
+    try:
+        from api.db import get_sessionmaker as _gsm
+        db = _gsm()()
+    except Exception as _e:
+        print(f"[n04a] 取会话失败（跳过清理）: {_e}")
+        db = None
+if db is not None:
+    try:
+        from api.models.knowledge import WikiPage, WikiLink, WikiFolder
+        # 命中本文档的候选页（source_refs LIKE %kid|%，与 kb_admin 删文档级联同款粗筛）
+        like_pat = f"%{_kid}|%"
+        pages = db.execute(
+            _sq_sel(WikiPage.id, WikiPage.slug, WikiPage.folder_id, WikiPage.source_refs).where(
+                WikiPage.kb_id == _kb,
+                WikiPage.source_refs.isnot(None),
+                _sq_cast(WikiPage.source_refs, _sq_String).like(like_pat),
+            )
+        ).all()
+        doc_prefix = f"{_kid}|"
+        to_delete = []
+        for pid, slug, fid, refs in pages:
+            refs = refs if isinstance(refs, list) else []
+            hits = [r for r in refs if isinstance(r, str) and r.startswith(doc_prefix)]
+            if not hits:
+                continue
+            # 专属页（所有引用都属本文档）才删；共享页（跨文档合并实体）只摘引用，
+            # 防御性不删共享页（本链路动态页 source_refs 恒单文档，正常都是专属页）
+            if len(refs) <= len(hits):
+                to_delete.append((str(pid), str(slug or ''), str(fid or '')))
+        # 目录清理：只删文档专属根（name = doc_root_raw 或 slug 前缀命中）下的空目录，
+        # 不碰其他文档根目录/全库共用根。目录是否可删 = 该目录已无任何页引用。
+        deleted_pages = 0
+        for pid, slug, fid in to_delete:
+            try:
+                db.execute(_sq_del(WikiLink).where(WikiLink.from_page_id == pid))
+                db.execute(_sq_del(WikiLink).where(WikiLink.to_page_id == pid))
+                db.execute(_sq_del(WikiPage).where(WikiPage.id == pid))
+                deleted_pages += 1
+            except Exception as _e:
+                print(f"[n04a] 删页失败 {slug}: {_e}")
+        # 文档专属目录清理（doc_root 根 + 其下空目录，均无页引用才删）
+        deleted_folders = 0
+        try:
+            # 该文档专属页所在的目录（含根）——取本文档仍引用页的目录，反查空目录
+            doc_folders = set()
+            if to_delete:
+                doc_folders = {f for _, _, f in to_delete if f}
+            # 文档根目录：name=doc_root_raw 且 parent_id=''（KB 根下）
+            root_ids = set(db.execute(
+                _sq_sel(WikiFolder.id).where(
+                    WikiFolder.kb_id == _kb, WikiFolder.parent_id == '',
+                    WikiFolder.name == _doc_root_raw,
+                )
+            ).scalars().all())
+            # 候选删除目录 = 命中本文档页的目录 ∪ 文档根目录（仅限 name/doc_root 前缀）
+            cand = set(str(x) for x in (doc_folders | root_ids) if x)
+            if cand:
+                still_used = set(db.execute(
+                    _sq_sel(WikiPage.folder_id).where(
+                        WikiPage.kb_id == _kb, WikiPage.folder_id.in_(cand),
+                    )
+                ).scalars().all())
+                for fid in cand:
+                    if str(fid) in still_used:
+                        continue
+                    db.execute(_sq_del(WikiFolder).where(WikiFolder.id == fid))
+                    deleted_folders += 1
+            db.commit()
+        except Exception as _e:
+            print(f"[n04a] 目录清理失败（不阻断）: {_e}")
+            db.rollback()
+        print(f"[n04a] 清理本文档旧页 {deleted_pages} 张、目录 {deleted_folders} 个（doc_root={_doc_root_slug}）")
+    except Exception as _e:
+        print(f"[n04a] 清理失败（不阻断）: {_e}")
+        db.rollback()
+    finally:
+        db.close()
+print("[n04a] 清理结束")
+'''
+
 # ─────────────────────────────────────────────────────────────────────
 # n04: 门禁
 # ─────────────────────────────────────────────────────────────────────
@@ -159,16 +253,23 @@ bindings['kp_count'] = len(kps)
 # folder_ids 与 paths 同序（wiki_ensure_folder 批量输出），绑定到每个知识点
 items = []
 seen_slugs = set()
+# 2026-10-30 跨文档同名知识点隔离：slug 加文档前缀（doc_root_slug-知识点slug）。
+# 此前 slug 只按知识点名生成 → 不同文档同名知识点（如都叫「定义」）slug 冲突，
+# 后构建文档覆盖先构建页（用户反馈）。doc_root 已清洗（去扩展名/非法字符），
+# 再清洗成 slug 安全字符（doc_root 可能含「-」，保留；其余非 word/中文替换）。
+_doc_root_slug = re.sub(r'[^\\w\\u4e00-\\u9fff-]', '-', str(_doc_root or '')).strip('-') or '文档'
 for i, k in enumerate(kps):
     fid = folder_ids[i] if i < len(folder_ids) else ''
     name = str(k.get('name') or '').strip()
     if not name:
         name = f"知识点{i + 1}"
     base = re.sub(r'[^\\w\\u4e00-\\u9fff-]', '-', name).strip('-') or f"kp{i}"
-    slug = base
+    # 2026-10-30：slug = {doc_root_slug}-{知识点slug}，文档内唯一；文档间天然隔离。
+    # slug 列 String(255)，doc_root ≤80 + 知识点 slug 截断 120 兜底。
+    slug = f"{_doc_root_slug}-{base}"[:240]
     n = 2
     while slug in seen_slugs:
-        slug = f"{base}-{n}"
+        slug = f"{_doc_root_slug}-{base}-{n}"[:240]
         n += 1
     seen_slugs.add(slug)
     items.append({
@@ -562,6 +663,7 @@ def build_dynamic_tape_payload(
                 ])
     n03 = _script_node("n03", "初始化+切片拉取清洗", CODE_INIT_CHUNKS)
     n04 = _script_node("n04", "切片门禁", CODE_GATE)
+    n04a = _script_node("n04a", "清理本文档旧wiki页", CODE_CLEANUP_OLD_PAGES)
     n05 = _folder_node("n05", "按知识点建目录树")
     n06 = _script_node("n06", "组装循环集合", CODE_ASSEMBLE_ITEMS)
     n07 = _loop_node("n07", "逐知识点循环", "{{kp_items}}", "kp")
@@ -576,17 +678,20 @@ def build_dynamic_tape_payload(
     # loop body = n07 下游可达子图（n07a~n07e），每轮全跑；n07e 靠
     # item.idx 判定末轮才重建互链；body 终点 = n07e（其后不再连线，
     # 否则被 collect_body_ids 卷进 body 每轮执行）。
-    nodes = [n01, n02, n03, n04, n05, n06, n07, n07a, n07b, n07c, n07d, n07e]
+    nodes = [n01, n02, n03, n04, n04a, n05, n06, n07, n07a, n07b, n07c, n07d, n07e]
     # 依赖顺序（2026-10-28 修复 kp_paths 缺失导致的建目录节点失败）：
     #   n02 派生 kp_paths → n05 建目录消费 kp_paths/产出 folder_ids
     #   → n06 组装消费 folder_ids/重写 kp_paths → n07 loop
     # 旧版 n02 漏派生 kp_paths，n05 拿到未渲染 {{kp_paths}} 解析炸
     # （2026-10-28「附件1：行业短彩端口收入效益评估报表需求.xlsx」构建失败）。
+    # 2026-10-30 插入 n04a（清理旧页）在门禁后、建目录前：先清再建，
+    # 重新触发构建不残留旧 wiki 页/目录。
     edges = [
         _edge("e01", "n01", "n02"),
         _edge("e02", "n02", "n03"),
         _edge("e03", "n03", "n04"),
-        _edge("e04", "n04", "n05"),
+        _edge("e04", "n04", "n04a"),
+        _edge("e04a", "n04a", "n05"),
         _edge("e05", "n05", "n06"),
         _edge("e06", "n06", "n07"),
         # loop → 循环体

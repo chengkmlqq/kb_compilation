@@ -33,12 +33,52 @@ def test_payload_topology() -> None:
     assert insts["n05"] == "wiki_ensure_folder"
     assert insts["n07"] == "loop"
     assert insts["n07d"] == "wiki_upsert_page"
+    # 2026-10-30：n04a 构建前清理旧页节点（门禁后、建目录前）
+    assert insts["n04a"] == "script", "必须存在 n04a 清理旧页节点（重新触发不残留旧页）"
+    ids = [n["id"] for n in p["nodes"]]
+    assert ids.index("n04") < ids.index("n04a") < ids.index("n05"), "n04a 必须在门禁后、建目录前"
     # 循环体连线
     src_of = {e["source"]: e["target"] for e in p["edges"]}
     assert src_of["n07"] == "n07a"  # loop → 循环体起点
     assert src_of["n07d"] == "n07e"  # body 终点
     # body 终点无出边（不被 collect_body_ids 卷进每轮执行）
     assert "n07e" not in src_of
+
+
+def test_n04a_cleanup_code_contract() -> None:
+    """n04a 清理旧页脚本契约（2026-10-30 修复重新触发残留）。
+
+    必须按 source_refs 前缀（{document_id}|）+ doc_root 目录限定删除本文档
+    专属旧页，且 best-effort（异常不阻断构建）。防误删摘要页/其他文档页。
+    """
+    from scripts.gen_dynamic_wiki_tape import build_dynamic_tape_payload
+
+    p = build_dynamic_tape_payload("wiki构建-动态-测试")
+    by_id = {n["id"]: n for n in p["nodes"]}
+    code = by_id["n04a"]["data"]["config"]["code"]
+    # 清理判定核心：source_refs 前缀命中本文档 + doc_root 限定
+    assert "source_refs" in code and "like_pat" in code, "n04a 必须按 source_refs 粗筛本文档页"
+    assert "doc_prefix" in code, "n04a 必须用 {document_id}| 前缀精判"
+    assert "WikiPage" in code and "WikiLink" in code, "n04a 必须删页+清链接"
+    # best-effort：异常不阻断
+    assert "不阻断" in code, "n04a 必须容错（失败不阻断构建）"
+    # slug 前缀：doc_root_slug 清洗存在
+    assert "_doc_root_slug" in code
+
+
+def test_n06_slug_has_doc_prefix() -> None:
+    """2026-10-30：知识点页 slug 加文档前缀（跨文档同名知识点不再互相覆盖）。
+
+    此前 slug 只按知识点名生成 → 不同文档同名知识点（如都叫「定义」）slug
+    冲突，后构建文档覆盖先构建页。现在 slug = {doc_root_slug}-{知识点slug}。
+    """
+    from scripts.gen_dynamic_wiki_tape import build_dynamic_tape_payload
+
+    p = build_dynamic_tape_payload("wiki构建-动态-测试")
+    by_id = {n["id"]: n for n in p["nodes"]}
+    code = by_id["n06"]["data"]["config"]["code"]
+    assert "_doc_root_slug" in code, "n06 必须清洗 doc_root 为 slug 前缀"
+    assert 'f"{_doc_root_slug}-{base}"' in code, "slug 必须带文档前缀"
 
 
 def test_loop_and_node_configs() -> None:
